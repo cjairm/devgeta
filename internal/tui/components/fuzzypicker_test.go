@@ -7,7 +7,7 @@ import (
 
 func testItems() []PaletteItem {
 	return []PaletteItem{
-		{Command: "devgita", Hint: "~/code/devgita"},
+		{Command: "gitmoji", Hint: "~/code/gitmoji"},
 		{Command: "worktrunk", Hint: "~/code/worktrunk"},
 		{Command: "gitignore-tool", Hint: "~/code/gitignore-tool"},
 	}
@@ -24,7 +24,7 @@ func TestFuzzyPickerFiltering(t *testing.T) {
 		}
 	})
 
-	t.Run("substring query ranks devgita and gitignore-tool above worktrunk", func(t *testing.T) {
+	t.Run("substring query ranks gitmoji and gitignore-tool above worktrunk", func(t *testing.T) {
 		p := NewFuzzyPicker("Repo", testItems())
 		for _, k := range []string{"g", "i", "t"} {
 			p.HandleKey(k)
@@ -41,7 +41,7 @@ func TestFuzzyPickerFiltering(t *testing.T) {
 		if !ok {
 			t.Fatal("expected a selected item")
 		}
-		if item.Command != "devgita" && item.Command != "gitignore-tool" {
+		if item.Command != "gitmoji" && item.Command != "gitignore-tool" {
 			t.Errorf("unexpected top match %q", item.Command)
 		}
 		if p.cursor != 0 {
@@ -160,7 +160,7 @@ func TestFuzzyPickerNavigation(t *testing.T) {
 	t.Run("typing k narrows the filtered list to matching names", func(t *testing.T) {
 		p := NewFuzzyPicker("Repo", []PaletteItem{
 			{Command: "kubernetes"},
-			{Command: "devgita"},
+			{Command: "devgeta"},
 			{Command: "postgres"},
 		})
 		p.HandleKey("k")
@@ -181,7 +181,7 @@ func TestFuzzyPickerNavigation(t *testing.T) {
 	t.Run("typing j narrows the filtered list to matching names", func(t *testing.T) {
 		p := NewFuzzyPicker("Repo", []PaletteItem{
 			{Command: "jira-sync"},
-			{Command: "devgita"},
+			{Command: "devgeta"},
 			{Command: "worktrunk"},
 		})
 		p.HandleKey("j")
@@ -353,7 +353,7 @@ func TestFuzzyPickerHandleKeyAcceptsUnicodeRunes(t *testing.T) {
 	t.Run("a unicode query filters down to the matching item", func(t *testing.T) {
 		p := NewFuzzyPicker("Repo", []PaletteItem{
 			{Command: "café-tool"},
-			{Command: "devgita"},
+			{Command: "devgeta"},
 		})
 		p.HandleKey("é")
 		if len(p.filtered) != 1 {
@@ -385,8 +385,8 @@ func TestFuzzyPickerInsertText(t *testing.T) {
 
 	t.Run("strips control characters from the pasted content", func(t *testing.T) {
 		p := NewFuzzyPicker("Repo", testItems())
-		p.InsertText("dev\ngita\r")
-		if p.Query() != "devgita" {
+		p.InsertText("dev\ngeta\r")
+		if p.Query() != "devgeta" {
 			t.Fatalf("expected control chars stripped, got %q", p.Query())
 		}
 	})

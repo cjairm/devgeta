@@ -1,4 +1,4 @@
-// Syntaxhighlighting module provides installation and configuration management for zsh-syntax-highlighting with devgita integration.
+// Syntaxhighlighting module provides installation and configuration management for zsh-syntax-highlighting with devgeta integration.
 // zsh-syntax-highlighting provides Fish shell-like syntax highlighting for commands as you type.
 
 package syntaxhighlighting
@@ -6,9 +6,9 @@ package syntaxhighlighting
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Syntaxhighlighting struct {

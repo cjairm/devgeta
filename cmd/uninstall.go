@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/registry"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/registry"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -22,13 +22,13 @@ var uninstallGetAppFn = func(name string) (apps.App, error) {
 
 var uninstallCmd = &cobra.Command{
 	Use:   "uninstall <app|category>",
-	Short: "Uninstall an app or category installed by devgita",
+	Short: "Uninstall an app or category installed by devgeta",
 	Long: `Reverses the install process for an app or category.
-Only removes apps that devgita originally installed. Pre-existing apps are skipped.
+Only removes apps that devgeta originally installed. Pre-existing apps are skipped.
 
 Examples:
   dg uninstall git           # uninstall a single app
-  dg uninstall terminal      # uninstall all terminal apps devgita installed
+  dg uninstall terminal      # uninstall all terminal apps devgeta installed
 `,
 	Args: cobra.ExactArgs(1),
 	RunE: runUninstall,
@@ -45,8 +45,8 @@ func runUninstall(_ *cobra.Command, args []string) error {
 	if target == "languages" || target == "databases" {
 		return fmt.Errorf("dg uninstall %s is not yet supported — manage runtimes via mise", target)
 	}
-	if target == "devgita" {
-		return fmt.Errorf("cannot uninstall devgita from itself")
+	if target == "devgeta" {
+		return fmt.Errorf("cannot uninstall devgeta from itself")
 	}
 
 	isApp := registry.IsKnownApp(target)
@@ -80,9 +80,9 @@ func runUninstall(_ *cobra.Command, args []string) error {
 	for _, name := range targets {
 		meta := registry.Meta[name]
 
-		if !gc.IsInstalledByDevgita(name, meta.ItemType) {
-			logger.L().Infow("skipping: not installed by devgita", "app", name)
-			utils.PrintInfo(fmt.Sprintf("skipping %s: not installed by devgita", name))
+		if !gc.IsInstalledByDevgeta(name, meta.ItemType) {
+			logger.L().Infow("skipping: not installed by devgeta", "app", name)
+			utils.PrintInfo(fmt.Sprintf("skipping %s: not installed by devgeta", name))
 			continue
 		}
 

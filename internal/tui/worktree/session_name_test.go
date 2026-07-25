@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // testLabel is a stand-in folder label for the name-generation tests, standing

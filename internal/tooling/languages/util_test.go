@@ -3,7 +3,7 @@ package languages
 import (
 	"testing"
 
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // Tests for containsIgnoreCase

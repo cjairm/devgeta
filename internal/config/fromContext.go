@@ -3,10 +3,10 @@ package config
 import (
 	"context"
 
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
-const ConfigKey = "devgita-config-context"
+const ConfigKey = "devgeta-config-context"
 
 type ContextConfig struct {
 	SelectedLanguages   []string

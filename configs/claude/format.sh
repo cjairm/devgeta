@@ -49,7 +49,7 @@ case "$FILE" in
 	;;
 *.html)
 	# TODO: remove hire2 exception once the repo is public
-	HIRE2_WT="${XDG_DATA_HOME:-$HOME/.local/share}/devgita/worktrees/hire2"
+	HIRE2_WT="${XDG_DATA_HOME:-$HOME/.local/share}/devgeta/worktrees/hire2"
 	case "$FILE" in
 	"$HOME/lever/hire2"/* | "$HIRE2_WT"/*) ;;
 	*) fmt "$BIN/prettier" "$FILE" --write ;;

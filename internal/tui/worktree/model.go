@@ -10,13 +10,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/task"
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/githubcli"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/task"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 const (

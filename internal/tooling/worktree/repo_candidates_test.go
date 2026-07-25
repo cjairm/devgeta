@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // failingLookPath and okLookPath swap commands.LookPathFn for the duration of
@@ -79,7 +79,7 @@ func TestCreateRecordsRepoOnSuccess(t *testing.T) {
 	mockTmuxBase.SetExecCommandResult("", "", nil)
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)
@@ -149,7 +149,7 @@ func TestCreateSucceedsDespiteRecordFailure(t *testing.T) {
 	}
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)

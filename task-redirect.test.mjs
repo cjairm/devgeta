@@ -24,20 +24,20 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   TaskRedirect,
-  isDevgitaRepo,
+  isDevgetaRepo,
 } from "./configs/opencode/plugin/task-redirect.js";
 
-// This test file lives at the repo root, so its own directory is a devgita
-// repo (repo-root go.mod has module github.com/cjairm/devgita). Used as the
-// devgita-cwd for the release-gating tests below.
-const DEVGITA_DIR = dirname(fileURLToPath(import.meta.url));
+// This test file lives at the repo root, so its own directory is a devgeta
+// repo (repo-root go.mod has module github.com/cjairm/devgeta). Used as the
+// devgeta-cwd for the release-gating tests below.
+const DEVGETA_DIR = dirname(fileURLToPath(import.meta.url));
 
 // runHook drives the plugin exactly as OpenCode would: build the plugin,
 // invoke its tool.execute.before hook with a bash tool call, and report
 // whether it denied (threw) or allowed (returned normally). `ctx` is the
-// OpenCode plugin context (defaults to the devgita repo dir so the release
+// OpenCode plugin context (defaults to the devgeta repo dir so the release
 // rules are exercised in their firing state unless a test overrides it).
-async function runHook(command, env = {}, ctx = { directory: DEVGITA_DIR }) {
+async function runHook(command, env = {}, ctx = { directory: DEVGETA_DIR }) {
   const previous = {};
   for (const [key, value] of Object.entries(env)) {
     previous[key] = process.env[key];
@@ -109,7 +109,7 @@ test("allows legitimate single commands", async () => {
     "gh pr status",
     "gh pr list",
     "gh api graphql -f query='{ viewer { login } }'",
-    "gh api repos/cjairm/devgita",
+    "gh api repos/cjairm/devgeta",
   ];
   for (const command of allowed) {
     const result = await runHook(command);
@@ -123,43 +123,43 @@ test("allows legitimate single commands", async () => {
 
 test("denies narrow patterns, including compound commands and env-var prefixes", async () => {
   const cases = [
-    ["git diff main..feature", "devgita task review-package"],
-    ["git diff v1.2.0..v1.3.0", "devgita task review-package"],
-    ["git diff --stat A..B", "devgita task review-package"],
-    ["git log --oneline base..head", "devgita task review-package"],
-    ["git worktree add ../wt -b feature-x", "devgita task worktree-start"],
-    ["git worktree remove ../wt", "devgita task worktree-finish"],
+    ["git diff main..feature", "devgeta task review-package"],
+    ["git diff v1.2.0..v1.3.0", "devgeta task review-package"],
+    ["git diff --stat A..B", "devgeta task review-package"],
+    ["git log --oneline base..head", "devgeta task review-package"],
+    ["git worktree add ../wt -b feature-x", "devgeta task worktree-start"],
+    ["git worktree remove ../wt", "devgeta task worktree-finish"],
     // New gh rules — all GLOBAL, so they deny regardless of cwd. (runHook
-    // defaults ctx to the devgita dir, but these rules never consult it; the
+    // defaults ctx to the devgeta dir, but these rules never consult it; the
     // release-gating tests below cover the cwd-dependent rules.)
-    ["gh pr checks", "devgita task pr-checks"],
-    ["gh pr checks --watch", "devgita task pr-checks"],
-    ["gh pr review --approve", "devgita task submit-review"],
-    ["gh pr review --request-changes -b bad", "devgita task submit-review"],
+    ["gh pr checks", "devgeta task pr-checks"],
+    ["gh pr checks --watch", "devgeta task pr-checks"],
+    ["gh pr review --approve", "devgeta task submit-review"],
+    ["gh pr review --request-changes -b bad", "devgeta task submit-review"],
     [
       "gh api graphql --paginate -f query='{ repository { pullRequest { reviewThreads { nodes { id } } } } }'",
-      "devgita task review-threads",
+      "devgeta task review-threads",
     ],
     // Compound commands: a matching segment anywhere in the chain must
     // deny, not just a bare command at position 0.
     [
       "cd some/dir && git worktree add ../wt -b x",
-      "devgita task worktree-start",
+      "devgeta task worktree-start",
     ],
-    ["git status; git worktree remove ../wt", "devgita task worktree-finish"],
-    ["git fetch && git diff main..feature", "devgita task review-package"],
-    ["gh pr view && gh pr checks", "devgita task pr-checks"],
+    ["git status; git worktree remove ../wt", "devgeta task worktree-finish"],
+    ["git fetch && git diff main..feature", "devgeta task review-package"],
+    ["gh pr view && gh pr checks", "devgeta task pr-checks"],
     // git diff a..b | less: the LHS of the pipe is still a git invocation
     // itself, so this must deny too.
-    ["git diff main..feature | less", "devgita task review-package"],
+    ["git diff main..feature | less", "devgeta task review-package"],
     // Env-var-prefix case (no separator character before `git` at all):
     // deliberately handled now that GIT_PREFIX is being reworked anyway — a
     // simple `NAME=value` prefix, single or repeated, in front of `git`
     // still denies.
-    ["GIT_PAGER=cat git diff main..feature", "devgita task review-package"],
+    ["GIT_PAGER=cat git diff main..feature", "devgeta task review-package"],
     [
       "FOO=bar BAZ=qux git worktree add ../wt -b x",
-      "devgita task worktree-start",
+      "devgeta task worktree-start",
     ],
   ];
   for (const [command, wantReplacement] of cases) {
@@ -174,39 +174,39 @@ test("denies narrow patterns, including compound commands and env-var prefixes",
       `expected deny reason for ${JSON.stringify(command)} to mention ${JSON.stringify(wantReplacement)}, got ${JSON.stringify(result.message)}`,
     );
     assert.ok(
-      result.message.includes("DEVGITA_SKIP_TASK_REDIRECT"),
+      result.message.includes("DEVGETA_SKIP_TASK_REDIRECT"),
       `expected deny reason for ${JSON.stringify(command)} to state the bypass escape hatch, got ${JSON.stringify(result.message)}`,
     );
   }
 });
 
-// isDevgitaRepo is unit-tested directly with injected paths so the release
+// isDevgetaRepo is unit-tested directly with injected paths so the release
 // gate's core decision is verified independently of the plugin plumbing.
-test("isDevgitaRepo detects the devgita go.mod by walking up", () => {
-  // The repo root itself is devgita.
-  assert.equal(isDevgitaRepo(DEVGITA_DIR), true);
-  // A nested subdirectory still resolves upward to the devgita go.mod.
-  assert.equal(isDevgitaRepo(join(DEVGITA_DIR, "cmd")), true);
+test("isDevgetaRepo detects the devgeta go.mod by walking up", () => {
+  // The repo root itself is devgeta.
+  assert.equal(isDevgetaRepo(DEVGETA_DIR), true);
+  // A nested subdirectory still resolves upward to the devgeta go.mod.
+  assert.equal(isDevgetaRepo(join(DEVGETA_DIR, "cmd")), true);
 
-  // A dir with no go.mod anywhere up the (temp) tree: not devgita.
+  // A dir with no go.mod anywhere up the (temp) tree: not devgeta.
   const noGoMod = mkdtempSync(join(tmpdir(), "no-gomod-"));
-  assert.equal(isDevgitaRepo(noGoMod), false);
+  assert.equal(isDevgetaRepo(noGoMod), false);
 
-  // A dir whose go.mod is a different module: not devgita.
+  // A dir whose go.mod is a different module: not devgeta.
   const otherModule = mkdtempSync(join(tmpdir(), "other-mod-"));
   writeFileSync(
     join(otherModule, "go.mod"),
     "module github.com/other/thing\n\ngo 1.25\n",
   );
-  assert.equal(isDevgitaRepo(otherModule), false);
+  assert.equal(isDevgetaRepo(otherModule), false);
 
   // Indeterminate inputs fail toward false (release rules do not fire).
-  assert.equal(isDevgitaRepo(undefined), false);
-  assert.equal(isDevgitaRepo(""), false);
-  assert.equal(isDevgitaRepo(123), false);
+  assert.equal(isDevgetaRepo(undefined), false);
+  assert.equal(isDevgetaRepo(""), false);
+  assert.equal(isDevgetaRepo(123), false);
 });
 
-test("release rules deny inside devgita, allow everywhere else", async () => {
+test("release rules deny inside devgeta, allow everywhere else", async () => {
   const releaseCommands = [
     "git reset --soft HEAD~1",
     "git reset --soft HEAD~3",
@@ -224,22 +224,22 @@ test("release rules deny inside devgita, allow everywhere else", async () => {
   );
 
   for (const command of releaseCommands) {
-    // Inside devgita: deny.
-    const inside = await runHook(command, {}, { directory: DEVGITA_DIR });
+    // Inside devgeta: deny.
+    const inside = await runHook(command, {}, { directory: DEVGETA_DIR });
     assert.equal(
       inside.denied,
       true,
-      `expected deny inside devgita for ${JSON.stringify(command)}`,
+      `expected deny inside devgeta for ${JSON.stringify(command)}`,
     );
-    assert.ok(inside.message.includes("devgita task release"));
+    assert.ok(inside.message.includes("devgeta task release"));
 
-    // Outside devgita (no go.mod, and a different module): allow.
+    // Outside devgeta (no go.mod, and a different module): allow.
     for (const dir of [noGoMod, otherModule]) {
       const outside = await runHook(command, {}, { directory: dir });
       assert.equal(
         outside.denied,
         false,
-        `expected allow outside devgita (${dir}) for ${JSON.stringify(command)}, got: ${outside.message}`,
+        `expected allow outside devgeta (${dir}) for ${JSON.stringify(command)}, got: ${outside.message}`,
       );
     }
   }
@@ -250,12 +250,12 @@ test("release gate uses worktree fallback and fails toward not firing", async ()
   const viaWorktree = await runHook(
     "git reset --soft HEAD~1",
     {},
-    { worktree: DEVGITA_DIR },
+    { worktree: DEVGETA_DIR },
   );
   assert.equal(viaWorktree.denied, true);
 
-  // Empty ctx and a non-devgita process.cwd() would allow; here we assert the
-  // explicit non-devgita directory path allows (the fail-toward-not-firing
+  // Empty ctx and a non-devgeta process.cwd() would allow; here we assert the
+  // explicit non-devgeta directory path allows (the fail-toward-not-firing
   // posture), which is the safety-critical direction.
   const noGoMod = mkdtempSync(join(tmpdir(), "no-gomod-"));
   const failOpen = await runHook(
@@ -268,7 +268,7 @@ test("release gate uses worktree fallback and fails toward not firing", async ()
 
 test("bypass env var allows everything", async () => {
   const result = await runHook("git worktree add ../wt -b x", {
-    DEVGITA_SKIP_TASK_REDIRECT: "1",
+    DEVGETA_SKIP_TASK_REDIRECT: "1",
   });
   assert.equal(result.denied, false);
 });

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
-# install.sh - Zero-dependency devgita installer
+# install.sh - Zero-dependency devgeta installer
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/cjairm/devgita/main/install.sh | bash
-#   bash install.sh --local /path/to/devgita-binary
+#   curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
+#   bash install.sh --local /path/to/devgeta-binary
 
-REPO="cjairm/devgita"
+REPO="cjairm/devgeta"
 INSTALL_DIR="$HOME/.local/bin"
-BINARY_NAME="devgita"
+BINARY_NAME="devgeta"
 
 # Colors for output
 RED='\033[0;31m'
@@ -55,7 +55,7 @@ Linux)
     ;;
 *)
     print_error "Unsupported operating system: $OS"
-    echo "Devgita only supports macOS (Darwin) and Linux (Debian/Ubuntu)."
+    echo "Devgeta only supports macOS (Darwin) and Linux (Debian/Ubuntu)."
     exit 1
     ;;
 esac
@@ -77,14 +77,14 @@ aarch64)
     ;;
 *)
     print_error "Unsupported architecture: $ARCH"
-    echo "Devgita only supports amd64 (x86_64) and arm64 (aarch64) architectures."
+    echo "Devgeta only supports amd64 (x86_64) and arm64 (aarch64) architectures."
     exit 1
     ;;
 esac
 
-BINARY_FILENAME="devgita-${OS_NAME}-${ARCH_NAME}"
+BINARY_FILENAME="devgeta-${OS_NAME}-${ARCH_NAME}"
 
-print_info "Installing devgita for ${OS_NAME}/${ARCH_NAME}..."
+print_info "Installing devgeta for ${OS_NAME}/${ARCH_NAME}..."
 
 # Create install directory if it doesn't exist
 mkdir -p "$INSTALL_DIR"
@@ -161,17 +161,17 @@ esac
 
 # Add to PATH and create alias if not already present
 PATH_EXPORT="export PATH=\"\$HOME/.local/bin:\$PATH\""
-ALIAS_EXPORT="alias dg='devgita'"
-SOURCE_CONFIG="source $HOME/.local/share/devgita/devgita.zsh"
+ALIAS_EXPORT="alias dg='devgeta'"
+SOURCE_CONFIG="source $HOME/.local/share/devgeta/devgeta.zsh"
 
 if [ -f "$SHELL_CONFIG" ]; then
-    # Check if devgita installer block already exists
-    if grep -qF "# Added by devgita installer" "$SHELL_CONFIG" 2>/dev/null; then
-        print_info "devgita already configured in $SHELL_CONFIG"
+    # Check if devgeta installer block already exists
+    if grep -qF "# Added by devgeta installer" "$SHELL_CONFIG" 2>/dev/null; then
+        print_info "devgeta already configured in $SHELL_CONFIG"
     else
-        print_info "Adding devgita configuration to $SHELL_CONFIG"
+        print_info "Adding devgeta configuration to $SHELL_CONFIG"
         echo "" >>"$SHELL_CONFIG"
-        echo "# Added by devgita installer" >>"$SHELL_CONFIG"
+        echo "# Added by devgeta installer" >>"$SHELL_CONFIG"
         echo "$PATH_EXPORT" >>"$SHELL_CONFIG"
         echo "$ALIAS_EXPORT" >>"$SHELL_CONFIG"
         echo "$SOURCE_CONFIG" >>"$SHELL_CONFIG"
@@ -180,11 +180,11 @@ if [ -f "$SHELL_CONFIG" ]; then
 else
     # Create shell config if it doesn't exist
     print_info "Creating $SHELL_CONFIG"
-    echo "# Added by devgita installer" >"$SHELL_CONFIG"
+    echo "# Added by devgeta installer" >"$SHELL_CONFIG"
     echo "$PATH_EXPORT" >>"$SHELL_CONFIG"
     echo "$ALIAS_EXPORT" >>"$SHELL_CONFIG"
     echo "$SOURCE_CONFIG" >>"$SHELL_CONFIG"
-    print_success "Created $SHELL_CONFIG with devgita configuration"
+    print_success "Created $SHELL_CONFIG with devgeta configuration"
 fi
 
 # Verify installation
@@ -193,9 +193,9 @@ print_info "Verifying installation..."
 # Add to current PATH for verification
 export PATH="$INSTALL_DIR:$PATH"
 
-if command -v devgita &>/dev/null; then
-    INSTALLED_VERSION=$(devgita --version 2>/dev/null || echo "unknown")
-    print_success "✓ devgita installed successfully!"
+if command -v devgeta &>/dev/null; then
+    INSTALLED_VERSION=$(devgeta --version 2>/dev/null || echo "unknown")
+    print_success "✓ devgeta installed successfully!"
     print_success "  Version: $INSTALLED_VERSION"
     echo ""
     print_info "Next steps:"

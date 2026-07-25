@@ -1,7 +1,7 @@
 // Bat - A cat clone with syntax highlighting and Git integration
 //
 // Bat is a cat clone with syntax highlighting, Git integration, and automatic paging.
-// This module provides installation and configuration management for bat with devgita integration.
+// This module provides installation and configuration management for bat with devgeta integration.
 //
 // References:
 // - Bat Repository: https://github.com/sharkdp/bat
@@ -23,9 +23,9 @@ package bat
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Bat struct {
@@ -56,7 +56,7 @@ func (b *Bat) ForceInstall() error {
 }
 
 func (b *Bat) Uninstall() error {
-	return fmt.Errorf("bat uninstall not supported through devgita")
+	return fmt.Errorf("bat uninstall not supported through devgeta")
 }
 
 func (b *Bat) ForceConfigure() error {
@@ -98,5 +98,5 @@ func (b *Bat) ExecuteCommand(args ...string) error {
 }
 
 func (b *Bat) Update() error {
-	return fmt.Errorf("bat update not implemented through devgita")
+	return fmt.Errorf("bat update not implemented through devgeta")
 }

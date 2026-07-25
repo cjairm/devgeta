@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
 // --- Create flow (n) ---

@@ -3,7 +3,7 @@ package baseapp
 import (
 	"errors"
 
-	"github.com/cjairm/devgita/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps"
 )
 
 // Reinstall implements the "force reinstall" flow correctly:

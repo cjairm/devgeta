@@ -6,8 +6,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/cjairm/devgita/internal/tooling/task"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/tooling/task"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func plainRewrite(t *testing.T, content string, stats []task.FileStat) string {

@@ -18,14 +18,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/fzf"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/fzf"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 const (
@@ -111,17 +111,17 @@ func New() *WorktreeManager {
 	}
 }
 
-// worktreePath returns ~/.local/share/devgita/worktrees/<repo-slug>/<flat-name>
+// worktreePath returns ~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>
 // Slashes in the name are replaced with dashes to keep the worktree directory
 // directly under the repo slug. This ensures the parent directory is always
 // the repo slug (important for tools that display the parent dir, e.g. Claude Code).
 func (w *WorktreeManager) worktreePath(repoSlug, name string) string {
-	return filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, FlattenName(name))
+	return filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, FlattenName(name))
 }
 
-// GetWorktreeBasePath returns the base path for all devgita worktrees
+// GetWorktreeBasePath returns the base path for all devgeta worktrees
 func GetWorktreeBasePath() string {
-	return filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees")
+	return filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees")
 }
 
 // Create creates a new worktree with tmux window and builds the given window
@@ -371,7 +371,7 @@ func (w *WorktreeManager) buildWindowPanes(
 	if pane0ID != "" {
 		// Land the user on pane 0 (e.g. the AI coder), not whichever pane was
 		// split last (e.g. an editor pane), when they attach. Re-targeting by
-		// tmux pane index (e.g. target+".0") is NOT reliable: devgita's own
+		// tmux pane index (e.g. target+".0") is NOT reliable: devgeta's own
 		// shipped tmux.conf sets pane-base-index to 1 (configs/tmux/tmux.conf),
 		// so a window's first pane is index 1, not 0 - pane_id is tmux's own
 		// stable, globally-unique identifier and is unaffected by that option.

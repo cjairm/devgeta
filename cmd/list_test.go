@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/paths"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

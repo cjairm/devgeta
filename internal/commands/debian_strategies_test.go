@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/pkg/downloader"
+	"github.com/cjairm/devgeta/pkg/downloader"
 )
 
 func TestVerifySHA256(t *testing.T) {

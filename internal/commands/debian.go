@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/cjairm/devgita/pkg/apt"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/pkg/apt"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 type DebianCommand struct {

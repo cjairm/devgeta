@@ -1,4 +1,4 @@
-// fd-find is a fast and user-friendly alternative to 'find' with devgita integration
+// fd-find is a fast and user-friendly alternative to 'find' with devgeta integration
 //
 // fd-find (commonly called 'fd') is a simple, fast, and user-friendly alternative to the
 // traditional Unix 'find' command. It provides intuitive syntax, respects .gitignore by
@@ -23,8 +23,8 @@ package fdfind
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type FdFind struct {
@@ -55,7 +55,7 @@ func (f *FdFind) ForceInstall() error {
 }
 
 func (f *FdFind) Uninstall() error {
-	return fmt.Errorf("fd-find uninstall not supported through devgita")
+	return fmt.Errorf("fd-find uninstall not supported through devgeta")
 }
 
 func (f *FdFind) ForceConfigure() error {
@@ -135,5 +135,5 @@ func (f *FdFind) ExecuteCommand(args ...string) error {
 }
 
 func (f *FdFind) Update() error {
-	return fmt.Errorf("fd-find update not implemented through devgita")
+	return fmt.Errorf("fd-find update not implemented through devgeta")
 }

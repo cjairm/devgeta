@@ -1,8 +1,8 @@
-// Curl HTTP client tool with devgita integration
+// Curl HTTP client tool with devgeta integration
 //
 // Curl is a command-line tool for transferring data with URLs, supporting various
 // protocols including HTTP, HTTPS, FTP, and more. This module provides installation
-// and configuration management for curl with devgita integration.
+// and configuration management for curl with devgeta integration.
 //
 // References:
 // - Curl Documentation: https://curl.se/docs/
@@ -23,8 +23,8 @@ package curl
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Curl struct {
@@ -55,7 +55,7 @@ func (c *Curl) ForceInstall() error {
 }
 
 func (c *Curl) Uninstall() error {
-	return fmt.Errorf("curl uninstall not supported through devgita")
+	return fmt.Errorf("curl uninstall not supported through devgeta")
 }
 
 func (c *Curl) ForceConfigure() error {
@@ -83,5 +83,5 @@ func (c *Curl) ExecuteCommand(args ...string) error {
 }
 
 func (c *Curl) Update() error {
-	return fmt.Errorf("curl update not implemented through devgita")
+	return fmt.Errorf("curl update not implemented through devgeta")
 }

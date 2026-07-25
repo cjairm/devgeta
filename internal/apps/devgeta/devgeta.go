@@ -1,32 +1,32 @@
-package devgita
+package devgeta
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/embedded"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/embedded"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
-var _ apps.App = (*Devgita)(nil)
+var _ apps.App = (*Devgeta)(nil)
 
-const DevgitaExtended = "extended_capabilities"
+const DevgetaExtended = "extended_capabilities"
 
-type Devgita struct {
+type Devgeta struct {
 	Base            commands.BaseCommandExecutor
 	ExtractEmbedded embedded.ExtractFunc
 }
 
-func (dg *Devgita) Name() string       { return constants.DevgitaApp }
-func (dg *Devgita) Kind() apps.AppKind { return apps.KindMeta }
+func (dg *Devgeta) Name() string       { return constants.DevgetaApp }
+func (dg *Devgeta) Kind() apps.AppKind { return apps.KindMeta }
 
 func getConfigDirPath() string {
 	return filepath.Join(paths.Paths.Config.Root, constants.App.Name)
@@ -44,14 +44,14 @@ func getZshenvScriptPath() string {
 	return filepath.Join(paths.Paths.App.Root, "configs", "zsh", "zshenv.zsh")
 }
 
-// setupZshenv wires devgita's PATH self-repair script (configs/zsh/zshenv.zsh)
+// setupZshenv wires devgeta's PATH self-repair script (configs/zsh/zshenv.zsh)
 // into the user's ~/.zshenv. ~/.zshenv runs before /etc/zshrc for every zsh —
 // login or not — which is what lets it fix a PATH a non-login tmux pane
 // inherited broken, before oh-my-zsh/p10k get a chance to spew "command not
-// found". The "[ -f ... ] &&" guard means uninstalling devgita leaves a dead
+// found". The "[ -f ... ] &&" guard means uninstalling devgeta leaves a dead
 // line instead of a broken shell startup. Only zsh reads ~/.zshenv, so bash
 // users are skipped — wiring it in would just create a file nothing sources.
-func (dg *Devgita) setupZshenv() error {
+func (dg *Devgeta) setupZshenv() error {
 	if filepath.Base(paths.Files.ShellConfig) != ".zshrc" {
 		return nil
 	}
@@ -60,14 +60,14 @@ func (dg *Devgita) setupZshenv() error {
 	return dg.Base.MaybeSetupInFile(line, scriptPath, paths.Files.ZshEnv)
 }
 
-func New() *Devgita {
-	return &Devgita{
+func New() *Devgeta {
+	return &Devgeta{
 		Base:            commands.NewBaseCommand(),
 		ExtractEmbedded: embedded.DefaultExtractor,
 	}
 }
 
-func (dg *Devgita) Install() error {
+func (dg *Devgeta) Install() error {
 	// Create configs directory inside app root
 	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
 
@@ -86,23 +86,23 @@ func (dg *Devgita) Install() error {
 	return nil
 }
 
-func (dg *Devgita) SoftInstall() error {
+func (dg *Devgeta) SoftInstall() error {
 	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
 
 	// Check if configs/ subdirectory exists and is non-empty
 	if files.DirAlreadyExist(configsDir) && !files.IsDirEmpty(configsDir) {
-		logger.L().Infow("Devgita configs already installed", "path", configsDir)
+		logger.L().Infow("Devgeta configs already installed", "path", configsDir)
 		return nil
 	}
 
 	return dg.Install()
 }
 
-func (dg *Devgita) ForceInstall() error {
+func (dg *Devgeta) ForceInstall() error {
 	return baseapp.Reinstall(dg.Install, dg.Uninstall)
 }
 
-func (dg *Devgita) Uninstall() error {
+func (dg *Devgeta) Uninstall() error {
 	// Clean up extracted configs directory
 	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
 	if files.DirAlreadyExist(configsDir) {
@@ -155,7 +155,7 @@ func (dg *Devgita) Uninstall() error {
 	return nil
 }
 
-func (dg *Devgita) ForceConfigure() error {
+func (dg *Devgeta) ForceConfigure() error {
 	// Re-extract embedded configs so deployed configs/claude, configs/opencode, etc.
 	// always match the current binary (not the original install).
 	if err := dg.Install(); err != nil {
@@ -174,7 +174,7 @@ func (dg *Devgita) ForceConfigure() error {
 	// Auto-detect installed tools so the shell config reflects reality,
 	// even if global_config.yaml lost its shell feature flags.
 	gc.ReconcileShellFeatures()
-	gc.EnableShellFeature(DevgitaExtended)
+	gc.EnableShellFeature(DevgetaExtended)
 	if err := gc.Save(); err != nil {
 		return fmt.Errorf("failed to save global config: %w", err)
 	}
@@ -182,8 +182,8 @@ func (dg *Devgita) ForceConfigure() error {
 	if err := gc.RegenerateShellConfig(); err != nil {
 		return fmt.Errorf("failed to create global config file: %w", err)
 	}
-	devgitaConfigLine := fmt.Sprintf(`source "%s"`, getZshConfigPath())
-	if err := dg.Base.MaybeSetup(devgitaConfigLine, getZshConfigPath()); err != nil {
+	devgetaConfigLine := fmt.Sprintf(`source "%s"`, getZshConfigPath())
+	if err := dg.Base.MaybeSetup(devgetaConfigLine, getZshConfigPath()); err != nil {
 		return err
 	}
 	if err := dg.setupZshenv(); err != nil {
@@ -194,7 +194,7 @@ func (dg *Devgita) ForceConfigure() error {
 	return nil
 }
 
-func (dg *Devgita) SoftConfigure() error {
+func (dg *Devgeta) SoftConfigure() error {
 	// Cheap and idempotent, so existing installs pick up the PATH self-repair
 	// wiring on a plain `dg configure`, not just a fresh `--force` one.
 	if err := dg.setupZshenv(); err != nil {
@@ -211,7 +211,7 @@ func (dg *Devgita) SoftConfigure() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	if !gc.IsShellFeatureEnabled(DevgitaExtended) {
+	if !gc.IsShellFeatureEnabled(DevgetaExtended) {
 		if err := enableExtendedCapabilities(gc); err != nil {
 			return fmt.Errorf("failed to enable extended capabilities: %w", err)
 		}
@@ -219,16 +219,16 @@ func (dg *Devgita) SoftConfigure() error {
 	return nil
 }
 
-func (dg *Devgita) ExecuteCommand(_ ...string) error {
-	return fmt.Errorf("%w for devgita", apps.ErrExecuteNotSupported)
+func (dg *Devgeta) ExecuteCommand(_ ...string) error {
+	return fmt.Errorf("%w for devgeta", apps.ErrExecuteNotSupported)
 }
 
-func (dg *Devgita) Update() error {
-	return fmt.Errorf("%w for devgita", apps.ErrUpdateNotSupported)
+func (dg *Devgeta) Update() error {
+	return fmt.Errorf("%w for devgeta", apps.ErrUpdateNotSupported)
 }
 
 func enableExtendedCapabilities(gc *config.GlobalConfig) error {
-	gc.EnableShellFeature(DevgitaExtended)
+	gc.EnableShellFeature(DevgetaExtended)
 	if err := gc.RegenerateShellConfig(); err != nil {
 		return fmt.Errorf("failed to generate shell config: %w", err)
 	}

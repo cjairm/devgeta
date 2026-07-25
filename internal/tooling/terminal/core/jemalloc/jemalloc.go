@@ -27,8 +27,8 @@ package jemalloc
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Jemalloc struct {
@@ -59,7 +59,7 @@ func (j *Jemalloc) ForceInstall() error {
 }
 
 func (j *Jemalloc) Uninstall() error {
-	return fmt.Errorf("jemalloc uninstall not supported through devgita")
+	return fmt.Errorf("jemalloc uninstall not supported through devgeta")
 }
 
 func (j *Jemalloc) ForceConfigure() error {
@@ -90,5 +90,5 @@ func (j *Jemalloc) ExecuteCommand(args ...string) error {
 }
 
 func (j *Jemalloc) Update() error {
-	return fmt.Errorf("jemalloc update not implemented through devgita")
+	return fmt.Errorf("jemalloc update not implemented through devgeta")
 }

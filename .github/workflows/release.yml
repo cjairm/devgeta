@@ -34,25 +34,25 @@ jobs:
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           SHORT_COMMIT=$(echo "$COMMIT" | cut -c1-7)
           LDFLAGS="-s -w \
-            -X 'github.com/cjairm/devgita/cmd.Version=${VERSION}' \
-            -X 'github.com/cjairm/devgita/cmd.Commit=${SHORT_COMMIT}' \
-            -X 'github.com/cjairm/devgita/cmd.BuildDate=${BUILD_DATE}'"
+            -X 'github.com/cjairm/devgeta/cmd.Version=${VERSION}' \
+            -X 'github.com/cjairm/devgeta/cmd.Commit=${SHORT_COMMIT}' \
+            -X 'github.com/cjairm/devgeta/cmd.BuildDate=${BUILD_DATE}'"
 
-          GOOS=darwin  GOARCH=amd64 go build -o devgita-darwin-amd64  -ldflags="$LDFLAGS" .
-          GOOS=darwin  GOARCH=arm64 go build -o devgita-darwin-arm64  -ldflags="$LDFLAGS" .
-          GOOS=linux   GOARCH=amd64 go build -o devgita-linux-amd64   -ldflags="$LDFLAGS" .
-          GOOS=linux   GOARCH=arm64 go build -o devgita-linux-arm64   -ldflags="$LDFLAGS" .
+          GOOS=darwin  GOARCH=amd64 go build -o devgeta-darwin-amd64  -ldflags="$LDFLAGS" .
+          GOOS=darwin  GOARCH=arm64 go build -o devgeta-darwin-arm64  -ldflags="$LDFLAGS" .
+          GOOS=linux   GOARCH=amd64 go build -o devgeta-linux-amd64   -ldflags="$LDFLAGS" .
+          GOOS=linux   GOARCH=arm64 go build -o devgeta-linux-arm64   -ldflags="$LDFLAGS" .
 
-          chmod +x devgita-*
+          chmod +x devgeta-*
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            devgita-darwin-amd64
-            devgita-darwin-arm64
-            devgita-linux-amd64
-            devgita-linux-arm64
+            devgeta-darwin-amd64
+            devgeta-darwin-arm64
+            devgeta-linux-amd64
+            devgeta-linux-arm64
           generate_release_notes: true
           draft: false
           prerelease: false

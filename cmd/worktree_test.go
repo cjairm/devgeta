@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() { testutil.InitLogger() }

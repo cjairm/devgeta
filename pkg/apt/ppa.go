@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // PPAConfig defines the configuration for a Debian/Ubuntu PPA (Personal Package Archive)

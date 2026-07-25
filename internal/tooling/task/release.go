@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// releaseVersionPattern enforces devgita's own tag policy (CLAUDE.md §9):
+// releaseVersionPattern enforces devgeta's own tag policy (CLAUDE.md §9):
 // tags are always vMAJOR.MINOR.PATCH — strict semver only, no prerelease or
 // build-metadata suffixes.
 var releaseVersionPattern = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)

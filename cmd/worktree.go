@@ -8,11 +8,11 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -25,7 +25,7 @@ var worktreeCmd = &cobra.Command{
 Each worktree gets its own tmux window in the current session with an AI assistant running,
 enabling parallel AI-assisted development across multiple branches.
 
-Worktrees are stored in ~/.local/share/devgita/worktrees/<repo-slug>/,
+Worktrees are stored in ~/.local/share/devgeta/worktrees/<repo-slug>/,
 and tmux windows are prefixed with "wt-" for easy identification.
 
 Examples:
@@ -47,7 +47,7 @@ var worktreeCreateCmd = &cobra.Command{
 	Long: `Create a new git worktree with an associated tmux window (aliases: c, new).
 
 This command:
-  1. Creates a new git worktree in ~/.local/share/devgita/worktrees/<repo>/<name>
+  1. Creates a new git worktree in ~/.local/share/devgeta/worktrees/<repo>/<name>
   2. Creates a new branch with the same name
   3. Creates a new tmux window named wt-<repo>-<name> in the current session
   4. Launches the selected AI coder in the window
@@ -66,7 +66,7 @@ inside tmux, the client switches to the new window.
 Window layout selection precedence (--layout and --ai are mutually exclusive):
   1. --layout flag (explicit layout name)
   2. --ai flag, derived into a single-pane layout
-  3. DEVGITA_WORKTREE_AI environment variable, derived into a single-pane layout
+  3. DEVGETA_WORKTREE_AI environment variable, derived into a single-pane layout
   4. worktree.default_layout in global_config.yaml
   5. worktree.default_ai in global_config.yaml, derived into a single-pane layout
   6. Default: opencode, single-pane
@@ -114,9 +114,9 @@ var worktreeListCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"l", "ls"},
 	Short:   "List all worktrees with window status",
-	Long: `List all git worktrees managed by devgita with their tmux window status (aliases: l, ls).
+	Long: `List all git worktrees managed by devgeta with their tmux window status (aliases: l, ls).
 
-Shows worktrees from all repos in ~/.local/share/devgita/worktrees/ along with:
+Shows worktrees from all repos in ~/.local/share/devgeta/worktrees/ along with:
   - Repo name
   - Branch name
   - Associated tmux window name
@@ -213,7 +213,7 @@ Window layout selection follows the same precedence as create (--layout and
 --ai are mutually exclusive):
   1. --layout flag (explicit layout name)
   2. --ai flag, derived into a single-pane layout
-  3. DEVGITA_WORKTREE_AI environment variable, derived into a single-pane layout
+  3. DEVGETA_WORKTREE_AI environment variable, derived into a single-pane layout
   4. worktree.default_layout in global_config.yaml
   5. worktree.default_ai in global_config.yaml, derived into a single-pane layout
   6. Default: opencode, single-pane
@@ -251,10 +251,10 @@ surviving panes already match the requested layout.`,
 var worktreePruneCmd = &cobra.Command{
 	Use:   "prune",
 	Short: "Remove all worktrees",
-	Long: `Remove all worktrees managed by devgita.
+	Long: `Remove all worktrees managed by devgeta.
 
 This command prompts for confirmation before removing all worktrees
-across all repos in ~/.local/share/devgita/worktrees/.
+across all repos in ~/.local/share/devgeta/worktrees/.
 
 Each worktree is removed using the same logic as 'dg wt remove':
   - Kills the tmux window if present
@@ -353,7 +353,7 @@ func loadWorktreeGlobalConfig() {
 	}
 }
 
-// resolveWorktreeAIFlag resolves an aiAlias from ONLY --ai/DEVGITA_WORKTREE_AI
+// resolveWorktreeAIFlag resolves an aiAlias from ONLY --ai/DEVGETA_WORKTREE_AI
 // (not through ResolveAIAlias's folded flag->env->default_ai->opencode
 // chain), leaving it "" when neither is given - that "" is what lets
 // ResolveLayout consult worktree.default_layout before falling back to
@@ -364,7 +364,7 @@ func resolveWorktreeAIFlag(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	return os.Getenv("DEVGITA_WORKTREE_AI")
+	return os.Getenv("DEVGETA_WORKTREE_AI")
 }
 
 func findLastSlash(s string) int {

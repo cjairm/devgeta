@@ -6,11 +6,11 @@ package aitools
 import (
 	"fmt"
 
-	"github.com/cjairm/devgita/internal/apps/rtk"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps/rtk"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 // softInstallable is the subset of apps.App used by the ai-tools coordinator.

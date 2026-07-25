@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cjairm/devgita/internal/commands"
+	"github.com/cjairm/devgeta/internal/commands"
 )
 
 // TestExecCommandCapturesLongSingleLine is a regression test for a deadlock in

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 func init() {
@@ -72,7 +72,7 @@ func TestUninstall(t *testing.T) {
 		t.Fatal("expected error for unsupported operation")
 	}
 
-	expectedMsg := "ripgrep uninstall not supported through devgita"
+	expectedMsg := "ripgrep uninstall not supported through devgeta"
 	if err.Error() != expectedMsg {
 		t.Fatalf("expected error message %q, got %q", expectedMsg, err.Error())
 	}

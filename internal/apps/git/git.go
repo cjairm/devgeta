@@ -1,8 +1,8 @@
-// Git version control system with devgita integration
+// Git version control system with devgeta integration
 //
 // Git is the distributed version control system that tracks changes in source code
 // during software development. This module provides installation and configuration
-// management for Git with devgita integration.
+// management for Git with devgeta integration.
 //
 // References:
 // - Git Documentation: https://git-scm.com/doc
@@ -29,13 +29,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 var _ apps.App = (*Git)(nil)

@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // RepoCandidates returns a ranked, deduped list of candidate repo paths for a
@@ -126,7 +126,7 @@ func (w *WorktreeManager) cursorRepoRoot(cursorRepoSlug string) string {
 }
 
 // zoxideCandidates runs `zoxide query -l` to list zoxide's tracked
-// directories, for offering as repo picker candidates beyond what devgita
+// directories, for offering as repo picker candidates beyond what devgeta
 // itself has recorded. Called only after the caller confirms zoxide is
 // installed (via commands.LookPathFn), so a query failure here is a genuine
 // error rather than "zoxide isn't installed".

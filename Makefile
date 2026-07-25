@@ -6,9 +6,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Linker flags to inject version info
-LDFLAGS := -X 'github.com/cjairm/devgita/cmd.Version=$(VERSION)' \
-           -X 'github.com/cjairm/devgita/cmd.Commit=$(COMMIT)' \
-           -X 'github.com/cjairm/devgita/cmd.BuildDate=$(BUILD_DATE)'
+LDFLAGS := -X 'github.com/cjairm/devgeta/cmd.Version=$(VERSION)' \
+           -X 'github.com/cjairm/devgeta/cmd.Commit=$(COMMIT)' \
+           -X 'github.com/cjairm/devgeta/cmd.BuildDate=$(BUILD_DATE)'
 
 # Build all platform binaries
 all: build-darwin-arm64 build-darwin-amd64 build-linux-amd64
@@ -17,27 +17,27 @@ all: build-darwin-arm64 build-darwin-amd64 build-linux-amd64
 build-darwin-arm64:
 	@echo "Building for macOS ARM64 (Apple Silicon)..."
 	@echo "Version: $(VERSION), Commit: $(COMMIT), Build Date: $(BUILD_DATE)"
-	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o devgita-darwin-arm64 .
-	@echo "✓ devgita-darwin-arm64 built successfully"
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o devgeta-darwin-arm64 .
+	@echo "✓ devgeta-darwin-arm64 built successfully"
 
 # macOS AMD64 (Intel chips)
 build-darwin-amd64:
 	@echo "Building for macOS AMD64 (Intel)..."
 	@echo "Version: $(VERSION), Commit: $(COMMIT), Build Date: $(BUILD_DATE)"
-	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o devgita-darwin-amd64 .
-	@echo "✓ devgita-darwin-amd64 built successfully"
+	GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o devgeta-darwin-amd64 .
+	@echo "✓ devgeta-darwin-amd64 built successfully"
 
 # Linux AMD64 (Debian/Ubuntu)
 build-linux-amd64:
 	@echo "Building for Linux AMD64..."
 	@echo "Version: $(VERSION), Commit: $(COMMIT), Build Date: $(BUILD_DATE)"
-	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o devgita-linux-amd64 .
-	@echo "✓ devgita-linux-amd64 built successfully"
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o devgeta-linux-amd64 .
+	@echo "✓ devgeta-linux-amd64 built successfully"
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -f devgita-darwin-arm64 devgita-darwin-amd64 devgita-linux-amd64
+	rm -f devgeta-darwin-arm64 devgeta-darwin-amd64 devgeta-linux-amd64
 	@echo "✓ Clean complete"
 
 # Run tests
@@ -57,8 +57,8 @@ lint:
 build:
 	@echo "Building for current platform..."
 	@echo "Version: $(VERSION), Commit: $(COMMIT), Build Date: $(BUILD_DATE)"
-	go build -ldflags "$(LDFLAGS)" -o devgita .
-	@echo "✓ devgita built successfully"
+	go build -ldflags "$(LDFLAGS)" -o devgeta .
+	@echo "✓ devgeta built successfully"
 
 # Help
 help:

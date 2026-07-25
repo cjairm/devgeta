@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/spf13/cobra"
 )
 

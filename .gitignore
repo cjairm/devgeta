@@ -38,10 +38,10 @@ Icon?
 *.bak
 *.tmp
 
-# Devgita binaries (all platforms)
-/devgita
-devgita-darwin-*
-devgita-linux-*
+# Devgeta binaries (all platforms)
+/devgeta
+devgeta-darwin-*
+devgeta-linux-*
 
 # Claude Code worktrees (legacy)
 .claude/worktrees/

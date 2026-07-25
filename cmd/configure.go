@@ -9,10 +9,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/devgita"
-	"github.com/cjairm/devgita/internal/apps/registry"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/devgeta"
+	"github.com/cjairm/devgeta/internal/apps/registry"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -29,7 +29,7 @@ var getAppFn = func(name string) (apps.App, error) {
 // refreshEmbeddedConfigs re-extracts embedded configs so templates match the
 // running binary. Overridden in tests to avoid nil ExtractEmbedded.
 var refreshEmbeddedConfigs = func() error {
-	return devgita.New().Install()
+	return devgeta.New().Install()
 }
 
 var configureCmd = &cobra.Command{

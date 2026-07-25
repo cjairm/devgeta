@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
+	"github.com/cjairm/devgeta/internal/commands"
 )
 
 // --- Pure formatter tests (fixtures, no mocks) ---

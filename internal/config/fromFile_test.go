@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/paths"
 	"github.com/stretchr/testify/assert"
 )
 

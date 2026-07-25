@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() {
@@ -118,7 +118,7 @@ func TestUninstall(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Uninstall to return error")
 	}
-	if err.Error() != "fzf uninstall not supported through devgita" {
+	if err.Error() != "fzf uninstall not supported through devgeta" {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

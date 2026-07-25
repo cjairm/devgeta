@@ -28,8 +28,8 @@ package openssl
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type OpenSSL struct {
@@ -60,7 +60,7 @@ func (o *OpenSSL) ForceInstall() error {
 }
 
 func (o *OpenSSL) Uninstall() error {
-	return fmt.Errorf("openssl uninstall not supported through devgita")
+	return fmt.Errorf("openssl uninstall not supported through devgeta")
 }
 
 func (o *OpenSSL) ForceConfigure() error {
@@ -88,5 +88,5 @@ func (o *OpenSSL) ExecuteCommand(args ...string) error {
 }
 
 func (o *OpenSSL) Update() error {
-	return fmt.Errorf("openssl update not implemented through devgita")
+	return fmt.Errorf("openssl update not implemented through devgeta")
 }

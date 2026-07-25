@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
 // uniqueRepoSlug returns a repo slug that is unique to this test, so tests

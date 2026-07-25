@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
+	"github.com/cjairm/devgeta/internal/config"
 )
 
 // --- built-in layout shapes ---

@@ -16,7 +16,7 @@ import (
 // actually installed (e.g. ~/.local/bin/claude), producing a false "not
 // installed" error even though the coder would launch fine. Worktree windows
 // run their coder by sending shell commands to an interactive pane, which
-// sources ~/.zshenv (PATH self-repair) and ~/.zshrc (devgita.zsh: the cc/oc
+// sources ~/.zshenv (PATH self-repair) and ~/.zshrc (devgeta.zsh: the cc/oc
 // aliases). Resolving a tool the same way that pane will is the only check that
 // matches reality; a bare exec.LookPath in dg's own process does not.
 //
@@ -33,7 +33,7 @@ const shellLookupTimeout = 5 * time.Second
 // shell and reports whether it resolved (exit status 0).
 //
 //   - $SHELL, falling back to zsh, so it matches the login shell a pane runs.
-//   - -i makes the shell source ~/.zshrc (where devgita.zsh defines cc/oc);
+//   - -i makes the shell source ~/.zshrc (where devgeta.zsh defines cc/oc);
 //     ~/.zshenv (PATH repair) is sourced regardless of -i. Together this mirrors
 //     an interactive pane's view of both PATH and aliases.
 //   - name is passed as a positional argument ($1), never interpolated into the

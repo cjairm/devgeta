@@ -1,4 +1,4 @@
-package devgita
+package devgeta
 
 import (
 	"fmt"
@@ -7,12 +7,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/embedded"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/embedded"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // fakePlatform is a minimal commands.CustomizablePlatform so tests can build a
@@ -118,9 +118,9 @@ func TestNew(t *testing.T) {
 }
 
 func TestNameAndKind(t *testing.T) {
-	dg := &Devgita{}
-	if dg.Name() != constants.DevgitaApp {
-		t.Errorf("expected Name() %q, got %q", constants.DevgitaApp, dg.Name())
+	dg := &Devgeta{}
+	if dg.Name() != constants.DevgetaApp {
+		t.Errorf("expected Name() %q, got %q", constants.DevgetaApp, dg.Name())
 	}
 	if dg.Kind() != apps.KindMeta {
 		t.Errorf("expected Kind() KindMeta, got %v", dg.Kind())
@@ -129,7 +129,7 @@ func TestNameAndKind(t *testing.T) {
 
 func TestSoftInstall_DirectoryDoesNotExist(t *testing.T) {
 	tempDir := t.TempDir()
-	appDir := filepath.Join(tempDir, "devgita")
+	appDir := filepath.Join(tempDir, "devgeta")
 
 	oldAppDir := paths.Paths.App.Root
 	paths.Paths.App.Root = appDir
@@ -138,7 +138,7 @@ func TestSoftInstall_DirectoryDoesNotExist(t *testing.T) {
 	})
 
 	mockApp := testutil.NewMockApp()
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            mockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -165,7 +165,7 @@ func TestSoftInstall_DirectoryDoesNotExist(t *testing.T) {
 
 func TestSoftInstall_DirectoryExistsWithFiles(t *testing.T) {
 	tempDir := t.TempDir()
-	appDir := filepath.Join(tempDir, "devgita")
+	appDir := filepath.Join(tempDir, "devgeta")
 	configsDir := filepath.Join(appDir, "configs")
 
 	// Create existing configs directory with a file
@@ -184,7 +184,7 @@ func TestSoftInstall_DirectoryExistsWithFiles(t *testing.T) {
 	})
 
 	mockApp := testutil.NewMockApp()
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            mockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -216,7 +216,7 @@ func TestUninstall_RemovesConfigsDirectory(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -251,7 +251,7 @@ func TestForceInstall(t *testing.T) {
 		t.Fatalf("Failed to create old file: %v", err)
 	}
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -278,7 +278,7 @@ func TestForceConfigure_CreatesConfig(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -317,7 +317,7 @@ func TestForceConfigure_OverwritesExisting(t *testing.T) {
 		t.Fatalf("Failed to create old config: %v", err)
 	}
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -368,7 +368,7 @@ shell:
 		t.Fatalf("Failed to create existing config: %v", err)
 	}
 
-	// Create existing zsh config at the correct location (App.Root/devgita.zsh)
+	// Create existing zsh config at the correct location (App.Root/devgeta.zsh)
 	// This must match where RegenerateShellConfig writes the file
 	actualZshPath := getZshConfigPath()
 	existingZsh := "# Custom zsh marker\nsource /custom/path\n"
@@ -383,7 +383,7 @@ shell:
 	}
 	originalModTime := configInfo.ModTime()
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -450,7 +450,7 @@ func TestForceConfigure_WiresZshenv_WhenShellIsZsh(t *testing.T) {
 	// Real BaseCommand: MaybeSetupInFile only touches files, so this is safe
 	// against the sandboxed paths above, and it's the only way to see the
 	// actual line written (MockBaseCommand no-ops MaybeSetupInFile).
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            commands.NewBaseCommandCustom(fakePlatform{}),
 		ExtractEmbedded: mockExtractor,
 	}
@@ -475,7 +475,7 @@ func TestForceConfigure_ReturnsWrappedError_WhenZshenvWiringFails(t *testing.T) 
 	setupZshenvPaths(t, ".zshrc")
 
 	tc.MockApp.Base.MaybeSetupInFileError = fmt.Errorf("injected zshenv wiring failure")
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}
@@ -496,7 +496,7 @@ func TestForceConfigure_NoZshenv_WhenShellIsNotZsh(t *testing.T) {
 	defer tc.Cleanup()
 	zshenvPath := setupZshenvPaths(t, ".bashrc")
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            commands.NewBaseCommandCustom(fakePlatform{}),
 		ExtractEmbedded: mockExtractor,
 	}
@@ -542,7 +542,7 @@ shell:
 		t.Fatalf("Failed to create existing zsh config: %v", err)
 	}
 
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            commands.NewBaseCommandCustom(fakePlatform{}),
 		ExtractEmbedded: mockExtractor,
 	}
@@ -569,7 +569,7 @@ func TestSoftConfigure_ReturnsWrappedError_WhenZshenvWiringFails(t *testing.T) {
 	setupZshenvPaths(t, ".zshrc")
 
 	tc.MockApp.Base.MaybeSetupInFileError = fmt.Errorf("injected zshenv wiring failure")
-	dg := &Devgita{
+	dg := &Devgeta{
 		Base:            tc.MockApp.Base,
 		ExtractEmbedded: mockExtractor,
 	}

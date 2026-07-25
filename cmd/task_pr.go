@@ -8,7 +8,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/tooling/task"
+	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/spf13/cobra"
 )
 
@@ -164,9 +164,9 @@ line-anchored review comments in the same submission.
 
 A request-changes or comment review needs a body or inline comments; approve may
 have neither.`,
-	Example: `  devgita task submit-review --event approve --body "LGTM"
-  devgita task submit-review --event request-changes --body-file review.md --comments-file comments.json
-  devgita task submit-review --pr 42 --event comment --comments-file comments.json`,
+	Example: `  devgeta task submit-review --event approve --body "LGTM"
+  devgeta task submit-review --event request-changes --body-file review.md --comments-file comments.json
+  devgeta task submit-review --pr 42 --event comment --comments-file comments.json`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := resolveBody(prBodyFlag, prBodyFileFlag)

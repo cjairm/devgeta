@@ -9,8 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/cjairm/devgita/internal/config"
-	tuiinventory "github.com/cjairm/devgita/internal/tui/inventory"
+	"github.com/cjairm/devgeta/internal/config"
+	tuiinventory "github.com/cjairm/devgeta/internal/tui/inventory"
 	"github.com/spf13/cobra"
 )
 
@@ -138,7 +138,7 @@ func formatInstalled(gc *config.GlobalConfig, category string) (string, error) {
 	}, category)
 	alreadyWrote := writeCategoryTables(
 		&buf,
-		"Already on this machine (not installed by Devgita):",
+		"Already on this machine (not installed by Devgeta):",
 		func(d categoryDef) []string { return d.AlreadyInstalled(&gc.AlreadyInstalled) },
 		category,
 	)
@@ -158,12 +158,12 @@ var (
 var listCmd = &cobra.Command{
 	Use:     "list",
 	Aliases: []string{"installed"},
-	Short:   "View all items installed via Devgita",
-	Long: `View all items installed via Devgita (alias: installed).
+	Short:   "View all items installed via Devgeta",
+	Long: `View all items installed via Devgeta (alias: installed).
 
 In a terminal, opens the interactive inventory dashboard grouped by category
 with a live OK/MISSING/UNKNOWN status per item. Piped output, CI, or --plain
-fall back to the plain-text table (reads ~/.config/devgita/global_config.yaml
+fall back to the plain-text table (reads ~/.config/devgeta/global_config.yaml
 directly, with no live status check).
 
 Examples:

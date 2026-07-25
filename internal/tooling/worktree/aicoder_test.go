@@ -43,8 +43,8 @@ func TestResolveAICoder(t *testing.T) {
 	}
 }
 
-// Command() returns the devgita shell alias, not the raw binary, so the launch
-// recipe stays defined once in devgita.zsh (see the Command() doc comments).
+// Command() returns the devgeta shell alias, not the raw binary, so the launch
+// recipe stays defined once in devgeta.zsh (see the Command() doc comments).
 func TestOpenCodeCoderCommand(t *testing.T) {
 	coder := &OpenCodeCoder{}
 	if coder.Command() != "oc" {

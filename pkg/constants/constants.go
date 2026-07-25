@@ -61,13 +61,13 @@ var App = struct {
 		ShellConfig string
 	}
 }{
-	Name: "devgita",
+	Name: "devgeta",
 	Repository: struct {
 		Name string
 		URL  string
 	}{
-		Name: "devgita",
-		URL:  "https://github.com/cjairm/devgita.git",
+		Name: "devgeta",
+		URL:  "https://github.com/cjairm/devgeta.git",
 	},
 	Dir: struct {
 		Configs string
@@ -79,12 +79,12 @@ var App = struct {
 		ZshConfig    string
 	}{
 		GlobalConfig: "global_config.yaml",
-		ZshConfig:    ".devgita.zsh",
+		ZshConfig:    ".devgeta.zsh",
 	},
 	Template: struct {
 		ShellConfig string
 	}{
-		ShellConfig: "devgita.zsh.tmpl",
+		ShellConfig: "devgeta.zsh.tmpl",
 	},
 }
 
@@ -100,8 +100,8 @@ const (
 	Btop         = "btop"
 	Curl         = "curl"
 	Jq           = "jq"
-	// TODO: Rename this to `Devgita` and update current Devgita graphic to match the new name. (This is to avoid confusion between the app and the repository)
-	DevgitaApp         = "devgita"
+	// TODO: Rename this to `Devgeta` and update current Devgeta graphic to match the new name. (This is to avoid confusion between the app and the repository)
+	DevgetaApp         = "devgeta"
 	Docker             = "docker"
 	Eza                = "eza"
 	Fastfetch          = "fastfetch"
@@ -182,12 +182,12 @@ const (
 	SQLite     = "sqlite"
 )
 
-var Devgita = `
-    .___                .__  __          
-  __| _/_______  ______ |__|/  |______   
- / __ |/ __ \  \/ / ___\|  \   __\__  \  
-/ /_/ \  ___/\   / /_/  >  ||  |  / __ \_
-\____ |\___  >\_/\___  /|__||__| (____  /
-     \/    \/   /_____/               \/ 
+var Devgeta = `
+    .___                        __
+  __| _/_______  ______   _____/  |______
+ / __ |/ __ \  \/ / ___\_/ __ \   __\__  \
+/ /_/ \  ___/\   / /_/  >  ___/|  |  / __ \_
+\____ |\___  >\_/\___  / \___  >__| (____  /
+     \/    \/   /_____/      \/          \/
 @cjairm / https://cjairm.me/
 `

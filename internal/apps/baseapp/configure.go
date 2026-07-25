@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // SharedConfigParts are the embedded configs/shared subtrees applied to the AI

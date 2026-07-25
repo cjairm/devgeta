@@ -1,8 +1,8 @@
-// Aerospace window manager with devgita integration
+// Aerospace window manager with devgeta integration
 //
 // Aerospace is a macOS-specific tiling window manager inspired by i3wm.
 // This module provides installation and configuration management for Aerospace
-// with devgita integration for seamless macOS window management setup.
+// with devgeta integration for seamless macOS window management setup.
 //
 // References:
 // - Aerospace Documentation: https://github.com/nikitabobko/AeroSpace/blob/main/docs/guide.md
@@ -15,13 +15,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 var _ apps.App = (*Aerospace)(nil)
@@ -96,7 +96,7 @@ func (a *Aerospace) SoftConfigure() error {
 }
 
 func (a *Aerospace) ExecuteCommand(args ...string) error {
-	// Aerospace is a tiling window manager; no terminal commands managed by devgita
+	// Aerospace is a tiling window manager; no terminal commands managed by devgeta
 	return nil
 }
 

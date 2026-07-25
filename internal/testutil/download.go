@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/pkg/downloader"
+	"github.com/cjairm/devgeta/pkg/downloader"
 )
 
 // ChecksumAwareDownloadFn returns a downloadFn for commands.InstallGitHubBinary
@@ -24,7 +24,7 @@ func ChecksumAwareDownloadFn(
 	t *testing.T,
 ) func(context.Context, string, string, downloader.RetryConfig) error {
 	t.Helper()
-	content := []byte("devgita-test-archive")
+	content := []byte("devgeta-test-archive")
 	sum := sha256.Sum256(content)
 	var assetName string
 	return func(_ context.Context, url, dest string, _ downloader.RetryConfig) error {

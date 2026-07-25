@@ -4,7 +4,7 @@
 package cmd
 
 import (
-	"github.com/cjairm/devgita/internal/tooling/task"
+	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/spf13/cobra"
 )
 
@@ -239,7 +239,7 @@ var taskWorktreeStartCmd = &cobra.Command{
 	Short: "Create a git worktree + branch in dg wt's shared location (for agents)",
 	Long: `Refuse to run from a dirty tree, fetch origin, then create a new git worktree
 with a new branch, in the same location "dg wt" uses
-(~/.local/share/devgita/worktrees/<repo-slug>/<flat-name>) — so "dg wt list" sees
+(~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>) — so "dg wt list" sees
 it and vice versa.
 
 --base sets the branch's starting point explicitly (any ref: a branch, tag, or

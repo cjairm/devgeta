@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	gitcli "github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/githubcli"
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/jq"
+	gitcli "github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/jq"
 
-	"github.com/cjairm/devgita/internal/commands"
+	"github.com/cjairm/devgeta/internal/commands"
 )
 
 // newPRSetup builds a PRManager whose gh and jq calls go through separate mock

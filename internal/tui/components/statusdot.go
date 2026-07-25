@@ -1,6 +1,6 @@
 package tuicomponents
 
-import "github.com/cjairm/devgita/internal/tooling/worktree"
+import "github.com/cjairm/devgeta/internal/tooling/worktree"
 
 type SessionState int
 

@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // shellBinaryDetector pairs a shell feature setter with the binary name to detect.
@@ -101,7 +101,7 @@ func (gc *GlobalConfig) ReconcileShellFeatures() {
 	// Platform detection
 	gc.Shell.IsMac = runtime.GOOS == "darwin"
 
-	// Extended capabilities is always on (devgita meta-feature)
+	// Extended capabilities is always on (devgeta meta-feature)
 	gc.Shell.ExtendedCapabilities = true
 
 	// Detect binary tools

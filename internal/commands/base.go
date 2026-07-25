@@ -15,12 +15,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 var (
@@ -360,9 +360,9 @@ func (b *BaseCommand) MaybeInstall(
 			return err
 		}
 	} else {
-		if globalConfig.IsInstalledByDevgita(pkgToInstall, itemType) {
+		if globalConfig.IsInstalledByDevgeta(pkgToInstall, itemType) {
 			logger.L().
-				Debugw("Item already tracked as installed by devgita", "item", pkgToInstall, "type", itemType)
+				Debugw("Item already tracked as installed by devgeta", "item", pkgToInstall, "type", itemType)
 			return nil
 		}
 		if globalConfig.IsAlreadyInstalled(pkgToInstall, itemType) {

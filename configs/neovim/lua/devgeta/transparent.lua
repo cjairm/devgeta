@@ -1,4 +1,4 @@
--- [devgita]
+-- [devgeta]
 -- Forces transparent background across UI elements regardless of colorscheme.
 -- Wrapped in a ColorScheme autocmd so overrides reapply when the theme changes.
 
@@ -41,4 +41,4 @@ apply()
 -- Re-applies on theme change so transparency survives `:colorscheme X` mid-session
 vim.api.nvim_create_autocmd("ColorScheme", { callback = apply })
 
--- [/devgita]
+-- [/devgeta]

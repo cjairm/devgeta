@@ -6,8 +6,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/inventory"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }

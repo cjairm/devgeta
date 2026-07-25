@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // TestInstallDeps_Mac verifies that on macOS, gcc and xclip are NOT installed,

@@ -9,13 +9,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() {
@@ -253,7 +253,7 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 			if gotRtk != tt.wantRtk {
 				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
 			}
-			// devgita's own hooks must be present in every rendering.
+			// devgeta's own hooks must be present in every rendering.
 			for _, hook := range []string{"task-redirect.sh", "format.sh"} {
 				if !strings.Contains(string(data), hook) {
 					t.Errorf("rendered settings.json is missing %s", hook)

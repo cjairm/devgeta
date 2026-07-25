@@ -28,8 +28,8 @@ package readline
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Readline struct {
@@ -60,7 +60,7 @@ func (r *Readline) ForceInstall() error {
 }
 
 func (r *Readline) Uninstall() error {
-	return fmt.Errorf("readline uninstall not supported through devgita")
+	return fmt.Errorf("readline uninstall not supported through devgeta")
 }
 
 func (r *Readline) ForceConfigure() error {
@@ -88,5 +88,5 @@ func (r *Readline) ExecuteCommand(args ...string) error {
 }
 
 func (r *Readline) Update() error {
-	return fmt.Errorf("readline update not implemented through devgita")
+	return fmt.Errorf("readline update not implemented through devgeta")
 }

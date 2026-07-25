@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() {
@@ -181,7 +181,7 @@ fi
 	}
 
 	// Verify generated file contains mise activation
-	outputPath := filepath.Join(tempDir, "devgita.zsh")
+	outputPath := filepath.Join(tempDir, "devgeta.zsh")
 	content, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)
@@ -271,7 +271,7 @@ func TestSoftConfigure(t *testing.T) {
 		}
 
 		// Verify file was generated
-		outputPath := filepath.Join(tempDir, "devgita.zsh")
+		outputPath := filepath.Join(tempDir, "devgeta.zsh")
 		content, err := os.ReadFile(outputPath)
 		if err != nil {
 			t.Fatalf("Failed to read generated file: %v", err)
@@ -329,7 +329,7 @@ func TestSoftConfigure(t *testing.T) {
 		}
 
 		// Verify NO file was generated (should skip when already enabled)
-		outputPath := filepath.Join(tempDir, "devgita.zsh")
+		outputPath := filepath.Join(tempDir, "devgeta.zsh")
 		if _, err := os.Stat(outputPath); err == nil {
 			t.Fatal("Expected no file to be generated when feature already enabled")
 		}
@@ -413,7 +413,7 @@ func TestUninstall(t *testing.T) {
 	}
 
 	// Verify generated file reflects disabled state
-	outputPath := filepath.Join(tempDir, "devgita.zsh")
+	outputPath := filepath.Join(tempDir, "devgeta.zsh")
 	content, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)

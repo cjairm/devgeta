@@ -1,5 +1,5 @@
 // Package fzf provides installation and command execution management for fzf
-// fuzzy finder with devgita integration. It follows the standardized devgita
+// fuzzy finder with devgeta integration. It follows the standardized devgeta
 // app interface while providing fzf-specific operations for interactive file
 // searching, command history filtering, and directory navigation.
 package fzf
@@ -9,9 +9,9 @@ import (
 	"os/exec"
 	"strings"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Fzf struct {
@@ -68,7 +68,7 @@ func (f *Fzf) SoftConfigure() error {
 }
 
 func (f *Fzf) Uninstall() error {
-	return fmt.Errorf("fzf uninstall not supported through devgita")
+	return fmt.Errorf("fzf uninstall not supported through devgeta")
 }
 
 func (f *Fzf) ExecuteCommand(args ...string) error {

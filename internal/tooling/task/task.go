@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	git_app "github.com/cjairm/devgita/internal/apps/git"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/fzf"
+	git_app "github.com/cjairm/devgeta/internal/apps/git"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/fzf"
 )
 
 // TaskManager executes developer utility tasks.

@@ -1,6 +1,6 @@
 // Auto-generation of a standalone-session name when the user leaves the name
 // prompt blank. Names are "<folder>-<character>": the folder the session opens
-// in, followed by a Dragon Ball character — a nod to devgita itself, whose name
+// in, followed by a Dragon Ball character — a nod to devgeta itself, whose name
 // comes from Vegeta. They are always checked against the live tmux sessions so
 // a blank-name create can never collide with an existing session (tmux
 // new-session -s fails on a duplicate).
@@ -12,9 +12,9 @@ import (
 	"math/rand"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // defaultSessionLabel is the fallback prefix when a chosen folder yields no

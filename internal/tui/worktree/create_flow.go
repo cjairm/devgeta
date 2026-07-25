@@ -12,9 +12,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // createMode tracks progress through the n/N → repo-pick → name-input →

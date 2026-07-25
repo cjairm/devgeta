@@ -1,7 +1,7 @@
 package promptui
 
 import (
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/manifoldco/promptui"
 )
 

@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cjairm/devgita/pkg/apt"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/downloader"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/apt"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/downloader"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // InstallGitHubBinary downloads binaryName from a GitHub release tar.gz, verifies

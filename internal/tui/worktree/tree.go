@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
 type rowKind int

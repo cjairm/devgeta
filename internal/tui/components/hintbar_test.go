@@ -5,7 +5,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestHintBarContainsKeyAndDesc(t *testing.T) {

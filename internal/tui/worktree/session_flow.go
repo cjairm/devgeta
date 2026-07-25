@@ -12,8 +12,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
-	"github.com/cjairm/devgita/pkg/paths"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // sessionMode tracks progress through the s → folder-pick → name-input →

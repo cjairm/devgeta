@@ -1,6 +1,6 @@
 // Package alacritty provides installation and configuration management for Alacritty terminal emulator.
 // Alacritty is a fast, cross-platform terminal emulator written in Rust that uses GPU acceleration.
-// This module follows the standardized devgita app interface for consistent lifecycle management.
+// This module follows the standardized devgeta app interface for consistent lifecycle management.
 
 package alacritty
 
@@ -9,13 +9,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 var _ apps.App = (*Alacritty)(nil)
@@ -93,7 +93,7 @@ func (a *Alacritty) SoftConfigure() error {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
 	if gc.IsAlreadyInstalled(constants.Alacritty, "desktop_app") ||
-		gc.IsInstalledByDevgita(constants.Alacritty, "desktop_app") {
+		gc.IsInstalledByDevgeta(constants.Alacritty, "desktop_app") {
 		return nil
 	}
 	if err := a.ForceConfigure(); err != nil {

@@ -23,8 +23,8 @@ package autoconf
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Autoconf struct {
@@ -55,7 +55,7 @@ func (a *Autoconf) ForceInstall() error {
 }
 
 func (a *Autoconf) Uninstall() error {
-	return fmt.Errorf("autoconf uninstall not supported through devgita")
+	return fmt.Errorf("autoconf uninstall not supported through devgeta")
 }
 
 func (a *Autoconf) ForceConfigure() error {
@@ -83,5 +83,5 @@ func (a *Autoconf) ExecuteCommand(args ...string) error {
 }
 
 func (a *Autoconf) Update() error {
-	return fmt.Errorf("autoconf update not implemented through devgita")
+	return fmt.Errorf("autoconf update not implemented through devgeta")
 }

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() {
@@ -223,7 +223,7 @@ func TestTrackInstallation(t *testing.T) {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	if !gc.IsInstalledByDevgita("node@lts", "dev_language") {
+	if !gc.IsInstalledByDevgeta("node@lts", "dev_language") {
 		t.Error("Expected node@lts to be tracked as installed")
 	}
 }

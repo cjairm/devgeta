@@ -1,8 +1,8 @@
-// Eza modern ls replacement tool with devgita integration
+// Eza modern ls replacement tool with devgeta integration
 //
 // Eza is a modern, maintained replacement for ls with improved features including
 // colors, icons, git integration, and tree views. This module provides installation
-// and command execution management for eza with devgita integration.
+// and command execution management for eza with devgeta integration.
 //
 // References:
 // - Eza Repository: https://github.com/eza-community/eza
@@ -23,9 +23,9 @@ package eza
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Eza struct {
@@ -56,7 +56,7 @@ func (e *Eza) ForceInstall() error {
 }
 
 func (e *Eza) Uninstall() error {
-	return fmt.Errorf("eza uninstall not supported through devgita")
+	return fmt.Errorf("eza uninstall not supported through devgeta")
 }
 
 func (e *Eza) ForceConfigure() error {
@@ -98,5 +98,5 @@ func (e *Eza) ExecuteCommand(args ...string) error {
 }
 
 func (e *Eza) Update() error {
-	return fmt.Errorf("eza update not implemented through devgita")
+	return fmt.Errorf("eza update not implemented through devgeta")
 }

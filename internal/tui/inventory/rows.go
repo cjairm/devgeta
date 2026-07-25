@@ -1,12 +1,12 @@
 // Package tuiinventory provides the shared Bubble Tea dashboard for browsing
-// devgita's tracked inventory, used by the `dg list` dashboard.
+// devgeta's tracked inventory, used by the `dg list` dashboard.
 package tuiinventory
 
 import (
 	"sort"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 type rowKind int

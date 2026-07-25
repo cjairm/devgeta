@@ -30,8 +30,8 @@ BLUE=$'\033[34m'
 
 # Base dir where `dg worktree` creates worktrees. Anything living under it gets
 # the compact "wt:<repo>" display, whether or not git treats it as a *linked*
-# worktree (devgita-created dirs may be standalone clones with a real .git dir).
-WT_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/devgita/worktrees"
+# worktree (devgeta-created dirs may be standalone clones with a real .git dir).
+WT_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/devgeta/worktrees"
 
 TMP_DIR="${TMPDIR:-/tmp}"
 DIR_HASH=$(printf '%s' "$DIR" | cksum | awk '{print $1}')

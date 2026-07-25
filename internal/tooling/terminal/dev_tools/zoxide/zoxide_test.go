@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() {
@@ -139,7 +139,7 @@ eval "$(zoxide init zsh)"
 	}
 
 	// Verify generated file contains zoxide initialization
-	outputPath := filepath.Join(tempDir, "devgita.zsh")
+	outputPath := filepath.Join(tempDir, "devgeta.zsh")
 	content, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)
@@ -228,7 +228,7 @@ func TestSoftConfigure(t *testing.T) {
 		}
 
 		// Verify file was generated
-		outputPath := filepath.Join(tempDir, "devgita.zsh")
+		outputPath := filepath.Join(tempDir, "devgeta.zsh")
 		content, err := os.ReadFile(outputPath)
 		if err != nil {
 			t.Fatalf("Failed to read generated file: %v", err)
@@ -285,7 +285,7 @@ func TestSoftConfigure(t *testing.T) {
 		}
 
 		// Verify NO file was generated (should skip when already enabled)
-		outputPath := filepath.Join(tempDir, "devgita.zsh")
+		outputPath := filepath.Join(tempDir, "devgeta.zsh")
 		if _, err := os.Stat(outputPath); err == nil {
 			t.Fatal("Expected no file to be generated when feature already enabled")
 		}
@@ -364,7 +364,7 @@ func TestUninstall(t *testing.T) {
 	}
 
 	// Verify generated file reflects disabled state
-	outputPath := filepath.Join(tempDir, "devgita.zsh")
+	outputPath := filepath.Join(tempDir, "devgeta.zsh")
 	content, err := os.ReadFile(outputPath)
 	if err != nil {
 		t.Fatalf("Failed to read generated file: %v", err)
@@ -463,7 +463,7 @@ func TestUpdate(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected Update to return error for unsupported operation")
 	}
-	if err.Error() != "zoxide update not implemented through devgita" {
+	if err.Error() != "zoxide update not implemented through devgeta" {
 		t.Fatalf("unexpected error message: %v", err)
 	}
 }

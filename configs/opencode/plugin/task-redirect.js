@@ -1,5 +1,5 @@
 // OpenCode plugin: intercept a narrow set of raw-git command patterns that
-// have a dedicated `devgita task` equivalent, and deny with the exact
+// have a dedicated `devgeta task` equivalent, and deny with the exact
 // replacement to run instead. See docs/apps/claude.md ("Command redirect
 // (PreToolUse hook)") for the full contract — this is the OpenCode-side
 // mirror of configs/claude/task-redirect.sh's PreToolUse hook. Keep the two
@@ -14,16 +14,16 @@
 //     worktree remove), and the gh redirects pr-checks / review-threads /
 //     submit-review. They impose no repo-specific convention.
 //   - The two release rules (git reset --soft HEAD~N, git tag -a v<semver>)
-//     are devgita-repo-only: they encode devgita's own release policy and
+//     are devgeta-repo-only: they encode devgeta's own release policy and
 //     would be wrong to steer in other repos. They fire only when
-//     isDevgitaRepo confirms a go.mod with module github.com/cjairm/devgita,
-//     and fail toward NOT firing on any uncertainty (see isDevgitaRepo).
+//     isDevgetaRepo confirms a go.mod with module github.com/cjairm/devgeta,
+//     and fail toward NOT firing on any uncertainty (see isDevgetaRepo).
 //
 // Working directory for the release gate: the plugin factory receives an
 // OpenCode context object with `directory` (current working dir) and
 // `worktree` (git worktree path) per opencode.ai/docs/plugins/. We prefer
-// `directory`, fall back to `worktree`, then process.cwd(). isDevgitaRepo
-// walks up from there for a matching go.mod; if none of these yield a devgita
+// `directory`, fall back to `worktree`, then process.cwd(). isDevgetaRepo
+// walks up from there for a matching go.mod; if none of these yield a devgeta
 // go.mod, the release rules simply do not fire.
 //
 // API shape (tool.execute.before: async (input, output) => {...}, deny by
@@ -35,7 +35,7 @@
 // file's deploy path (configs/opencode/plugin/, singular, mirroring the
 // Claude Code side) loads correctly either way.
 //
-// Escape hatch: set DEVGITA_SKIP_TASK_REDIRECT=1 in the environment to bypass
+// Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 in the environment to bypass
 // this plugin entirely when raw git is genuinely needed. Every deny message
 // repeats this so no flow dead-ends.
 //
@@ -63,23 +63,23 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const BYPASS_HINT =
-  "set DEVGITA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed";
+  "set DEVGETA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed";
 
-// isDevgitaRepo answers "is the command running inside the devgita repo?" —
+// isDevgetaRepo answers "is the command running inside the devgeta repo?" —
 // the gate for the release rules (git reset --soft HEAD~N, git tag -a
-// v<semver>), which encode devgita's OWN release policy and must not steer the
+// v<semver>), which encode devgeta's OWN release policy and must not steer the
 // universal git techniques in other repos. It walks UP from startDir looking
-// for the FIRST go.mod; the repo IS devgita only if that go.mod's module path
-// is exactly github.com/cjairm/devgita.
+// for the FIRST go.mod; the repo IS devgeta only if that go.mod's module path
+// is exactly github.com/cjairm/devgeta.
 //
 // CRITICAL: it fails TOWARD false (release rules do NOT fire) on any
 // uncertainty — no startDir, no go.mod found, an unreadable go.mod, or a
 // non-matching module path. The unacceptable outcome is a general reset/tag
-// being wrongly blocked outside devgita; "the release redirect didn't fire" is
+// being wrongly blocked outside devgeta; "the release redirect didn't fire" is
 // always the safe fallback. Exported so it is unit-testable with injected
 // paths.
-const DEVGITA_MODULE_RE = /^module\s+github\.com\/cjairm\/devgita($|\/)/m;
-export function isDevgitaRepo(startDir) {
+const DEVGETA_MODULE_RE = /^module\s+github\.com\/cjairm\/devgeta($|\/)/m;
+export function isDevgetaRepo(startDir) {
   if (!startDir || typeof startDir !== "string") {
     return false;
   }
@@ -89,7 +89,7 @@ export function isDevgitaRepo(startDir) {
     const goMod = join(dir, "go.mod");
     if (existsSync(goMod)) {
       try {
-        return DEVGITA_MODULE_RE.test(readFileSync(goMod, "utf8"));
+        return DEVGETA_MODULE_RE.test(readFileSync(goMod, "utf8"));
       } catch {
         return false;
       }
@@ -118,8 +118,8 @@ const GH_PREFIX = "(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gh";
 // Each rule: { pattern, message, scope }. `pattern` is tested against a single
 // command segment (see splitCommandSegments below), anchored with `^` at the
 // start of that segment; `message` is the deny reason (bypass hint is
-// appended by the caller). `scope` is "global" (fires everywhere) or "devgita"
-// (fires only inside the devgita repo — see isDevgitaRepo). Order mirrors
+// appended by the caller). `scope` is "global" (fires everywhere) or "devgeta"
+// (fires only inside the devgeta repo — see isDevgetaRepo). Order mirrors
 // task-redirect.sh's case order.
 const RULES = [
   {
@@ -131,30 +131,30 @@ const RULES = [
       `^${GIT_PREFIX}\\s+(diff|log)(\\s+\\S+)*\\s+${RANGE_TOKEN}(\\s|$)`,
     ),
     message:
-      "Use: devgita task review-package <base> <head> (one call: verified range, commits, noise-filtered stats + full diff)",
+      "Use: devgeta task review-package <base> <head> (one call: verified range, commits, noise-filtered stats + full diff)",
     scope: "global",
   },
   {
     // git worktree add ...
     pattern: new RegExp(`^${GIT_PREFIX}\\s+worktree\\s+add(\\s|$)`),
-    message: "Use: devgita task worktree-start <name> [--base <ref>]",
+    message: "Use: devgeta task worktree-start <name> [--base <ref>]",
     scope: "global",
   },
   {
     // git worktree remove ...
     pattern: new RegExp(`^${GIT_PREFIX}\\s+worktree\\s+remove(\\s|$)`),
-    message: "Use: devgita task worktree-finish [<name>] --merge|--discard",
+    message: "Use: devgeta task worktree-finish [<name>] --merge|--discard",
     scope: "global",
   },
   {
     // git reset --soft HEAD~N (N >= 1). `git reset --soft HEAD` (no ~N,
-    // e.g. amend-style staging) is never matched. devgita-repo-only.
+    // e.g. amend-style staging) is never matched. devgeta-repo-only.
     pattern: new RegExp(
       `^${GIT_PREFIX}\\s+reset\\s+--soft\\s+HEAD~[1-9][0-9]*(\\s|$)`,
     ),
     message:
-      "Use: devgita task release <version> --message-file <file> [--push] (squash + tag flow)",
-    scope: "devgita",
+      "Use: devgeta task release <version> --message-file <file> [--push] (squash + tag flow)",
+    scope: "devgeta",
   },
   {
     // gh pr checks — the PR CI-status view. `pr checks` only (never `gh pr
@@ -162,7 +162,7 @@ const RULES = [
     // exactly `checks`.
     pattern: new RegExp(`^${GH_PREFIX}\\s+pr\\s+checks\\b`),
     message:
-      "Use: devgita task pr-checks (adds a failing-job log digest the raw command lacks)",
+      "Use: devgeta task pr-checks (adds a failing-job log digest the raw command lacks)",
     scope: "global",
   },
   {
@@ -171,7 +171,7 @@ const RULES = [
     // subcommand) or `gh pr checks`.
     pattern: new RegExp(`^${GH_PREFIX}\\s+pr\\s+review\\b`),
     message:
-      "Use: devgita task submit-review --event approve|request-changes|comment [--body ...] (posts body + inline comments atomically)",
+      "Use: devgeta task submit-review --event approve|request-changes|comment [--body ...] (posts body + inline comments atomically)",
     scope: "global",
   },
 ];
@@ -268,28 +268,28 @@ function splitCommandSegments(command) {
 }
 
 // findDenyMessage returns the deny message for the first matching rule across
-// all segments, or null. `isDevgitaRepoFn` is a zero-arg memoized predicate:
-// a devgita-scoped rule (release) only denies when it returns true, and it is
+// all segments, or null. `isDevgetaRepoFn` is a zero-arg memoized predicate:
+// a devgeta-scoped rule (release) only denies when it returns true, and it is
 // called ONLY after a release pattern has already matched — so a command with
 // no release pattern, or a repo where release patterns never match, pays zero
 // go.mod-lookup cost.
-function findDenyMessage(command, isDevgitaRepoFn) {
+function findDenyMessage(command, isDevgetaRepoFn) {
   const segments = splitCommandSegments(command);
   for (const segment of segments) {
     for (const rule of RULES) {
       if (rule.pattern.test(segment)) {
-        if (rule.scope === "devgita" && !isDevgitaRepoFn()) {
+        if (rule.scope === "devgeta" && !isDevgetaRepoFn()) {
           continue;
         }
         return rule.message;
       }
     }
     if (matchesReviewThreads(segment)) {
-      return "Use: devgita task review-threads (GraphQL payload rendered to compact markdown + dedup)";
+      return "Use: devgeta task review-threads (GraphQL payload rendered to compact markdown + dedup)";
     }
-    // git tag -a v<semver> — devgita-repo-only (checked after the pattern).
-    if (matchesReleaseTag(segment) && isDevgitaRepoFn()) {
-      return "Use: devgita task release <version> --message-file <file> [--push] (squash + tag flow)";
+    // git tag -a v<semver> — devgeta-repo-only (checked after the pattern).
+    if (matchesReleaseTag(segment) && isDevgetaRepoFn()) {
+      return "Use: devgeta task release <version> --message-file <file> [--push] (squash + tag flow)";
     }
   }
   return null;
@@ -297,11 +297,11 @@ function findDenyMessage(command, isDevgitaRepoFn) {
 
 export const TaskRedirect = async (ctx = {}) => {
   // Prefer the OpenCode context's working dir, then the git worktree path,
-  // then this process's cwd — used only by the devgita-repo release gate.
+  // then this process's cwd — used only by the devgeta-repo release gate.
   const projectDir = ctx.directory || ctx.worktree || process.cwd();
   return {
     "tool.execute.before": async (input, output) => {
-      if (process.env.DEVGITA_SKIP_TASK_REDIRECT) {
+      if (process.env.DEVGETA_SKIP_TASK_REDIRECT) {
         return;
       }
       if (input.tool !== "bash") {
@@ -315,14 +315,14 @@ export const TaskRedirect = async (ctx = {}) => {
       // Memoize the repo check per invocation: computed at most once, and
       // only if a release pattern actually matches a segment.
       let repoMemo;
-      const isDevgitaRepoFn = () => {
+      const isDevgetaRepoFn = () => {
         if (repoMemo === undefined) {
-          repoMemo = isDevgitaRepo(projectDir);
+          repoMemo = isDevgetaRepo(projectDir);
         }
         return repoMemo;
       };
 
-      const message = findDenyMessage(command, isDevgitaRepoFn);
+      const message = findDenyMessage(command, isDevgetaRepoFn);
       if (message) {
         throw new Error(`${message} — ${BYPASS_HINT}`);
       }

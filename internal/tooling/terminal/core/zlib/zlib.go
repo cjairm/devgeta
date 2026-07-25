@@ -1,9 +1,9 @@
-// Zlib compression library with devgita integration
+// Zlib compression library with devgeta integration
 //
 // Zlib is a software library used for data compression, providing in-memory
 // compression and decompression functions including integrity checks of the
 // uncompressed data. This module provides installation and configuration
-// management for zlib with devgita integration.
+// management for zlib with devgeta integration.
 //
 // References:
 // - Zlib Documentation: https://zlib.net/
@@ -19,8 +19,8 @@ package zlib
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Zlib struct {
@@ -56,7 +56,7 @@ func (z *Zlib) ForceInstall() error {
 }
 
 func (z *Zlib) Uninstall() error {
-	return fmt.Errorf("zlib uninstall not supported through devgita")
+	return fmt.Errorf("zlib uninstall not supported through devgeta")
 }
 
 func (z *Zlib) ForceConfigure() error {
@@ -86,5 +86,5 @@ func (z *Zlib) ExecuteCommand(args ...string) error {
 }
 
 func (z *Zlib) Update() error {
-	return fmt.Errorf("zlib update not implemented through devgita")
+	return fmt.Errorf("zlib update not implemented through devgeta")
 }

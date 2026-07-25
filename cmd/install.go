@@ -8,16 +8,16 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps/devgita"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/tooling/aitools"
-	"github.com/cjairm/devgita/internal/tooling/databases"
-	"github.com/cjairm/devgita/internal/tooling/desktop"
-	"github.com/cjairm/devgita/internal/tooling/languages"
-	"github.com/cjairm/devgita/internal/tooling/terminal"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps/devgeta"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/tooling/aitools"
+	"github.com/cjairm/devgeta/internal/tooling/databases"
+	"github.com/cjairm/devgeta/internal/tooling/desktop"
+	"github.com/cjairm/devgeta/internal/tooling/languages"
+	"github.com/cjairm/devgeta/internal/tooling/terminal"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +31,7 @@ var knownCategories = []string{"terminal", "languages", "databases", "desktop", 
 
 // appToCoordinator maps each registry app to the coordinator that installs it.
 // alacritty has KindTerminal but is installed by the desktop coordinator.
-// devgita ("") is never included in dg install.
+// devgeta ("") is never included in dg install.
 var appToCoordinator = map[string]string{
 	"claude":     "terminal",
 	"fastfetch":  "terminal",
@@ -52,7 +52,7 @@ var appToCoordinator = map[string]string{
 	"i3":         "desktop",
 	"raycast":    "desktop",
 	"ulauncher":  "desktop",
-	"devgita":    "",
+	"devgeta":    "",
 }
 
 // installConfig holds the resolved plan for a single dg install run.
@@ -73,8 +73,8 @@ type installConfig struct {
 
 var installCmd = &cobra.Command{
 	Use:   "install",
-	Short: "Install devgita and all required tools",
-	Long: `Installs the devgita platform and sets up your development environment.
+	Short: "Install devgeta and all required tools",
+	Long: `Installs the devgeta platform and sets up your development environment.
 
 This command performs the following steps:
   - Validates your OS version
@@ -116,7 +116,7 @@ func run(cmd *cobra.Command, args []string) error {
 
 	logger.L().Debugw("install config", "cfg", cfg, "verbose", verbose)
 
-	utils.PrintBold(constants.Devgita)
+	utils.PrintBold(constants.Devgeta)
 	utils.Print("=> Begin installation (or abort with ctrl+c)...", "")
 	utils.Print("===============================================", "")
 
@@ -133,7 +133,7 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	installDevgita()
+	installDevgeta()
 
 	if cfg.runTerminal {
 		installTerminalTools(cfg.terminalAppFilter, cfg.terminalSkipFilter)
@@ -362,9 +362,9 @@ func formatAppNames() string {
 	return strings.Join(targetable, ", ")
 }
 
-func installDevgita() {
-	dg := devgita.New()
-	utils.PrintInfo("Installing & configuring devgita app")
+func installDevgeta() {
+	dg := devgeta.New()
+	utils.PrintInfo("Installing & configuring devgeta app")
 	utils.MaybeExitWithError(dg.SoftInstall())
 	utils.MaybeExitWithError(dg.SoftConfigure())
 }

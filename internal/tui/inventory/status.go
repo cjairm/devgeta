@@ -1,8 +1,8 @@
 package tuiinventory
 
 import (
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // statusGlyph returns the raw glyph for an item state (no ANSI styling).

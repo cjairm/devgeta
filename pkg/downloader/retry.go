@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // RetryConfig defines the configuration for retry behavior with exponential backoff

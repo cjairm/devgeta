@@ -1,8 +1,8 @@
-// OpenCode terminal-based AI code editor with devgita integration
+// OpenCode terminal-based AI code editor with devgeta integration
 //
 // OpenCode is an AI-powered code editor that runs in the terminal, providing
 // intelligent code completion, refactoring, and assistance. This module provides
-// installation and configuration management for OpenCode with devgita integration.
+// installation and configuration management for OpenCode with devgeta integration.
 //
 // References:
 // - OpenCode Documentation: https://opencode.ai/docs
@@ -16,14 +16,14 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	"github.com/cjairm/devgita/internal/apps/rtk"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/apps/rtk"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 var (
@@ -199,7 +199,7 @@ func (o *OpenCode) ConfigurableParts() []string {
 // ForceConfigureParts refreshes only the named parts. Shared subtrees
 // (skills, commands, agents) are overwritten from the embedded configs;
 // the rtk part runs `rtk init -g --opencode`, which installs rtk's plugin
-// as its own file (plugins/rtk.ts) — devgita never touches that file, so no
+// as its own file (plugins/rtk.ts) — devgeta never touches that file, so no
 // opt-in state needs tracking here, unlike claude's settings.json hook.
 // Unlike full ForceConfigure this does not remove or regenerate
 // opencode.json or themes, so a hand-edited config survives. This is the

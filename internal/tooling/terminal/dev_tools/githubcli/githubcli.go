@@ -1,9 +1,9 @@
-// GitHub CLI (gh) tool with devgita integration
+// GitHub CLI (gh) tool with devgeta integration
 //
 // GitHub CLI is the official command-line tool for GitHub, providing access to
 // pull requests, issues, releases, repositories, gists, and more directly from
 // the terminal. This module provides installation and configuration management
-// for gh with devgita integration.
+// for gh with devgeta integration.
 //
 // References:
 // - GitHub CLI Documentation: https://cli.github.com/manual/
@@ -31,8 +31,8 @@ import (
 	"strings"
 	"time"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type GithubCli struct {
@@ -63,7 +63,7 @@ func (g *GithubCli) ForceInstall() error {
 }
 
 func (g *GithubCli) Uninstall() error {
-	return fmt.Errorf("gh uninstall not supported through devgita")
+	return fmt.Errorf("gh uninstall not supported through devgeta")
 }
 
 func (g *GithubCli) ForceConfigure() error {
@@ -97,7 +97,7 @@ func (g *GithubCli) ExecuteCommand(args ...string) error {
 }
 
 func (g *GithubCli) Update() error {
-	return fmt.Errorf("gh update not implemented through devgita")
+	return fmt.Errorf("gh update not implemented through devgeta")
 }
 
 // RunWithOutput runs a gh command and returns captured stdout.
@@ -283,7 +283,7 @@ func (g *GithubCli) CreateReview(owner, repo, prNumber, payloadJSON string) (str
 		return "", fmt.Errorf("create review requires a payload")
 	}
 
-	tmp, err := os.CreateTemp("", "devgita-review-*.json")
+	tmp, err := os.CreateTemp("", "devgeta-review-*.json")
 	if err != nil {
 		return "", fmt.Errorf("create review: failed to create temp file: %w", err)
 	}

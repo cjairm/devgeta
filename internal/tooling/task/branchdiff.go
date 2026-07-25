@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	git_app "github.com/cjairm/devgita/internal/apps/git"
+	git_app "github.com/cjairm/devgeta/internal/apps/git"
 )
 
 // BranchDiffResult is BranchDiffAt's payload: the rendered diff plus totals

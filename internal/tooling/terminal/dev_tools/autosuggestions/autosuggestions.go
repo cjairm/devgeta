@@ -1,4 +1,4 @@
-// Autosuggestions module provides installation and configuration management for zsh-autosuggestions with devgita integration.
+// Autosuggestions module provides installation and configuration management for zsh-autosuggestions with devgeta integration.
 // zsh-autosuggestions suggests commands as you type based on history and completions.
 
 package autosuggestions
@@ -6,9 +6,9 @@ package autosuggestions
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Autosuggestions struct {

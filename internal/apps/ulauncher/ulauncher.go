@@ -3,11 +3,11 @@ package ulauncher
 import (
 	"fmt"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 var _ apps.App = (*Ulauncher)(nil)
@@ -70,7 +70,7 @@ func (u *Ulauncher) SoftConfigure() error {
 }
 
 func (u *Ulauncher) ExecuteCommand(args ...string) error {
-	// Ulauncher is a desktop application without CLI commands typically managed by devgita
+	// Ulauncher is a desktop application without CLI commands typically managed by devgeta
 	// Return success for interface compliance
 	return nil
 }

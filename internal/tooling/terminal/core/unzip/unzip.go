@@ -1,5 +1,5 @@
 // Package unzip provides installation and command execution management for unzip
-// archive extraction utility with devgita integration.
+// archive extraction utility with devgeta integration.
 //
 // Unzip is a command-line tool for extracting files from ZIP archives. This module
 // ensures unzip is properly installed across macOS (Homebrew) and Debian/Ubuntu (apt)
@@ -16,8 +16,8 @@ package unzip
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Unzip struct {
@@ -66,7 +66,7 @@ func (u *Unzip) SoftConfigure() error {
 }
 
 func (u *Unzip) Uninstall() error {
-	return fmt.Errorf("unzip uninstall not supported through devgita")
+	return fmt.Errorf("unzip uninstall not supported through devgeta")
 }
 
 func (u *Unzip) ExecuteCommand(args ...string) error {

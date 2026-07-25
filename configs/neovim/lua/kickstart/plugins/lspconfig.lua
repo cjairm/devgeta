@@ -105,7 +105,7 @@ vim.api.nvim_create_autocmd("LspAttach", {
 --  See `:help lsp-config` for information about keys and how to configure
 ---@type table<string, vim.lsp.Config>
 local servers = {
-	-- [devgita]
+	-- [devgeta]
 	clangd = {},
 	eslint = {
 		settings = {
@@ -123,7 +123,7 @@ local servers = {
 	intelephense = {},
 	pyright = {},
 	ts_ls = {},
-	-- [/devgita]
+	-- [/devgeta]
 
 	-- Special Lua Config, as recommended by neovim help docs
 	lua_ls = {
@@ -184,7 +184,7 @@ require("mason").setup({})
 -- You can press `g?` for help in this menu.
 local ensure_installed = vim.tbl_keys(servers or {})
 vim.list_extend(ensure_installed, {
-	-- [devgita] formatters and linters (not LSP servers)
+	-- [devgeta] formatters and linters (not LSP servers)
 	"black",
 	"flake8",
 	"goimports",
@@ -197,7 +197,7 @@ vim.list_extend(ensure_installed, {
 	"prettierd",
 	"shfmt",
 	"stylua",
-	-- [/devgita]
+	-- [/devgeta]
 })
 
 require("mason-tool-installer").setup({ ensure_installed = ensure_installed })

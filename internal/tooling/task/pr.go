@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/githubcli"
-	"github.com/cjairm/devgita/internal/tooling/terminal/dev_tools/jq"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/jq"
 )
 
 // PRManager wires the githubcli primitives to the jq formatters so the dg task

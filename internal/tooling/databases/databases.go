@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"strings"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/promptui"
-	"github.com/cjairm/devgita/pkg/utils"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/promptui"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 // DatabaseConfig defines a database's installation configuration
@@ -105,7 +105,7 @@ func (d *Databases) getInstalledDatabases(gc *config.GlobalConfig) []string {
 	databaseConfigs := GetDatabaseConfigs()
 	for _, dbCfg := range databaseConfigs {
 		dbSpec := dbCfg.Name
-		if gc.IsInstalledByDevgita(dbSpec, "database") ||
+		if gc.IsInstalledByDevgeta(dbSpec, "database") ||
 			gc.IsAlreadyInstalled(dbSpec, "database") {
 			installed = append(installed, dbCfg.DisplayName)
 		}
@@ -184,7 +184,7 @@ func (d *Databases) detectPreInstalledDatabases() {
 	configUpdated := false
 	for _, dbCfg := range databaseConfigs {
 		dbSpec := dbCfg.Name
-		if gc.IsInstalledByDevgita(dbSpec, "database") ||
+		if gc.IsInstalledByDevgeta(dbSpec, "database") ||
 			gc.IsAlreadyInstalled(dbSpec, "database") {
 			continue
 		}

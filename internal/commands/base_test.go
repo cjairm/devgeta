@@ -8,12 +8,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 	"gopkg.in/yaml.v3"
 )
 
@@ -390,8 +390,8 @@ func TestMaybeInstall_ItemNotInstalled_InstallsSuccessfully(t *testing.T) {
 	}
 }
 
-func TestMaybeInstall_ItemAlreadyInstalledByDevgita_SkipsInstall(t *testing.T) {
-	// Create test config with item already installed by devgita
+func TestMaybeInstall_ItemAlreadyInstalledByDevgeta_SkipsInstall(t *testing.T) {
+	// Create test config with item already installed by devgeta
 	testConfig := &config.GlobalConfig{
 		Installed: config.InstalledConfig{
 			Packages: []string{"test-package"},

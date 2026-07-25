@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/commands"
+	"github.com/cjairm/devgeta/internal/commands"
 )
 
 // AICoder represents an AI coding assistant that can be launched in a worktree window
@@ -33,7 +33,7 @@ type AICoder interface {
 // launchToken is the exact token the window build will send to the pane (the
 // cc/oc alias for a coder, "nvim" for the editor), NOT the underlying binary -
 // so the check can't pass while the launch fails. A coder installed outside
-// devgita (so its cc/oc alias was never written to devgita.zsh) correctly fails
+// devgeta (so its cc/oc alias was never written to devgeta.zsh) correctly fails
 // this check up front with an actionable message, rather than building a window
 // whose pane then dies on `cc: command not found`. displayName is the binary the
 // message names (claude/opencode/nvim), which reads better than the alias.
@@ -52,8 +52,8 @@ type OpenCodeCoder struct{}
 
 func (o *OpenCodeCoder) Name() string { return "opencode" }
 
-// Command returns the devgita shell alias (oc), not the raw binary, so the one
-// definition of how to launch opencode lives in devgita.zsh (alias oc=opencode)
+// Command returns the devgeta shell alias (oc), not the raw binary, so the one
+// definition of how to launch opencode lives in devgeta.zsh (alias oc=opencode)
 // rather than being duplicated here. The command is sent to an interactive tmux
 // pane where that alias is defined.
 func (o *OpenCodeCoder) Command() string { return "oc" }
@@ -70,8 +70,8 @@ type ClaudeCoder struct{}
 
 func (c *ClaudeCoder) Name() string { return "claude" }
 
-// Command returns the devgita shell alias (cc), not the raw binary. The alias
-// (alias cc="CLAUDE_CODE_NO_FLICKER=1 claude" in devgita.zsh) owns both the
+// Command returns the devgeta shell alias (cc), not the raw binary. The alias
+// (alias cc="CLAUDE_CODE_NO_FLICKER=1 claude" in devgeta.zsh) owns both the
 // binary name and the no-flicker env var, so that launch recipe lives in one
 // place instead of being duplicated here. The command is sent to an interactive
 // tmux pane where the alias is defined.

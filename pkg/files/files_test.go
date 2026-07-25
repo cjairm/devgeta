@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 var fileContent = "Hello, World!"
@@ -455,7 +455,7 @@ export EDITOR="{{.Editor}}"`
 		}
 
 		data := ShellConfig{
-			Name:    "devgita",
+			Name:    "devgeta",
 			BinPath: "/usr/local/bin",
 			Editor:  "nvim",
 		}
@@ -473,7 +473,7 @@ export EDITOR="{{.Editor}}"`
 		}
 
 		expectedContent := `#!/bin/bash
-# Shell configuration for devgita
+# Shell configuration for devgeta
 export PATH="/usr/local/bin:$PATH"
 export EDITOR="nvim"`
 

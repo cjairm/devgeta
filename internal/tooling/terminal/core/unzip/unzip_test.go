@@ -1,7 +1,7 @@
 // Package unzip provides tests for the unzip archive extraction utility module.
 //
 // These tests use mock interfaces to verify app behavior without executing real
-// system commands. Tests follow devgita testing patterns with dependency injection
+// system commands. Tests follow devgeta testing patterns with dependency injection
 // via BaseCommandExecutor interface.
 //
 // References:
@@ -16,8 +16,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 func init() {

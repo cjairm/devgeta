@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() {
@@ -227,7 +227,7 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		themeContent := `{"name": "Devgita Gruvbox", "type": "dark"}`
+		themeContent := `{"name": "Devgeta Gruvbox", "type": "dark"}`
 		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
 		if err := os.WriteFile(themeSourcePath, []byte(themeContent), 0o644); err != nil {
 			t.Fatal(err)
@@ -287,7 +287,7 @@ func TestForceConfigure(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to read theme: %v", err)
 		}
-		if !strings.Contains(string(themeContentRead), "Devgita Gruvbox") {
+		if !strings.Contains(string(themeContentRead), "Devgeta Gruvbox") {
 			t.Error("Expected theme file to contain Gruvbox theme")
 		}
 

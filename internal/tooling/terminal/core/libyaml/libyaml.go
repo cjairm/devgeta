@@ -1,8 +1,8 @@
-// Libyaml YAML parser library with devgita integration
+// Libyaml YAML parser library with devgeta integration
 //
 // Libyaml is a YAML 1.1 parser and emitter library written in C. It provides
 // a low-level API for parsing and emitting YAML documents. This module provides
-// installation and configuration management for libyaml with devgita integration.
+// installation and configuration management for libyaml with devgeta integration.
 //
 // References:
 // - Libyaml Homepage: https://pyyaml.org/wiki/LibYAML
@@ -19,8 +19,8 @@ package libyaml
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Libyaml struct {
@@ -54,7 +54,7 @@ func (l *Libyaml) ForceInstall() error {
 }
 
 func (l *Libyaml) Uninstall() error {
-	return fmt.Errorf("libyaml uninstall not supported through devgita")
+	return fmt.Errorf("libyaml uninstall not supported through devgeta")
 }
 
 func (l *Libyaml) ForceConfigure() error {
@@ -85,5 +85,5 @@ func (l *Libyaml) ExecuteCommand(args ...string) error {
 }
 
 func (l *Libyaml) Update() error {
-	return fmt.Errorf("libyaml update not implemented through devgita")
+	return fmt.Errorf("libyaml update not implemented through devgeta")
 }

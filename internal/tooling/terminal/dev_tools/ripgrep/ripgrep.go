@@ -1,5 +1,5 @@
 // Package ripgrep provides installation and command execution management for ripgrep
-// with devgita integration. It follows the standardized devgita app interface while
+// with devgeta integration. It follows the standardized devgeta app interface while
 // providing ripgrep-specific operations for fast code searching and pattern matching.
 //
 // Ripgrep is a line-oriented search tool that recursively searches the current directory
@@ -10,8 +10,8 @@ package ripgrep
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Ripgrep struct {
@@ -62,7 +62,7 @@ func (rg *Ripgrep) SoftConfigure() error {
 }
 
 func (rg *Ripgrep) Uninstall() error {
-	return fmt.Errorf("ripgrep uninstall not supported through devgita")
+	return fmt.Errorf("ripgrep uninstall not supported through devgeta")
 }
 
 func (rg *Ripgrep) ExecuteCommand(args ...string) error {

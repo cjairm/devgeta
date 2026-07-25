@@ -27,7 +27,7 @@ import (
 // meaningfully validate this script anyway.
 func runTaskRedirectHook(t *testing.T, command string) (exitCode int, stderr string) {
 	t.Helper()
-	// Default working dir for the process: this repo's own root (a devgita
+	// Default working dir for the process: this repo's own root (a devgeta
 	// go.mod), reached by running with the test's own cwd. Global rules don't
 	// care about it; the release-gating tests below use the cwd-aware helper.
 	return runTaskRedirectHookInDir(t, command, "", "")
@@ -35,7 +35,7 @@ func runTaskRedirectHook(t *testing.T, command string) (exitCode int, stderr str
 
 // runTaskRedirectHookInDir runs the hook with an explicit payload `cwd` field
 // (payloadCwd, omitted when empty) and an explicit process working directory
-// (procDir, inherited when empty). Both feed the release-rule devgita-repo
+// (procDir, inherited when empty). Both feed the release-rule devgeta-repo
 // gate: the script reads `.cwd` from the payload and falls back to its own
 // $PWD, so these two knobs exercise the gate's every input.
 func runTaskRedirectHookInDir(
@@ -91,7 +91,7 @@ func runTaskRedirectHookInDir(
 }
 
 // repoRoot returns this test binary's repo root (the directory holding the
-// devgita go.mod), used as a real devgita-cwd for the release-gating tests.
+// devgeta go.mod), used as a real devgeta-cwd for the release-gating tests.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	wd, err := os.Getwd()
@@ -152,7 +152,7 @@ func TestTaskRedirectHook_AllowsLegitimateSingleCommands(t *testing.T) {
 		"gh pr status",
 		"gh pr list",
 		"gh api graphql -f query='{ viewer { login } }'",
-		"gh api repos/cjairm/devgita",
+		"gh api repos/cjairm/devgeta",
 	}
 	for _, command := range allowed {
 		t.Run(command, func(t *testing.T) {
@@ -174,39 +174,39 @@ func TestTaskRedirectHook_DeniesNarrowPatterns(t *testing.T) {
 		command         string
 		wantReplacement string
 	}{
-		{"git diff main..feature", "devgita task review-package"},
-		{"git diff v1.2.0..v1.3.0", "devgita task review-package"},
-		{"git diff --stat A..B", "devgita task review-package"},
-		{"git log --oneline base..head", "devgita task review-package"},
-		{"git worktree add ../wt -b feature-x", "devgita task worktree-start"},
-		{"git worktree remove ../wt", "devgita task worktree-finish"},
+		{"git diff main..feature", "devgeta task review-package"},
+		{"git diff v1.2.0..v1.3.0", "devgeta task review-package"},
+		{"git diff --stat A..B", "devgeta task review-package"},
+		{"git log --oneline base..head", "devgeta task review-package"},
+		{"git worktree add ../wt -b feature-x", "devgeta task worktree-start"},
+		{"git worktree remove ../wt", "devgeta task worktree-finish"},
 		// New gh rules — all GLOBAL, so they deny regardless of cwd (this
 		// helper runs with no payload cwd; the process cwd is the repo root,
 		// but these rules never consult it).
-		{"gh pr checks", "devgita task pr-checks"},
-		{"gh pr checks --watch", "devgita task pr-checks"},
-		{"gh pr review --approve", "devgita task submit-review"},
-		{"gh pr review --request-changes -b bad", "devgita task submit-review"},
+		{"gh pr checks", "devgeta task pr-checks"},
+		{"gh pr checks --watch", "devgeta task pr-checks"},
+		{"gh pr review --approve", "devgeta task submit-review"},
+		{"gh pr review --request-changes -b bad", "devgeta task submit-review"},
 		{
 			"gh api graphql --paginate -f query='{ repository { pullRequest { reviewThreads { nodes { id } } } } }'",
-			"devgita task review-threads",
+			"devgeta task review-threads",
 		},
 		// Compound commands: a matching segment anywhere in the chain must
 		// deny, not just a bare command at position 0.
-		{"cd some/dir && git worktree add ../wt -b x", "devgita task worktree-start"},
-		{"git status; git worktree remove ../wt", "devgita task worktree-finish"},
-		{"git fetch && git diff main..feature", "devgita task review-package"},
-		{"gh pr view && gh pr checks", "devgita task pr-checks"},
+		{"cd some/dir && git worktree add ../wt -b x", "devgeta task worktree-start"},
+		{"git status; git worktree remove ../wt", "devgeta task worktree-finish"},
+		{"git fetch && git diff main..feature", "devgeta task review-package"},
+		{"gh pr view && gh pr checks", "devgeta task pr-checks"},
 		// git diff a..b | less: the LHS of the pipe is still a git
 		// invocation itself, so this must deny too.
-		{"git diff main..feature | less", "devgita task review-package"},
+		{"git diff main..feature | less", "devgeta task review-package"},
 		// Env-var-prefix case (no separator character before `git` at all):
 		// deliberately handled now that the anchor is being reworked anyway
 		// (see GIT_ANCHOR in task-redirect.sh / GIT_PREFIX in
 		// task-redirect.js) — a simple `NAME=value` prefix, single or
 		// repeated, in front of `git` still denies.
-		{"GIT_PAGER=cat git diff main..feature", "devgita task review-package"},
-		{"FOO=bar BAZ=qux git worktree add ../wt -b x", "devgita task worktree-start"},
+		{"GIT_PAGER=cat git diff main..feature", "devgeta task review-package"},
+		{"FOO=bar BAZ=qux git worktree add ../wt -b x", "devgeta task worktree-start"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.command, func(t *testing.T) {
@@ -227,7 +227,7 @@ func TestTaskRedirectHook_DeniesNarrowPatterns(t *testing.T) {
 					stderr,
 				)
 			}
-			if !strings.Contains(stderr, "DEVGITA_SKIP_TASK_REDIRECT") {
+			if !strings.Contains(stderr, "DEVGETA_SKIP_TASK_REDIRECT") {
 				t.Errorf(
 					"expected deny reason for %q to state the bypass escape hatch, got %q",
 					tc.command,
@@ -238,14 +238,14 @@ func TestTaskRedirectHook_DeniesNarrowPatterns(t *testing.T) {
 	}
 }
 
-// TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo is the regression-proof
+// TestTaskRedirectHook_ReleaseRulesGatedToDevgetaRepo is the regression-proof
 // assertion for this fix: the two release rules (git reset --soft HEAD~N, git
-// tag -a v<semver>) deny ONLY when the command runs inside the devgita repo,
-// and allow the identical command everywhere else. "Inside devgita" means a
-// go.mod with module github.com/cjairm/devgita found by walking up from the
+// tag -a v<semver>) deny ONLY when the command runs inside the devgeta repo,
+// and allow the identical command everywhere else. "Inside devgeta" means a
+// go.mod with module github.com/cjairm/devgeta found by walking up from the
 // payload's cwd (falling back to the process $PWD). The gate fails toward NOT
 // firing, so an indeterminate cwd allows the raw git through.
-func TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo(t *testing.T) {
+func TestTaskRedirectHook_ReleaseRulesGatedToDevgetaRepo(t *testing.T) {
 	releaseCommands := []string{
 		"git reset --soft HEAD~1",
 		"git reset --soft HEAD~3",
@@ -255,9 +255,9 @@ func TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo(t *testing.T) {
 		"git status && git tag -a v1.0.0 -m release",
 	}
 
-	devgitaDir := repoRoot(t) // this repo's own root has a devgita go.mod
+	devgetaDir := repoRoot(t) // this repo's own root has a devgeta go.mod
 
-	// A non-devgita dir with no go.mod, and one with a different module path —
+	// A non-devgeta dir with no go.mod, and one with a different module path —
 	// both must ALLOW the release commands.
 	noGoMod := t.TempDir()
 	otherModule := t.TempDir()
@@ -269,21 +269,21 @@ func TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo(t *testing.T) {
 		t.Fatalf("failed to write other go.mod: %v", err)
 	}
 
-	t.Run("devgita cwd denies", func(t *testing.T) {
+	t.Run("devgeta cwd denies", func(t *testing.T) {
 		for _, command := range releaseCommands {
 			t.Run(command, func(t *testing.T) {
-				code, stderr := runTaskRedirectHookInDir(t, command, devgitaDir, "")
+				code, stderr := runTaskRedirectHookInDir(t, command, devgetaDir, "")
 				if code != 2 {
 					t.Fatalf(
-						"expected deny (exit 2) inside devgita for %q, got exit %d, stderr=%q",
+						"expected deny (exit 2) inside devgeta for %q, got exit %d, stderr=%q",
 						command,
 						code,
 						stderr,
 					)
 				}
-				if !strings.Contains(stderr, "devgita task release") {
+				if !strings.Contains(stderr, "devgeta task release") {
 					t.Errorf(
-						"expected deny reason to mention 'devgita task release', got %q",
+						"expected deny reason to mention 'devgeta task release', got %q",
 						stderr,
 					)
 				}
@@ -291,14 +291,14 @@ func TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo(t *testing.T) {
 		}
 	})
 
-	t.Run("non-devgita cwd allows", func(t *testing.T) {
+	t.Run("non-devgeta cwd allows", func(t *testing.T) {
 		for _, dir := range []string{noGoMod, otherModule} {
 			for _, command := range releaseCommands {
 				t.Run(dir+"/"+command, func(t *testing.T) {
 					code, stderr := runTaskRedirectHookInDir(t, command, dir, "")
 					if code != 0 {
 						t.Fatalf(
-							"expected allow (exit 0) outside devgita for %q in %q, got exit %d, stderr=%q",
+							"expected allow (exit 0) outside devgeta for %q in %q, got exit %d, stderr=%q",
 							command,
 							dir,
 							code,
@@ -310,15 +310,15 @@ func TestTaskRedirectHook_ReleaseRulesGatedToDevgitaRepo(t *testing.T) {
 		}
 	})
 
-	t.Run("no cwd field falls back to process PWD and allows outside devgita", func(t *testing.T) {
-		// No payload cwd; process cwd is a non-devgita temp dir — the gate's
-		// $PWD fallback must resolve to non-devgita and allow.
+	t.Run("no cwd field falls back to process PWD and allows outside devgeta", func(t *testing.T) {
+		// No payload cwd; process cwd is a non-devgeta temp dir — the gate's
+		// $PWD fallback must resolve to non-devgeta and allow.
 		for _, command := range releaseCommands {
 			t.Run(command, func(t *testing.T) {
 				code, stderr := runTaskRedirectHookInDir(t, command, "", noGoMod)
 				if code != 0 {
 					t.Fatalf(
-						"expected allow (exit 0) with no cwd and non-devgita PWD for %q, got exit %d, stderr=%q",
+						"expected allow (exit 0) with no cwd and non-devgeta PWD for %q, got exit %d, stderr=%q",
 						command,
 						code,
 						stderr,
@@ -388,7 +388,7 @@ func TestTaskRedirectHook_BypassEnvVarAllowsEverything(t *testing.T) {
 	})
 	cmd := exec.Command(scriptPath)
 	cmd.Stdin = bytes.NewReader(payload)
-	cmd.Env = append(os.Environ(), "DEVGITA_SKIP_TASK_REDIRECT=1")
+	cmd.Env = append(os.Environ(), "DEVGETA_SKIP_TASK_REDIRECT=1")
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 	if err := cmd.Run(); err != nil {

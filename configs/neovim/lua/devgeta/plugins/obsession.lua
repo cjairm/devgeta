@@ -1,4 +1,4 @@
--- [devgita]
+-- [devgeta]
 -- vim-obsession keeps a Session.vim continuously updated so tmux-resurrect
 -- can restore Neovim with files and splits intact after a reboot
 -- (`@resurrect-strategy-nvim 'session'` in tmux.conf). Run `:Obsession`
@@ -7,4 +7,4 @@
 local gh = require("kickstart.utils").gh
 
 vim.pack.add({ gh("tpope/vim-obsession") })
--- [/devgita]
+-- [/devgeta]

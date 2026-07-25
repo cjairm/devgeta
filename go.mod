@@ -1,4 +1,4 @@
-module github.com/cjairm/devgita
+module github.com/cjairm/devgeta
 
 go 1.25.0
 

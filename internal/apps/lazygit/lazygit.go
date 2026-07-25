@@ -1,4 +1,4 @@
-// LazyGit terminal UI for Git repository management with devgita integration
+// LazyGit terminal UI for Git repository management with devgeta integration
 //
 // LazyGit is a simple terminal UI for git commands, written in Go with the gocui library.
 // It provides an interactive interface to manage Git repositories, branches, commits, and
@@ -21,14 +21,14 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/downloader"
-	gh "github.com/cjairm/devgita/pkg/github"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/downloader"
+	gh "github.com/cjairm/devgeta/pkg/github"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 var _ apps.App = (*LazyGit)(nil)

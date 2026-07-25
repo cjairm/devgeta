@@ -135,7 +135,7 @@ do
 	-- change the command under that to load whatever the name of that colorscheme is.
 	--
 	-- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-	require("devgita.themes.gruvbox")
+	require("devgeta.themes.gruvbox")
 
 	-- Highlight todo, notes, etc in comments
 	require("kickstart.plugins.todo_comments")
@@ -205,30 +205,30 @@ do
 	-- require 'kickstart.plugins.debug'
 	-- require 'kickstart.plugins.indent_line'
 	-- require 'kickstart.plugins.autopairs'
-	-- [devgita]
+	-- [devgeta]
 	require("kickstart.plugins.gitsigns")
 	require("kickstart.plugins.lint")
 	require("kickstart.plugins.neotree")
-	-- [/devgita]
+	-- [/devgeta]
 
 	-- NOTE: You can add your own plugins, configuration, etc from `lua/custom/plugins/*.lua`
 	--
 	--  Uncomment the following line and add your plugins to `lua/custom/plugins/*.lua` to get going.
-	-- [devgita]
-	require("devgita.plugins.coffee_script")
-	require("devgita.plugins.copilot")
-	require("devgita.plugins.lazygit")
-	require("devgita.plugins.obsession")
-	require("devgita.plugins.tmux_navigator")
-	require("devgita.plugins.vimade")
-	-- [/devgita]
+	-- [devgeta]
+	require("devgeta.plugins.coffee_script")
+	require("devgeta.plugins.copilot")
+	require("devgeta.plugins.lazygit")
+	require("devgeta.plugins.obsession")
+	require("devgeta.plugins.tmux_navigator")
+	require("devgeta.plugins.vimade")
+	-- [/devgeta]
 end
 
 -- The line beneath this is called `modeline`. See `:help modeline`
 -- vim: ts=2 sts=2 sw=2 et
 
--- [devgita] Personal options, keymaps and transparency overrides loaded after plugins
-require("devgita.options")
-require("devgita.keymaps")
-require("devgita.transparent")
--- [/devgita]
+-- [devgeta] Personal options, keymaps and transparency overrides loaded after plugins
+require("devgeta.options")
+require("devgeta.keymaps")
+require("devgeta.transparent")
+-- [/devgeta]

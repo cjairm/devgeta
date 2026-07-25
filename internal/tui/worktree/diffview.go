@@ -5,8 +5,8 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/cjairm/devgita/internal/tooling/task"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/tooling/task"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // fileHeaderPrefix marks lines produced by rewriteFileHeaders. Diff body

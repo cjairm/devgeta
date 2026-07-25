@@ -1,4 +1,4 @@
-// jq JSON processor with devgita integration
+// jq JSON processor with devgeta integration
 //
 // jq is a lightweight and flexible command-line JSON processor. It lets you
 // slice, filter, map, and transform structured JSON data with ease.
@@ -21,8 +21,8 @@ import (
 	"os"
 	"strconv"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // reviewThreadsFilter turns a GitHub GraphQL pull-request reviewThreads
@@ -152,7 +152,7 @@ func (j *Jq) ForceInstall() error {
 }
 
 func (j *Jq) Uninstall() error {
-	return fmt.Errorf("jq uninstall not supported through devgita")
+	return fmt.Errorf("jq uninstall not supported through devgeta")
 }
 
 func (j *Jq) ForceConfigure() error {
@@ -176,7 +176,7 @@ func (j *Jq) ExecuteCommand(args ...string) error {
 }
 
 func (j *Jq) Update() error {
-	return fmt.Errorf("jq update not implemented through devgita")
+	return fmt.Errorf("jq update not implemented through devgeta")
 }
 
 // runFilter is the standard entry point every Format* method goes through: it
@@ -189,7 +189,7 @@ func (j *Jq) Update() error {
 // lists the input fields it expects, then write a thin FormatX(json, ...) that
 // calls runFilter. Keep output compact and LLM-oriented.
 func (j *Jq) runFilter(payload, filter string, extraArgs ...string) (string, error) {
-	tmp, err := os.CreateTemp("", "devgita-jq-*.json")
+	tmp, err := os.CreateTemp("", "devgeta-jq-*.json")
 	if err != nil {
 		return "", fmt.Errorf("jq: failed to create temp file: %w", err)
 	}

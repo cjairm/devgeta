@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestStatusGlyph_NoANSI(t *testing.T) {

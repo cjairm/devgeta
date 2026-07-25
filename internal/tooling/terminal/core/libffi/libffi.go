@@ -26,8 +26,8 @@ package libffi
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Libffi struct {
@@ -58,7 +58,7 @@ func (l *Libffi) ForceInstall() error {
 }
 
 func (l *Libffi) Uninstall() error {
-	return fmt.Errorf("libffi uninstall not supported through devgita")
+	return fmt.Errorf("libffi uninstall not supported through devgeta")
 }
 
 func (l *Libffi) ForceConfigure() error {
@@ -87,5 +87,5 @@ func (l *Libffi) ExecuteCommand(args ...string) error {
 }
 
 func (l *Libffi) Update() error {
-	return fmt.Errorf("libffi update not implemented through devgita")
+	return fmt.Errorf("libffi update not implemented through devgeta")
 }

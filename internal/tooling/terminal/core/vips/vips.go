@@ -34,8 +34,8 @@ package vips
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Vips struct {
@@ -66,7 +66,7 @@ func (v *Vips) ForceInstall() error {
 }
 
 func (v *Vips) Uninstall() error {
-	return fmt.Errorf("vips uninstall not supported through devgita")
+	return fmt.Errorf("vips uninstall not supported through devgeta")
 }
 
 func (v *Vips) ForceConfigure() error {
@@ -94,5 +94,5 @@ func (v *Vips) ExecuteCommand(args ...string) error {
 }
 
 func (v *Vips) Update() error {
-	return fmt.Errorf("vips update not implemented through devgita")
+	return fmt.Errorf("vips update not implemented through devgeta")
 }

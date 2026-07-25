@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() {
@@ -72,7 +72,7 @@ func TestForceConfigure(t *testing.T) {
 		Base: mockApp.Base,
 	}
 
-	// Fontconfig uses system defaults, no devgita-managed config needed
+	// Fontconfig uses system defaults, no devgeta-managed config needed
 	err := fc.ForceConfigure()
 
 	// Should return nil since fontconfig doesn't need configuration
@@ -90,7 +90,7 @@ func TestSoftConfigure(t *testing.T) {
 	}
 
 	t.Run("not configured", func(t *testing.T) {
-		// Fontconfig uses system defaults, no devgita-managed config needed
+		// Fontconfig uses system defaults, no devgeta-managed config needed
 		err := fc.SoftConfigure()
 
 		// Should return nil since fontconfig doesn't need configuration
@@ -100,7 +100,7 @@ func TestSoftConfigure(t *testing.T) {
 	})
 
 	t.Run("already configured", func(t *testing.T) {
-		// Fontconfig uses system defaults, no devgita-managed config needed
+		// Fontconfig uses system defaults, no devgeta-managed config needed
 		err := fc.SoftConfigure()
 
 		// Should return nil since fontconfig doesn't need configuration
@@ -119,7 +119,7 @@ func TestUninstall(t *testing.T) {
 	// This test is skipped because:
 	// - Fontconfig is a system library
 	// - Uninstalling system libraries can break system functionality
-	// - Managed at OS level, not by devgita
+	// - Managed at OS level, not by devgeta
 }
 
 // TestExecuteCommand verifies fontconfig command execution

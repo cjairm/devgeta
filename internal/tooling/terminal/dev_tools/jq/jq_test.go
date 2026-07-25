@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 func init() { logger.Init(false) }

@@ -10,7 +10,7 @@ const (
 	KindLanguage         // Programming language runtimes and managers
 	KindDatabase         // Database systems
 	KindFont             // Font packages (satisfies FontInstaller, not App)
-	KindMeta             // Devgita itself
+	KindMeta             // Devgeta itself
 )
 
 // App is the contract every app module must satisfy.

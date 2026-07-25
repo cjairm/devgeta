@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }
@@ -245,18 +245,18 @@ func TestParseFlags_UnknownSkip_ReturnsError(t *testing.T) {
 	}
 }
 
-func TestParseFlags_Devgita_IsNotTargetable(t *testing.T) {
-	// devgita maps to "" coordinator; it's not a valid --only or --skip target
-	_, err := parseInstallFlags([]string{"devgita"}, nil)
+func TestParseFlags_Devgeta_IsNotTargetable(t *testing.T) {
+	// devgeta maps to "" coordinator; it's not a valid --only or --skip target
+	_, err := parseInstallFlags([]string{"devgeta"}, nil)
 	if err == nil {
-		t.Fatal("expected error: devgita should not be targetable via --only")
+		t.Fatal("expected error: devgeta should not be targetable via --only")
 	}
 }
 
 func TestParseFlags_AllKnownApps_Valid(t *testing.T) {
 	for appName, coord := range appToCoordinator {
 		if coord == "" {
-			continue // devgita not targetable
+			continue // devgeta not targetable
 		}
 		t.Run(appName, func(t *testing.T) {
 			cfg, err := parseInstallFlags([]string{appName}, nil)

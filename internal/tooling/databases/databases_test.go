@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() {
@@ -203,7 +203,7 @@ func TestTrackInstallation(t *testing.T) {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	if !gc.IsInstalledByDevgita("redis", "database") {
+	if !gc.IsInstalledByDevgeta("redis", "database") {
 		t.Error("Expected redis to be tracked as installed")
 	}
 }

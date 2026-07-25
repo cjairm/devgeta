@@ -1,4 +1,4 @@
-// tldr simplified command documentation tool with devgita integration
+// tldr simplified command documentation tool with devgeta integration
 //
 // tldr (Too Long; Didn't Read) is a command-line utility that provides simplified
 // and community-driven man pages with practical examples. It focuses on practical
@@ -22,8 +22,8 @@ package tldr
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Tldr struct {
@@ -54,7 +54,7 @@ func (t *Tldr) ForceInstall() error {
 }
 
 func (t *Tldr) Uninstall() error {
-	return fmt.Errorf("tldr uninstall not supported through devgita")
+	return fmt.Errorf("tldr uninstall not supported through devgeta")
 }
 
 func (t *Tldr) ForceConfigure() error {
@@ -136,5 +136,5 @@ func (t *Tldr) ExecuteCommand(args ...string) error {
 }
 
 func (t *Tldr) Update() error {
-	return fmt.Errorf("tldr update not implemented through devgita")
+	return fmt.Errorf("tldr update not implemented through devgeta")
 }

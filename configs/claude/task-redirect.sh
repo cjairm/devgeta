@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # PreToolUse hook: intercept a narrow set of raw-git command patterns that have
-# a dedicated `devgita task` equivalent, and deny with the exact replacement to
+# a dedicated `devgeta task` equivalent, and deny with the exact replacement to
 # run instead. See docs/apps/claude.md ("Command redirect (PreToolUse hook)")
 # for the full contract.
 #
@@ -17,7 +17,7 @@
 # unmatched command, jq missing — falls through to exit 0 (allow): this hook
 # must never accidentally block all Bash calls.
 #
-# Escape hatch: set DEVGITA_SKIP_TASK_REDIRECT=1 for the session to bypass this
+# Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 for the session to bypass this
 # hook entirely when raw git is genuinely needed. Every deny message repeats
 # this so no flow dead-ends.
 #
@@ -35,10 +35,10 @@
 #     impose no repo-specific convention — they're better/compressed forms of
 #     universal git/gh operations.
 #   - The two release rules (git reset --soft HEAD~N, git tag -a v<semver>) are
-#     devgita-repo-only: they encode devgita's own release policy and would be
-#     wrong to steer in other repos. They fire only when is_devgita_repo
-#     confirms a go.mod with module github.com/cjairm/devgita, and fail toward
-#     NOT firing on any uncertainty (see is_devgita_repo).
+#     devgeta-repo-only: they encode devgeta's own release policy and would be
+#     wrong to steer in other repos. They fire only when is_devgeta_repo
+#     confirms a go.mod with module github.com/cjairm/devgeta, and fail toward
+#     NOT firing on any uncertainty (see is_devgeta_repo).
 #
 # Matching scope (read before touching the patterns below):
 #   - Each rule is checked against every "command segment" of the input, not
@@ -58,7 +58,7 @@
 #     not a shell parser.
 
 # Bypass first, before touching stdin, so it works even if stdin is malformed.
-if [ -n "${DEVGITA_SKIP_TASK_REDIRECT:-}" ]; then
+if [ -n "${DEVGETA_SKIP_TASK_REDIRECT:-}" ]; then
 	exit 0
 fi
 
@@ -67,12 +67,12 @@ COMMAND=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/nul
 [ -z "$COMMAND" ] && exit 0
 
 # Claude Code's PreToolUse payload includes the agent's working directory at
-# top-level `.cwd`. It gates the release rules (rules 4 & 5) to the devgita
-# repo only (see is_devgita_repo). If absent/empty, fall back to this shell's
+# top-level `.cwd`. It gates the release rules (rules 4 & 5) to the devgeta
+# repo only (see is_devgeta_repo). If absent/empty, fall back to this shell's
 # own $PWD; if that too is indeterminate, the gate fails toward NOT firing.
 CWD=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 
-BYPASS_HINT="set DEVGITA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed"
+BYPASS_HINT="set DEVGETA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed"
 
 deny() {
 	echo "$1 — $BYPASS_HINT" >&2
@@ -93,45 +93,45 @@ GIT_ANCHOR="^(${ENV_ASSIGN}[[:space:]]+)*git"
 # same leading VAR=value prefix run.
 GH_ANCHOR="^(${ENV_ASSIGN}[[:space:]]+)*gh"
 
-# is_devgita_repo answers "is the command running inside the devgita repo?" —
-# the gate for the release rules (rules 4 & 5). Those rules encode devgita's
+# is_devgeta_repo answers "is the command running inside the devgeta repo?" —
+# the gate for the release rules (rules 4 & 5). Those rules encode devgeta's
 # OWN repo-specific release policy (CLAUDE.md §9), so redirecting the universal
 # `git reset --soft`/`git tag -a` techniques must NOT happen in other repos.
 #
 # It walks UP from the payload's working dir (CWD, falling back to $PWD)
-# looking for the FIRST go.mod; the repo IS devgita only if that go.mod's
-# module path is exactly github.com/cjairm/devgita. It memoizes its result so
+# looking for the FIRST go.mod; the repo IS devgeta only if that go.mod's
+# module path is exactly github.com/cjairm/devgeta. It memoizes its result so
 # multiple release segments/rules in one invocation check at most once.
 #
 # CRITICAL: this fails TOWARD NOT firing. If the working dir is indeterminate,
 # no go.mod is found, or the module doesn't match, it returns non-zero (repo is
-# NOT devgita) — so the raw git command is allowed through rather than a
-# general reset/tag being wrongly blocked outside devgita. It is only ever
+# NOT devgeta) — so the raw git command is allowed through rather than a
+# general reset/tag being wrongly blocked outside devgeta. It is only ever
 # called AFTER a release pattern has already matched, so the common allow path
 # never pays the go.mod-lookup cost.
-DEVGITA_REPO_MEMO=""
-is_devgita_repo() {
-	if [ -n "$DEVGITA_REPO_MEMO" ]; then
-		[ "$DEVGITA_REPO_MEMO" = "yes" ]
+DEVGETA_REPO_MEMO=""
+is_devgeta_repo() {
+	if [ -n "$DEVGETA_REPO_MEMO" ]; then
+		[ "$DEVGETA_REPO_MEMO" = "yes" ]
 		return
 	fi
 	local dir="${CWD:-$PWD}"
 	if [ -z "$dir" ]; then
-		DEVGITA_REPO_MEMO="no"
+		DEVGETA_REPO_MEMO="no"
 		return 1
 	fi
 	while [ -n "$dir" ] && [ "$dir" != "/" ]; do
 		if [ -f "$dir/go.mod" ]; then
-			if grep -qE '^module[[:space:]]+github\.com/cjairm/devgita($|/)' "$dir/go.mod" 2>/dev/null; then
-				DEVGITA_REPO_MEMO="yes"
+			if grep -qE '^module[[:space:]]+github\.com/cjairm/devgeta($|/)' "$dir/go.mod" 2>/dev/null; then
+				DEVGETA_REPO_MEMO="yes"
 				return 0
 			fi
-			DEVGITA_REPO_MEMO="no"
+			DEVGETA_REPO_MEMO="no"
 			return 1
 		fi
 		dir=$(dirname "$dir")
 	done
-	DEVGITA_REPO_MEMO="no"
+	DEVGETA_REPO_MEMO="no"
 	return 1
 }
 
@@ -216,46 +216,46 @@ check_segment() {
 	# `git diff`, `git diff HEAD~1`, and `git log`/`git log -5` never match.
 	if printf '%s\n' "$segment" |
 		grep -qE "${GIT_ANCHOR}[[:space:]]+(diff|log)([[:space:]]+[^[:space:]]+)*[[:space:]]+${RANGE_TOKEN}([[:space:]]|\$)"; then
-		deny "Use: devgita task review-package <base> <head> (one call: verified range, commits, noise-filtered stats + full diff)"
+		deny "Use: devgeta task review-package <base> <head> (one call: verified range, commits, noise-filtered stats + full diff)"
 	fi
 
 	# --- git worktree add ... ---
 	if printf '%s\n' "$segment" | grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+add([[:space:]]|\$)"; then
-		deny "Use: devgita task worktree-start <name> [--base <ref>]"
+		deny "Use: devgeta task worktree-start <name> [--base <ref>]"
 	fi
 
 	# --- git worktree remove ... ---
 	if printf '%s\n' "$segment" | grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+remove([[:space:]]|\$)"; then
-		deny "Use: devgita task worktree-finish [<name>] --merge|--discard"
+		deny "Use: devgeta task worktree-finish [<name>] --merge|--discard"
 	fi
 
-	# --- git reset --soft HEAD~N (N >= 1) — devgita-repo-only ---
+	# --- git reset --soft HEAD~N (N >= 1) — devgeta-repo-only ---
 	# `git reset --soft HEAD` (no ~N, e.g. amend-style staging) is never matched.
-	# Gated by is_devgita_repo (checked only after the pattern matches): the
-	# release flow is devgita's own policy, so this stays out of other repos.
+	# Gated by is_devgeta_repo (checked only after the pattern matches): the
+	# release flow is devgeta's own policy, so this stays out of other repos.
 	if printf '%s\n' "$segment" |
 		grep -qE "${GIT_ANCHOR}[[:space:]]+reset[[:space:]]+--soft[[:space:]]+HEAD~[1-9][0-9]*([[:space:]]|\$)" &&
-		is_devgita_repo; then
-		deny "Use: devgita task release <version> --message-file <file> [--push] (squash + tag flow)"
+		is_devgeta_repo; then
+		deny "Use: devgeta task release <version> --message-file <file> [--push] (squash + tag flow)"
 	fi
 
-	# --- git tag -a v<semver> ... — devgita-repo-only ---
+	# --- git tag -a v<semver> ... — devgeta-repo-only ---
 	# Requires all three, within THIS segment: "git tag", a "-a" flag, and a
 	# v-prefixed semver-shaped token — so `git tag` (list) and `git tag
 	# v1.0.0` (lightweight, no -a) are never matched. Also gated by
-	# is_devgita_repo (checked last, only after the three pattern checks pass).
+	# is_devgeta_repo (checked last, only after the three pattern checks pass).
 	if printf '%s\n' "$segment" | grep -qE "${GIT_ANCHOR}[[:space:]]+tag\b" &&
 		printf '%s\n' "$segment" | grep -qE '(^|[[:space:]])-a([[:space:]]|$)' &&
 		printf '%s\n' "$segment" | grep -qE '(^|[[:space:]])v[0-9]+\.[0-9]+\.[0-9]+([[:space:]]|$)' &&
-		is_devgita_repo; then
-		deny "Use: devgita task release <version> --message-file <file> [--push] (squash + tag flow)"
+		is_devgeta_repo; then
+		deny "Use: devgeta task release <version> --message-file <file> [--push] (squash + tag flow)"
 	fi
 
 	# --- gh pr checks — global ---
 	# The gh PR CI-status view. `pr checks` only (never `gh pr view`, `gh pr
 	# status`, `gh pr list`): the token after `pr` must be exactly `checks`.
 	if printf '%s\n' "$segment" | grep -qE "${GH_ANCHOR}[[:space:]]+pr[[:space:]]+checks\b"; then
-		deny "Use: devgita task pr-checks (adds a failing-job log digest the raw command lacks)"
+		deny "Use: devgeta task pr-checks (adds a failing-job log digest the raw command lacks)"
 	fi
 
 	# --- gh api graphql ... reviewThreads — global ---
@@ -269,7 +269,7 @@ check_segment() {
 		printf '%s\n' "$segment" | grep -qE '(^|[[:space:]])api([[:space:]]|$)' &&
 		printf '%s\n' "$segment" | grep -qE '(^|[[:space:]])graphql([[:space:]]|$)' &&
 		printf '%s\n' "$segment" | grep -q 'reviewThreads'; then
-		deny "Use: devgita task review-threads (GraphQL payload rendered to compact markdown + dedup)"
+		deny "Use: devgeta task review-threads (GraphQL payload rendered to compact markdown + dedup)"
 	fi
 
 	# --- gh pr review — global ---
@@ -277,7 +277,7 @@ check_segment() {
 	# exactly `review`) — never `gh pr view` (different subcommand) or `gh pr
 	# checks`.
 	if printf '%s\n' "$segment" | grep -qE "${GH_ANCHOR}[[:space:]]+pr[[:space:]]+review\b"; then
-		deny "Use: devgita task submit-review --event approve|request-changes|comment [--body ...] (posts body + inline comments atomically)"
+		deny "Use: devgeta task submit-review --event approve|request-changes|comment [--body ...] (posts body + inline comments atomically)"
 	fi
 }
 

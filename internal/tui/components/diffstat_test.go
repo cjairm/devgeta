@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestDiffStat(t *testing.T) {

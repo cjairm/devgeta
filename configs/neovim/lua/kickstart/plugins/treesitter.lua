@@ -10,7 +10,7 @@ vim.pack.add({ { src = gh("nvim-treesitter/nvim-treesitter"), version = "main" }
 
 -- Ensure basic parsers are installed
 local parsers = {
-	-- [devgita]
+	-- [devgeta]
 	"bash",
 	"c",
 	"diff",
@@ -28,7 +28,7 @@ local parsers = {
 	"tsx",
 	"go",
 	"php",
-	-- [/devgita]
+	-- [/devgeta]
 }
 require("nvim-treesitter").install(parsers)
 

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // containsIgnoreCase checks if a string exists in a slice (case-insensitive)

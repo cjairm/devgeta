@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestSessionStateFromWorktree(t *testing.T) {

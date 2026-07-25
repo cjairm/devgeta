@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }

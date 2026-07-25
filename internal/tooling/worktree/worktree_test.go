@@ -7,11 +7,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() {
@@ -215,7 +215,7 @@ func TestRemove(t *testing.T) {
 		repoSlug := filepath.Base(tempDir)
 		wtPath := filepath.Join(
 			paths.Paths.Data.Root,
-			"devgita",
+			"devgeta",
 			"worktrees",
 			repoSlug,
 			"feature-test",
@@ -269,7 +269,7 @@ func TestRemove(t *testing.T) {
 		repoSlug := filepath.Base(tempDir)
 		wtPath := filepath.Join(
 			paths.Paths.Data.Root,
-			"devgita",
+			"devgeta",
 			"worktrees",
 			repoSlug,
 			"feature-test",
@@ -341,7 +341,7 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 
 	t.Run("wrong repoSlug leaves directory intact", func(t *testing.T) {
 		wm, repoSlug := newWM()
-		wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, wtName)
+		wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName)
 		if err := os.MkdirAll(wtPath, 0o755); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
@@ -363,7 +363,7 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 
 	t.Run("correct repoSlug removes directory via fallback", func(t *testing.T) {
 		wm, repoSlug := newWM()
-		wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, wtName)
+		wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName)
 		if err := os.MkdirAll(wtPath, 0o755); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
@@ -385,7 +385,7 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 func TestWorktreePath(t *testing.T) {
 	wm := &WorktreeManager{}
 	path := wm.worktreePath("myrepo", "feature-a")
-	expectedSuffix := filepath.Join("devgita", "worktrees", "myrepo", "feature-a")
+	expectedSuffix := filepath.Join("devgeta", "worktrees", "myrepo", "feature-a")
 	if !filepath.IsAbs(path) {
 		t.Errorf("Expected absolute path, got %q", path)
 	}
@@ -396,7 +396,7 @@ func TestWorktreePath(t *testing.T) {
 
 func TestGetWorktreeBasePath(t *testing.T) {
 	basePath := GetWorktreeBasePath()
-	expectedSuffix := filepath.Join("devgita", "worktrees")
+	expectedSuffix := filepath.Join("devgeta", "worktrees")
 	if !filepath.IsAbs(basePath) {
 		t.Errorf("Expected absolute path, got %q", basePath)
 	}
@@ -431,7 +431,7 @@ func TestRepairStaleWorktree(t *testing.T) {
 	repoSlug := filepath.Base(tempDir)
 	wtPath := filepath.Join(
 		paths.Paths.Data.Root,
-		"devgita",
+		"devgeta",
 		"worktrees",
 		repoSlug,
 		"stale-feature",

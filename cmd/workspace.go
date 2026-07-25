@@ -4,7 +4,7 @@
 package cmd
 
 import (
-	tuiworktree "github.com/cjairm/devgita/internal/tui/worktree"
+	tuiworktree "github.com/cjairm/devgeta/internal/tui/worktree"
 	"github.com/spf13/cobra"
 )
 

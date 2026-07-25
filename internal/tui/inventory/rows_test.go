@@ -3,7 +3,7 @@ package tuiinventory
 import (
 	"testing"
 
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 func sampleItems() []inventory.Item {

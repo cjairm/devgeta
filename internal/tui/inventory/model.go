@@ -7,8 +7,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // Options configures the dashboard's initial filter state.

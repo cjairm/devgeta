@@ -1,5 +1,5 @@
 // Package gimp provides GIMP (GNU Image Manipulation Program) installation and management
-// with devgita integration.
+// with devgeta integration.
 //
 // GIMP is a free and open-source raster graphics editor used for image manipulation,
 // image editing, free-form drawing, transcoding between different image file formats,
@@ -11,11 +11,11 @@ package gimp
 import (
 	"fmt"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 var _ apps.App = (*Gimp)(nil)

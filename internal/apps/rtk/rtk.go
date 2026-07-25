@@ -1,4 +1,4 @@
-// rtk token-compressing CLI proxy with devgita integration
+// rtk token-compressing CLI proxy with devgeta integration
 //
 // rtk ("Rust Token Killer") is a CLI proxy that filters and compresses the
 // output of 100+ common dev commands (git, test runners, docker, cat/grep, …)
@@ -6,7 +6,7 @@
 // complements `dg task`: rtk is generic lossy compression, `dg task` is
 // semantic orchestration + policy (see docs/guides/task-design.md).
 //
-// Devgita installs the binary only. rtk's command-rewriting hook
+// Devgeta installs the binary only. rtk's command-rewriting hook
 // (`rtk init -g`) intercepts every agent Bash call and stays opt-in —
 // see ADR-0004 and docs/apps/rtk.md.
 //
@@ -28,14 +28,14 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/downloader"
-	gh "github.com/cjairm/devgita/pkg/github"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/downloader"
+	gh "github.com/cjairm/devgeta/pkg/github"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 var _ apps.App = (*Rtk)(nil)
@@ -178,7 +178,7 @@ func (r *Rtk) SoftConfigure() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	if gc.IsInstalledByDevgita(constants.Rtk, "package") {
+	if gc.IsInstalledByDevgeta(constants.Rtk, "package") {
 		return nil
 	}
 	return r.ForceConfigure()

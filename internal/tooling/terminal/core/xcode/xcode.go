@@ -1,5 +1,5 @@
 // Package xcode provides installation and command execution management for
-// Xcode Command Line Tools with devgita integration.
+// Xcode Command Line Tools with devgeta integration.
 //
 // Xcode Command Line Tools is a macOS-specific package that provides essential
 // development tools including compilers (clang, gcc), build tools (make), SDKs,
@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"strings"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
+	cmd "github.com/cjairm/devgeta/internal/commands"
 )
 
 type XcodeCommandLineTools struct {
@@ -84,7 +84,7 @@ func (x *XcodeCommandLineTools) SoftConfigure() error {
 }
 
 func (x *XcodeCommandLineTools) Uninstall() error {
-	return fmt.Errorf("xcode command line tools uninstall not supported through devgita")
+	return fmt.Errorf("xcode command line tools uninstall not supported through devgeta")
 }
 
 func (x *XcodeCommandLineTools) ExecuteCommand(args ...string) error {

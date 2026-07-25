@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
 )
 
 // This allows swapping it during tests
@@ -30,7 +30,7 @@ var testSandbox = func() string {
 	if !testing.Testing() {
 		return ""
 	}
-	dir, err := os.MkdirTemp("", "devgita-test-sandbox-")
+	dir, err := os.MkdirTemp("", "devgeta-test-sandbox-")
 	if err != nil {
 		panic("could not create test sandbox directory: " + err.Error())
 	}
@@ -101,7 +101,7 @@ var Paths = struct {
 		Aerospace string
 		Alacritty string
 		Claude    string
-		Devgita   string
+		Devgeta   string
 		Fastfetch string
 		Fonts     string
 		Git       string
@@ -201,7 +201,7 @@ var Paths = struct {
 		Aerospace string
 		Alacritty string
 		Claude    string
-		Devgita   string
+		Devgeta   string
 		Fastfetch string
 		Fonts     string
 		Git       string
@@ -215,7 +215,7 @@ var Paths = struct {
 		Aerospace: GetConfigDir(constants.Aerospace),
 		Alacritty: GetConfigDir(constants.Alacritty),
 		Claude:    GetHomeDir(".claude"),
-		Devgita:   GetConfigDir(constants.DevgitaApp),
+		Devgeta:   GetConfigDir(constants.DevgetaApp),
 		Fastfetch: GetConfigDir(constants.Fastfetch),
 		Fonts:     GetConfigDir(constants.Fonts),
 		Git:       GetConfigDir(constants.Git),

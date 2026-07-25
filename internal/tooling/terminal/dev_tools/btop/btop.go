@@ -1,5 +1,5 @@
 // Package btop provides installation and configuration management for btop resource monitor
-// with devgita integration. It follows the standardized devgita app interface while providing
+// with devgeta integration. It follows the standardized devgeta app interface while providing
 // btop-specific operations for system resource monitoring and process management.
 //
 // References:
@@ -11,8 +11,8 @@ package btop
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Btop struct {
@@ -55,7 +55,7 @@ func (b *Btop) SoftConfigure() error {
 }
 
 func (b *Btop) Uninstall() error {
-	return fmt.Errorf("btop uninstall not supported through devgita")
+	return fmt.Errorf("btop uninstall not supported through devgeta")
 }
 
 func (b *Btop) ExecuteCommand(args ...string) error {

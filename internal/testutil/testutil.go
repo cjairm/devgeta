@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // TestPaths holds the original path values for restoration after tests
@@ -87,7 +87,7 @@ func SetupIsolatedPaths(t *testing.T) PathsCleanup {
 
 // SetupTestDirs creates a complete test directory structure
 // Returns paths to key directories
-func SetupTestDirs(t *testing.T) (appDir, configDir, templatesDir, devgitaConfigDir string) {
+func SetupTestDirs(t *testing.T) (appDir, configDir, templatesDir, devgetaConfigDir string) {
 	t.Helper()
 
 	tempDir := t.TempDir()
@@ -95,9 +95,9 @@ func SetupTestDirs(t *testing.T) (appDir, configDir, templatesDir, devgitaConfig
 	appDir = filepath.Join(tempDir, "app")
 	configDir = filepath.Join(tempDir, "config")
 	templatesDir = filepath.Join(tempDir, "templates")
-	devgitaConfigDir = filepath.Join(configDir, constants.App.Name)
+	devgetaConfigDir = filepath.Join(configDir, constants.App.Name)
 
-	dirs := []string{appDir, configDir, templatesDir, devgitaConfigDir}
+	dirs := []string{appDir, configDir, templatesDir, devgetaConfigDir}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
@@ -177,7 +177,7 @@ shell:
 	}
 }
 
-// CreateShellConfigTemplate creates a basic devgita.zsh.tmpl template
+// CreateShellConfigTemplate creates a basic devgeta.zsh.tmpl template
 func CreateShellConfigTemplate(t *testing.T, templatesDir string, content string) {
 	t.Helper()
 
@@ -210,12 +210,12 @@ func CreateShellConfigTemplate(t *testing.T, templatesDir string, content string
 func CreateGlobalConfigFile(t *testing.T, configDir string, content string) string {
 	t.Helper()
 
-	devgitaConfigDir := filepath.Join(configDir, constants.App.Name)
-	if err := os.MkdirAll(devgitaConfigDir, 0755); err != nil {
-		t.Fatalf("Failed to create devgita config dir: %v", err)
+	devgetaConfigDir := filepath.Join(configDir, constants.App.Name)
+	if err := os.MkdirAll(devgetaConfigDir, 0755); err != nil {
+		t.Fatalf("Failed to create devgeta config dir: %v", err)
 	}
 
-	configPath := filepath.Join(devgitaConfigDir, constants.App.File.GlobalConfig)
+	configPath := filepath.Join(devgetaConfigDir, constants.App.File.GlobalConfig)
 
 	if content == "" {
 		content = `app_path: ""
@@ -305,7 +305,7 @@ func SetupCompleteTest(t *testing.T) *TestConfig {
 		Cleanup:       cleanup,
 		MockApp:       NewMockApp(),
 		ConfigPath:    configPath,
-		ZshConfigPath: filepath.Join(appDir, "devgita.zsh"),
+		ZshConfigPath: filepath.Join(appDir, "devgeta.zsh"),
 	}
 
 	return tc
@@ -335,7 +335,7 @@ func VerifyNoRealConfigChanges(t *testing.T) {
 	t.Helper()
 
 	// Check if any temp paths are in common config locations
-	realConfigDir := os.ExpandEnv("$HOME/.config/devgita")
+	realConfigDir := os.ExpandEnv("$HOME/.config/devgeta")
 	realZshrc := os.ExpandEnv("$HOME/.zshrc")
 
 	if paths.Paths.Config.Root == realConfigDir {

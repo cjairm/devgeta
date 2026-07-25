@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // mockUninstallApp records whether Uninstall was called and returns a preset error.
@@ -108,13 +108,13 @@ func TestUninstall_DatabasesBlocked(t *testing.T) {
 	}
 }
 
-func TestUninstall_DevgitaBlocked(t *testing.T) {
-	err := runUninstall(uninstallCmd, []string{"devgita"})
+func TestUninstall_DevgetaBlocked(t *testing.T) {
+	err := runUninstall(uninstallCmd, []string{"devgeta"})
 	if err == nil {
-		t.Fatal("expected error for 'devgita'")
+		t.Fatal("expected error for 'devgeta'")
 	}
-	if !strings.Contains(err.Error(), "cannot uninstall devgita from itself") {
-		t.Errorf("expected 'cannot uninstall devgita' error, got: %v", err)
+	if !strings.Contains(err.Error(), "cannot uninstall devgeta from itself") {
+		t.Errorf("expected 'cannot uninstall devgeta' error, got: %v", err)
 	}
 }
 

@@ -1,4 +1,4 @@
-// PowerLevel10k module provides installation and configuration management for Powerlevel10k Zsh theme with devgita integration.
+// PowerLevel10k module provides installation and configuration management for Powerlevel10k Zsh theme with devgeta integration.
 // Powerlevel10k is a fast, customizable Zsh theme that provides a visually rich command-line prompt.
 
 package powerlevel10k
@@ -6,9 +6,9 @@ package powerlevel10k
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type PowerLevel10k struct {

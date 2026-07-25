@@ -5,28 +5,28 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/aerospace"
-	"github.com/cjairm/devgita/internal/apps/alacritty"
-	"github.com/cjairm/devgita/internal/apps/brave"
-	"github.com/cjairm/devgita/internal/apps/claude"
-	"github.com/cjairm/devgita/internal/apps/devgita"
-	"github.com/cjairm/devgita/internal/apps/docker"
-	"github.com/cjairm/devgita/internal/apps/fastfetch"
-	"github.com/cjairm/devgita/internal/apps/flameshot"
-	"github.com/cjairm/devgita/internal/apps/gimp"
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/i3"
-	"github.com/cjairm/devgita/internal/apps/lazydocker"
-	"github.com/cjairm/devgita/internal/apps/lazygit"
-	"github.com/cjairm/devgita/internal/apps/mise"
-	"github.com/cjairm/devgita/internal/apps/neovim"
-	"github.com/cjairm/devgita/internal/apps/opencode"
-	"github.com/cjairm/devgita/internal/apps/raycast"
-	"github.com/cjairm/devgita/internal/apps/rtk"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/apps/ulauncher"
-	"github.com/cjairm/devgita/pkg/constants"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/aerospace"
+	"github.com/cjairm/devgeta/internal/apps/alacritty"
+	"github.com/cjairm/devgeta/internal/apps/brave"
+	"github.com/cjairm/devgeta/internal/apps/claude"
+	"github.com/cjairm/devgeta/internal/apps/devgeta"
+	"github.com/cjairm/devgeta/internal/apps/docker"
+	"github.com/cjairm/devgeta/internal/apps/fastfetch"
+	"github.com/cjairm/devgeta/internal/apps/flameshot"
+	"github.com/cjairm/devgeta/internal/apps/gimp"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/i3"
+	"github.com/cjairm/devgeta/internal/apps/lazydocker"
+	"github.com/cjairm/devgeta/internal/apps/lazygit"
+	"github.com/cjairm/devgeta/internal/apps/mise"
+	"github.com/cjairm/devgeta/internal/apps/neovim"
+	"github.com/cjairm/devgeta/internal/apps/opencode"
+	"github.com/cjairm/devgeta/internal/apps/raycast"
+	"github.com/cjairm/devgeta/internal/apps/rtk"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/apps/ulauncher"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // AppMeta holds metadata for uninstall orchestration.
@@ -58,7 +58,7 @@ var Meta = map[string]AppMeta{
 	constants.Rtk:        {Coordinator: "ai-tools", ItemType: "package", HasShellFeature: false},
 	constants.Tmux:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Ulauncher:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.DevgitaApp: {Coordinator: "", ItemType: "", HasShellFeature: false},
+	constants.DevgetaApp: {Coordinator: "", ItemType: "", HasShellFeature: false},
 }
 
 // knownCategories is the set of valid uninstall coordinator categories.
@@ -68,10 +68,10 @@ var knownCategories = map[string]bool{
 	"ai-tools": true,
 }
 
-// IsKnownApp reports whether name is a registered app (excluding devgita itself).
+// IsKnownApp reports whether name is a registered app (excluding devgeta itself).
 func IsKnownApp(name string) bool {
 	_, ok := Meta[name]
-	return ok && name != constants.DevgitaApp
+	return ok && name != constants.DevgetaApp
 }
 
 // IsKnownCategory reports whether name is a valid coordinator category.
@@ -107,7 +107,7 @@ var factories = map[string]func() apps.App{
 	constants.Alacritty:  func() apps.App { return alacritty.New() },
 	constants.Brave:      func() apps.App { return brave.New() },
 	constants.Claude:     func() apps.App { return claude.New() },
-	constants.DevgitaApp: func() apps.App { return devgita.New() },
+	constants.DevgetaApp: func() apps.App { return devgeta.New() },
 	constants.Docker:     func() apps.App { return docker.New() },
 	constants.Fastfetch:  func() apps.App { return fastfetch.New() },
 	constants.Flameshot:  func() apps.App { return flameshot.New() },

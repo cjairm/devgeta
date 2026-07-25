@@ -1,5 +1,5 @@
 // Package fontconfig provides installation and configuration management for fontconfig library
-// with devgita integration.
+// with devgeta integration.
 //
 // Fontconfig is a library for configuring and customizing font access, used by many applications
 // on Linux/Unix systems for font rendering and management.
@@ -9,8 +9,8 @@ package fontconfig
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type FontConfig struct {
@@ -41,7 +41,7 @@ func (fc *FontConfig) ForceInstall() error {
 }
 
 func (fc *FontConfig) ForceConfigure() error {
-	// fontconfig doesn't require devgita-managed configuration
+	// fontconfig doesn't require devgeta-managed configuration
 	// It uses system defaults which are appropriate for most use cases
 	// Configuration would involve:
 	// 1. Copy configuration from paths.FontConfigConfigAppDir to paths.FontConfigConfigLocalDir
@@ -55,13 +55,13 @@ func (fc *FontConfig) ForceConfigure() error {
 }
 
 func (fc *FontConfig) SoftConfigure() error {
-	// fontconfig doesn't require devgita-managed configuration
+	// fontconfig doesn't require devgeta-managed configuration
 	// It uses system defaults which are appropriate for most use cases
 	return nil
 }
 
 func (fc *FontConfig) Uninstall() error {
-	return fmt.Errorf("fontconfig uninstall not supported through devgita")
+	return fmt.Errorf("fontconfig uninstall not supported through devgeta")
 }
 
 func (fc *FontConfig) ExecuteCommand(fontConfigCmd string, args ...string) error {

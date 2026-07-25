@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 func init() {
@@ -174,7 +174,7 @@ func TestExecuteCommand(t *testing.T) {
 // 	if err == nil {
 // 		t.Fatal("expected Uninstall to return error for unsupported operation")
 // 	}
-// 	if err.Error() != "tldr uninstall not supported through devgita" {
+// 	if err.Error() != "tldr uninstall not supported through devgeta" {
 // 		t.Fatalf("unexpected error message: %v", err)
 // 	}
 // }
@@ -188,7 +188,7 @@ func TestExecuteCommand(t *testing.T) {
 // 	if err == nil {
 // 		t.Fatal("expected Update to return error for unsupported operation")
 // 	}
-// 	if err.Error() != "tldr update not implemented through devgita" {
+// 	if err.Error() != "tldr update not implemented through devgeta" {
 // 		t.Fatalf("unexpected error message: %v", err)
 // 	}
 // }

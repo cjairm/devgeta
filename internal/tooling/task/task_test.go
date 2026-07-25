@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	gitapp "github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
+	gitapp "github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }

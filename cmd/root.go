@@ -6,8 +6,8 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +16,8 @@ var verbose bool
 var rootCmd = &cobra.Command{
 	Use:          "dg",
 	SilenceUsage: true,
-	Short:        "Devgita - Your cross-platform CLI to install, configure, and manage development environments",
-	Long: `Devgita (dg) helps you set up and manage your development environment with ease.
+	Short:        "Devgeta - Your cross-platform CLI to install, configure, and manage development environments",
+	Long: `Devgeta (dg) helps you set up and manage your development environment with ease.
 
 Key Features:
   • Debian/Ubuntu and macOS support
@@ -25,7 +25,7 @@ Key Features:
   • Maintain a global manifest of installed components to prevent conflicts
   • Choose and apply themes and fonts for your environment
   • Reconfigure or force reconfigure apps and dotfiles
-  • Safely uninstall only what Devgita managed
+  • Safely uninstall only what Devgeta managed
   • Detect and revert failed installs to keep your system clean
   • Create and restore configuration backups
   • Validate your setup to catch issues early
@@ -38,12 +38,12 @@ Available Commands:
   re-configure   Re-apply configuration even if already present
   uninstall      Remove previously installed apps or assets (fonts/themes) safely
   update         Update selected apps (e.g., --neovim, --aerospace)
-  list           View all items installed via Devgita
+  list           View all items installed via Devgeta
   check-updates  See if any managed apps have updates
-  backup         Create a backup of your current Devgita-managed environment
+  backup         Create a backup of your current Devgeta-managed environment
   restore        Restore a previous backup configuration
   change         Change font or theme (--theme=..., --font=...)
-  version        Print the version number of devgita
+  version        Print the version number of devgeta
 
 Examples:
   dg install
@@ -74,6 +74,6 @@ func init() {
 
 	rootCmd.Version = Version
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
-		"devgita {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
+		"devgeta {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
 	))
 }

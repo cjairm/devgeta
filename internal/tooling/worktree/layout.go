@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/config"
+	"github.com/cjairm/devgeta/internal/config"
 )
 
 // nvimCommand is the shell command used to launch Neovim in a tmux pane.
@@ -183,12 +183,12 @@ func deriveLayoutFromAlias(alias string) (Layout, error) {
 //
 // IMPORTANT - what to pass as aiAlias:
 //
-// aiAlias must be resolved from ONLY the flag and DEVGITA_WORKTREE_AI env
+// aiAlias must be resolved from ONLY the flag and DEVGETA_WORKTREE_AI env
 // var, e.g.:
 //
 //	aiAlias := flagValue
 //	if aiAlias == "" {
-//		aiAlias = os.Getenv("DEVGITA_WORKTREE_AI")
+//		aiAlias = os.Getenv("DEVGETA_WORKTREE_AI")
 //	}
 //
 // Do NOT pass ResolveAIAlias(flag, gc) here. ResolveAIAlias already folds

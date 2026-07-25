@@ -24,8 +24,8 @@ package bison
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Bison struct {
@@ -56,7 +56,7 @@ func (b *Bison) ForceInstall() error {
 }
 
 func (b *Bison) Uninstall() error {
-	return fmt.Errorf("bison uninstall not supported through devgita")
+	return fmt.Errorf("bison uninstall not supported through devgeta")
 }
 
 func (b *Bison) ForceConfigure() error {
@@ -84,5 +84,5 @@ func (b *Bison) ExecuteCommand(args ...string) error {
 }
 
 func (b *Bison) Update() error {
-	return fmt.Errorf("bison update not implemented through devgita")
+	return fmt.Errorf("bison update not implemented through devgeta")
 }

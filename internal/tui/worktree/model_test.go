@@ -10,12 +10,12 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/internal/tooling/task"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/internal/tooling/task"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func init() { testutil.InitLogger() }

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 const (

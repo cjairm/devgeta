@@ -1,4 +1,4 @@
-// LazyDocker terminal UI for Docker container and image management with devgita integration
+// LazyDocker terminal UI for Docker container and image management with devgeta integration
 //
 // LazyDocker is a simple terminal UI for both docker and docker-compose, written in Go
 // with the gocui library. It provides an interactive interface to manage Docker containers,
@@ -21,14 +21,14 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/downloader"
-	gh "github.com/cjairm/devgita/pkg/github"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/downloader"
+	gh "github.com/cjairm/devgeta/pkg/github"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 var _ apps.App = (*LazyDocker)(nil)

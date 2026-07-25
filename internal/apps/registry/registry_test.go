@@ -4,14 +4,14 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }
 
 var expectedApps = []string{
-	"aerospace", "alacritty", "brave", "claude", "devgita", "docker",
+	"aerospace", "alacritty", "brave", "claude", "devgeta", "docker",
 	"fastfetch", "flameshot", "gimp", "git", "i3", "lazydocker",
 	"lazygit", "mise", "neovim", "opencode", "raycast", "rtk", "tmux", "ulauncher",
 }
@@ -126,7 +126,7 @@ func TestGetAppsByKind_NoMeta(t *testing.T) {
 	desktop := GetAppsByKind(apps.KindDesktop)
 	all := append(terminal, desktop...)
 	for _, name := range all {
-		if name == "devgita" {
+		if name == "devgeta" {
 			t.Errorf("KindMeta app %q must not appear in terminal or desktop results", name)
 		}
 	}
@@ -135,7 +135,7 @@ func TestGetAppsByKind_NoMeta(t *testing.T) {
 func TestMeta_ConsistencyWithFactories(t *testing.T) {
 	for name, meta := range Meta {
 		if meta.Coordinator == "" {
-			continue // devgita sentinel — no factory requirement
+			continue // devgeta sentinel — no factory requirement
 		}
 		if _, ok := factories[name]; !ok {
 			t.Errorf(
@@ -156,8 +156,8 @@ func TestIsKnownApp(t *testing.T) {
 	if !IsKnownApp("git") {
 		t.Error("IsKnownApp(git) = false, want true")
 	}
-	if IsKnownApp("devgita") {
-		t.Error("IsKnownApp(devgita) = true, want false")
+	if IsKnownApp("devgeta") {
+		t.Error("IsKnownApp(devgeta) = true, want false")
 	}
 	if IsKnownApp("notanapp") {
 		t.Error("IsKnownApp(notanapp) = true, want false")

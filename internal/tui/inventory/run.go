@@ -3,9 +3,9 @@ package tuiinventory
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 // Run starts the interactive inventory dashboard for dg list.

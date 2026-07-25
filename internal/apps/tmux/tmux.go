@@ -15,13 +15,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps"
-	"github.com/cjairm/devgita/internal/apps/baseapp"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 var _ apps.App = (*Tmux)(nil)
@@ -365,8 +365,8 @@ func (t *Tmux) SplitWindow(window, workdir, direction string) error {
 // Pane IDs, not pane indexes, are the only reliable way to re-target a
 // specific pane once other panes may have been created around it: tmux
 // numbers a window's panes starting from the "pane-base-index" option, which
-// devgita's own shipped tmux.conf sets to 1 (configs/tmux/tmux.conf) - so on
-// a devgita-configured server, pane index 0 does not exist, and even a
+// devgeta's own shipped tmux.conf sets to 1 (configs/tmux/tmux.conf) - so on
+// a devgeta-configured server, pane index 0 does not exist, and even a
 // correctly-computed base-index is only a snapshot that stops matching once
 // panes are added/removed/reordered. Pane IDs are assigned by tmux in
 // creation order and are unique server-wide regardless of that option, so

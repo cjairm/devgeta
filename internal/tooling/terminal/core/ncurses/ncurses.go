@@ -1,9 +1,9 @@
-// Ncurses terminal UI library with devgita integration
+// Ncurses terminal UI library with devgeta integration
 //
 // Ncurses (new curses) is a programming library providing an API that allows
 // programmers to write text-based user interfaces in a terminal-independent manner.
 // This module provides installation and configuration management for ncurses with
-// devgita integration.
+// devgeta integration.
 //
 // References:
 // - Ncurses Homepage: https://invisible-island.net/ncurses/
@@ -20,8 +20,8 @@ package ncurses
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Ncurses struct {
@@ -55,7 +55,7 @@ func (n *Ncurses) ForceInstall() error {
 }
 
 func (n *Ncurses) Uninstall() error {
-	return fmt.Errorf("ncurses uninstall not supported through devgita")
+	return fmt.Errorf("ncurses uninstall not supported through devgeta")
 }
 
 func (n *Ncurses) ForceConfigure() error {
@@ -85,5 +85,5 @@ func (n *Ncurses) ExecuteCommand(args ...string) error {
 }
 
 func (n *Ncurses) Update() error {
-	return fmt.Errorf("ncurses update not implemented through devgita")
+	return fmt.Errorf("ncurses update not implemented through devgeta")
 }

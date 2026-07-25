@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/apps/git"
-	"github.com/cjairm/devgita/internal/apps/tmux"
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/testutil"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // twoPaneLayout is a 2-pane Layout literal (no install checkers, so
@@ -56,7 +56,7 @@ func newLayoutTestWM(mockGitBase, mockTmuxBase *commands.MockBaseCommand) *Workt
 // tmux calls in the exact order buildWindowPanes documents: create the
 // window, capture pane 0's id, launch pane 0, split, launch pane 1, then
 // reselect pane 0 by the captured id (never by index - see ActivePaneID's
-// doc comment for why: devgita's own tmux.conf sets pane-base-index to 1).
+// doc comment for why: devgeta's own tmux.conf sets pane-base-index to 1).
 func TestCreateMultiPaneLayoutCallOrder(t *testing.T) {
 	repoRoot := t.TempDir()
 
@@ -79,7 +79,7 @@ func TestCreateMultiPaneLayoutCallOrder(t *testing.T) {
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)
@@ -117,7 +117,7 @@ func TestCreateMultiPaneLayoutCallOrder(t *testing.T) {
 
 	// The final select-pane must target pane 0's captured id, not some other
 	// pane or a bare index (which would silently select nothing/the wrong
-	// pane under devgita's own pane-base-index=1 tmux.conf).
+	// pane under devgeta's own pane-base-index=1 tmux.conf).
 	last := mockTmuxBase.ExecCommandCalls[len(mockTmuxBase.ExecCommandCalls)-1]
 	found := false
 	for _, arg := range last.Args {
@@ -152,7 +152,7 @@ func TestCreateSinglePaneLayoutSkipsReselect(t *testing.T) {
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)
@@ -207,7 +207,7 @@ func TestCreateMultiPaneMidBuildFailureRollsBack(t *testing.T) {
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)
@@ -277,7 +277,7 @@ func TestCreateAtMultiPaneFailureKillsWindowNotSession(t *testing.T) {
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := filepath.Join(paths.Paths.Data.Root, "devgita", "worktrees", repoSlug, "feature-test")
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
 	t.Cleanup(func() {
 		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
 			t.Logf("cleanup: %v", err)

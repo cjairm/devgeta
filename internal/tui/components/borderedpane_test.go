@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // stripANSI removes ANSI escape codes from a string.

@@ -17,7 +17,7 @@ require("neo-tree").setup({
 			},
 		},
 	},
-	-- [devgita]
+	-- [devgeta]
 	event_handlers = {
 		{
 			event = "file_opened",
@@ -26,5 +26,5 @@ require("neo-tree").setup({
 			end,
 		},
 	},
-	-- [/devgita]
+	-- [/devgeta]
 })

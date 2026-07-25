@@ -13,8 +13,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // defaultScanDepth is used whenever scan_depth is unset, zero, or negative.

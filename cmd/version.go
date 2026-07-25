@@ -25,7 +25,7 @@ var readBuildInfo = debug.ReadBuildInfo
 
 // resolveVersionInfo returns the version, commit, and build date, falling
 // back to runtime/debug.BuildInfo when ldflags weren't applied (e.g. plain
-// `go build` or `go install github.com/cjairm/devgita@latest`).
+// `go build` or `go install github.com/cjairm/devgeta@latest`).
 func resolveVersionInfo() (version, commit, buildDate string) {
 	version, commit, buildDate = Version, Commit, BuildDate
 
@@ -59,13 +59,13 @@ func resolveVersionInfo() (version, commit, buildDate string) {
 
 func printVersion(w io.Writer) {
 	version, commit, buildDate := resolveVersionInfo()
-	fmt.Fprintf(w, "devgita %s (commit: %s, built: %s)\n", version, commit, buildDate)
+	fmt.Fprintf(w, "devgeta %s (commit: %s, built: %s)\n", version, commit, buildDate)
 }
 
 var versionCmd = &cobra.Command{
 	Use:   "version",
-	Short: "Print the version number of devgita",
-	Long:  `All software has versions. This is devgita's.`,
+	Short: "Print the version number of devgeta",
+	Long:  `All software has versions. This is devgeta's.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		printVersion(cmd.OutOrStdout())
 		return nil

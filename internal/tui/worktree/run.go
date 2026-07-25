@@ -3,9 +3,9 @@ package tuiworktree
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/worktree"
-	"github.com/cjairm/devgita/pkg/logger"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // Run starts the worktree TUI dashboard.

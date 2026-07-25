@@ -7,10 +7,10 @@ import (
 	"slices"
 	"time"
 
-	"github.com/cjairm/devgita/pkg/constants"
-	"github.com/cjairm/devgita/pkg/files"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 	"gopkg.in/yaml.v3"
 )
 
@@ -56,7 +56,7 @@ type ShellFeatures struct {
 	Claude                bool `yaml:"claude"`
 }
 
-// IntegrationsConfig tracks explicit cross-app opt-ins that devgita must
+// IntegrationsConfig tracks explicit cross-app opt-ins that devgeta must
 // preserve when re-rendering another app's config. RtkClaudeHook records that
 // the user opted into rtk's command-rewriting hook (ADR-0004: the hook is
 // never enabled automatically), so claude's settings.json template keeps the
@@ -74,7 +74,7 @@ type FailedInstallation struct {
 	AttemptCount int       `yaml:"attempt_count"`
 }
 
-// RecentRepo tracks a repo root devgita has created a worktree in, so the
+// RecentRepo tracks a repo root devgeta has created a worktree in, so the
 // worktree TUI's repo picker can offer it again (most-recently-used first)
 // even after every worktree under it has been removed.
 type RecentRepo struct {
@@ -341,7 +341,7 @@ func (gc *GlobalConfig) AddToFailed(packageName, category, errorMessage string, 
 	)
 }
 
-func (gc *GlobalConfig) IsInstalledByDevgita(itemName, itemType string) bool {
+func (gc *GlobalConfig) IsInstalledByDevgeta(itemName, itemType string) bool {
 	return gc.IsTracked(itemName, itemType, "installed")
 }
 

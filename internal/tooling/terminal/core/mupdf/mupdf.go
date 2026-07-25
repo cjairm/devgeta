@@ -34,8 +34,8 @@ package mupdf
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Mupdf struct {
@@ -66,7 +66,7 @@ func (m *Mupdf) ForceInstall() error {
 }
 
 func (m *Mupdf) Uninstall() error {
-	return fmt.Errorf("mupdf uninstall not supported through devgita")
+	return fmt.Errorf("mupdf uninstall not supported through devgeta")
 }
 
 func (m *Mupdf) ForceConfigure() error {
@@ -94,5 +94,5 @@ func (m *Mupdf) ExecuteCommand(args ...string) error {
 }
 
 func (m *Mupdf) Update() error {
-	return fmt.Errorf("mupdf update not implemented through devgita")
+	return fmt.Errorf("mupdf update not implemented through devgeta")
 }

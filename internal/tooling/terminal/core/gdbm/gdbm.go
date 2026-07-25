@@ -25,8 +25,8 @@ package gdbm
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Gdbm struct {
@@ -57,7 +57,7 @@ func (g *Gdbm) ForceInstall() error {
 }
 
 func (g *Gdbm) Uninstall() error {
-	return fmt.Errorf("gdbm uninstall not supported through devgita")
+	return fmt.Errorf("gdbm uninstall not supported through devgeta")
 }
 
 func (g *Gdbm) ForceConfigure() error {
@@ -86,5 +86,5 @@ func (g *Gdbm) ExecuteCommand(args ...string) error {
 }
 
 func (g *Gdbm) Update() error {
-	return fmt.Errorf("gdbm update not implemented through devgita")
+	return fmt.Errorf("gdbm update not implemented through devgeta")
 }

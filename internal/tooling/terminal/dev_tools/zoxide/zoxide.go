@@ -1,4 +1,4 @@
-// Zoxide smart directory navigation tool with devgita integration
+// Zoxide smart directory navigation tool with devgeta integration
 //
 // Zoxide is a smarter cd command that learns your habits and allows you to navigate
 // to frequently and recently used directories with just a few keystrokes. It tracks
@@ -20,7 +20,7 @@
 //
 // Shell integration:
 //   After installation and configuration, zoxide is automatically enabled via
-//   devgita's template-based shell configuration system. The 'z' command becomes
+//   devgeta's template-based shell configuration system. The 'z' command becomes
 //   available for smart navigation:
 //   - z foo - Jump to directory matching 'foo'
 //   - zi foo - Interactive selection when multiple matches
@@ -30,9 +30,9 @@ package zoxide
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type Zoxide struct {
@@ -114,5 +114,5 @@ func (z *Zoxide) ExecuteCommand(args ...string) error {
 }
 
 func (z *Zoxide) Update() error {
-	return fmt.Errorf("zoxide update not implemented through devgita")
+	return fmt.Errorf("zoxide update not implemented through devgeta")
 }

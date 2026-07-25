@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/apps/mise"
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/pkg/logger"
-	"github.com/cjairm/devgita/pkg/promptui"
-	"github.com/cjairm/devgita/pkg/utils"
+	"github.com/cjairm/devgeta/internal/apps/mise"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/promptui"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 // LanguageInstaller defines the interface for language installation
@@ -116,7 +116,7 @@ func (dl *DevLanguages) getInstalledLanguages(gc *config.GlobalConfig) []string 
 	languageConfigs := GetLanguageConfigs()
 	for _, langCfg := range languageConfigs {
 		langSpec := formatSpec(langCfg.Name, langCfg.Version, langCfg.UseMise)
-		if gc.IsInstalledByDevgita(langSpec, "dev_language") ||
+		if gc.IsInstalledByDevgeta(langSpec, "dev_language") ||
 			gc.IsAlreadyInstalled(langSpec, "dev_language") {
 			installed = append(installed, langCfg.DisplayName)
 		}
@@ -220,7 +220,7 @@ func (dl *DevLanguages) detectPreInstalledLanguages() {
 	configUpdated := false
 	for _, langCfg := range languageConfigs {
 		langSpec := formatSpec(langCfg.Name, langCfg.Version, langCfg.UseMise)
-		if gc.IsInstalledByDevgita(langSpec, "dev_language") ||
+		if gc.IsInstalledByDevgeta(langSpec, "dev_language") ||
 			gc.IsAlreadyInstalled(langSpec, "dev_language") {
 			continue
 		}

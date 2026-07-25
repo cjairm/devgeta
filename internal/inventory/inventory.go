@@ -1,10 +1,10 @@
 package inventory
 
 import (
-	cmdpkg "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/databases"
-	"github.com/cjairm/devgita/internal/tooling/languages"
+	cmdpkg "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/databases"
+	"github.com/cjairm/devgeta/internal/tooling/languages"
 )
 
 // ItemState is the result of a live drift check for one tracked item.
@@ -31,11 +31,11 @@ func (s ItemState) String() string {
 	}
 }
 
-// Item is one tracked piece of devgita state plus its live drift-check result.
+// Item is one tracked piece of devgeta state plus its live drift-check result.
 type Item struct {
 	Name     string
 	Category string // "packages", "desktop_apps", "fonts", "themes", "terminal_tools", "dev_languages", "databases"
-	Source   string // "installed" (devgita installed it) or "pre-existing" (found already on the system)
+	Source   string // "installed" (devgeta installed it) or "pre-existing" (found already on the system)
 	State    ItemState
 	Detail   string // populated when State == StateUnknown (the check error's message)
 }
@@ -58,7 +58,7 @@ var Categories = []CategoryInfo{
 	{Key: "databases", Label: "Databases"},
 }
 
-// Collector runs presence checks for every item devgita has tracked, for both
+// Collector runs presence checks for every item devgeta has tracked, for both
 // the "installed" and "already_installed" buckets of global_config.yaml.
 type Collector struct {
 	Cmd  cmdpkg.Command

@@ -106,7 +106,7 @@ func TestPrintVersion_Format(t *testing.T) {
 	var buf bytes.Buffer
 	printVersion(&buf)
 
-	want := "devgita v0.10.3 (commit: abc1234, built: 2026-05-14T12:00:00Z)\n"
+	want := "devgeta v0.10.3 (commit: abc1234, built: 2026-05-14T12:00:00Z)\n"
 	if buf.String() != want {
 		t.Errorf("output mismatch:\n  want: %q\n  got:  %q", want, buf.String())
 	}
@@ -123,7 +123,7 @@ func TestVersionCmd_WritesToCobraOutput(t *testing.T) {
 	if err := versionCmd.RunE(versionCmd, nil); err != nil {
 		t.Fatalf("RunE returned error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "devgita v0.10.3") {
+	if !strings.Contains(buf.String(), "devgeta v0.10.3") {
 		t.Errorf("expected output to contain version, got %q", buf.String())
 	}
 }

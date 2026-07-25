@@ -23,8 +23,8 @@ package pkgconfig
 import (
 	"fmt"
 
-	cmd "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/pkg/constants"
+	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 type PkgConfig struct {
@@ -55,7 +55,7 @@ func (pc *PkgConfig) ForceInstall() error {
 }
 
 func (pc *PkgConfig) Uninstall() error {
-	return fmt.Errorf("pkg-config uninstall not supported through devgita")
+	return fmt.Errorf("pkg-config uninstall not supported through devgeta")
 }
 
 func (pc *PkgConfig) ForceConfigure() error {
@@ -83,5 +83,5 @@ func (pc *PkgConfig) ExecuteCommand(args ...string) error {
 }
 
 func (pc *PkgConfig) Update() error {
-	return fmt.Errorf("pkg-config update not implemented through devgita")
+	return fmt.Errorf("pkg-config update not implemented through devgeta")
 }
