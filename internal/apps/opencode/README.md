@@ -30,18 +30,18 @@ export OPENROUTER_API_KEY="your-key-here"
 
 ## Models
 
-| Model                     | Role                       |
-| ------------------------- | -------------------------- |
-| `anthropic/claude-opus-4` | Hardest reasoning          |
-| `qwen/qwen3-coder`        | Daily coding (default)     |
-| `moonshotai/kimi-k2`      | Agents + large repos       |
-| `qwen/qwen3.5-coder-480b` | Deep review + architecture |
-| `minimax/minimax-m1`      | Cheap bulk tasks           |
+| Model                        | Role                       |
+| ---------------------------- | -------------------------- |
+| `anthropic/claude-fable-5`   | Hardest reasoning          |
+| `anthropic/claude-opus-5`    | Daily coding (default)     |
+| `moonshotai/kimi-k3`         | Agents + large repos       |
+| `z-ai/glm-5.2`               | Deep review + architecture |
+| `deepseek/deepseek-v4-flash` | Cheap bulk tasks           |
 
 ### When to switch
 
-- **claude-opus-4** — when nothing else solves it
-- **qwen3-coder** — everyday coding, bug fixes, PR reviews
-- **kimi-k2** — large codebases, multi-file refactors, long agent workflows
-- **qwen3.5-coder-480b** — architecture decisions, hard debugging, critical reviews
-- **minimax-m1** — background or non-critical automation
+- **claude-fable-5** — when nothing else solves it
+- **claude-opus-5** — everyday coding, bug fixes, PR reviews
+- **kimi-k3** — large codebases, multi-file refactors, long agent workflows
+- **glm-5.2** — architecture decisions, hard debugging, critical reviews
+- **deepseek-v4-flash** — background or non-critical automation
