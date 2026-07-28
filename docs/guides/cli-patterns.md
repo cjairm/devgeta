@@ -6,7 +6,7 @@ Guide to building consistent, user-friendly commands using Cobra. Covers all cur
 
 ## Overview
 
-Every devgita command follows these principles:
+Every devgeta command follows these principles:
 
 1. **Clear hierarchy** — Root → Category → Action (e.g., `dg worktree create`)
 2. **Consistent flags** — Predictable naming and behavior across commands
@@ -21,7 +21,7 @@ Every devgita command follows these principles:
 
 **File:** `cmd/root.go`
 
-Every devgita command starts with the root command that:
+Every devgeta command starts with the root command that:
 
 - Initializes logging: `logger.Init(verbose)` via `PersistentPreRunE`
 - Provides global flags: `--verbose`, `--debug` (alias for verbose)
@@ -69,12 +69,12 @@ For commands with no subcommands, use simple `Run` function:
 var versionCmd = &cobra.Command{
     Use:   "version",
     Short: "Print the version number",
-    Long: `Print the version number of devgita.
+    Long: `Print the version number of devgeta.
 
 Examples:
   dg version`,
     Run: func(cmd *cobra.Command, args []string) {
-        fmt.Println("devgita v0.1.0")
+        fmt.Println("devgeta v0.1.0")
     },
 }
 
@@ -101,8 +101,8 @@ var (
 
 var installCmd = &cobra.Command{
     Use:   "install",
-    Short: "Install devgita and all required tools",
-    Long: `Installs the devgita platform and sets up your development environment.
+    Short: "Install devgeta and all required tools",
+    Long: `Installs the devgeta platform and sets up your development environment.
 
 This command performs the following steps:
   1. Validates your OS version

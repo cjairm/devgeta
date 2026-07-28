@@ -1,6 +1,6 @@
 # Development Guides
 
-Detailed guides for implementing features, tests, and commands in devgita. These supplement [CLAUDE.md](../../CLAUDE.md) with practical examples and deep dives.
+Detailed guides for implementing features, tests, and commands in devgeta. These supplement [CLAUDE.md](../../CLAUDE.md) with practical examples and deep dives.
 
 ---
 
@@ -8,7 +8,7 @@ Detailed guides for implementing features, tests, and commands in devgita. These
 
 ### [CLI Patterns](cli-patterns.md) — Building commands with Cobra
 
-Everything about designing and building devgita commands:
+Everything about designing and building devgeta commands:
 
 - Command hierarchy and structure
 - Flag handling (string slices, booleans, validation)
@@ -41,7 +41,7 @@ How to design `dg task` output for LLM agents:
 
 ### [Testing Patterns](testing-patterns.md) — Isolation, mocks, and reliability
 
-Complete testing architecture for devgita:
+Complete testing architecture for devgeta:
 
 - Three levels of test isolation
 - Mock injection patterns
@@ -166,7 +166,7 @@ Complete release workflow:
 
 ---
 
-## How Guides Fit Into Devgita's Documentation
+## How Guides Fit Into Devgeta's Documentation
 
 ```
 CLAUDE.md (Source of Truth)

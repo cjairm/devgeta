@@ -8,8 +8,8 @@
 
 ## 1. Domain Context
 
-Devgita generates a shell-integration file (`~/.local/share/devgita/devgita.zsh`) from
-the Go `text/template` at `configs/templates/devgita.zsh.tmpl`. Inside it, gated by the
+Devgeta generates a shell-integration file (`~/.local/share/devgeta/devgeta.zsh`) from
+the Go `text/template` at `configs/templates/devgeta.zsh.tmpl`. Inside it, gated by the
 `ExtendedCapabilities` feature flag, lives a **shell function** named `dge()` (template
 lines 72–208). `dge` is a subcommand dispatcher with an allowlist guard that exposes a
 handful of developer utilities:
@@ -19,7 +19,7 @@ handful of developer utilities:
 - **GitHub:** `fetch-pr-comments <repo> <pr> [file]` (a `gh api graphql` + `jq` pipeline)
 
 **Problem.** `dge` is a shell function, so it only exists in an interactive shell that has
-sourced `devgita.zsh`. It cannot be invoked as an executable: agents (Claude Code, CI,
+sourced `devgeta.zsh`. It cannot be invoked as an executable: agents (Claude Code, CI,
 any non-interactive `bash -c`) cannot reliably call it, you can't `which` it, pipe to it,
 or call it from another process. The logic also lives as untested template text — outside
 the Go test suite this repo mandates.
@@ -40,7 +40,7 @@ Related docs: [CLAUDE.md](../../../CLAUDE.md) §6/§12, [docs/guides/cli-pattern
 
 **Relevant files and their purposes:**
 
-- `configs/templates/devgita.zsh.tmpl` (72–208) — current `dge()` function; will become a wrapper
+- `configs/templates/devgeta.zsh.tmpl` (72–208) — current `dge()` function; will become a wrapper
 - `internal/config/fromFile.go` (39–57, 381–388) — `ShellFeatures` struct + `RegenerateShellConfig()`
 - `internal/config/reconcile.go` (98–123) — `ExtendedCapabilities` hardcoded `true`
 - `cmd/worktree.go` — reference pattern for a parent command with subcommands, fzf selection, registration
@@ -93,7 +93,7 @@ humans (via `dge`), and is covered by the Go test suite.
 - [x] `dg task` parent command + subcommands: `delete-branch`, `refresh-branch`, `reset-main-branch`, `reinstall-libraries`, `reinstall-library`
 - [x] Interactive branch picker for `delete-branch` via `fzf.SelectFromList` (no `fzf-tmux` dependency)
 - [x] Extend `internal/tooling/terminal/dev_tools/githubcli/githubcli.go` so callers can pass a GraphQL query (with variables) and receive stdout back
-- [x] Rewrite the `dge()` function in `devgita.zsh.tmpl` to a thin wrapper: `dge() { dg task "$@"; }` (preserving the allowlist UX, or delegating validation to Cobra)
+- [x] Rewrite the `dge()` function in `devgeta.zsh.tmpl` to a thin wrapper: `dge() { dg task "$@"; }` (preserving the allowlist UX, or delegating validation to Cobra)
 - [x] Tests (mocked) for every `dg task` subcommand and the new githubcli method
 - [x] Register `taskCmd` (in `cmd/task.go`'s own `init()`, following the same self-registering pattern as `cmd/worktree.go`, rather than in `cmd/root.go` directly)
 - [x] Document `dg task` in `docs/spec.md` and README; note the `dge` → `dg task` relationship
@@ -132,8 +132,8 @@ on commit messages alone.
 | Create | `cmd/task.go`                                                                 | `taskCmd` parent + subcommands                                                                                  |
 | Create | `cmd/task_test.go`                                                            | Subcommand arg-parsing/dispatch tests (mocked)                                                                  |
 | Modify | `cmd/root.go`                                                                 | Register `taskCmd`                                                                                              |
-| Modify | `configs/templates/devgita.zsh.tmpl` (72–208)                                 | Replace `dge()` body with wrapper forwarding to `dg task`                                                       |
-| Modify | `configs/templates/devgita.zsh.tmpl` (related test)                           | Update template golden/expectation tests if present                                                             |
+| Modify | `configs/templates/devgeta.zsh.tmpl` (72–208)                                 | Replace `dge()` body with wrapper forwarding to `dg task`                                                       |
+| Modify | `configs/templates/devgeta.zsh.tmpl` (related test)                           | Update template golden/expectation tests if present                                                             |
 | Modify | `docs/spec.md`, `README.md`                                                   | Document `dg task`; explain `dge` wrapper                                                                       |
 
 ### Step-by-Step
@@ -184,18 +184,18 @@ on commit messages alone.
 
 - `rootCmd.AddCommand(taskCmd)` and attach subcommands in `cmd/task.go` init (worktree pattern).
 - `cmd/task_test.go`: assert each subcommand parses args and dispatches to a mocked TaskManager.
-- Verify: `go test ./cmd/ -v` and `./devgita task --help`
+- Verify: `go test ./cmd/ -v` and `./devgeta task --help`
 
 #### Step 7: Rewrite dge() wrapper
 
-- Replace the `dge()` body in `devgita.zsh.tmpl` with a thin forwarder, e.g.:
+- Replace the `dge()` body in `devgeta.zsh.tmpl` with a thin forwarder, e.g.:
   ```sh
   dge() { dg task "$@"; }
   ```
   Keep it inside `{{if .ExtendedCapabilities}}`. Decide whether to keep the friendly
   `valid commands are: ...` echo (call `dg task --help` on no args) — recommended for parity.
-- Update any template expectation/golden tests (`internal/config`, `internal/apps/devgita`).
-- Verify: `go test ./internal/config/ ./internal/apps/devgita/`
+- Update any template expectation/golden tests (`internal/config`, `internal/apps/devgeta`).
+- Verify: `go test ./internal/config/ ./internal/apps/devgeta/`
 
 #### Step 8: Documentation
 
@@ -213,20 +213,20 @@ on commit messages alone.
 go test ./internal/tooling/task/
 go test ./internal/tooling/terminal/dev_tools/githubcli/
 go test ./cmd/
-go test ./internal/config/ ./internal/apps/devgita/
+go test ./internal/config/ ./internal/apps/devgeta/
 make lint
 go test ./... -cover
 ```
 
 ### Manual Verification
 
-1. `make build && ./devgita task --help` → lists all subcommands with descriptions
-2. `./devgita task reset-main-branch` (in a throwaway repo) → resets correctly or clear error
-3. `./devgita task refresh-branch` → defaults to `main`, merges into current branch
-4. `./devgita task delete-branch` → opens fzf picker, deletes selected branch
-5. `./devgita task reinstall-library lodash` (in a node project) → reinstalls just that package
+1. `make build && ./devgeta task --help` → lists all subcommands with descriptions
+2. `./devgeta task reset-main-branch` (in a throwaway repo) → resets correctly or clear error
+3. `./devgeta task refresh-branch` → defaults to `main`, merges into current branch
+4. `./devgeta task delete-branch` → opens fzf picker, deletes selected branch
+5. `./devgeta task reinstall-library lodash` (in a node project) → reinstalls just that package
 6. GraphQL: call the new `githubcli` method (via a small harness or a real `gh api graphql`) → returns JSON
-7. Regenerate shell config, `source ~/.local/share/devgita/devgita.zsh`, run `dge refresh-branch` → behaves identically to `dg task refresh-branch`
+7. Regenerate shell config, `source ~/.local/share/devgeta/devgeta.zsh`, run `dge refresh-branch` → behaves identically to `dg task refresh-branch`
 
 ### Regression Check
 
@@ -243,7 +243,7 @@ go test ./... -cover
 | Interactive fzf in a binary subcommand behaves differently than `fzf-tmux`            | Med        | Reuse the proven `fzf.SelectFromList` + worktree-remove pattern; document that selection is plain fzf, not tmux-popup      |
 | `dge` users relied on the allowlist echo for discoverability                          | Low        | Forward no-arg `dge` to `dg task --help`                                                                                   |
 | GraphQL method API too narrow/too broad                                               | Med        | Mirror `gh api graphql` flags (`-f` string vars, `-F` typed vars); keep raw-JSON return so callers shape with their own jq |
-| Template expectation tests drift                                                      | Med        | Run `internal/config` + `internal/apps/devgita` tests in Step 7 before commit                                              |
+| Template expectation tests drift                                                      | Med        | Run `internal/config` + `internal/apps/devgeta` tests in Step 7 before commit                                              |
 | Destructive git ops (`reset --hard`, `branch -D`) run from a binary feel less guarded | Med        | Preserve current behavior; do not add new auto-confirmation in this cycle (note for future)                                |
 
 ### Trade-offs Made

@@ -15,7 +15,7 @@ install category or fold into `terminal`.
 Two sub-decisions were needed:
 
 1. **Category:** new `ai-tools` category vs. registering rtk under `terminal`.
-2. **Hook:** whether devgita should run `rtk init -g`, which installs a hook
+2. **Hook:** whether devgeta should run `rtk init -g`, which installs a hook
    that rewrites every agent Bash call (`git status` → `rtk git status`).
 
 ## Decision
@@ -34,7 +34,7 @@ Two sub-decisions were needed:
    with a receipt). Users who want the hook run `rtk init -g` themselves;
    `docs/apps/rtk.md` documents it.
 3. **Install channels:** Homebrew formula on macOS; on Debian, the official
-   GitHub release binary via the shared `InstallGitHubBinary` helper (devgita
+   GitHub release binary via the shared `InstallGitHubBinary` helper (devgeta
    downloads and installs the binary itself rather than piping the upstream
    install script into `sh`, per the §4 security rule against executing
    downloaded code unreviewed). Review of this change surfaced that the helper
@@ -61,7 +61,7 @@ telemetry disabled by default, opt-in, anonymous aggregates.
 - Users don't get rtk's savings automatically: without the hook, agents only
   benefit when prompted to call `rtk` directly. That is the deliberate
   trade-off until the project stabilizes; revisit per ROADMAP.md.
-- The explicit opt-in has a devgita-native form on the AI coders themselves:
+- The explicit opt-in has a devgeta-native form on the AI coders themselves:
   `dg configure claude --force --only=rtk` and
   `dg configure opencode --force --only=rtk` (SelectiveConfigurer parts that
   delegate to `rtk init`). The Claude opt-in is persisted in

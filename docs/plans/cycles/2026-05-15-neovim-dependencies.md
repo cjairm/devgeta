@@ -53,7 +53,7 @@ to cover the `dg install --only neovim` path where those flows are skipped.
 ```bash
 go test ./internal/apps/neovim/...
 go test ./pkg/constants/...
-go build -o /tmp/devgita-test main.go && rm /tmp/devgita-test
+go build -o /tmp/devgeta-test main.go && rm /tmp/devgeta-test
 go vet ./...
 ```
 
@@ -189,10 +189,10 @@ package neovim
 import (
     "fmt"
 
-    cmd "github.com/cjairm/devgita/internal/commands"
-    "github.com/cjairm/devgita/internal/config"
-    "github.com/cjairm/devgita/pkg/constants"
-    "github.com/cjairm/devgita/pkg/logger"
+    cmd "github.com/cjairm/devgeta/internal/commands"
+    "github.com/cjairm/devgeta/internal/config"
+    "github.com/cjairm/devgeta/pkg/constants"
+    "github.com/cjairm/devgeta/pkg/logger"
 )
 
 // InstallDeps installs all system packages required for Neovim to function correctly.
@@ -368,7 +368,7 @@ if last != constants.Neovim {
 go test ./internal/apps/neovim/...
 go test ./internal/commands/...
 go test ./pkg/constants/...
-go build -o /tmp/devgita-test main.go && rm /tmp/devgita-test
+go build -o /tmp/devgeta-test main.go && rm /tmp/devgeta-test
 go vet ./...
 ```
 
@@ -388,7 +388,7 @@ All commands must exit 0 with no failures.
    tree-sitter --version
    nvim --version
    ```
-3. Check `~/.config/devgita/global_config.yaml` — `tree-sitter` should appear under `installed.packages` (especially on Bookworm where npm fallback runs)
+3. Check `~/.config/devgeta/global_config.yaml` — `tree-sitter` should appear under `installed.packages` (especially on Bookworm where npm fallback runs)
 4. Open Neovim — no "missing binary" warnings on startup.
 
 ### Regression Check

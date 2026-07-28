@@ -43,7 +43,7 @@ Related files: [docs/spec.md](../../spec.md), [ROADMAP.md](../../../ROADMAP.md),
 
 **KindDesktop (8):** aerospace, brave, docker, flameshot, gimp, i3, raycast, ulauncher
 
-**KindMeta (1):** devgita ← never included in install
+**KindMeta (1):** devgeta ← never included in install
 
 Note: `alacritty` is `KindTerminal` but is currently installed by the desktop coordinator. It stays there.
 
@@ -226,7 +226,7 @@ This is the core integration step.
   6. Pass computed filters: `installTerminalTools(summary, onlyCategorySet, skipCategorySet, terminalAppFilter)` etc.
 - Update `shouldInstall()` signature or replace with per-category logic
 - Expected outcome: compiles, existing category-only tests pass
-- Verify: `go build ./cmd/` then `./devgita install --help`
+- Verify: `go build ./cmd/` then `./devgeta install --help`
 
 #### Step 7: Tests for `cmd/install.go` flag parsing
 
@@ -263,18 +263,18 @@ make lint
 
 ```bash
 make build
-./devgita install --help           # Check flag descriptions
-./devgita install --only bogus     # Should error with valid names listed
-./devgita install --only neovim --help   # Verify accepted
-./devgita install --only terminal --skip lazygit --help  # Verify accepted
+./devgeta install --help           # Check flag descriptions
+./devgeta install --only bogus     # Should error with valid names listed
+./devgeta install --only neovim --help   # Verify accepted
+./devgeta install --only terminal --skip lazygit --help  # Verify accepted
 ```
 
 ### Regression Check
 
-- `./devgita install --only terminal` — existing behavior unchanged (no app filter)
-- `./devgita install --skip databases` — existing behavior unchanged
-- `./devgita install --help` — all flags still present and described
-- `./devgita configure neovim` — unrelated command unaffected
+- `./devgeta install --only terminal` — existing behavior unchanged (no app filter)
+- `./devgeta install --skip databases` — existing behavior unchanged
+- `./devgeta install --help` — all flags still present and described
+- `./devgeta configure neovim` — unrelated command unaffected
 
 ---
 

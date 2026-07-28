@@ -1,6 +1,6 @@
 # Claude Code (`claude`)
 
-Devgita installs [Claude Code](https://claude.com/claude-code), Anthropic's
+Devgeta installs [Claude Code](https://claude.com/claude-code), Anthropic's
 terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 `~/.claude/`.
 
@@ -25,7 +25,7 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 `--force` re-render: when `integrations.rtk_claude_hook` is set in
 `global_config.yaml` (via `dg configure claude --force --only=rtk`, the
 explicit opt-in required by [ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md)),
-the rendered file includes rtk's `PreToolUse` hook entry alongside devgita's
+the rendered file includes rtk's `PreToolUse` hook entry alongside devgeta's
 own hooks. `dg uninstall rtk` clears the flag. See [rtk.md](rtk.md).
 
 ## Permissions model
@@ -71,7 +71,7 @@ been patched in past releases).
 > linter binaries that neovim installs via Mason** at
 > `~/.local/share/nvim/mason/bin`, rather than installing a separate toolchain.
 > This keeps one source of truth for tool versions across the editor and Claude.
-> The trade-off: if neovim (and its Mason tools) is not installed via devgita,
+> The trade-off: if neovim (and its Mason tools) is not installed via devgeta,
 > `format.sh` silently no-ops — each tool is guarded by an executable check, so a
 > missing binary is skipped, not an error.
 
@@ -99,33 +99,33 @@ Notes:
 `settings.json` registers a `PreToolUse` hook on the `Bash` tool that runs
 `~/.claude/task-redirect.sh` before every Bash command Claude runs. The script
 reads the command from the hook payload (`.tool_input.command`) and denies a
-narrow set of raw-git patterns that have a dedicated `devgita task` equivalent
+narrow set of raw-git patterns that have a dedicated `devgeta task` equivalent
 — it never rewrites or runs anything itself, only denies with the exact
 replacement to run instead:
 
 | Raw pattern                                                                              | Replacement                                                     | Scope             |
 | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------- |
-| `git diff <ref>..<ref>` / `git log <ref>..<ref>` (any flags, e.g. `--stat`, `--oneline`) | `devgita task review-package <base> <head>`                     | global            |
-| `git worktree add ...`                                                                   | `devgita task worktree-start <name> [--base <ref>]`             | global            |
-| `git worktree remove ...`                                                                | `devgita task worktree-finish [<name>] --merge\|--discard`      | global            |
-| `gh pr checks ...`                                                                       | `devgita task pr-checks`                                        | global            |
-| `gh api graphql ... reviewThreads ...`                                                   | `devgita task review-threads`                                   | global            |
-| `gh pr review ...`                                                                       | `devgita task submit-review --event ...`                        | global            |
-| `git reset --soft HEAD~N` (N ≥ 1)                                                        | `devgita task release <version> --message-file <file> [--push]` | devgita repo only |
-| `git tag -a v<semver> ...`                                                               | `devgita task release <version> --message-file <file> [--push]` | devgita repo only |
+| `git diff <ref>..<ref>` / `git log <ref>..<ref>` (any flags, e.g. `--stat`, `--oneline`) | `devgeta task review-package <base> <head>`                     | global            |
+| `git worktree add ...`                                                                   | `devgeta task worktree-start <name> [--base <ref>]`             | global            |
+| `git worktree remove ...`                                                                | `devgeta task worktree-finish [<name>] --merge\|--discard`      | global            |
+| `gh pr checks ...`                                                                       | `devgeta task pr-checks`                                        | global            |
+| `gh api graphql ... reviewThreads ...`                                                   | `devgeta task review-threads`                                   | global            |
+| `gh pr review ...`                                                                       | `devgeta task submit-review --event ...`                        | global            |
+| `git reset --soft HEAD~N` (N ≥ 1)                                                        | `devgeta task release <version> --message-file <file> [--push]` | devgeta repo only |
+| `git tag -a v<semver> ...`                                                               | `devgeta task release <version> --message-file <file> [--push]` | devgeta repo only |
 
 **Scope.** These hooks deploy to the user's global config, so they fire on
 every Bash call in every repo. The `review-package`, `worktree-start`,
 `worktree-finish`, `pr-checks`, `review-threads`, and `submit-review` rules are
 **global**: each is a better/compressed form of a universal git or `gh`
-operation that imposes no devgita-specific convention, so redirecting it
+operation that imposes no devgeta-specific convention, so redirecting it
 everywhere is correct. The two **release** rules (`git reset --soft HEAD~N` and
-`git tag -a v<semver>`) are **devgita-repo-only**: they encode devgita's own
+`git tag -a v<semver>`) are **devgeta-repo-only**: they encode devgeta's own
 release policy (§9 squash-before-tag, strict `vX.Y.Z`), which would be wrong to
 steer in any other project. A release rule fires only when the command is
-running inside the devgita repo — detected by walking up from the payload's
+running inside the devgeta repo — detected by walking up from the payload's
 working directory (`.cwd`, falling back to the shell's `$PWD`) to the first
-`go.mod` and confirming its module path is `github.com/cjairm/devgita`. This
+`go.mod` and confirming its module path is `github.com/cjairm/devgeta`. This
 check runs only after a release pattern has already matched (the common allow
 path pays no lookup cost) and it **fails toward not firing**: if the working
 directory is indeterminate, no `go.mod` is found, or the module doesn't match,
@@ -164,7 +164,7 @@ failure mode). A missing/unparseable command, or jq itself being unavailable,
 falls through to exit 0 (allow) — this hook must never accidentally block all
 Bash calls.
 
-**Bypass:** every deny message ends with `set DEVGITA_SKIP_TASK_REDIRECT=1 to
+**Bypass:** every deny message ends with `set DEVGETA_SKIP_TASK_REDIRECT=1 to
 bypass this session if raw git is genuinely needed`. Set that environment
 variable for the session to let raw git through unconditionally, or edit
 `~/.claude/settings.json` to remove the `PreToolUse` entry entirely if you
@@ -172,7 +172,7 @@ never want this hook active.
 
 The OpenCode plugin equivalent (`~/.config/opencode/plugin/task-redirect.js`,
 a `tool.execute.before` hook) mirrors the same pattern table, the same
-global-vs-devgita scoping, and the same `DEVGITA_SKIP_TASK_REDIRECT` bypass. It
+global-vs-devgeta scoping, and the same `DEVGETA_SKIP_TASK_REDIRECT` bypass. It
 reads the working directory for the release gate from the plugin context's
 `directory` (falling back to `worktree`, then `process.cwd()`) and applies the
 identical fail-toward-not-firing `go.mod` check — see that file's header
@@ -186,7 +186,7 @@ upstream syncs); this hook is the durable, runtime answer for those flows.
 
 `statusline.sh` renders model, context bar, git branch/status, rate limits, and
 duration. For directories that are **git worktrees** — either a _linked_ worktree
-(`git --git-dir` ≠ `--git-common-dir`) **or** any directory under devgita's
-worktree base (`$XDG_DATA_HOME/devgita/worktrees`, e.g. standalone clones placed
+(`git --git-dir` ≠ `--git-common-dir`) **or** any directory under devgeta's
+worktree base (`$XDG_DATA_HOME/devgeta/worktrees`, e.g. standalone clones placed
 there) — it shows a compact `wt:<repo>` label instead of the full path, since the
 branch already conveys the worktree identity.

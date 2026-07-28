@@ -1,8 +1,8 @@
-# Testing Patterns in Devgita
+# Testing Patterns in Devgeta
 
 ## 🧭 Why
 
-Ensure consistent, maintainable, and reliable tests across the devgita codebase by using dependency injection and mocking patterns. This guide documents the testing architecture that enables:
+Ensure consistent, maintainable, and reliable tests across the devgeta codebase by using dependency injection and mocking patterns. This guide documents the testing architecture that enables:
 
 - **Isolated unit tests**: Test app logic without running actual system commands
 - **Fast test execution**: No external dependencies or slow operations
@@ -17,7 +17,7 @@ Ensure consistent, maintainable, and reliable tests across the devgita codebase 
 ### Component Structure
 
 ```
-devgita/
+devgeta/
 ├── internal/
 │   ├── apps/                    # App implementations
 │   │   ├── curl/
@@ -47,7 +47,7 @@ devgita/
 
 - Execute real system commands (brew, apt, git, etc.)
 - Modify your actual `.zshrc` file
-- Write to real configuration directories (`~/.config/devgita/`)
+- Write to real configuration directories (`~/.config/devgeta/`)
 - Create temporary files that get sourced in your shell
 
 **Solution**: Use `testutil` package for complete isolation:
@@ -479,7 +479,7 @@ func TestUninstall(t *testing.T) {
 Use `errors.Is` — never string-match — when asserting that an operation is unsupported:
 
 ```go
-import "github.com/cjairm/devgita/internal/apps"
+import "github.com/cjairm/devgeta/internal/apps"
 
 func TestUninstall(t *testing.T) {
     mockApp := testutil.NewMockApp()

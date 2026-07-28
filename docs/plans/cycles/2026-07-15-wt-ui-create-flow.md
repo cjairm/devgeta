@@ -8,7 +8,7 @@
 
 ## 1. Domain Context
 
-`dg wt ui` is the worktree dashboard: it lists every devgita-managed worktree grouped by
+`dg wt ui` is the worktree dashboard: it lists every devgeta-managed worktree grouped by
 repo and supports attach, destroy (with session-hop), repair, filter, and a branch-diff
 pane. Creating a worktree, however, still requires leaving the TUI and typing
 `dg wt new <name> --repo <path>` — the most common action has the most friction.
@@ -257,7 +257,7 @@ repos, driven via a dedicated tmux session) — see cycle closeout notes for evi
   terminal — exactly the background-clearing effect this cycle removes. We build the
   picker from the components toolkit instead.
 - **Own store vs. zoxide-only:** zoxide may be absent and knows directories, not "repos
-  devgita used." The store is authoritative; zoxide is a supplement for first-time repos.
+  devgeta used." The store is authoritative; zoxide is a supplement for first-time repos.
 - **Attach immediately after create vs. stay in dashboard:** attach-and-quit matches the
   create+attach pattern every surveyed tool converged on; staying would add a keystroke to
   the common case.
@@ -285,7 +285,7 @@ repos, driven via a dedicated tmux session) — see cycle closeout notes for evi
 - IMPORTANT — candidate dedupe lacked a normalization contract. Resolved: canonical path
   form defined in Step 4 (expand `~`, absolute, clean, best-effort symlink resolution)
   and applied to all sources in Step 5; free-typed paths validate at selection time.
-- MINOR — `docs/spec.md` said `DEVGITA_AI` instead of `DEVGITA_WORKTREE_AI`. Fixed
+- MINOR — `docs/spec.md` said `DEVGETA_AI` instead of `DEVGETA_WORKTREE_AI`. Fixed
   directly (doc correction, independent of this cycle).
 
 ---

@@ -8,8 +8,8 @@
 Today a user reaches two tmux surfaces with two keys: bare `ctrl+t` runs tmux's native
 `choose-tree -Zs` (a session switcher over every session on the server), and `prefix + u`
 opens `dg wt ui` (the worktree dashboard). The worktree dashboard is scoped to git
-worktrees under `~/.local/share/devgita/worktrees/`; it has no concept of a standalone
-tmux session — one not backed by any devgita worktree (a manual `notes` session, an ssh
+worktrees under `~/.local/share/devgeta/worktrees/`; it has no concept of a standalone
+tmux session — one not backed by any devgeta worktree (a manual `notes` session, an ssh
 session). So `choose-tree` and `dg wt ui` show overlapping-but-different things, and the
 user must remember which key shows which.
 
@@ -18,7 +18,7 @@ We want one launcher. Three facts constrain the design:
 1. **tmux sessions cannot be nested.** The hierarchy is server → session → window → pane.
    Any notion of "everything under one parent" is a dashboard/view concept, not a tmux
    structural one.
-2. **devgita models a worktree as a tmux _window_, not a session.** Worktree windows are
+2. **devgeta models a worktree as a tmux _window_, not a session.** Worktree windows are
    named `wt-<repo>-<flat-name>` and live in a session named after the repo slug
    (`tmuxSessionName`). Several worktrees of one repo are windows in one repo session.
 3. **Worktrees exist independently of tmux.** `WorktreeManager.List()` walks the

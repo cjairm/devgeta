@@ -8,12 +8,12 @@
 
 ## 1. Domain Context
 
-Devgita tracks everything it installs in `~/.config/devgita/global_config.yaml` under two sections:
+Devgeta tracks everything it installs in `~/.config/devgeta/global_config.yaml` under two sections:
 
-- `installed` — packages devgita installed itself
-- `already_installed` — packages that were pre-existing when devgita ran
+- `installed` — packages devgeta installed itself
+- `already_installed` — packages that were pre-existing when devgeta ran
 
-`dg uninstall` reverses the install process: removes the binary/package, removes config files devgita wrote, disables shell features, and updates `global_config.yaml`. Pre-existing packages are never touched.
+`dg uninstall` reverses the install process: removes the binary/package, removes config files devgeta wrote, disables shell features, and updates `global_config.yaml`. Pre-existing packages are never touched.
 
 Each app's `Uninstall()` is self-contained — it handles binary removal, config cleanup, shell feature disabling, and global config updates, exactly mirroring how `Install` + `ForceConfigure` work.
 
@@ -98,7 +98,7 @@ This means the **actual item types in `global_config.yaml`** for existing instal
 
 **The previous draft's `AppEntry.ItemType` table was wrong for 9 apps** (fastfetch, git, i3, lazydocker, lazygit, mise, neovim, tmux were listed as `"terminal_tool"` but are actually tracked as `"package"`). Using the wrong item type in `RemoveFromInstalled` would silently fail to remove the entry.
 
-**Decision:** `RemoveFromInstalled` and `IsInstalledByDevgita` calls in `Uninstall()` must use the **actual tracked item type** (`"package"` or `"desktop_app"`), matching what `MaybeInstall*` stored. The `AppMeta` map below reflects reality.
+**Decision:** `RemoveFromInstalled` and `IsInstalledByDevgeta` calls in `Uninstall()` must use the **actual tracked item type** (`"package"` or `"desktop_app"`), matching what `MaybeInstall*` stored. The `AppMeta` map below reflects reality.
 
 ### ⚠️ REVISED: Registry stays in `internal/apps/registry/` — no move
 
@@ -134,7 +134,7 @@ var Meta = map[string]AppMeta{
     "raycast":    {Coordinator: "desktop",   ItemType: "desktop_app",  HasShellFeature: false},
     "tmux":       {Coordinator: "terminal",  ItemType: "package",      HasShellFeature: true},
     "ulauncher":  {Coordinator: "desktop",   ItemType: "desktop_app",  HasShellFeature: false},
-    "devgita":    {Coordinator: "",           ItemType: "",             HasShellFeature: false},
+    "devgeta":    {Coordinator: "",           ItemType: "",             HasShellFeature: false},
 }
 ```
 
@@ -142,7 +142,7 @@ Add helpers: `IsKnownApp`, `IsKnownCategory`, `KnownCategories`, `AppsByCoordina
 
 ### ⚠️ REVISED: "14 apps missing tracking" is overstated
 
-**Previous claim:** 14 apps don't call `AddToInstalled` in `ForceConfigure`, so `IsInstalledByDevgita` returns false.
+**Previous claim:** 14 apps don't call `AddToInstalled` in `ForceConfigure`, so `IsInstalledByDevgeta` returns false.
 
 **Actual situation:** All 18 apps ARE tracked during `Install()` by `MaybeInstallPackage`/`MaybeInstallDesktopApp` (which call `AddToInstalled` internally in `base.go:324`). The "gap" only affects `dg configure --force <app>` when run standalone without a prior install — a rare edge case.
 
@@ -225,16 +225,16 @@ Implement `dg uninstall <app|category>` that fully reverses the install process 
 - [ ] Mocked tests for every app's `Uninstall()` (success + failure paths)
 - [ ] Implement `cmd/uninstall.go` with `dg uninstall <app|category>`
 - [ ] (Cleanup) Fix `AddToInstalled` tracking in `ForceConfigure` for the 14 apps that are missing it — not a prerequisite for uninstall (apps are tracked during `Install()` by `MaybeInstall*`)
-- [ ] Orchestrator checks `IsInstalledByDevgita` before calling `Uninstall()`; skips pre-existing apps with a warning
+- [ ] Orchestrator checks `IsInstalledByDevgeta` before calling `Uninstall()`; skips pre-existing apps with a warning
 - [ ] `dg uninstall languages` / `dg uninstall databases` fail fast with explicit "not supported yet" error
-- [ ] `dg uninstall devgita` fails fast with "cannot uninstall devgita from itself"
+- [ ] `dg uninstall devgeta` fails fast with "cannot uninstall devgeta from itself"
 - [ ] Print "run `source ~/.zshrc` to apply shell changes" after any shell-feature-touching uninstall
 - [ ] Command registered via `init()` in `cmd/uninstall.go` (no `cmd/root.go` change needed)
 
 ### Explicitly Out of Scope
 
 - Languages and databases uninstall (mise manages language runtimes; complex, separate cycle)
-- `--force` flag to override `IsInstalledByDevgita` check
+- `--force` flag to override `IsInstalledByDevgeta` check
 - Interactive multi-select TUI
 - `dg uninstall` with no args
 - Compound `--only/--skip` flags on uninstall (single positional arg only in v1)
@@ -574,13 +574,13 @@ Test neovim with both `IsMacResult: true` and `false`. Test claude verifies npm 
 ```go
 var uninstallCmd = &cobra.Command{
     Use:   "uninstall <app|category>",
-    Short: "Uninstall an app or category installed by devgita",
+    Short: "Uninstall an app or category installed by devgeta",
     Long: `Reverses the install process for an app or category.
-Only removes apps that devgita originally installed. Pre-existing apps are skipped.
+Only removes apps that devgeta originally installed. Pre-existing apps are skipped.
 
 Examples:
   dg uninstall git           # uninstall a single app
-  dg uninstall terminal      # uninstall all terminal apps devgita installed
+  dg uninstall terminal      # uninstall all terminal apps devgeta installed
 `,
     Args: cobra.ExactArgs(1),
     RunE: runUninstall,
@@ -599,14 +599,14 @@ var uninstallGetAppFn = registry.GetApp
 
 1. **Block reserved targets first** (before any other validation):
    - `languages` or `databases` → return error: `"dg uninstall languages/databases is not yet supported — manage runtimes via mise"`
-   - `devgita` → return error: `"cannot uninstall devgita from itself"`
+   - `devgeta` → return error: `"cannot uninstall devgeta from itself"`
 2. Validate arg — `registry.IsKnownCategory` or `registry.IsKnownApp`; if neither, return error listing valid categories + apps
 3. Build target list: if category arg, all `registry.Meta` entries where `Coordinator == arg`; if app arg, just that entry
 4. Load `gc` once
 5. Track `anyFailed bool` and `shellFeatureChanged bool`
 6. For each target app:
    a. `itemType := registry.Meta[name].ItemType`
-   b. If `!gc.IsInstalledByDevgita(name, itemType)`: log warning "skipping %s: not installed by devgita", continue
+   b. If `!gc.IsInstalledByDevgeta(name, itemType)`: log warning "skipping %s: not installed by devgeta", continue
    c. `app, err := uninstallGetAppFn(name)` — uses the seam, mockable in tests
    d. If `err := app.Uninstall(); err != nil`: log error, set `anyFailed = true`, continue
     e. On success: set `shellFeatureChanged = true` if `registry.Meta[name].HasShellFeature` is true
@@ -618,9 +618,9 @@ var uninstallGetAppFn = registry.GetApp
 
 `cmd/uninstall_test.go`:
 - `dg uninstall languages` → explicit "not supported" error (checked before validation)
-- `dg uninstall devgita` → "cannot uninstall devgita from itself" (checked before validation)
+- `dg uninstall devgeta` → "cannot uninstall devgeta from itself" (checked before validation)
 - Unknown arg → error listing valid targets
-- App not tracked by devgita → warning logged, exit zero
+- App not tracked by devgeta → warning logged, exit zero
 - Single app uninstall succeeds → no error, `getAppFn` called with correct name
 - `app.Uninstall()` returns error → `anyFailed` captured, non-zero exit, other apps continue
 - Category uninstall → all apps in category processed, non-tracked ones skipped
@@ -668,7 +668,7 @@ make lint                        # Format + vet
 1. `dg uninstall --help` → shows `<app|category>` with examples
 2. `dg uninstall fakeapp` → error listing valid targets
 3. `dg uninstall languages` → "not supported" error
-4. `dg uninstall git` (not tracked) → "was not installed by devgita, skipping"
+4. `dg uninstall git` (not tracked) → "was not installed by devgeta, skipping"
 5. After `dg install --only fastfetch`: run `dg uninstall fastfetch` → binary gone, config dir gone, global_config updated
 6. After `dg install --only tmux`: run `dg uninstall tmux` → binary gone, `.tmux.conf` gone, shell feature disabled in global_config, "source ~/.zshrc" message printed
 7. `dg uninstall terminal` → processes all terminal apps, skips pre-existing ones, shows summary
@@ -695,7 +695,7 @@ go test ./...                     # nothing else broken
 ### Trade-offs Made
 
 - **`os.RemoveAll` injection vs direct call:** For testability, apps that remove config dirs should accept a `removeAllFn` field. Apps that don't need it (brave, gimp, etc.) can call `os.RemoveAll` directly since those code paths aren't in the test surface.
-- **Orchestrator vs per-app gc management:** Per-app `Uninstall()` owns its own gc operations (consistent with `ForceConfigure` pattern). The orchestrator only does the `IsInstalledByDevgita` pre-check.
+- **Orchestrator vs per-app gc management:** Per-app `Uninstall()` owns its own gc operations (consistent with `ForceConfigure` pattern). The orchestrator only does the `IsInstalledByDevgeta` pre-check.
 - **Continue on error:** Category uninstall continues past individual failures and reports them at the end, rather than aborting. Consistent with how `dg install` handles partial failures.
 
 ---
@@ -720,6 +720,6 @@ go test ./...                     # nothing else broken
 
 - **Steps 5–8 are parallelizable** once Steps 1–4 are done. Each app is independent.
 - **Commit after each step.** Run `/smart-commit` once the step's verify check passes.
-- **Check item types carefully** — `claude` and `opencode` use `"package"` not `"terminal_tool"` (see their `ForceConfigure`). Wrong type means `IsInstalledByDevgita` returns false and uninstall silently skips.
+- **Check item types carefully** — `claude` and `opencode` use `"package"` not `"terminal_tool"` (see their `ForceConfigure`). Wrong type means `IsInstalledByDevgeta` returns false and uninstall silently skips.
 - **`mise` warning is important** — users may not realize mise is the runtime manager for all their language versions.
 - **`removeAllFn` injection pattern:** Add `removeAllFn func(string) error` to any struct whose `Uninstall` calls `os.RemoveAll`; default to `os.RemoveAll` in `New()`. Test sets it to a stub. See neovim's `downloadFn` for the established precedent.

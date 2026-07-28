@@ -68,7 +68,7 @@ const (
     KindLanguage           // Language runtimes (managed by tooling/languages)
     KindDatabase           // Database servers (managed by tooling/databases)
     KindFont               // Font packages (Fonts uses FontInstaller, not App)
-    KindMeta               // devgita itself
+    KindMeta               // devgeta itself
 )
 ```
 

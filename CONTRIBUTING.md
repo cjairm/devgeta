@@ -1,4 +1,4 @@
-# Contributing to Devgita
+# Contributing to Devgeta
 
 Thank you for your interest in contributing! This guide covers development setup, testing, and release workflows.
 
@@ -18,8 +18,8 @@ Thank you for your interest in contributing! This guide covers development setup
 1. **Clone the repository:**
 
    ```bash
-   git clone https://github.com/cjairm/devgita.git
-   cd devgita
+   git clone https://github.com/cjairm/devgeta.git
+   cd devgeta
    ```
 
 2. **Install dependencies:**
@@ -36,7 +36,7 @@ Thank you for your interest in contributing! This guide covers development setup
 
 4. **Verify the build:**
    ```bash
-   ./devgita-$(uname -m | sed 's/aarch64/darwin-arm64/;s/x86_64/darwin-amd64/') --version
+   ./devgeta-$(uname -m | sed 's/aarch64/darwin-arm64/;s/x86_64/darwin-amd64/') --version
    ```
 
 ---
@@ -73,19 +73,19 @@ If you prefer direct Go commands:
 **For macOS Apple Silicon (M1/M2/M3+):**
 
 ```bash
-GOOS=darwin GOARCH=arm64 go build -o devgita-darwin-arm64
+GOOS=darwin GOARCH=arm64 go build -o devgeta-darwin-arm64
 ```
 
 **For macOS Intel:**
 
 ```bash
-GOOS=darwin GOARCH=amd64 go build -o devgita-darwin-amd64
+GOOS=darwin GOARCH=amd64 go build -o devgeta-darwin-amd64
 ```
 
 **For Linux/Debian/Ubuntu (x86_64):**
 
 ```bash
-GOOS=linux GOARCH=amd64 go build -o devgita-linux-amd64
+GOOS=linux GOARCH=amd64 go build -o devgeta-linux-amd64
 ```
 
 ---
@@ -130,10 +130,10 @@ Before submitting a PR, test your binary:
 make build
 
 # Install it locally for testing
-bash install.sh --local ./devgita-$(uname -m | sed 's/aarch64/darwin-arm64/;s/x86_64/darwin-amd64/')
+bash install.sh --local ./devgeta-$(uname -m | sed 's/aarch64/darwin-arm64/;s/x86_64/darwin-amd64/')
 
 # Test the installation
-devgita install --only terminal
+devgeta install --only terminal
 ```
 
 ---
@@ -222,7 +222,7 @@ See [CLAUDE.md section 9](CLAUDE.md#9-versioning--tagging) for the full versioni
    - Uploads binaries as release assets
 
 4. **Verify** the release:
-   - Check [GitHub Releases](https://github.com/cjairm/devgita/releases)
+   - Check [GitHub Releases](https://github.com/cjairm/devgeta/releases)
    - Test the installer script
    - Verify binary checksums
 
@@ -270,7 +270,7 @@ Understand the codebase organization:
 - **Architecture:** Read `docs/guides/cross-platform-installation.md`
 - **Decisions:** Check `docs/decisions/` for ADRs (Architecture Decision Records)
 - **Roadmap:** See `ROADMAP.md` for planned features
-- **Issues:** Check [GitHub Issues](https://github.com/cjairm/devgita/issues)
+- **Issues:** Check [GitHub Issues](https://github.com/cjairm/devgeta/issues)
 
 ---
 
@@ -287,4 +287,4 @@ Understand the codebase organization:
 
 Open an issue or discussion on GitHub, or reach out to the maintainers directly.
 
-Thank you for contributing to Devgita! 🎉
+Thank you for contributing to Devgeta! 🎉

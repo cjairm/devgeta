@@ -53,7 +53,7 @@ Relevant docs: [CLAUDE.md](../../CLAUDE.md), [ROADMAP.md](../../ROADMAP.md) (TUI
 
 ```go
 // cmd/version.go:27 — current format:
-fmt.Printf("devgita %s (commit: %s, built: %s)\n", Version, Commit, BuildDate)
+fmt.Printf("devgeta %s (commit: %s, built: %s)\n", Version, Commit, BuildDate)
 ```
 
 This format must survive migration to `rootCmd.Version`. Preserve it using:
@@ -61,7 +61,7 @@ This format must survive migration to `rootCmd.Version`. Preserve it using:
 ```go
 rootCmd.Version = Version
 rootCmd.SetVersionTemplate(fmt.Sprintf(
-    "devgita {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
+    "devgeta {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
 ))
 ```
 
@@ -83,10 +83,10 @@ This bypasses Cobra's normal lifecycle and causes `os.Exit(0)` in `init()` — a
 **Binary artifact locations (from Makefile):**
 
 ```
-devgita               → make build (current platform)
-devgita-darwin-arm64  → make all
-devgita-darwin-amd64  → make all
-devgita-linux-amd64   → make all
+devgeta               → make build (current platform)
+devgeta-darwin-arm64  → make all
+devgeta-darwin-amd64  → make all
+devgeta-linux-amd64   → make all
 ```
 
 All artifacts land in the **repo root**, not a `build/` directory.
@@ -168,7 +168,7 @@ toolchain go1.26.3
 go get github.com/spf13/cobra@v1.10.2
 ```
 
-> **pflag note:** Cobra v1.10.0 renamed `ParseErrorsWhitelist` → `ParseErrorsAllowlist` in pflag. Devgita does not use pflag directly, so no code changes needed. After `go get`, verify `go build ./...` compiles without pflag errors.
+> **pflag note:** Cobra v1.10.0 renamed `ParseErrorsWhitelist` → `ParseErrorsAllowlist` in pflag. Devgeta does not use pflag directly, so no code changes needed. After `go get`, verify `go build ./...` compiles without pflag errors.
 
 - Verify: `go build ./cmd/...` succeeds; `go test ./cmd/...` passes
 
@@ -266,18 +266,18 @@ In `cmd/root.go`, set the built-in Version field **and** preserve the exact outp
 ```go
 rootCmd.Version = Version
 rootCmd.SetVersionTemplate(fmt.Sprintf(
-    "devgita {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
+    "devgeta {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
 ))
 ```
 
 Keep the `dg version` subcommand (`versionCmd`) in place — it should continue to work as before. The built-in `--version` flag is additive.
 
 **Acceptance criteria:**
-- `dg version` → `devgita <ver> (commit: <sha>, built: <date>)`
+- `dg version` → `devgeta <ver> (commit: <sha>, built: <date>)`
 - `dg --version` → same format
 - Neither command calls `os.Exit()` inside `init()`
 
-- Verify: `go build . && ./devgita version && ./devgita --version` — both print matching output
+- Verify: `go build . && ./devgeta version && ./devgeta --version` — both print matching output
 - Commit: `refactor: replace init() version flag hack with cobra built-in Version field`
 
 #### Step B4: Add `dg completion` command
@@ -331,7 +331,7 @@ func init() {
 - `dg completion unknown` → returns an error, exits non-zero
 - Command does not panic when run outside a git repo
 
-- Verify: `go build . && ./devgita completion zsh | head -5` shows a valid script header
+- Verify: `go build . && ./devgeta completion zsh | head -5` shows a valid script header
 - Commit: `feat: add dg completion command for shell tab completion`
 
 #### Step B5: Wire `ValidArgsFunction` on worktree remove and jump
@@ -360,7 +360,7 @@ If `worktree.ListNames()` does not exist, add a thin wrapper in `internal/toolin
 - Returns `ShellCompDirectiveError` on read failure (not panic)
 - Works when run outside a git repo (returns empty list gracefully)
 
-- Verify: `go build . && ./devgita __complete worktree remove ""` → prints worktree names (Cobra's internal completion test command)
+- Verify: `go build . && ./devgeta __complete worktree remove ""` → prints worktree names (Cobra's internal completion test command)
 - Commit: `feat: add dynamic tab completion for worktree remove and jump`
 
 #### Step B6: Update CLAUDE.md
@@ -390,22 +390,22 @@ make lint
 
 # All three platform builds land in repo root
 make all
-ls devgita-darwin-arm64 devgita-darwin-amd64 devgita-linux-amd64
+ls devgeta-darwin-arm64 devgeta-darwin-amd64 devgeta-linux-amd64
 ```
 
 ### Manual Verification
 
-1. `./devgita --help` → custom help renders correctly; no usage dump on `--help`
-2. `./devgita version` → `devgita <ver> (commit: <sha>, built: <date>)`
-3. `./devgita --version` → same format as above
-4. `./devgita install --help` → shows `--only` and `--skip` flags
-5. `./devgita worktree --help` → lists all subcommands including `completion`
-6. `./devgita worktree list extra-arg` → clean error (no usage dump, thanks to `SilenceUsage`)
-7. `./devgita --debug` → shows deprecation warning; still activates verbose logging
-8. `./devgita completion zsh` → prints non-empty zsh script
-9. `./devgita completion bash` → prints non-empty bash script
-10. `./devgita __complete worktree remove ""` → lists worktree names (or empty list if none)
-11. Binary size: `ls -lh devgita` — should be slightly smaller than before charmbracelet removal
+1. `./devgeta --help` → custom help renders correctly; no usage dump on `--help`
+2. `./devgeta version` → `devgeta <ver> (commit: <sha>, built: <date>)`
+3. `./devgeta --version` → same format as above
+4. `./devgeta install --help` → shows `--only` and `--skip` flags
+5. `./devgeta worktree --help` → lists all subcommands including `completion`
+6. `./devgeta worktree list extra-arg` → clean error (no usage dump, thanks to `SilenceUsage`)
+7. `./devgeta --debug` → shows deprecation warning; still activates verbose logging
+8. `./devgeta completion zsh` → prints non-empty zsh script
+9. `./devgeta completion bash` → prints non-empty bash script
+10. `./devgeta __complete worktree remove ""` → lists worktree names (or empty list if none)
+11. Binary size: `ls -lh devgeta` — should be slightly smaller than before charmbracelet removal
 
 ### Regression Check
 
@@ -420,7 +420,7 @@ ls devgita-darwin-arm64 devgita-darwin-amd64 devgita-linux-amd64
 | Risk | Likelihood | Mitigation |
 |------|------------|-----------|
 | Go 1.26 stdlib change breaks something | Very Low | `go test ./...` catches it; Go maintains strong backward compat |
-| Cobra v1.10 pflag rename causes compile error | Very Low | Devgita doesn't use pflag directly; `go build` will surface it immediately |
+| Cobra v1.10 pflag rename causes compile error | Very Low | Devgeta doesn't use pflag directly; `go build` will surface it immediately |
 | `init()` removal in version.go changes startup order | Low | No other `init()` depends on the version flag; test with `dg --version` |
 | `ValidArgsFunction` panics outside git repo | Low | Guard with `err != nil` → return `ShellCompDirectiveError` |
 | `internal/tui/` directory left empty after delete | Low | Check `ls internal/tui/`; remove directory if empty |
@@ -431,7 +431,7 @@ ls devgita-darwin-arm64 devgita-darwin-amd64 devgita-linux-amd64
 
 - **Scope kept as one cycle:** The two tracks are related (Cobra upgrade enables Cobra API improvements) and the Cobra refactor is additive — no behavior regression risk. Splitting would create unnecessary back-and-forth between the dependency version and the API surface.
 - **`dg version` subcommand kept:** The built-in `--version` flag is additive. `dg version` continues to exist for discoverability. Both produce identical output.
-- **Version output format preserved exactly:** Using `SetVersionTemplate` to keep `devgita <ver> (commit: <sha>, built: <date>)` — this is user-visible and must not change.
+- **Version output format preserved exactly:** Using `SetVersionTemplate` to keep `devgeta <ver> (commit: <sha>, built: <date>)` — this is user-visible and must not change.
 - **Promptui kept at v0.9.0:** Upstream is unmaintained but stable; replacing it is a UX decision for a separate cycle.
 - **Charmbracelet removed entirely:** Speculative code that was never wired up. Removing now is better than maintaining a dependency that doesn't run.
 
@@ -459,4 +459,4 @@ ls devgita-darwin-arm64 devgita-darwin-amd64 devgita-linux-amd64
 - **Verification must pass before "done."** Full `go test ./...` + `make all` + manual version/completion checks.
 - **Do not touch promptui.** It is out of scope.
 - **Watch the `go.sum` diff after tidy.** Removed entries should be charmbracelet-family only. If unrelated packages change, investigate before committing.
-- **`ValidArgsFunction` must not panic.** Test with `./devgita __complete worktree remove ""` in a repo with no worktrees and outside a git repo.
+- **`ValidArgsFunction` must not panic.** Test with `./devgeta __complete worktree remove ""` in a repo with no worktrees and outside a git repo.

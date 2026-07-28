@@ -55,7 +55,7 @@ tabs)**, and **keybinding model K1 (persistent hint bar)**.
 | `internal/apps/git/git.go`              | git helpers; `IsWorktreeDirty` exists; add `Diff`/`DiffStat`          |
 | `internal/commands/base.go:191`         | `BaseCommand.ExecCommand(CommandParams) (stdout, stderr, error)`      |
 | `internal/commands/mock.go:204`         | `MockBaseCommand.ExecCommand` for tests                               |
-| `configs/tmux/tmux.conf:113`            | `prefix + u` popup binding (currently `devgita wt j`)                 |
+| `configs/tmux/tmux.conf:113`            | `prefix + u` popup binding (currently `devgeta wt j`)                 |
 | `go.mod`                                | Add Bubble Tea + Lipgloss deps                                        |
 
 **Key existing types/functions to reuse (do NOT reimplement — see the §5 guardrails):**
@@ -81,7 +81,7 @@ tabs)**, and **keybinding model K1 (persistent hint bar)**.
   (also ambiguous for duplicate names). **Step 0 must add `RepairInRepo(repo, name, coder)`**;
   the TUI repair + auto-repair call that.
 - `worktree.ResolveAICoder(alias)` — exported, maps alias → coder. ⚠️ But the
-  **precedence** logic (`--ai` flag → `DEVGITA_WORKTREE_AI` → `global_config` → `opencode`)
+  **precedence** logic (`--ai` flag → `DEVGETA_WORKTREE_AI` → `global_config` → `opencode`)
   lives in `cmd.resolveAIAlias`, which is **unexported in package `cmd`** and unreachable
   from the TUI (and `cmd` already imports the TUI → importing back would cycle).
   **Step 0 must hoist that precedence into a shared exported resolver** (in
@@ -107,7 +107,7 @@ tabs)**, and **keybinding model K1 (persistent hint bar)**.
   users to run `` `dg wt jump %s` ``. After the command is removed this is stale; change
   it to point at `` `dg wt ui` ``. (Step 8b grep gate must catch strings, not just symbols.)
 
-**Devgita repo patterns to follow (verified from the codebase — match these, don't invent):**
+**Devgeta repo patterns to follow (verified from the codebase — match these, don't invent):**
 
 - **Construction:** every app/coordinator is a struct built by a package-level `New()`.
   `tmux.New()` and `git.New()` each return a struct holding `Cmd cmd.Command` +
@@ -153,7 +153,7 @@ Aliases, Short, Long, Args, RunE}`, registered in `init()` via
 
 **Commands:**
 
-- Build: `go build -o devgita main.go`
+- Build: `go build -o devgeta main.go`
 - Test: `go test ./...`
 - Lint: `make lint` (`go fmt ./...` + `go vet ./...`)
 
@@ -230,7 +230,7 @@ dashboard. All other `dg wt` subcommands (`create`, `list`, `remove`, `repair`,
 - [x] `tmux.CapturePane(session, window) (string, error)` helper + test.
 - [x] `git.Diff(path) (string, error)` and `git.DiffStat(path) (files, added, removed int, error)` helpers + tests.
 - [x] `dg wt ui` Cobra subcommand (aliases `dash`, `dashboard`) registered in `cmd/worktree.go`.
-- [x] Update `configs/tmux/tmux.conf:113` to launch `devgita wt ui` in the popup.
+- [x] Update `configs/tmux/tmux.conf:113` to launch `devgeta wt ui` in the popup.
 - [x] Unit tests for the model's `Update` transitions (nav, fold, tab switch, filter).
 
 ### Explicitly Out of Scope
@@ -295,7 +295,7 @@ dashboard. All other `dg wt` subcommands (`create`, `list`, `remove`, `repair`,
 >    see Step 0; do **not** reach for unexported `removeByRepo`). Repair (and
 >    auto-repair on attach) → `WorktreeManager.RepairInRepo` (Step 0). Listing →
 >    `WorktreeManager.List`. Coder resolution → the **shared** exported resolver added
->    in Step 0 (same flag → `DEVGITA_WORKTREE_AI` → `global_config` → `opencode`
+>    in Step 0 (same flag → `DEVGETA_WORKTREE_AI` → `global_config` → `opencode`
 >    precedence), reused by both `cmd` and the TUI — never duplicated. The TUI holds
 >    **UI state only**; every side-effect routes through an existing manager method.
 > 2. **New helpers mirror existing siblings.** `Tmux.CapturePane` must mirror
@@ -335,7 +335,7 @@ dashboard. All other `dg wt` subcommands (`create`, `list`, `remove`, `repair`,
 | Modify | `internal/tooling/worktree/worktree_test.go`   | **Remove** orphaned fzf-jump tests (`TestFormatJumpRow`, `TestParseJumpRow`, `TestParseJumpOutput*`, jump/`confirmAndRemove` fzfCall harness tests)                                                                                                                                                                                        |
 | Modify | `README.md`                                    | Document `dg wt ui` (and `dash`/`dashboard` aliases); **remove `dg wt j` references** — user-facing per §12                                                                                                                                                                                                                                |
 | Modify | `docs/spec.md`                                 | Add `dg wt ui` dashboard to the worktree feature spec; **remove the `dg wt j` fzf-jump description**                                                                                                                                                                                                                                       |
-| Modify | `configs/tmux/tmux.conf:113`                   | `devgita wt j` → `devgita wt ui`                                                                                                                                                                                                                                                                                                           |
+| Modify | `configs/tmux/tmux.conf:113`                   | `devgeta wt j` → `devgeta wt ui`                                                                                                                                                                                                                                                                                                           |
 
 ### Data flow
 
@@ -385,7 +385,7 @@ clicked.) Multi-pane awareness / a pane selector is deferred to Phase 2+.
 - Hoist the AI-alias precedence out of `cmd.resolveAIAlias` into a shared exported
   resolver so there is **one** source of truth:
   ```go
-  // ResolveAIAlias applies precedence: flag → DEVGITA_WORKTREE_AI → global_config → opencode.
+  // ResolveAIAlias applies precedence: flag → DEVGETA_WORKTREE_AI → global_config → opencode.
   func ResolveAIAlias(flag string, gc *config.GlobalConfig) string { ... }
   ```
   Then `cmd.resolveAIAlias` becomes a thin call to `worktree.ResolveAIAlias` (keeps the
@@ -664,7 +664,7 @@ v.MouseMode = tea.MouseModeCellMotion; return v` — alt-screen and mouse are
   }
   ```
   and `worktreeCmd.AddCommand(worktreeUICmd)` in `init()`.
-- Verify: `./devgita wt ui` launches (manual, Step 11).
+- Verify: `./devgeta wt ui` launches (manual, Step 11).
 
 #### Step 8b: Remove the fzf jump flow
 
@@ -735,8 +735,8 @@ v.MouseMode = tea.MouseModeCellMotion; return v` — alt-screen and mouse are
 
 #### Step 11: tmux binding + manual smoke
 
-- `configs/tmux/tmux.conf:113`: change the popup command from `devgita wt j` to
-  `devgita wt ui`. Keep `display-popup -E -w 80% -h 60%`.
+- `configs/tmux/tmux.conf:113`: change the popup command from `devgeta wt j` to
+  `devgeta wt ui`. Keep `display-popup -E -w 80% -h 60%`.
 - **Removal / migration note (this is a real removal, not additive):** `dg wt j`/`jump`
   is **deleted** this cycle (its jump/delete/repair behavior is migrated into `dg wt ui`).
   Two consequences for existing users:
@@ -744,11 +744,11 @@ v.MouseMode = tea.MouseModeCellMotion; return v` — alt-screen and mouse are
     command. This is an intentional CLI change (CLAUDE.md §10) and must be called out
     in the release notes / PR description with the one-line migration: "use `dg wt ui`".
   - **tmux config:** per Product Principle 4 (user config edits are never overwritten),
-    users who already applied `tmux.conf` keep their old `prefix + u → devgita wt j`
+    users who already applied `tmux.conf` keep their old `prefix + u → devgeta wt j`
     binding until they re-run the relevant `dg` configure step and reload tmux
-    (`tmux source-file` / restart). Because `devgita wt j` is now gone, that stale
+    (`tmux source-file` / restart). Because `devgeta wt j` is now gone, that stale
     binding would fail — so the release notes must tell upgraders to refresh the tmux
-    config (or manually repoint `prefix + u` to `devgita wt ui`).
+    config (or manually repoint `prefix + u` to `devgeta wt ui`).
   - **Second behavioral break (automation):** the old `dg wt j` **outside tmux** printed
     the selected worktree's **path** to stdout (script-friendly). The TUI has no such
     output. Release notes must call this out separately from the command removal. If
@@ -785,7 +785,7 @@ v.MouseMode = tea.MouseModeCellMotion; return v` — alt-screen and mouse are
 go test ./internal/tui/worktree/... ./internal/apps/tmux/... ./internal/apps/git/...
 
 # Full gate before marking the cycle done (this superset covers the line above):
-go build -o devgita main.go
+go build -o devgeta main.go
 go vet ./...
 go test ./...
 ```
@@ -793,8 +793,8 @@ go test ./...
 ### Manual Verification
 
 1. In a tmux session, create two worktrees with Claude running:
-   `./devgita wt new demo-a --ai claude` and `./devgita wt new demo-b --ai claude`.
-2. Run `./devgita wt ui`.
+   `./devgeta wt new demo-a --ai claude` and `./devgeta wt new demo-b --ai claude`.
+2. Run `./devgeta wt ui`.
 3. Confirm: tree shows the repo with `demo-a`/`demo-b` children, status glyph + any
    `+A/-R`; `j/k` moves (cursor never lands on repo headers); `h/l` and `z`
    fold/unfold; right pane Agent shows the selected worktree's Claude output;
@@ -822,7 +822,7 @@ go test ./...
 12. **Narrow terminal:** shrink the terminal to ~30 cols; confirm no panic and a sane
     single-pane/fallback layout.
 13. Re-bind check: `prefix + u` opens the same dashboard in a popup.
-14. **Outside-tmux goal**: Run `./devgita wt ui` **outside** tmux → it still renders
+14. **Outside-tmux goal**: Run `./devgeta wt ui` **outside** tmux → it still renders
     (read-only browsing works); `Enter` shows the inline "not inside tmux" status
     instead of crashing. This is an **explicit goal**, not just graceful degradation.
     (Note: unlike old `dg wt j`, it does **not** print a path — see the migration note.)

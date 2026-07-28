@@ -12,8 +12,8 @@ Today a user reaches two tmux surfaces with two keys:
 
 - **`ctrl+t`** (bare, no prefix) → `configs/tmux/tmux.conf:147-148`: a popup running tmux's
   native `choose-tree -Zs` — the built-in session switcher over every session on the tmux
-  server, including ones devgita never created (a manual `notes` session, an ssh session).
-- **`ctrl+space u`** (prefix + `u`) → `configs/tmux/tmux.conf:150-154`: opens `devgita wt ui`
+  server, including ones devgeta never created (a manual `notes` session, an ssh session).
+- **`ctrl+space u`** (prefix + `u`) → `configs/tmux/tmux.conf:150-154`: opens `devgeta wt ui`
   in a new window — the worktree dashboard, scoped to git worktrees only.
 
 This cycle introduces a new top-level command **`dg ws`** (alias `workspace`) that unifies
@@ -275,7 +275,7 @@ is replaced by opening `dg ws`.
     > **Superseded (2026-07-22):** `s` now opens a folder-pick step first (`root` = home pinned,
     > plus the repo candidates and a free-typed path, validated as a directory via
     > `ValidateDirPath`), so the workdir is no longer always home. The name prompt now also
-    > auto-generates a `devgita-<character>` name on a blank Enter, collision-checked against the
+    > auto-generates a `devgeta-<character>` name on a blank Enter, collision-checked against the
     > live tmux sessions. See `session_flow.go` / `session_name.go` and `docs/spec.md`.
 - **Duplicate session names (Q2):** rely on tmux's own error — `tmux new-session -s <name>`
   fails when the name exists — surfaced via the status line, the same way worktree
@@ -310,13 +310,13 @@ is replaced by opening `dg ws`.
   `RunE` calls `tuiworktree.Run()`; register in `init()` via `rootCmd.AddCommand`.
 - `cmd/worktree.go`: set ``worktreeUICmd.Deprecated = "use `dg ws` instead"`` (cobra prints
   the notice and still runs). Update `dg wt` long help.
-- Verify: `go build ./cmd/`; `./devgita ws --help`; `./devgita wt ui` prints the notice.
+- Verify: `go build ./cmd/`; `./devgeta ws --help`; `./devgeta wt ui` prints the notice.
 - Done: implemented in commit `da14ff0`.
 
 #### Step 9: Keybinding migration (embedded config)
 
 - `configs/tmux/tmux.conf`: remove `choose-tree` (147-148); bind `ctrl+t` to open `dg ws`
-  (mirror the existing `new-window ... ~/.local/bin/devgita ...` form, now `ws`); repoint
+  (mirror the existing `new-window ... ~/.local/bin/devgeta ...` form, now `ws`); repoint
   `prefix+u` to `dg ws` too.
 - **Rebuild + redeploy**: `make build` → install → `dg configure tmux --force` → reload
   tmux. An old binary ships the old config (CLAUDE.md §"Changing an embedded config").
@@ -375,7 +375,7 @@ make lint
 ### Regression Check
 
 - Worktree create/attach/delete/repair unchanged (`go test ./internal/tui/worktree/`).
-- `dg wt --help`, `dg wt list` still work (`make build && ./devgita wt --help`).
+- `dg wt --help`, `dg wt list` still work (`make build && ./devgeta wt --help`).
 - Not inside tmux: `dg ws` lists; `enter` (switch) shows the "not inside tmux" guard; `s`
   still creates a detached session and reports it (not blocked, not an error).
 

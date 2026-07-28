@@ -1,4 +1,4 @@
-# Devgita
+# Devgeta
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
@@ -13,10 +13,10 @@ One command to set up a complete, configured development environment. Automates 
 
 ## 🚀 Quick Start
 
-**1. Install devgita:**
+**1. Install devgeta:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cjairm/devgita/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
 ```
 
 **2. Restart your shell:**
@@ -92,14 +92,14 @@ That's it! You'll be prompted to select which programming languages, databases, 
 
 ### Quick Install (Recommended)
 
-Install devgita with a single command. This will:
+Install devgeta with a single command. This will:
 
 1. Download the appropriate binary for your OS and architecture
-2. Install to `~/.local/bin/devgita`
+2. Install to `~/.local/bin/devgeta`
 3. Configure your PATH automatically
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/cjairm/devgita/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
 source ~/.zshrc  # or source ~/.bashrc
 ```
 
@@ -109,7 +109,7 @@ If you prefer to review the installer script:
 
 ```bash
 # Download the installer
-curl -fsSL -o install.sh https://raw.githubusercontent.com/cjairm/devgita/main/install.sh
+curl -fsSL -o install.sh https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh
 
 # Review it
 cat install.sh
@@ -125,7 +125,7 @@ bash install.sh
 Run the interactive installer to set up your development environment:
 
 ```bash
-devgita install
+devgeta install
 ```
 
 Or use the short alias:
@@ -192,7 +192,7 @@ dg install --skip databases,desktop
   - `dg wt repair <name>` - Recreate the tmux window for an existing worktree
   - `dg wt prune` - Remove all managed worktrees
 - `dg ws` (alias: `dg workspace`) - Unified TUI dashboard: repo workspaces (worktrees, circle `●`/`○` marker, expandable, `N trees` badge) and standalone tmux sessions (square `■`/`□` marker) in one flat list (`enter` switch/attach, `d` delete/kill, `s` new session, `n`/`N` new worktree, `/` filter, `q` quit). Also bound to bare `ctrl+t` in tmux.
-- `dg list` (alias: `dg installed`) - Show everything Devgita has installed, grouped by category
+- `dg list` (alias: `dg installed`) - Show everything Devgeta has installed, grouped by category
   - `--category <name>` - Filter to one bucket (`packages`, `desktop_apps`, `fonts`, `themes`, `terminal_tools`, `dev_languages`, `databases`)
 - `dg task` (alias: `dg t`) - Developer utilities callable by agents and humans (mirrors `dge` shell function)
   - `dg task refresh-branch [target]` - Checkout target (default: `main`), pull, return to previous branch, merge
@@ -221,10 +221,10 @@ dg install --skip databases,desktop
 
 ## ⚙️ Configuration
 
-Devgita manages configurations in `~/.config/devgita/`:
+Devgeta manages configurations in `~/.config/devgeta/`:
 
 - **Global state**: `global_config.yaml` tracks installed packages
-- **Shell integration**: `devgita.zsh` sourced from your shell config
+- **Shell integration**: `devgeta.zsh` sourced from your shell config
 - **App configs**: Application-specific configuration templates
 
 ### Customization
@@ -262,7 +262,7 @@ chmod 755 ~/.local/bin
 
 **Unsupported platform:**
 
-- Devgita requires macOS 13+ or Debian 12+/Ubuntu 24+
+- Devgeta requires macOS 13+ or Debian 12+/Ubuntu 24+
 - Only amd64 and arm64 (Apple Silicon) architectures are supported
 
 **Mise commands not found after installation:**
@@ -285,7 +285,7 @@ mise install node@20
 mise use --global node@20
 ```
 
-For more help, see the [full documentation](docs/) or [open an issue](https://github.com/cjairm/devgita/issues).
+For more help, see the [full documentation](docs/) or [open an issue](https://github.com/cjairm/devgeta/issues).
 
 ---
 
@@ -310,7 +310,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 Quick links:
 
-- [Open an issue](https://github.com/cjairm/devgita/issues)
+- [Open an issue](https://github.com/cjairm/devgeta/issues)
 - [View the roadmap](ROADMAP.md)
 - [See development guide](CONTRIBUTING.md)
 
@@ -318,7 +318,7 @@ Quick links:
 
 ## 📄 License
 
-[MIT License](LICENSE) — Use devgita freely in personal and commercial projects.
+[MIT License](LICENSE) — Use devgeta freely in personal and commercial projects.
 
 ---
 
@@ -364,5 +364,5 @@ Test a local build before releasing:
 make build
 
 # Install using local binary
-bash install.sh --local ./devgita-darwin-arm64
+bash install.sh --local ./devgeta-darwin-arm64
 ```

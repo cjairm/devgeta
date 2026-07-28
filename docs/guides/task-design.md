@@ -1,7 +1,7 @@
 # Task Design — AI-first, token-wise `dg task` subcommands
 
 `dg task` subcommands are consumed by two audiences: **an LLM agent first** (Claude
-Code / OpenCode invoking `devgita task …` from the shared configs), **a human second**
+Code / OpenCode invoking `devgeta task …` from the shared configs), **a human second**
 (via the `dge` shell wrapper). When those audiences conflict, design for the agent —
 humans tolerate terse output far better than agents tolerate noisy output.
 
@@ -40,8 +40,8 @@ from raw commands. The three justifications, strongest first:
 **Keep every task (and any redirect that steers agents to it) generic.** This is the
 task-specific case of a repo-wide rule — CLAUDE.md §3 principle 8 (_Everything general,
 never bespoke_): a `dg task` subcommand runs in whatever repo the agent is in, so its
-behavior must make sense in any of them and must not encode devgita's own internal
-process. When a task genuinely does encode devgita-specific policy (e.g. `release`
+behavior must make sense in any of them and must not encode devgeta's own internal
+process. When a task genuinely does encode devgeta-specific policy (e.g. `release`
 implements the CLAUDE.md §9 flow), any hook/plugin that redirects raw commands to it
 must be gated so it never fires outside this repo — see the `go.mod` gate in
 `configs/claude/task-redirect.sh`.

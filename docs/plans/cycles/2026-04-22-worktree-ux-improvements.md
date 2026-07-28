@@ -2,7 +2,7 @@
 
 ## Overview
 
-Add git worktree management to devgita with tmux session integration. Each worktree gets its own tmux session with OpenCode, enabling parallel AI-assisted development.
+Add git worktree management to devgeta with tmux session integration. Each worktree gets its own tmux session with OpenCode, enabling parallel AI-assisted development.
 
 ## Goals
 
@@ -45,7 +45,7 @@ dg worktree remove <name>     # Remove worktree and kill session
 ### File Structure
 
 ```
-devgita/
+devgeta/
 ├── cmd/
 │   └── worktree.go                      # Cobra command
 ├── internal/
@@ -141,11 +141,11 @@ import (
     "path/filepath"
     "strings"
 
-    "github.com/cjairm/devgita/internal/apps/git"
-    "github.com/cjairm/devgita/internal/apps/opencode"
-    "github.com/cjairm/devgita/internal/apps/tmux"
-    cmd "github.com/cjairm/devgita/internal/commands"
-    "github.com/cjairm/devgita/pkg/constants"
+    "github.com/cjairm/devgeta/internal/apps/git"
+    "github.com/cjairm/devgeta/internal/apps/opencode"
+    "github.com/cjairm/devgeta/internal/apps/tmux"
+    cmd "github.com/cjairm/devgeta/internal/commands"
+    "github.com/cjairm/devgeta/pkg/constants"
 )
 
 const (
@@ -289,8 +289,8 @@ import (
     "os"
     "text/tabwriter"
 
-    "github.com/cjairm/devgita/internal/tooling/worktree"
-    "github.com/cjairm/devgita/pkg/utils"
+    "github.com/cjairm/devgeta/internal/tooling/worktree"
+    "github.com/cjairm/devgeta/pkg/utils"
     "github.com/spf13/cobra"
 )
 
@@ -455,7 +455,7 @@ func TestWorktreeManager_Create(t *testing.T) {
 
 ## Dependencies
 
-All dependencies already exist in devgita:
+All dependencies already exist in devgeta:
 
 - `internal/apps/git/git.go` - Git operations
 - `internal/apps/tmux/tmux.go` - Tmux operations
@@ -505,8 +505,8 @@ All dependencies already exist in devgita:
 
 - [Git Worktree Documentation](https://git-scm.com/docs/git-worktree)
 - [Tmux Manual](https://man7.org/linux/man-pages/man1/tmux.1.html)
-- [devgita Testing Patterns](../guides/testing-patterns.md)
-- [devgita Languages Coordinator](../../internal/tooling/languages/languages.go) - Pattern reference
+- [devgeta Testing Patterns](../guides/testing-patterns.md)
+- [devgeta Languages Coordinator](../../internal/tooling/languages/languages.go) - Pattern reference
 
 ---
 

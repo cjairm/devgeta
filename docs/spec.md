@@ -1,4 +1,4 @@
-# Devgita Product Specification
+# Devgeta Product Specification
 
 **Last Updated**: 2026-07-15  
 **Owner**: @cjairm
@@ -7,16 +7,16 @@
 
 ## Overview
 
-Devgita is a cross-platform development environment manager that automates installation and configuration of tools, runtimes, databases, and applications on macOS and Linux (Debian/Ubuntu).
+Devgeta is a cross-platform development environment manager that automates installation and configuration of tools, runtimes, databases, and applications on macOS and Linux (Debian/Ubuntu).
 
 **Core value proposition**: One command to install a complete, configured development environment instead of manual setup across 10+ tools and 100+ configuration files.
 
 **Core features:**
 
 - **Smart installation**: Detects existing packages to avoid conflicts
-- **Global state tracking**: Maintains what was installed by devgita vs pre-existing
+- **Global state tracking**: Maintains what was installed by devgeta vs pre-existing
 - **Interactive selection**: TUI-based multi-select for languages and databases
-- **Safe operations**: Only manages devgita-installed packages
+- **Safe operations**: Only manages devgeta-installed packages
 - **Configuration templates**: Consistent, reproducible configs across machines
 
 ---
@@ -24,7 +24,7 @@ Devgita is a cross-platform development environment manager that automates insta
 ## Architecture
 
 ```
-devgita/
+devgeta/
 ├── cmd/                     # Cobra CLI commands
 ├── internal/
 │   ├── tooling/            # Category-based coordinators
@@ -162,7 +162,7 @@ _Linux (Debian/Ubuntu)_:
 
 ### 2. Configuration Management
 
-#### Persistent State: `~/.config/devgita/`
+#### Persistent State: `~/.config/devgeta/`
 
 **`global_config.yaml`**
 
@@ -170,7 +170,7 @@ _Linux (Debian/Ubuntu)_:
 - Prevents duplicate installations
 - Used by other commands to detect what's already installed
 
-**`devgita.zsh`**
+**`devgeta.zsh`**
 
 - Shell integration script sourced from `~/.zshrc`
 - Sets up Mise activation, aliases, and environment variables
@@ -215,7 +215,7 @@ dg configure <app> [--force] [--only=<parts>]
 
 **Behavior**:
 
-- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgita`, `docker`, `fastfetch`, `flameshot`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `raycast`, `rtk`, `tmux`, `ulauncher`.
+- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `raycast`, `rtk`, `tmux`, `ulauncher`.
 - Apps that have no configuration to deploy (e.g., `brave`) return `ErrConfigureNotSupported` — the command prints an info message and exits zero.
 - Unknown app names print a sorted list of supported apps and exit non-zero.
 - Unknown `--only` values list the app's valid parts and exit non-zero; `--only` without `--force` is an error; apps without parts reject `--only`.
@@ -276,7 +276,7 @@ dg wt <subcommand> [flags]     # alias
 
   1. `--layout` flag — explicit layout name, wins over everything.
   2. `--ai` flag — derived into a single-pane layout running that coder.
-  3. `DEVGITA_WORKTREE_AI` env var — derived into a single-pane layout.
+  3. `DEVGETA_WORKTREE_AI` env var — derived into a single-pane layout.
   4. `worktree.default_layout` in `global_config.yaml`.
   5. `worktree.default_ai` in `global_config.yaml` — derived into a single-pane layout.
   6. Default: `opencode`, single-pane.
@@ -409,8 +409,8 @@ Session rows add:
      free-typed path is also accepted. A session isn't tied to a repo, so the chosen folder is
      validated as an existing directory only (not a git repo).
   2. **Name prompt** — on Enter with a name, creates the session in the chosen folder. Enter with
-     a **blank** name auto-generates a `devgita-<character>` name (Dragon Ball characters, e.g.
-     `devgita-goku`), checked against the live tmux sessions so a blank-name create never collides
+     a **blank** name auto-generates a `devgeta-<character>` name (Dragon Ball characters, e.g.
+     `devgeta-goku`), checked against the live tmux sessions so a blank-name create never collides
      with an existing one.
 
   Inside tmux, the client switches to the new session and the dashboard quits; outside tmux, the
@@ -429,7 +429,7 @@ to the dashboard.
 `dg list` is the single inventory command (there is no separate `dg validate`; drift
 checking lives inside the dashboard's problems-only view):
 
-- **Data model** — every item Devgita has tracked in `~/.config/devgita/global_config.yaml`
+- **Data model** — every item Devgeta has tracked in `~/.config/devgeta/global_config.yaml`
   (both what it installed and what it found pre-existing) is live-checked against the system,
   producing a three-state status per item:
   - `OK` — the presence check ran and found the item.
@@ -466,7 +466,7 @@ dg installed [--category <name>] [--plain]   # alias
 - In a terminal, opens the dashboard unfiltered (every tracked item, all categories).
 - Piped output, CI, or `--plain`: prints one table per non-empty category (name only, no
   live status check); empty categories are omitted. The "Already on this machine (not
-  installed by Devgita)" section only prints if it has entries. An empty config prints a
+  installed by Devgeta)" section only prints if it has entries. An empty config prints a
   clear message instead of a blank screen. An unrecognized `--category` value prints an
   error listing the valid category names.
 - This is still the MVP: name + category only in plain mode. Per-item version and
@@ -510,7 +510,7 @@ dg t <subcommand> [args]   # alias
 | `review-package` | `<base> <head>`, `--file <path>` | Verify both refs resolve (`rev-parse --verify`, an actionable error names whichever ref failed), then in one call print `range: <base>..<head>`, the commit list (short SHA, date, subject), a noise-filtered per-file stat table with exclusion receipts, and the full `-U10`-context diff of the included files as a fenced ` ```diff ` block. Unlike `review-scope`/`branch-diff`, base and head are not tied to the current branch's default-branch merge-base — this is for reviewing an arbitrary historical range or a PR that isn't checked out. `--file` bypasses exclusions and returns just that file's `-U10` diff. Sentinels: `No commits in range.` when the commit list is empty, `No file changes in range.` when the stat table is empty. Replaces a 6-call raw dance (`rev-parse --verify` x2, `log --oneline`, `diff --stat`, `diff -U10`, `rev-list --count`) that measured 793,426 bytes on a representative 10-commit range (`b0e98fd..main` in this repo); the one-call equivalent on the same range measured 792,704 bytes — the byte savings come from applying the same default lockfile exclusions as `review-scope`/`branch-diff`, not from compressing the diff itself (which review-package still prints in full); the real win is collapsing 6 round-trips into 1, per the "collapse round-trips" justification in `docs/guides/task-design.md`. |
 
 **Worktree lifecycle subcommands** (start/finish a git worktree in one call each —
-same base path `dg wt` uses, `~/.local/share/devgita/worktrees/<repo-slug>/<flat-name>`,
+same base path `dg wt` uses, `~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>`,
 so `dg wt list` and worktrees created here are the same population, never two parallel
 trackers):
 
@@ -551,7 +551,7 @@ appended under its one-liner:
 
 - If the check's `link` matches a GitHub Actions job URL
   (`.../actions/runs/<run-id>/job/<job-id>`, optionally with a
-  `#step:N:M` fragment), devgita fetches that job's failed-step log
+  `#step:N:M` fragment), devgeta fetches that job's failed-step log
   (`gh run view --job <job-id> --log-failed`) and appends a bounded,
   deduplicated tail: consecutive identical log lines collapse into one
   line with a `(×N)` suffix (CI retry/poll loops routinely repeat a line
@@ -560,7 +560,7 @@ appended under its one-liner:
   this way a receipt is prepended: `… 214 earlier lines omitted`. This
   receipt is never emitted when nothing was cut.
 - If the link doesn't match that exact shape (external checks, commit
-  statuses), devgita never guesses a job id — it appends `log unavailable:
+  statuses), devgeta never guesses a job id — it appends `log unavailable:
 external check` instead.
 - If the job id parses but the log fetch comes back empty or errors
   (verified in practice: `gh`'s log-download API only serves log content
@@ -615,17 +615,17 @@ a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to
 `settings.json`) and an OpenCode plugin equivalent
 (`configs/opencode/plugin/task-redirect.js`, deployed to
 `~/.config/opencode/plugin/`, a `tool.execute.before` hook) intercept a narrow
-set of raw-git and `gh` patterns and deny with the exact `devgita task`
+set of raw-git and `gh` patterns and deny with the exact `devgeta task`
 replacement. **Global rules** (fire in every repo, since these hooks deploy to
 the user's global config): `git diff <ref>..<ref>` / `git log <ref>..<ref>`
 (any flags) → `review-package`; `git worktree add` → `worktree-start`; `git
 worktree remove` → `worktree-finish`; `gh pr checks` → `pr-checks`; `gh api
 graphql ... reviewThreads` → `review-threads`; `gh pr review` → `submit-review`.
-**Devgita-repo-only rules**: `git reset --soft HEAD~N` (N ≥ 1) and `git tag -a
-v<semver>` → `release` — these encode devgita's own release policy, so they
-fire only when the command runs inside the devgita repo (detected by walking up
+**Devgeta-repo-only rules**: `git reset --soft HEAD~N` (N ≥ 1) and `git tag -a
+v<semver>` → `release` — these encode devgeta's own release policy, so they
+fire only when the command runs inside the devgeta repo (detected by walking up
 from the payload's `.cwd`, falling back to `$PWD`, to a `go.mod` with module
-`github.com/cjairm/devgita`); the check runs only after a release pattern
+`github.com/cjairm/devgeta`); the check runs only after a release pattern
 matches and fails toward not firing, so a general `git reset`/`git tag` in any
 other repo is never blocked. Matching checks every command segment (split on
 unquoted `&&`, `||`, `;`, `|`, and tolerant of a leading `VAR=value` prefix), so
@@ -634,12 +634,12 @@ while a bare `git diff`, `git log`, `git tag` (list), `git reset --soft HEAD`
 (no `~N`), `gh pr view`, or a bare `gh api graphql` is still never intercepted.
 Deny is exit-code-based (exit 2 + a one-line stderr reason for
 Claude Code; a thrown `Error` for OpenCode), never a silent rewrite, and every
-deny message states the bypass: set `DEVGITA_SKIP_TASK_REDIRECT=1` for the
+deny message states the bypass: set `DEVGETA_SKIP_TASK_REDIRECT=1` for the
 session to let raw git through when genuinely needed. See
 [docs/apps/claude.md](apps/claude.md#command-redirect-pretooluse-hook) for the
 full contract.
 
-`dge` (the shell function in `devgita.zsh`) is now a thin wrapper that forwards to `dg task`:
+`dge` (the shell function in `devgeta.zsh`) is now a thin wrapper that forwards to `dg task`:
 
 ```sh
 dge() {
@@ -686,7 +686,7 @@ Agents should prefer `dg task` directly; humans can use either `dg task` or `dge
 ```
 $ dg install
 
-Welcome to Devgita! Let's set up your development environment.
+Welcome to Devgeta! Let's set up your development environment.
 
 [✓] Installing terminal tools...
     ├─ curl

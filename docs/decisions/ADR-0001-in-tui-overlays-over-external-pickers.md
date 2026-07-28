@@ -18,7 +18,7 @@ fastest tools keep the interaction inside one screen.
 
 ## Decision
 
-Inside any devgita TUI, pickers, prompts, and modals are built from the
+Inside any devgeta TUI, pickers, prompts, and modals are built from the
 `internal/tui/components` toolkit and rendered as floating overlays composited over the
 current view. External picker processes are not launched from inside a running TUI.
 Plain CLI commands (no TUI running) may still use fzf.

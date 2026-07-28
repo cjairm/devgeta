@@ -61,7 +61,7 @@ Related docs: [CLAUDE.md](../../../CLAUDE.md) §6/§12,
   captures stdout when output must be parsed rather than streamed
 - `cmd/task.go` / `cmd/task_pr.go` — cobra registration pattern for task subcommands
 - `configs/shared/agents/code-reviewer.md` — Scope section = the orientation dance; has **no**
-  `devgita task *` permission today
+  `devgeta task *` permission today
 - `configs/shared/commands/create-pr.md` — step 1 hardcodes `main` (lines 26–31)
 - `configs/shared/commands/review-pr.md` — step 2's local-branch fallback repeats the fetch/default-branch prose
 
@@ -268,9 +268,9 @@ excluded — see notes below).` above the exclusion notes so the payload is neve
 ### Step 5 — Rewire the shared configs
 
 - [x] `configs/shared/agents/code-reviewer.md`: Scope step 3 becomes
-      `devgita task review-scope` then `devgita task branch-diff` (whole or `--file` by
+      `devgeta task review-scope` then `devgeta task branch-diff` (whole or `--file` by
       file for large branches); delete the fetch/never-pull/fallback prose it replaces;
-      **add the missing `"devgita task *": allow` permission**; keep raw `git diff`
+      **add the missing `"devgeta task *": allow` permission**; keep raw `git diff`
       permissions as escape hatch
 - [x] `configs/shared/commands/create-pr.md`: step 1 becomes `review-scope`
       (+ one `git log <default>..HEAD --format="%s%n%b%n---"` for commit bodies, using
@@ -327,8 +327,8 @@ branch touching `go.sum` should shrink by the lockfile's share.
 - **Merge-base drift vs. three-dot:** `git diff <merge-base>..HEAD` and
   `git diff origin/<default>...HEAD` are equivalent when base is computed after the
   fetch; compute base once and reuse it for stat + diff so the two can't disagree.
-- **Shared-config coupling:** the configs will instruct `devgita task …`, which assumes
-  the target machine has devgita ≥ this release. Same trade already accepted for the PR
+- **Shared-config coupling:** the configs will instruct `devgeta task …`, which assumes
+  the target machine has devgeta ≥ this release. Same trade already accepted for the PR
   subcommands in the 2026-06-18 cycle.
 - **`bun.lockb` is binary** — git shows it as `Bin` in stat; the exclusion note must
   handle numstat's `-	-	path` form for binary files.

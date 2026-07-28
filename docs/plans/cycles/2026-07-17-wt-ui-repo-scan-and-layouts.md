@@ -13,7 +13,7 @@ floating fuzzy picker → type a name → worktree + tmux window created → att
 Two gaps surfaced in real use:
 
 1. **Repos you've never touched are invisible.** The picker's candidate sources are: the
-   cwd repo, the cursor row's repo, devgita's recent-repos store, and `zoxide query -l`.
+   cwd repo, the cursor row's repo, devgeta's recent-repos store, and `zoxide query -l`.
    None of these scans the filesystem, so a repo you've never `cd`'d into (no zoxide entry)
    and never created a worktree in (not in the store) simply does not appear — you must
    type its full path from memory. Example that prompted this cycle: `~/pillar/pillar-infrastructure`
@@ -21,7 +21,7 @@ Two gaps surfaced in real use:
 
 2. **The created window is always one pane running one AI coder.** `launchWindow`
    (`worktree.go:256`) makes a single-pane window and sends the resolved coder's command
-   (`opencode` by default, `claude` via `default_ai`/`DEVGITA_WORKTREE_AI`). There is no
+   (`opencode` by default, `claude` via `default_ai`/`DEVGETA_WORKTREE_AI`). There is no
    way to express "claude + nvim side by side" or "just nvim for reading code" — the three
    real workflows this cycle's requester uses: (a) review in opencode, (b) work in
    claude + nvim vertical split, (c) read/review code in nvim only.
@@ -39,7 +39,7 @@ vscode-project-manager, lazygit) informed both fixes:
   only surveyed tool with one** (`twm -l` prompts among named layouts; bare `twm` uses the
   default silently). That is exactly the `n` (default) / `N` (pick) split this cycle adds.
   Per-project startup scripts (`.tmux-sessionizer`, `.twm.yaml`, `.gwq.toml`) are
-  explicitly acknowledged by those projects as code-execution vectors — devgita keeps
+  explicitly acknowledged by those projects as code-execution vectors — devgeta keeps
   layouts in its own config instead (see § 7).
 
 Related: [ROADMAP.md](../../ROADMAP.md) Worktree Enhancements; prior cycles
@@ -140,7 +140,7 @@ leaving the TUI. Unconfigured, behavior is identical to today.
       command, and validates its tool is installed the way `AICoder.EnsureInstalled` does
 - [x] `default_layout` config field with an explicit resolution contract (see § 5
       "Layout resolution contract") that keeps every existing AI-selection behavior —
-      `--ai`, `DEVGITA_WORKTREE_AI`, `default_ai` — working unchanged
+      `--ai`, `DEVGETA_WORKTREE_AI`, `default_ai` — working unchanged
 - [x] A `SplitWindow`/pane method on the tmux wrapper (`internal/apps/tmux`); `launchWindow`
       builds the window from the chosen layout via the wrapper, replacing the hardcoded
       single-pane `createWindowAndLaunch`. **Deviation from this bullet's original "only new
@@ -161,7 +161,7 @@ leaving the TUI. Unconfigured, behavior is identical to today.
 ### Explicitly Out of Scope
 
 - Per-project layout files checked into repos (`.tmux-sessionizer`-style) — security
-  vector, see § 7; layouts live in devgita config only
+  vector, see § 7; layouts live in devgeta config only
 - User-defined custom layouts in config **beyond the built-ins** — deferred to a follow-up
   once the built-in set and the pane model prove out (note it in ROADMAP)
 - Prompt-first create (passing a task prompt to the coder) — already a separate roadmap item
@@ -185,13 +185,13 @@ and reference here.
 
 One rule for create, repair, and TUI auto-repair. Highest present source wins; every
 AI-alias source resolves to a **derived single-pane layout** of that coder, so today's
-`--ai` → `DEVGITA_WORKTREE_AI` → `default_ai` → `opencode` chain is preserved verbatim,
+`--ai` → `DEVGETA_WORKTREE_AI` → `default_ai` → `opencode` chain is preserved verbatim,
 with `default_layout` slotted between env and `default_ai`:
 
 1. `--layout` flag (CLI) / `N` picker selection (TUI)
 2. `--ai` flag → derived single-pane layout (`--layout` and `--ai` together = error;
    `cobra.MarkFlagsMutuallyExclusive`)
-3. `DEVGITA_WORKTREE_AI` env → derived single-pane layout
+3. `DEVGETA_WORKTREE_AI` env → derived single-pane layout
 4. `default_layout` config
 5. `default_ai` config → derived single-pane layout
 6. Built-in fallback: `opencode` single-pane
@@ -407,7 +407,7 @@ session) — same method as the create-flow cycle.
       `model.go`); confirm it doesn't shadow filter-mode or popup-mode key handling
 - [x] Old `global_config.yaml` (no `search_paths`/`default_layout`) loads and behaves as before
 - [x] `default_ai` alone still selects the coder (via derived layout); `--ai` and
-      `DEVGITA_WORKTREE_AI` still behave exactly per the pre-cycle precedence
+      `DEVGETA_WORKTREE_AI` still behave exactly per the pre-cycle precedence
 - [x] `dg wt new/rm/ls/repair` unchanged aside from the additive `--layout` flag and help text
 
 ---
@@ -436,7 +436,7 @@ session) — same method as the create-flow cycle.
   costs the extra keystroke only when deviating.
 - **Built-in layouts in config vs. per-repo scripts:** per-repo startup files
   (`.tmux-sessionizer`, `.twm.yaml`, `.gwq.toml`) are code-execution vectors those projects
-  themselves flag. devgita keeps layouts as data in its own config, consistent with the
+  themselves flag. devgeta keeps layouts as data in its own config, consistent with the
   security rules in CLAUDE.md § 4.
 - **Empty search-paths default:** no repos are hardcoded; the scan is opt-in. Users who
   don't configure it keep today's exact candidate set — no surprise scanning of `$HOME`.

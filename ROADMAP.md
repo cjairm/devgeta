@@ -1,4 +1,4 @@
-# Devgita Roadmap
+# Devgeta Roadmap
 
 Public roadmap of planned features, improvements, and discussion topics for future releases.
 
@@ -131,7 +131,7 @@ Users should be able to choose between alternatives:
 
 ### Features & Scope
 
-- **Cleanup utilities** — Extend [existing cleanup script](https://github.com/cjairm/devgita/blob/038da72eec456e0a60c50dce2bc9ab615c795fb2/configs/bash/init.zsh#L15) to remove node_modules, docs, examples, unused files?
+- **Cleanup utilities** — Extend [existing cleanup script](https://github.com/cjairm/devgeta/blob/038da72eec456e0a60c50dce2bc9ab615c795fb2/configs/bash/init.zsh#L15) to remove node_modules, docs, examples, unused files?
 - **Opencode integrations** — Check [Opencode.nvim](https://github.com/nickjvandyke/opencode.nvim) for nvim integration
 - **Super powers** — How to extend [super powers](https://github.com/obra/superpowers) for Opencode?
 - **Auto Claude integration** — Reuse or build [Auto Claude](https://github.com/AndyMik90/Auto-Claude)?
@@ -161,8 +161,8 @@ TBD — To be determined based on:
 Have a feature request or idea?
 
 1. Check this roadmap — it might already be planned
-2. Check [GitHub Issues](https://github.com/cjairm/devgita/issues) — it might be discussed
-3. [Open a new issue](https://github.com/cjairm/devgita/issues/new) with the `feature-request` label
+2. Check [GitHub Issues](https://github.com/cjairm/devgeta/issues) — it might be discussed
+3. [Open a new issue](https://github.com/cjairm/devgeta/issues/new) with the `feature-request` label
 4. Or contribute directly — see `CONTRIBUTING.md`
 
 ---

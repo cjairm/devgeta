@@ -18,7 +18,7 @@ Extract reusable UI primitives from the existing layout A (`internal/tui/worktre
 | ---------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | Package location       | `internal/tui/components/` (`package tuicomponents`)                                           | Importable by any future TUI, not coupled to worktree                                                        |
 | Session state coupling | `SessionState` enum + `SessionStateFromWorktree()` helper                                      | Components stable as data model evolves; zero API change when `NeedsReview`/`Dirty` land on `WorktreeStatus` |
-| Component style        | `Palette` method receivers for logic-bearing components; raw `lip.Style` fields for direct use | Matches existing devgita style, idiomatic Go                                                                 |
+| Component style        | `Palette` method receivers for logic-bearing components; raw `lip.Style` fields for direct use | Matches existing devgeta style, idiomatic Go                                                                 |
 | Layout A migration     | Migrate in this cycle                                                                          | Validates the API against real code immediately                                                              |
 | Dead code              | Remove all deprecated code                                                                     | No `glyphFor`, old `Styles`, `newStyles`, unused render paths left behind                                    |
 

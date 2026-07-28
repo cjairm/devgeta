@@ -125,7 +125,7 @@ Each step should be completable in 5-15 minutes. Start here:
 
 - In `cmd/root.go`, add worktreeCmd and all subcommands to rootCmd
 - Expected outcome: `dg worktree` command available
-- Verify: `go build ./cmd/` and `./devgita worktree --help`
+- Verify: `go build ./cmd/` and `./devgeta worktree --help`
 
 #### Step 6: Add command tests
 
@@ -171,7 +171,7 @@ go test ./... -cover
 
 ### Regression Check
 
-- Does `dg install` still work? (Verify: `make build && ./devgita install --help`)
+- Does `dg install` still work? (Verify: `make build && ./devgeta install --help`)
 - Do existing commands work? (Verify: `dg version`, `dg worktree --help`)
 - No unintended changes to other commands
 

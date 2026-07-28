@@ -43,8 +43,8 @@ views) all independently confirm the task-design doctrine and these gaps.
 
 **Constraint discovered during planning:** most files under `configs/shared/skills/`
 are synced from upstream superpowers (see commit `8ff444e`). They must NOT be edited
-to reference devgita tasks — edits would conflict on the next sync. Direct reference
-updates are limited to devgita-owned files (`configs/shared/commands/*.md`,
+to reference devgeta tasks — edits would conflict on the next sync. Direct reference
+updates are limited to devgeta-owned files (`configs/shared/commands/*.md`,
 `configs/shared/agents/*.md`, `CLAUDE.md`). For synced skills, the redirect hook
 (Slice F) is the only steering mechanism.
 
@@ -142,7 +142,7 @@ so the task family is used by default, not by memory.
       claude.go's script copy loop, registered in the copied `settings.json`; the
       OpenCode plugin needs a new copy step added to opencode.go's configure.
       Ships LAST (depends on Slices A/C/E existing).
-- [x] Each slice updates `docs/spec.md` and the consuming devgita-owned configs in
+- [x] Each slice updates `docs/spec.md` and the consuming devgeta-owned configs in
       the same PR (sentinel-contract rule, task-design.md §4).
 
 ### Explicitly Out of Scope
@@ -171,9 +171,9 @@ spec.md → commit (feature workflow, CLAUDE.md §6).
 
 **Hard rule for all config updates:** every command reference written into
 `configs/shared/commands/*.md` or `configs/shared/agents/*.md` uses
-`devgita task …` — never `dg` — per the binary-invocation contract those files
+`devgeta task …` — never `dg` — per the binary-invocation contract those files
 already state (`review-pr.md` Notes, `code-reviewer.md` Scope): only the installed
-`devgita` binary is guaranteed on PATH where agents run. `dg task` in this doc's
+`devgeta` binary is guaranteed on PATH where agents run. `dg task` in this doc's
 prose is the feature's colloquial name, not the invocation.
 
 ### Slice A — `review-package` (~3h)
@@ -241,7 +241,7 @@ Steps:
 4. Flag interplay: exactly one of `--merge`/`--discard` required; clear usage error otherwise.
 
 **Design decision:** `worktree-start`/`worktree-finish` reuse `dg wt`'s exact base path —
-`worktree.GetWorktreeBasePath()` (`~/.local/share/devgita/worktrees/<repo-slug>/<flat-name>`) —
+`worktree.GetWorktreeBasePath()` (`~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>`) —
 rather than `.worktrees/` in-repo or a sibling directory. `internal/tooling/task` imports
 `internal/tooling/worktree` for the exported `GetWorktreeBasePath()`; `flattenName`
 (`strings.ReplaceAll(name, "/", "-")`) is a one-line duplicate in the task package rather
@@ -334,12 +334,12 @@ make lint
 
 ### Manual (per slice, on this repo)
 
-1. A: `devgita task review-package <old-sha> HEAD` → verify sections, exclusion
+1. A: `devgeta task review-package <old-sha> HEAD` → verify sections, exclusion
    receipts, and that a lockfile-touching range excludes it with a receipt.
-2. B: `devgita task review-scope --bodies` on a feature branch → dates + bodies render.
+2. B: `devgeta task review-scope --bodies` on a feature branch → dates + bodies render.
 3. C: full cycle — `worktree-start test-x` → commit inside → `worktree-finish --merge`
    → change on main, worktree gone, branch gone; repeat with `--discard`.
-4. D: `devgita task pr-checks` on a PR with a failing check → digest appears, bounded.
+4. D: `devgeta task pr-checks` on a PR with a failing check → digest appears, bounded.
 5. E: in a throwaway temp repo (`git init`, default branch, 3 commits, a fake
    `origin` remote): `release v0.0.1 --message-file m.txt` (no `--push`) → squash +
    tag correct, nothing pushed; delete the temp repo. (A scratch _branch_ can't be
@@ -402,7 +402,7 @@ Reviewed 2026-07-22 (document-reviewer). All findings resolved in this revision:
 - Slice E verification used `v0.0.1-test` (fails the semver guard) on a scratch
   branch (fails the default-branch guard) → now a throwaway temp repo with `v0.0.1`;
   strict-semver-only stance recorded (mirrors CLAUDE.md §9).
-- Binary-invocation contract (`devgita`, never `dg`, in shared configs) → hard rule
+- Binary-invocation contract (`devgeta`, never `dg`, in shared configs) → hard rule
   added to §5.
 - `worktree-finish` selector ambiguity → deterministic contract fixed:
   `[<name>] --merge|--discard`, explicit name > cwd resolution > error with list.

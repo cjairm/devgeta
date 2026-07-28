@@ -1,12 +1,12 @@
 # Cross-Platform Installation Architecture
 
-This document describes devgita's architecture for installing packages across macOS (Homebrew) and Debian/Ubuntu (apt) systems.
+This document describes devgeta's architecture for installing packages across macOS (Homebrew) and Debian/Ubuntu (apt) systems.
 
 ---
 
 ## Overview
 
-Devgita uses a **strategy pattern** combined with **package name mappings** to provide seamless installation across platforms. The codebase is designed with macOS as the primary platform, with translation layers for Debian/Ubuntu.
+Devgeta uses a **strategy pattern** combined with **package name mappings** to provide seamless installation across platforms. The codebase is designed with macOS as the primary platform, with translation layers for Debian/Ubuntu.
 
 ### Key Components
 
@@ -76,7 +76,7 @@ Add a new mapping when:
 
 ## Installation Strategies
 
-Devgita uses the **Strategy Pattern** to handle different installation methods on Debian/Ubuntu. Each strategy implements the `InstallationStrategy` interface.
+Devgeta uses the **Strategy Pattern** to handle different installation methods on Debian/Ubuntu. Each strategy implements the `InstallationStrategy` interface.
 
 ### Interface Contract
 
@@ -392,7 +392,7 @@ func (d *DebianCommand) MaybeInstallPackage(packageName string, aliases ...strin
 
 ### Why macOS-first?
 
-1. **Developer prevalence:** Most devgita users are on macOS
+1. **Developer prevalence:** Most devgeta users are on macOS
 2. **Homebrew consistency:** Single package manager, consistent naming
 3. **Translation layer:** Easier to translate from one source to many targets
 

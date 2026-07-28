@@ -8,7 +8,7 @@
 
 ## 1. Domain Context
 
-Devgita manages the installation and configuration of development tools. Each app implements `ForceConfigure()` and `SoftConfigure()` on the `App` interface in `internal/apps/contract.go`. Until now, configuration was only triggered automatically during `dg install`. This cycle adds a standalone `dg configure [app]` command so users can re-apply configs for a specific app at any time — without reinstalling.
+Devgeta manages the installation and configuration of development tools. Each app implements `ForceConfigure()` and `SoftConfigure()` on the `App` interface in `internal/apps/contract.go`. Until now, configuration was only triggered automatically during `dg install`. This cycle adds a standalone `dg configure [app]` command so users can re-apply configs for a specific app at any time — without reinstalling.
 
 This was explicitly planned in ROADMAP.md and unblocked once the app foundations cycle (2026-05-01) landed a stable `App` interface with `ErrConfigureNotSupported`.
 
@@ -102,7 +102,7 @@ Implement `dg configure [app]` command that re-applies configuration files for a
 unknown app "foo"
 
 Supported apps:
-  aerospace  alacritty  brave  claude  devgita  docker  fastfetch
+  aerospace  alacritty  brave  claude  devgeta  docker  fastfetch
   flameshot  gimp       git    i3      lazydocker  lazygit  mise
   neovim     opencode   raycast  tmux  ulauncher
 ```
@@ -160,7 +160,7 @@ Create `cmd/configure.go`:
 - On `ErrConfigureNotSupported`: `utils.PrintInfo(...)`, return nil
 - On success: `utils.PrintSuccess(...)`
 - Expected outcome: Command compiles, help text is correct
-- Verify: `go build ./cmd/` and `./devgita configure --help`
+- Verify: `go build ./cmd/` and `./devgeta configure --help`
 
 #### Step 4: Write command tests
 
@@ -178,7 +178,7 @@ Create `cmd/configure_test.go`:
 Modify `cmd/root.go` Long string only:
 - Add `configure` to the Available Commands list with a one-line description
 - No changes to `init()` or any other logic
-- Verify: `./devgita --help` shows configure in the list
+- Verify: `./devgeta --help` shows configure in the list
 
 #### Step 6: Update spec
 
@@ -205,11 +205,11 @@ Run all manual checks with an isolated HOME to avoid touching real user configs:
 
 ```bash
 export HOME=$(mktemp -d)
-./devgita configure --help
-./devgita configure git            # SoftConfigure: applies only if missing
-./devgita configure git --force    # ForceConfigure: always overwrites
-./devgita configure brave          # ErrConfigureNotSupported: info message, exit 0
-./devgita configure unknown-app    # Error with supported names list, exit non-zero
+./devgeta configure --help
+./devgeta configure git            # SoftConfigure: applies only if missing
+./devgeta configure git --force    # ForceConfigure: always overwrites
+./devgeta configure brave          # ErrConfigureNotSupported: info message, exit 0
+./devgeta configure unknown-app    # Error with supported names list, exit non-zero
 echo $?                            # Verify non-zero
 unset HOME
 ```

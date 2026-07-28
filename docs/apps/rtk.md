@@ -3,7 +3,7 @@
 [rtk](https://github.com/rtk-ai/rtk) ("Rust Token Killer", Apache-2.0) is a CLI
 proxy that filters and compresses the output of 100+ common dev commands (git,
 test runners, docker, `cat`/`grep`, …) before an LLM agent reads it, cutting up
-to 90% of bash output. It is the first app in devgita's `ai-tools` category
+to 90% of bash output. It is the first app in devgeta's `ai-tools` category
 (see [ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md)).
 
 ## Relationship to `dg task`
@@ -11,7 +11,7 @@ to 90% of bash output. It is the first app in devgita's `ai-tools` category
 Complementary, not competing — see
 [task-design.md](../guides/task-design.md): `dg task` provides semantic
 orchestration and policy (one-call flows, stable sentinels, atomic reviews);
-rtk provides generic lossy compression for the long tail of commands devgita
+rtk provides generic lossy compression for the long tail of commands devgeta
 deliberately doesn't wrap.
 
 ## Install
@@ -30,7 +30,7 @@ Verify: `rtk --version` and `rtk gain` (savings dashboard).
 ## The agent hook is opt-in
 
 `rtk init -g` installs a PreToolUse hook that rewrites **every** agent Bash
-call (`git status` → `rtk git status`). Devgita installs the binary only and
+call (`git status` → `rtk git status`). Devgeta installs the binary only and
 never runs `rtk init` for you, because lossy compression must not silently
 apply inside flows that need full payloads (e.g. a reviewer agent reading a
 diff — task-design.md output principle 5).
@@ -52,7 +52,7 @@ The Claude opt-in is also recorded in `global_config.yaml`
 from a template that includes the hook entry whenever that flag is set — so
 `dg configure claude --force` preserves the hook instead of wiping it.
 `dg uninstall rtk` clears the flag again. OpenCode needs no such flag: rtk's
-plugin is its own file (`plugins/rtk.ts`), which devgita never touches.
+plugin is its own file (`plugins/rtk.ts`), which devgeta never touches.
 
 Or use rtk directly:
 
@@ -73,7 +73,7 @@ Without the hook, agents still benefit whenever they call `rtk` directly
 
 rtk works with no config. Its optional config file lives at
 `~/.config/rtk/config.toml` (Linux) / `~/Library/Application Support/rtk/config.toml`
-(macOS); devgita does not ship one. Useful keys:
+(macOS); devgeta does not ship one. Useful keys:
 
 ```toml
 [hooks]

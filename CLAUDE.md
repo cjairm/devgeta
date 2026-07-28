@@ -1,4 +1,4 @@
-# CLAUDE.md — Devgita Development Guide
+# CLAUDE.md — Devgeta Development Guide
 
 ⚠️ **DOCUMENTATION CURRENCY:** This file is the source of truth for development practices. Keep it up to date as patterns and decisions evolve. Stale documentation is worse than no documentation—it misleads contributors. If you change how we do something, update this file and/or linked files in the same PR.
 
@@ -6,14 +6,14 @@
 
 ## 1. What this is
 
-Devgita is a cross-platform development environment manager that automates installation and configuration of terminal tools, programming language runtimes, database systems, and desktop applications on macOS and Debian/Ubuntu.
+Devgeta is a cross-platform development environment manager that automates installation and configuration of terminal tools, programming language runtimes, database systems, and desktop applications on macOS and Debian/Ubuntu.
 
 **Core functionality:**
 
 - **Installation automation** — `dg install` with interactive category selection
 - **Category-based setup** — terminal tools, languages, databases, desktop apps
 - **Cross-platform support** — Single command syntax works on macOS and Linux
-- **Smart state tracking** — `global_config.yaml` tracks what was installed by devgita
+- **Smart state tracking** — `global_config.yaml` tracks what was installed by devgeta
 - **Configuration templates** — Embedded configs applied consistently across machines
 - **Idempotent operations** — Safe to re-run; detects existing packages
 
@@ -43,9 +43,9 @@ Read these **in order** before starting work:
 3. **Cross-platform consistency** — Same command syntax and behavior on macOS and Linux; platform differences are transparent to users
 4. **Configuration persistence** — User edits to configs are never overwritten; new installs preserve existing customizations
 5. **Modular architecture** — Each app is independent; failures in one app don't cascade to others
-6. **Transparent state** — All installation state tracked in `~/.config/devgita/global_config.yaml`; users can inspect what was installed
+6. **Transparent state** — All installation state tracked in `~/.config/devgeta/global_config.yaml`; users can inspect what was installed
 7. **Visual consistency** — Alacritty, tmux, Neovim, and the AI-coder configs share one palette (Gruvbox dark) and a transparency convention; a color/theme change in one must be mirrored in the others. See [docs/guides/theming.md](docs/guides/theming.md)
-8. **Everything general, never bespoke** — Every feature devgita ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgita's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — see the `release` redirect's `go.mod` gate in `configs/claude/task-redirect.sh` — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
+8. **Everything general, never bespoke** — Every feature devgeta ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgeta's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — see the `release` redirect's `go.mod` gate in `configs/claude/task-redirect.sh` — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
 
 ---
 
@@ -71,7 +71,7 @@ Hard constraints that override all other considerations:
 - Installation state must be atomic: either complete or fully roll back (no partial installations)
 - Tests must never read or write real user directories. Under `go test`, `pkg/paths` automatically redirects HOME and all XDG roots into a throwaway sandbox so this cannot happen even when a test forgets to isolate; that guard must never be weakened or bypassed
 - User home directory must never be assumed writable in global locations; respect XDG Base Directory if needed
-- Config files installed by devgita must be distinguishable from user edits (version markers, checksums)
+- Config files installed by devgeta must be distinguishable from user edits (version markers, checksums)
 
 ### Platform Support
 
@@ -88,7 +88,7 @@ Hard constraints that override all other considerations:
 | **Language**                | Go 1.23+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                                   |
 | **Build System**            | Make                          | See Makefile for targets                                                                            |
 | **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                                |
-| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgita/global_config.yaml`                                              |
+| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                              |
 | **Config Generation**       | Go `text/template` + `embed`  | Templates in `configs/` embedded at compile time                                                    |
 | **Package Manager**         | Homebrew (macOS), APT (Linux) | With package name translation (see `pkg/constants/package_mappings.go`)                             |
 | **Logging**                 | Custom (zap-like logger)      | Initialized with `logger.Init(verbose)`                                                             |
@@ -106,7 +106,7 @@ Hard constraints that override all other considerations:
 - **Reuse before writing (DRY):** Before adding any function, helper, or logic, search the codebase for something that already does the job and build on it — extend or delegate rather than re-implement. When a change would make two code paths share the same logic, extract that logic into one place instead of copying it; do the extraction in the same PR that introduces the second use. Duplication found during review is a defect to fix, not a style preference.
 - **Investigate before designing new state or mechanisms:** Before introducing new state, persistence, or a new signal to solve a problem, actively explore whether something reachable already tracks or exposes it — an existing mechanism in this codebase, or one already offered live by a tool/app this project integrates with (e.g. tmux, git). Prefer reading and building on that existing source of truth over creating a parallel one that can drift from it or duplicate its job. Do this exploration up front, before implementing — not as a correction after a first attempt turns out more complex than it needed to be.
 - **Prefer existing over new:** When new code is unavoidable, prefer in this order: this codebase's existing helpers and patterns, then the Go standard library, then a dependency the project already uses, and only then new custom code. Never add a new dependency for something the standard library or an existing dependency covers; introducing one is a decision to surface in the PR, not a default. Also question whether the code needs to exist at all — speculative or "for later" code is not written until something needs it. Simplicity never overrides the non-negotiable rules (section 4), correctness, or error handling.
-- **Route external tools through their app wrappers:** Every invocation of an external binary that already has a devgita app wrapper must go through that wrapper, not a raw `exec.Command` or a hand-assembled `CommandParams`. This keeps timeout, streaming, directory, and error-wrapping behavior consistent and mockable in tests. When the wrapper lacks a capability the caller needs (a directory, a timeout, a new subcommand), extend the wrapper — and, if the gap is in the shared executor, the executor — rather than reaching around it. The only exception is the low-level platform-install layer, which is itself the boundary that shells out. When a class of external tool acquires a wrapper, reaching around it is a defect to fix in review.
+- **Route external tools through their app wrappers:** Every invocation of an external binary that already has a devgeta app wrapper must go through that wrapper, not a raw `exec.Command` or a hand-assembled `CommandParams`. This keeps timeout, streaming, directory, and error-wrapping behavior consistent and mockable in tests. When the wrapper lacks a capability the caller needs (a directory, a timeout, a new subcommand), extend the wrapper — and, if the gap is in the shared executor, the executor — rather than reaching around it. The only exception is the low-level platform-install layer, which is itself the boundary that shells out. When a class of external tool acquires a wrapper, reaching around it is a defect to fix in review.
 - Naming: camelCase for functions/variables, PascalCase for exports
 - Run `go fmt` before committing (make lint does this)
 - Comments explain WHY, not WHAT (code should be self-documenting)
@@ -240,7 +240,7 @@ Verify these before changing code in these areas:
 
 ### Shell Integration
 
-- [ ] Shell config files (`devgita.zsh`) are sourced correctly
+- [ ] Shell config files (`devgeta.zsh`) are sourced correctly
 - [ ] Mise activation works after install (test: `eval "$(mise activate zsh)"`)
 - [ ] User shell customizations are not overwritten
 - [ ] Aliases and functions don't conflict with user's existing setup
@@ -275,7 +275,7 @@ See [ROADMAP.md](ROADMAP.md) for planned features and future platform support
 
 ## 9. Versioning & tagging
 
-Devgita follows [Semantic Versioning](https://semver.org/) strictly: **`vMAJOR.MINOR.PATCH`**
+Devgeta follows [Semantic Versioning](https://semver.org/) strictly: **`vMAJOR.MINOR.PATCH`**
 
 ### Which bump to use
 
@@ -296,7 +296,7 @@ Devgita follows [Semantic Versioning](https://semver.org/) strictly: **`vMAJOR.M
 
 ### Push & tag workflow
 
-When pushing commits and creating a tag, **always squash multiple unpushed commits into one before tagging.** This keeps the git history clean and makes it easy for developers to understand what each tag/release includes. `devgita task release` automates this flow — do not run the raw `git reset --soft` / `git tag` / `git push` sequence by hand.
+When pushing commits and creating a tag, **always squash multiple unpushed commits into one before tagging.** This keeps the git history clean and makes it easy for developers to understand what each tag/release includes. `devgeta task release` automates this flow — do not run the raw `git reset --soft` / `git tag` / `git push` sequence by hand.
 
 **Steps:**
 
@@ -304,7 +304,7 @@ When pushing commits and creating a tag, **always squash multiple unpushed commi
 2. From a clean working tree on the default branch, run:
 
    ```bash
-   devgita task release <version> --message-file <file>
+   devgeta task release <version> --message-file <file>
    ```
 
    This verifies the tree is clean, you're on the default branch, the message file is non-empty, and the tag doesn't already exist; counts commits ahead of `origin/<default>`; squashes 2+ of them into one commit using the message file; and creates an annotated tag with that same message. Nothing is pushed yet.
@@ -322,7 +322,7 @@ feat: add user profile and caching
 - Add profile API endpoints with validation
 EOF
 
-devgita task release v0.11.0 --message-file release-notes.txt --push
+devgeta task release v0.11.0 --message-file release-notes.txt --push
 ```
 
 `version` must match `vMAJOR.MINOR.PATCH` exactly (no prerelease suffixes) — this is the tag policy from the table above, machine-enforced. Without `--push`, the final line states exactly what remains, e.g. `Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main --tags`.

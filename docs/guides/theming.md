@@ -1,6 +1,6 @@
 # Theming & Visual Consistency
 
-Devgita installs a _coordinated_ terminal environment. Alacritty (the terminal),
+Devgeta installs a _coordinated_ terminal environment. Alacritty (the terminal),
 tmux (the multiplexer), Neovim (the editor), and the AI-coder configs (OpenCode,
 Claude) are meant to look like **one cohesive setup**, not four tools that
 happen to be installed together.
@@ -87,7 +87,7 @@ Alacritty ships with `opacity = 0.8` and `blur = true`
 configs layered on top must **not paint solid backgrounds**:
 
 - **Neovim** forces a transparent background regardless of colorscheme via
-  `configs/neovim/lua/devgita/transparent.lua` (re-applied on every
+  `configs/neovim/lua/devgeta/transparent.lua` (re-applied on every
   `ColorScheme` event).
 - **tmux** must not set a background color on panes/windows. A solid `bg=` in
   `window-style` / `window-active-style` punches an opaque rectangle through the
@@ -127,7 +127,7 @@ These are documented honestly so contributors don't mistake them for intent:
    A single theme switch can't currently affect all four.
 3. **Palette mismatch.** Classic Gruvbox (tmux/nvim) vs. Gruvbox Material
    (alacritty). Picking one variant everywhere would make accents line up.
-4. **An unused `tokyonight.lua`** sits in `configs/neovim/lua/devgita/themes/`.
+4. **An unused `tokyonight.lua`** sits in `configs/neovim/lua/devgeta/themes/`.
    It's the seed of a second theme but nothing selects it.
 
 When you touch theming, prefer changes that move toward convergence (one palette,

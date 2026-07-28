@@ -11,12 +11,12 @@
 [ROADMAP.md](../../../ROADMAP.md) lists `dg validate` as planned: "Verify current configuration
 is valid" + "Check if all dependencies are met." `dg list` (shipped v0.28.0,
 [2026-07-06-dg-list.md](2026-07-06-dg-list.md)) already reads `global_config.yaml` and prints
-what devgita _thinks_ is installed, grouped by category — but never checks whether those items are
+what devgeta _thinks_ is installed, grouped by category — but never checks whether those items are
 _actually still present_ on the system. That gap is what `dg validate` closes: drift detection
 between tracked state and system reality.
 
 **Decision (confirmed with user 2026-07-07):** MVP scope is drift detection only — for every item
-devgita tracked (either as something it installed, or as something it found pre-existing), confirm
+devgeta tracked (either as something it installed, or as something it found pre-existing), confirm
 it's still actually present on the system (package manager / binary / version-command check).
 Neovim-style explicit dependency chains (make, gcc, ripgrep, etc.) are **not** special-cased —
 those prerequisites are already tracked as ordinary `"package"` items (see
@@ -735,8 +735,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }
@@ -920,10 +920,10 @@ Expected: FAIL to compile — package `internal/inventory` doesn't exist yet.
 package inventory
 
 import (
-	cmdpkg "github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/tooling/databases"
-	"github.com/cjairm/devgita/internal/tooling/languages"
+	cmdpkg "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/databases"
+	"github.com/cjairm/devgeta/internal/tooling/languages"
 )
 
 // ItemState is the result of a live drift check for one tracked item.
@@ -950,11 +950,11 @@ func (s ItemState) String() string {
 	}
 }
 
-// Item is one tracked piece of devgita state plus its live drift-check result.
+// Item is one tracked piece of devgeta state plus its live drift-check result.
 type Item struct {
 	Name     string
 	Category string // "packages", "desktop_apps", "fonts", "themes", "terminal_tools", "dev_languages", "databases"
-	Source   string // "installed" (devgita installed it) or "pre-existing" (found already on the system)
+	Source   string // "installed" (devgeta installed it) or "pre-existing" (found already on the system)
 	State    ItemState
 	Detail   string // populated when State == StateUnknown (the check error's message)
 }
@@ -977,7 +977,7 @@ var Categories = []CategoryInfo{
 	{Key: "databases", Label: "Databases"},
 }
 
-// Collector runs presence checks for every item devgita has tracked, for both
+// Collector runs presence checks for every item devgeta has tracked, for both
 // the "installed" and "already_installed" buckets of global_config.yaml.
 type Collector struct {
 	Cmd  cmdpkg.Command
@@ -1110,7 +1110,7 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestBorderedPane_TitleEmbeddedInTopBorder(t *testing.T) {
@@ -1262,7 +1262,7 @@ package tuiinventory
 import (
 	"testing"
 
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 func sampleItems() []inventory.Item {
@@ -1360,7 +1360,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 type rowKind int
@@ -1502,8 +1502,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestStatusGlyph_NoANSI(t *testing.T) {
@@ -1561,8 +1561,8 @@ Expected: FAIL to compile.
 package tuiinventory
 
 import (
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // statusGlyph returns the raw glyph for an item state (no ANSI styling).
@@ -1624,8 +1624,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	"github.com/cjairm/devgita/internal/testutil"
+	"github.com/cjairm/devgeta/internal/inventory"
+	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }
@@ -1768,8 +1768,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/cjairm/devgita/internal/inventory"
-	tuicomponents "github.com/cjairm/devgita/internal/tui/components"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 // Options configures the dashboard's initial filter state.
@@ -2087,9 +2087,9 @@ package tuiinventory
 import (
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/inventory"
 )
 
 // Run starts the shared inventory dashboard. dg list calls this with
@@ -2138,7 +2138,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cjairm/devgita/internal/inventory"
+	"github.com/cjairm/devgeta/internal/inventory"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -2224,10 +2224,10 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/cjairm/devgita/internal/commands"
-	"github.com/cjairm/devgita/internal/config"
-	"github.com/cjairm/devgita/internal/inventory"
-	tuiinventory "github.com/cjairm/devgita/internal/tui/inventory"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/inventory"
+	tuiinventory "github.com/cjairm/devgeta/internal/tui/inventory"
 	"github.com/spf13/cobra"
 )
 
@@ -2291,7 +2291,7 @@ var validateCmd = &cobra.Command{
 	Short: "Verify tracked installations are still present on the system",
 	Long: `Verify tracked installations are still present on the system.
 
-For every item devgita tracked (installed by devgita, or found pre-existing),
+For every item devgeta tracked (installed by devgeta, or found pre-existing),
 checks whether it's still actually present — catching drift between
 global_config.yaml and system reality.
 
@@ -2420,7 +2420,7 @@ In `cmd/list.go`, add the import and flag variable, update `RunE`, and register 
 Add to the import block:
 
 ```go
-	tuiinventory "github.com/cjairm/devgita/internal/tui/inventory"
+	tuiinventory "github.com/cjairm/devgeta/internal/tui/inventory"
 ```
 
 Add next to `listCategoryFlag`:
@@ -2473,11 +2473,11 @@ Add flag registration in `init()`, alongside the existing `--category` registrat
 Also update the `Long` help text to mention `--plain` and the new dashboard behavior:
 
 ```go
-	Long: `View all items installed via Devgita (alias: installed).
+	Long: `View all items installed via Devgeta (alias: installed).
 
 In a terminal, opens the interactive inventory dashboard grouped by category
 with a live OK/MISSING/UNKNOWN status per item. Piped output, CI, or --plain
-fall back to the plain-text table (reads ~/.config/devgita/global_config.yaml
+fall back to the plain-text table (reads ~/.config/devgeta/global_config.yaml
 directly, with no live status check).
 
 Examples:
@@ -2530,14 +2530,14 @@ git commit -m "feat(cmd): open the shared inventory dashboard from dg list in a 
 Find the `dg validate` entry (currently under a "planned" section, per the grep below) and move it
 out of the planned list. Read the surrounding structure first:
 
-Run: `grep -n "dg validate\|dg list\|## Implemented\|### " /Users/jair.mendez/Documents/projects/devgita/ROADMAP.md`
+Run: `grep -n "dg validate\|dg list\|## Implemented\|### " /Users/jair.mendez/Documents/projects/devgeta/ROADMAP.md`
 
 Move the `dg validate` bullet to the same "Implemented" section that `dg list` was moved to (see
 commit `290b6f9` for the pattern that cycle used), with equivalent phrasing, e.g.:
 
 ```markdown
 - **`dg validate`** — Drift detection dashboard (shipped vX.Y.Z)
-  - Checks every tracked item (installed by devgita, or found pre-existing) against system reality
+  - Checks every tracked item (installed by devgeta, or found pre-existing) against system reality
   - Interactive dashboard in a terminal (shared with `dg list`), pre-filtered to problems
   - `--plain` / non-TTY: STATUS table, exits 1 if anything is missing
 ```
@@ -2549,7 +2549,7 @@ dashboard in a terminal (plain table unchanged for piped/CI/`--plain` use).
 
 Read the file's existing structure first to match its section conventions and heading level:
 
-Run: `grep -n "^#\|dg list\|dg validate" /Users/jair.mendez/Documents/projects/devgita/docs/spec.md`
+Run: `grep -n "^#\|dg list\|dg validate" /Users/jair.mendez/Documents/projects/devgeta/docs/spec.md`
 
 Add a section documenting:
 
@@ -2627,7 +2627,7 @@ make lint
 | Risk                                                                                      | Likelihood | Mitigation                                                                                                                                                                 |
 | ----------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `languages`/`databases` presence checks are slow (shell out per tracked item)             | Med        | Only check tracked items (not every configured language/database like `detectPreInstalled*` does); consider a spinner/progress indicator in the dashboard while collecting |
-| Font check (`IsFontPresent`) matches by substring against family names / filenames        | Low        | Tracked font names come from devgita's own install path, which uses the same `IsFontPresent` matching at install time — the two sides agree by construction                |
+| Font check (`IsFontPresent`) matches by substring against family names / filenames        | Low        | Tracked font names come from devgeta's own install path, which uses the same `IsFontPresent` matching at install time — the two sides agree by construction                |
 | TUI dashboard becomes the _only_ discoverable path and users miss `--plain` for scripting | Low        | Auto-detect non-TTY by default so scripts/CI never need to know about `--plain` in the first place                                                                         |
 | Bubbletea dashboard scope creeps into interactivity beyond read-only                      | Med        | Explicitly out of scope above; flag any temptation to add actions as a follow-up cycle                                                                                     |
 | Implementer imitates the current worktree TUI's rendering instead of the wireframes       | Med        | §1 "Visual authority" + §2 visual-grammar list are the spec; manual verification step 7 checks against the PDF page by page                                                |

@@ -12,9 +12,9 @@ Before we expose user-facing commands like `dg configure`, `dg uninstall`, `dg u
 
 1. **A real bug:** `ForceInstall` is broken in 13+ apps. The pattern `Uninstall() → Install()` always fails because `Uninstall()` returns a "not supported" error in every app that doesn't actually support uninstall. Tests confirm this — `TestForceInstall` is **commented out** in `aerospace_test.go`, `alacritty_test.go`, and `docker_test.go`. Only `claude.go` does it correctly (just calls `Install()` directly).
 2. **No formal contract.** There is no Go `interface` that all apps implement. Every app exposes `Install`, `ForceInstall`, `SoftInstall`, `ForceConfigure`, `SoftConfigure`, `ExecuteCommand`, `Uninstall`, `Update` by convention only. This makes a future `dg uninstall` / `dg configure` dispatcher impossible to write generically — you cannot iterate over a `[]App` because there is no `App` type.
-3. **Inconsistent unsupported-operation errors.** 11 apps return one of "uninstall not supported for X", "uninstall not implemented for X", "X uninstall not supported through devgita", or longer free-form strings. A caller wanting to gracefully skip "this app doesn't support uninstall" cannot use `errors.Is` — they would have to string-match.
+3. **Inconsistent unsupported-operation errors.** 11 apps return one of "uninstall not supported for X", "uninstall not implemented for X", "X uninstall not supported through devgeta", or longer free-form strings. A caller wanting to gracefully skip "this app doesn't support uninstall" cannot use `errors.Is` — they would have to string-match.
 4. **Interface deviations.** `Fonts.Install(fontName string)` and `Fonts.ForceInstall(fontName string)` accept a parameter; every other app's `Install()` takes none. `Aerospace.ExecuteCommand()` takes no args; everyone else takes `...string`. These break the uniform shape future commands need.
-5. **Two parallel constructor patterns.** Apps either embed only `Cmd` (Brave, Flameshot, Gimp, Raycast, I3, Ulauncher, Devgita) or both `Cmd` + `Base` (everyone else). The split is intentional — desktop GUI apps don't need command execution — but it isn't documented anywhere, and the same `New()` boilerplate is hand-rolled in 19 places.
+5. **Two parallel constructor patterns.** Apps either embed only `Cmd` (Brave, Flameshot, Gimp, Raycast, I3, Ulauncher, Devgeta) or both `Cmd` + `Base` (everyone else). The split is intentional — desktop GUI apps don't need command execution — but it isn't documented anywhere, and the same `New()` boilerplate is hand-rolled in 19 places.
 6. **Test patterns split.** 9 test files use `commands.NewMockCommand()` directly; 5 use the documented `testutil.NewMockApp()`. Two files (`git_test.go`, `alacritty_test.go`) reimplement path isolation manually instead of calling `testutil.SetupIsolatedPaths()`.
 
 This cycle fixes the bug, defines the contract, standardizes the errors, and migrates every app and test to the new shape — so the next cycle can build `dg configure` / `dg uninstall` against a stable, iterable surface.
@@ -116,7 +116,7 @@ Define a formal `App` interface in `internal/apps/`, introduce sentinel errors f
 - Restructuring `internal/tooling/{terminal,desktop,languages,databases}/` — registration sites only need to import the new sentinels if they want to handle them; otherwise unchanged
 - Changing the `cmd.Command` / `cmd.BaseCommandExecutor` interfaces or their mocks
 - Adding new apps or new install methods
-- Renaming the `internal/apps/devgita/` self-installer module
+- Renaming the `internal/apps/devgeta/` self-installer module
 - Changing config file formats or migration logic in `internal/config/`
 - Adding any new commands to `cmd/`
 
@@ -136,7 +136,7 @@ To keep the migration tractable, here is the full set of apps (19 total), pre-cl
 | alacritty  | `internal/apps/alacritty/`  | Terminal     | yes          | yes                              | no (mixed)                            |
 | brave      | `internal/apps/brave/`      | Desktop      | no           | yes                              | yes                                   |
 | claude     | `internal/apps/claude/`     | Terminal     | yes          | **no** (reference)               | yes                                   |
-| devgita    | `internal/apps/devgita/`    | Meta         | yes (custom) | yes                              | yes                                   |
+| devgeta    | `internal/apps/devgeta/`    | Meta         | yes (custom) | yes                              | yes                                   |
 | docker     | `internal/apps/docker/`     | Desktop      | yes          | yes                              | yes                                   |
 | fastfetch  | `internal/apps/fastfetch/`  | Terminal     | yes          | yes                              | no                                    |
 | flameshot  | `internal/apps/flameshot/`  | Desktop      | no           | yes                              | yes                                   |
@@ -188,7 +188,7 @@ const (
     KindLanguage
     KindDatabase
     KindFont
-    KindMeta // devgita itself
+    KindMeta // devgeta itself
 )
 
 // App is the contract every app module satisfies (with the exception of Fonts,
@@ -238,7 +238,7 @@ package baseapp
 import (
     "errors"
 
-    "github.com/cjairm/devgita/internal/apps"
+    "github.com/cjairm/devgeta/internal/apps"
 )
 
 // Reinstall implements the "force reinstall" flow correctly:
@@ -336,15 +336,15 @@ Update callers (`internal/tooling/desktop/` likely) to use the new method names.
 
 Verify: `go test ./internal/apps/fonts/` and `go test ./internal/tooling/...`
 
-#### Step 7 — Refactor Devgita self-installer
+#### Step 7 — Refactor Devgeta self-installer
 
-Devgita is the meta-app. Apply the same treatment:
+Devgeta is the meta-app. Apply the same treatment:
 
 - `Name()`, `Kind() = KindMeta`, sentinel errors, interface assertion.
 - It has a richer `New()` with embedded extractor — leave the custom fields alone, just add the new methods.
-- If its `ForceInstall` actually does support uninstall (uninstalling devgita itself), confirm Reinstall correctly dispatches.
+- If its `ForceInstall` actually does support uninstall (uninstalling devgeta itself), confirm Reinstall correctly dispatches.
 
-Verify: `go test ./internal/apps/devgita/ -v`
+Verify: `go test ./internal/apps/devgeta/ -v`
 
 #### Step 8 — Re-enable commented-out tests
 
@@ -424,7 +424,7 @@ make lint
 2. **Sentinel grep.** `grep -rn "uninstall not supported\|update not supported\|uninstall not implemented\|update not implemented" internal/apps/` should return **zero** matches in `.go` source (test assertions may keep the strings if asserting wrapped messages — prefer `errors.Is` instead).
 3. **Commented-test grep.** `grep -rn "// func Test" internal/apps/` should return **zero** matches.
 4. **Direct-mock grep.** `grep -rn "commands.NewMockCommand()" internal/apps/` should return **zero** matches in `_test.go` files (the testutil layer is the one place allowed to call it).
-5. **`./devgita install --help`** still works and lists every category.
+5. **`./devgeta install --help`** still works and lists every category.
 
 ### Regression
 
@@ -465,7 +465,7 @@ make lint
 - [ ] Steps are actionable? (Each step has a verify command; commit boundaries match steps)
 - [ ] Verification is executable? (The grep checks at the bottom are concrete)
 - [ ] Risks are realistic? (Fonts split is the only one with non-trivial blast radius)
-- [ ] Order is right? (Foundations → Claude reference → desktop → terminal → fonts → devgita → tests → docs)
+- [ ] Order is right? (Foundations → Claude reference → desktop → terminal → fonts → devgeta → tests → docs)
 
 **Reviewer notes:**
 (Fill in during review.)

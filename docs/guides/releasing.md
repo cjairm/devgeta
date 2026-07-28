@@ -2,11 +2,11 @@
 
 ## Overview
 
-This guide explains how to create new releases of devgita using our automated GitHub Actions workflow. Releases are triggered by pushing version tags and automatically build binaries for all supported platforms.
+This guide explains how to create new releases of devgeta using our automated GitHub Actions workflow. Releases are triggered by pushing version tags and automatically build binaries for all supported platforms.
 
 ## Prerequisites
 
-- Write access to the devgita repository
+- Write access to the devgeta repository
 - Git configured with your GitHub credentials
 - Clean working directory (all changes committed)
 
@@ -18,7 +18,7 @@ Before creating a release, ensure:
 
 - All intended changes are merged to `main`
 - Tests are passing: `go test ./...`
-- Build succeeds locally: `go build -o devgita main.go`
+- Build succeeds locally: `go build -o devgeta main.go`
 - Documentation is up to date
 
 ### 2. Determine Version Number
@@ -46,10 +46,10 @@ git push origin v0.2.0
 Once you push the tag, GitHub Actions automatically:
 
 1. **Builds binaries** for all supported platforms:
-   - `devgita-darwin-amd64` (macOS Intel)
-   - `devgita-darwin-arm64` (macOS Apple Silicon)
-   - `devgita-linux-amd64` (Linux Intel)
-   - `devgita-linux-arm64` (Linux ARM)
+   - `devgeta-darwin-amd64` (macOS Intel)
+   - `devgeta-darwin-arm64` (macOS Apple Silicon)
+   - `devgeta-linux-amd64` (Linux Intel)
+   - `devgeta-linux-arm64` (Linux ARM)
 
 2. **Creates a GitHub Release** with:
    - Auto-generated release notes
@@ -58,7 +58,7 @@ Once you push the tag, GitHub Actions automatically:
 
 **Monitor progress**:
 
-- Visit: https://github.com/cjairm/devgita/actions
+- Visit: https://github.com/cjairm/devgeta/actions
 - Look for the "Release" workflow
 - Typical build time: 2-3 minutes
 
@@ -67,19 +67,19 @@ Once you push the tag, GitHub Actions automatically:
 After the workflow completes:
 
 1. **Check the release page**:
-   - Visit: https://github.com/cjairm/devgita/releases
+   - Visit: https://github.com/cjairm/devgeta/releases
    - Verify your new release appears
    - Confirm all four binaries are attached
 
 2. **Test the installation script**:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/cjairm/devgita/main/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
    ```
 
 3. **Verify the installed version**:
    ```bash
-   devgita --version
+   devgeta --version
    ```
 
 ### 6. Update Documentation (Optional)
@@ -121,13 +121,13 @@ The workflow:
 Binaries follow this pattern:
 
 ```
-devgita-{OS}-{ARCH}
+devgeta-{OS}-{ARCH}
 ```
 
 **Examples**:
 
-- `devgita-darwin-amd64`
-- `devgita-linux-arm64`
+- `devgeta-darwin-amd64`
+- `devgeta-linux-arm64`
 
 ## Troubleshooting
 
@@ -136,7 +136,7 @@ devgita-{OS}-{ARCH}
 If the GitHub Actions workflow fails:
 
 1. **Check workflow logs**:
-   - Go to: https://github.com/cjairm/devgita/actions
+   - Go to: https://github.com/cjairm/devgeta/actions
    - Click on the failed workflow run
    - Review the logs for error messages
 
@@ -173,7 +173,7 @@ If users report download failures:
 2. **Check binary permissions**: Ensure binaries are marked as assets
 3. **Test download URL**:
    ```bash
-   curl -fsSL https://github.com/cjairm/devgita/releases/download/v0.2.0/devgita-darwin-amd64
+   curl -fsSL https://github.com/cjairm/devgeta/releases/download/v0.2.0/devgeta-darwin-amd64
    ```
 
 ## Best Practices
@@ -182,7 +182,7 @@ If users report download failures:
 
 - [ ] All changes merged to `main`
 - [ ] Tests passing: `go test ./...`
-- [ ] Local build succeeds: `go build -o devgita main.go`
+- [ ] Local build succeeds: `go build -o devgeta main.go`
 - [ ] Version number determined (semantic versioning)
 - [ ] CHANGELOG.md updated (if applicable)
 - [ ] Documentation reviewed and updated
@@ -205,19 +205,19 @@ If you need to create a release manually without the workflow:
 
 ```bash
 # macOS amd64
-GOOS=darwin GOARCH=amd64 go build -o devgita-darwin-amd64 -ldflags="-s -w" .
+GOOS=darwin GOARCH=amd64 go build -o devgeta-darwin-amd64 -ldflags="-s -w" .
 
 # macOS arm64
-GOOS=darwin GOARCH=arm64 go build -o devgita-darwin-arm64 -ldflags="-s -w" .
+GOOS=darwin GOARCH=arm64 go build -o devgeta-darwin-arm64 -ldflags="-s -w" .
 
 # Linux amd64
-GOOS=linux GOARCH=amd64 go build -o devgita-linux-amd64 -ldflags="-s -w" .
+GOOS=linux GOARCH=amd64 go build -o devgeta-linux-amd64 -ldflags="-s -w" .
 
 # Linux arm64
-GOOS=linux GOARCH=arm64 go build -o devgita-linux-arm64 -ldflags="-s -w" .
+GOOS=linux GOARCH=arm64 go build -o devgeta-linux-arm64 -ldflags="-s -w" .
 
 # Make executable
-chmod +x devgita-*
+chmod +x devgeta-*
 ```
 
 ### Create Release via GitHub CLI
@@ -225,17 +225,17 @@ chmod +x devgita-*
 ```bash
 # Create release and upload binaries
 gh release create v0.2.0 \
-  devgita-darwin-amd64 \
-  devgita-darwin-arm64 \
-  devgita-linux-amd64 \
-  devgita-linux-arm64 \
+  devgeta-darwin-amd64 \
+  devgeta-darwin-arm64 \
+  devgeta-linux-amd64 \
+  devgeta-linux-arm64 \
   --title "v0.2.0" \
   --notes "Release notes here"
 ```
 
 ### Create Release via GitHub Web UI
 
-1. Go to: https://github.com/cjairm/devgita/releases/new
+1. Go to: https://github.com/cjairm/devgeta/releases/new
 2. Choose the tag (or create new tag)
 3. Add release title and notes
 4. Drag and drop all four binary files
@@ -257,8 +257,8 @@ git push origin v0.2.0
 # 3. Wait 2-3 minutes for workflow
 
 # 4. Test
-curl -fsSL https://raw.githubusercontent.com/cjairm/devgita/main/install.sh | bash
-devgita --version
+curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
+devgeta --version
 ```
 
 ### Delete a Release
@@ -274,16 +274,16 @@ git push origin :refs/tags/v0.2.0
 gh release delete v0.2.0
 
 # Or delete via GitHub web UI
-# https://github.com/cjairm/devgita/releases
+# https://github.com/cjairm/devgeta/releases
 ```
 
 ## Support
 
 If you encounter issues with releases:
 
-- **Check workflow logs**: https://github.com/cjairm/devgita/actions
+- **Check workflow logs**: https://github.com/cjairm/devgeta/actions
 - **Review release guide**: This document
-- **File an issue**: https://github.com/cjairm/devgita/issues
+- **File an issue**: https://github.com/cjairm/devgeta/issues
 
 ## Resources
 

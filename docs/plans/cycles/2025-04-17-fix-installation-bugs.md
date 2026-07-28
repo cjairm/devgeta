@@ -11,7 +11,7 @@
 During `dg install` testing, four bugs were discovered:
 
 1. **fd-find package name**: On macOS, the fd tool is installed with an unnecessary alias "fd-find", but Homebrew package name is just "fd"
-2. **fontconfig SoftConfigure**: Returns "not implemented" error instead of succeeding (fontconfig doesn't need devgita-managed config)
+2. **fontconfig SoftConfigure**: Returns "not implemented" error instead of succeeding (fontconfig doesn't need devgeta-managed config)
 3. **Aerospace detection**: `MaybeInstallDesktopApp("nikitabobko/tap/aerospace")` fails to detect existing `AeroSpace.app` because the cask name doesn't match the filesystem app name
 4. **Logger verbosity**: Debug/info logs appear without `--verbose` flag because production logger defaults to INFO level
 
@@ -43,7 +43,7 @@ go test ./internal/tooling/terminal/dev_tools/fdfind/...
 go test ./internal/tooling/terminal/core/fontconfig/...
 go test ./internal/apps/aerospace/...
 go test ./pkg/logger/...
-go build -o devgita main.go
+go build -o devgeta main.go
 ```
 
 ---
@@ -115,13 +115,13 @@ func (fc *FontConfig) SoftConfigure() error {
 
 // After:
 func (fc *FontConfig) SoftConfigure() error {
-    // fontconfig doesn't require devgita-managed configuration
+    // fontconfig doesn't require devgeta-managed configuration
     // It uses system defaults which are appropriate for most use cases
     return nil
 }
 ```
 
-**Rationale:** fontconfig is a system library that doesn't need custom configuration from devgita. Returning an error breaks the installation flow unnecessarily.
+**Rationale:** fontconfig is a system library that doesn't need custom configuration from devgeta. Returning an error breaks the installation flow unnecessarily.
 
 #### Step 3: Fix Aerospace detection
 
@@ -180,7 +180,7 @@ func Init(verbose bool) {
 #### Step 5: Build and verify
 
 ```bash
-go build -o devgita main.go
+go build -o devgeta main.go
 go test ./internal/tooling/terminal/dev_tools/fdfind/...
 go test ./internal/tooling/terminal/core/fontconfig/...
 go test ./internal/apps/aerospace/...
@@ -196,7 +196,7 @@ go vet ./...
 
 ```bash
 # Must all pass
-go build -o devgita main.go
+go build -o devgeta main.go
 go test ./...
 go vet ./...
 ```
@@ -205,28 +205,28 @@ go vet ./...
 
 #### Bug 1 (fd-find):
 
-1. Run `./devgita install --only terminal` on macOS
+1. Run `./devgeta install --only terminal` on macOS
 2. Observe no warning about "fd-find" package name
 3. Verify `fd --version` works after installation
 
 #### Bug 2 (fontconfig):
 
-1. Run `./devgita install --only terminal`
+1. Run `./devgeta install --only terminal`
 2. Observe no "not implemented: SoftConfigure" error
 3. Installation should proceed past fontconfig without error
 
 #### Bug 3 (Aerospace):
 
 1. Ensure `AeroSpace.app` is already in `/Applications/`
-2. Run `./devgita install --only desktop`
+2. Run `./devgeta install --only desktop`
 3. Observe no "Error: It seems there is already an App at '/Applications/AeroSpace.app'" error
 4. Aerospace should be detected as already installed and skipped
 
 #### Bug 4 (logger):
 
-1. Run `./devgita install` WITHOUT `--verbose`
+1. Run `./devgeta install` WITHOUT `--verbose`
 2. Observe NO debug/info log lines (only errors if any)
-3. Run `./devgita install --verbose`
+3. Run `./devgeta install --verbose`
 4. Observe debug/info logs appear (development mode)
 
 ### Regression Check

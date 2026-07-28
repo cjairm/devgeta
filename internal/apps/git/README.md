@@ -1,6 +1,6 @@
 # Git App
 
-Installs and configures Git with devgita integration.
+Installs and configures Git with devgeta integration.
 
 ## Recovering Lost Commits
 

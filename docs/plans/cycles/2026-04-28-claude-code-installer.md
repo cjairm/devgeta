@@ -8,7 +8,7 @@
 
 ## 1. Domain Context
 
-Devgita installs and configures terminal development tools. Claude Code (`claude`) is Anthropic's AI-powered CLI that runs in the terminal. This cycle adds Claude Code as a first-class installable tool in devgita's terminal tools category, and consolidates the shared skills/commands/agents used by both Claude Code and OpenCode into a single source location.
+Devgeta installs and configures terminal development tools. Claude Code (`claude`) is Anthropic's AI-powered CLI that runs in the terminal. This cycle adds Claude Code as a first-class installable tool in devgeta's terminal tools category, and consolidates the shared skills/commands/agents used by both Claude Code and OpenCode into a single source location.
 
 **What exists already:**
 
@@ -16,7 +16,7 @@ Devgita installs and configures terminal development tools. Claude Code (`claude
 - `configs/claude/statusline.sh` — Custom statusline script (model, context bar, git status)
 - `configs/claude/themes/` — Theme files
 - `configs/opencode/skills/`, `configs/opencode/commands/`, `configs/opencode/agents/` — Currently owned by OpenCode, but compatible with Claude Code paths too
-- `configs/templates/devgita.zsh.tmpl` — already has `{{if .Claude}}` and `{{if .Opencode}}` blocks, but `ShellFeatures` in `internal/config/fromFile.go` is missing both fields — the alias `cc` and `oc` never render currently
+- `configs/templates/devgeta.zsh.tmpl` — already has `{{if .Claude}}` and `{{if .Opencode}}` blocks, but `ShellFeatures` in `internal/config/fromFile.go` is missing both fields — the alias `cc` and `oc` never render currently
 - No `internal/apps/claude/` module, no constant, no path entry, no tooling registration yet
 
 **Installation method:**  
@@ -254,7 +254,7 @@ End every test with `testutil.VerifyNoRealCommands(t, mockApp.Base)`.
 
 In `internal/tooling/terminal/terminal.go`:
 
-1. Add import: `"github.com/cjairm/devgita/internal/apps/claude"`
+1. Add import: `"github.com/cjairm/devgeta/internal/apps/claude"`
 2. In `InstallTerminalApps()`, after the OpenCode block:
    ```go
    c := claude.New()
