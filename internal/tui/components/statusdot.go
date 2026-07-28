@@ -9,20 +9,30 @@ const (
 	StateNeedsReview              // session finished, fired by Stop hook
 	StateDirty                    // uncommitted changes, no active session
 	StateNoSession                // worktree exists, no tmux window
+	StateBlocked                  // agent is blocked, needs user intervention
+	StateError                    // agent encountered an error
 )
 
-// SessionStateFromWorktree derives state from WorktreeStatus.
-// needsReview and dirtyCount are zero-valued until WorktreeStatus gains those fields.
+// SessionStateFromWorktree derives state from WorktreeStatus, incorporating
+// the aggregated agent state from the worktree's window panes.
+// agentState should be one of the AgentState* constants from the worktree package,
+// or "" if no agent has reported a state (equivalent to StateRunning for active windows).
 func SessionStateFromWorktree(
 	s worktree.WorktreeStatus,
-	needsReview bool,
+	agentState string,
 	dirtyCount int,
 ) SessionState {
 	if s.WindowActive {
-		if needsReview {
+		switch agentState {
+		case worktree.AgentStateBlocked:
+			return StateBlocked
+		case worktree.AgentStateError:
+			return StateError
+		case worktree.AgentStateIdle:
 			return StateNeedsReview
+		default: // worktree.AgentStateBusy, or "" (no agent ever reported here)
+			return StateRunning
 		}
-		return StateRunning
 	}
 	if dirtyCount > 0 {
 		return StateDirty
@@ -42,6 +52,10 @@ func (p *Palette) StatusDot(state SessionState) string {
 		return p.NeedsReview.Render(g)
 	case StateDirty:
 		return p.Dirty.Render(g)
+	case StateBlocked:
+		return p.Blocked.Render(g)
+	case StateError:
+		return p.Error.Render(g)
 	default:
 		return p.NoSession.Render(g)
 	}
@@ -58,6 +72,10 @@ func (p *Palette) StatusGlyph(state SessionState) string {
 		return "◆"
 	case StateDirty:
 		return "●"
+	case StateBlocked:
+		return "!"
+	case StateError:
+		return "✕"
 	default:
 		return "○"
 	}

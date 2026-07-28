@@ -106,7 +106,7 @@ func (c *Claude) ForceConfigure() error {
 		return fmt.Errorf("failed to render claude settings: %w", err)
 	}
 
-	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh"} {
+	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh", "agent-state.sh"} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(
 			filepath.Join(paths.Paths.App.Configs.Claude, script),

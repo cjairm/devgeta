@@ -44,6 +44,87 @@ func TestTmuxDefaultCommandStaysResurrectSafe(t *testing.T) {
 	}
 }
 
+// TestTmuxWindowStatusFormatFlagsUnattendedAgents confirms Step 8's status-bar
+// signal (docs/plans/cycles/2026-07-28-agent-activity-notifications.md, Step 8;
+// ADR-0005) is wired to the correct, SEPARATE option name for the window-level
+// mirror. This is a string-only check against the embedded config text — it
+// never starts a real tmux server, per this cycle's safety requirement.
+//
+// The one mistake this task's brief warns against: reusing @dg_agent_state
+// (the pane-level, authoritative option) as the window-level mirror's name.
+// Because tmux options cascade window -> pane, a window-level write under the
+// SAME name would be inherited by every pane in that window without its own
+// override (e.g. the nvim pane in a claude-nvim layout), corrupting
+// Tmux.PaneStates()'s existing per-pane read. The mirror must be
+// @dg_window_agent_state instead — this test asserts both the presence of the
+// correct name and the absence of the bare pane-level name on the same line.
+func TestTmuxWindowStatusFormatFlagsUnattendedAgents(t *testing.T) {
+	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf")
+	if err != nil {
+		t.Fatalf("failed to read embedded tmux.conf: %v", err)
+	}
+	content := string(data)
+
+	var formatLine string
+	for _, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.Contains(trimmed, "window-status-format") {
+			formatLine = trimmed
+			break
+		}
+	}
+	if formatLine == "" {
+		t.Fatal("expected a window-status-format override in tmux.conf, found none")
+	}
+
+	if !strings.Contains(formatLine, "@dg_window_agent_state") {
+		t.Errorf(
+			"window-status-format line must reference @dg_window_agent_state, got: %s",
+			formatLine,
+		)
+	}
+	// Strip the correct name before checking for the bare pane-level name, so
+	// a substring match on "@dg_window_agent_state" (which itself does NOT
+	// contain "@dg_agent_state" — "window_agent_state" != "agent_state")
+	// can't hide a distinct, mistaken reference to the pane-level option
+	// elsewhere on the same line.
+	withoutMirrorName := strings.ReplaceAll(formatLine, "@dg_window_agent_state", "")
+	if strings.Contains(withoutMirrorName, "@dg_agent_state") {
+		t.Errorf(
+			"window-status-format line must not reference the pane-level @dg_agent_state directly "+
+				"(only the window-level mirror @dg_window_agent_state) - reusing the pane-level name "+
+				"would let it be inherited by every pane in the window without its own override: %s",
+			formatLine,
+		)
+	}
+
+	if !strings.Contains(formatLine, "window_active_clients") {
+		t.Errorf(
+			"window-status-format line must gate visibility on window_active_clients, got: %s",
+			formatLine,
+		)
+	}
+	// Same stripping trick as above: window_active_clients contains
+	// window_active as a literal prefix, so a naive "must not contain
+	// window_active" check would always fail. Strip the correct token first.
+	withoutActiveClients := strings.ReplaceAll(formatLine, "window_active_clients", "")
+	if strings.Contains(withoutActiveClients, "window_active") {
+		t.Errorf(
+			"window-status-format line must not use the bare window_active (session-active, not "+
+				"visible-to-a-client) - use window_active_clients instead: %s",
+			formatLine,
+		)
+	}
+
+	if strings.Contains(content, "window-status-current-format") {
+		t.Error(
+			"window-status-current-format must remain unset: the active window's own " +
+				"window_active_clients is always >= 1 for the client viewing it, so the visibility " +
+				"gate already excludes it without separate handling",
+		)
+	}
+}
+
 // configs/zsh/zshenv.zsh is sourced from ~/.zshenv on every zsh startup
 // (login or not), before /etc/zshrc runs. zsh startup semantics — not a
 // convention we control — impose the guard shape this test checks: without

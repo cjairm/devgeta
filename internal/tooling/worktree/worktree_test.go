@@ -185,6 +185,243 @@ func TestList(t *testing.T) {
 			}
 		}
 	})
+
+	// one scan, not N: the regression this whole refactor exists to prevent.
+	// Before this task, List() called Tmux.WindowSession() once per worktree,
+	// and each of those calls ran its own fresh list-windows -a scan - N tmux
+	// execs per dashboard refresh. List() must now call Tmux.PaneStates()
+	// exactly once regardless of how many worktrees it finds.
+	t.Run("single tmux scan regardless of worktree count", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		mockTmuxBase := commands.NewMockBaseCommand()
+		// Git errors are tolerated by List() (branch just stays "") - keep the
+		// fixture focused on the tmux-scan behavior under test.
+		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+
+		windowA := GetWindowName("repoA", "wt1")
+		windowB := GetWindowName("repoB", "wt2")
+		mockTmuxBase.SetExecCommandResult(
+			"sessA\t"+windowA+"\t%1\tbusy\n"+
+				"sessB\t"+windowB+"\t%2\tidle\n",
+			"",
+			nil,
+		)
+
+		wm := &WorktreeManager{
+			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+			Base: commands.NewMockBaseCommand(),
+		}
+
+		createWorktreeDir(t, "repoA", "wt1")
+		createWorktreeDir(t, "repoB", "wt2")
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if got := mockTmuxBase.GetExecCommandCallCount(); got != 1 {
+			t.Errorf(
+				"expected exactly 1 tmux exec call for %d worktrees, got %d",
+				len(statuses),
+				got,
+			)
+		}
+
+		byWindow := make(map[string]WorktreeStatus, len(statuses))
+		for _, s := range statuses {
+			byWindow[s.TmuxWindow] = s
+		}
+		if _, ok := byWindow[windowA]; !ok {
+			t.Fatalf("expected a status for window %s, got byWindow=%+v", windowA, byWindow)
+		}
+		if _, ok := byWindow[windowB]; !ok {
+			t.Fatalf("expected a status for window %s, got byWindow=%+v", windowB, byWindow)
+		}
+		if s := byWindow[windowA]; !s.WindowActive || s.AgentState != "busy" {
+			t.Errorf(
+				"window %s: got WindowActive=%v AgentState=%q, want true/\"busy\"",
+				windowA,
+				s.WindowActive,
+				s.AgentState,
+			)
+		}
+		if s := byWindow[windowB]; !s.WindowActive || s.AgentState != "idle" {
+			t.Errorf(
+				"window %s: got WindowActive=%v AgentState=%q, want true/\"idle\"",
+				windowB,
+				s.WindowActive,
+				s.AgentState,
+			)
+		}
+	})
+
+	// Aggregation over a window's panes must follow ADR-0005's precedence:
+	// blocked > error > idle > busy > (no agent). This covers two precedence
+	// pairs so the ordering isn't just checked at a single point: idle-over-busy
+	// (the split-pane review case ADR-0005 exists for) and blocked-over-error.
+	t.Run("aggregates multiple panes per window by precedence", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+
+		windowMixed := GetWindowName("repoC", "mixed")
+		windowUrgent := GetWindowName("repoC", "urgent")
+		mockTmuxBase.SetExecCommandResult(
+			"sess\t"+windowMixed+"\t%1\tidle\n"+
+				"sess\t"+windowMixed+"\t%2\tbusy\n"+
+				"sess\t"+windowUrgent+"\t%3\tblocked\n"+
+				"sess\t"+windowUrgent+"\t%4\terror\n",
+			"",
+			nil,
+		)
+
+		wm := &WorktreeManager{
+			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+			Base: commands.NewMockBaseCommand(),
+		}
+
+		createWorktreeDir(t, "repoC", "mixed")
+		createWorktreeDir(t, "repoC", "urgent")
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+
+		byWindow := make(map[string]WorktreeStatus, len(statuses))
+		for _, s := range statuses {
+			byWindow[s.TmuxWindow] = s
+		}
+		if got := byWindow[windowMixed].AgentState; got != "idle" {
+			t.Errorf(
+				"window with one idle + one busy pane: got AgentState %q, want \"idle\" (idle outranks busy)",
+				got,
+			)
+		}
+		if got := byWindow[windowUrgent].AgentState; got != "blocked" {
+			t.Errorf(
+				"window with one blocked + one error pane: got AgentState %q, want \"blocked\" (blocked outranks error)",
+				got,
+			)
+		}
+	})
+
+	// A window absent from the pane-state scan (no tmux window at all) and a
+	// window present but whose pane(s) never had @dg_agent_state set (e.g. an
+	// editor pane) are different situations and must be distinguished:
+	// WindowActive differs even though AgentState is "" in both cases.
+	t.Run("no agent vs no window are distinguished", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+
+		windowPresent := GetWindowName("repoD", "editor-only")
+		windowAbsent := GetWindowName("repoD", "no-window")
+		// windowAbsent deliberately has no line in the scan output at all.
+		mockTmuxBase.SetExecCommandResult(
+			"sess\t"+windowPresent+"\t%1\t\n",
+			"",
+			nil,
+		)
+
+		wm := &WorktreeManager{
+			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+			Base: commands.NewMockBaseCommand(),
+		}
+
+		createWorktreeDir(t, "repoD", "editor-only")
+		createWorktreeDir(t, "repoD", "no-window")
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+
+		byWindow := make(map[string]WorktreeStatus, len(statuses))
+		for _, s := range statuses {
+			byWindow[s.TmuxWindow] = s
+		}
+		if s := byWindow[windowPresent]; !s.WindowActive || s.AgentState != "" {
+			t.Errorf(
+				"window present with empty-state pane: got WindowActive=%v AgentState=%q, want true/\"\"",
+				s.WindowActive,
+				s.AgentState,
+			)
+		}
+		if s := byWindow[windowAbsent]; s.WindowActive || s.AgentState != "" {
+			t.Errorf(
+				"window absent from scan: got WindowActive=%v AgentState=%q, want false/\"\"",
+				s.WindowActive,
+				s.AgentState,
+			)
+		}
+	})
+}
+
+// createWorktreeDir creates the on-disk directory List() scans
+// (…/worktrees/<repoSlug>/<name>) and registers cleanup of the whole
+// repoSlug directory, mirroring the fixture pattern already used by
+// TestRemove/TestRemoveByRepoUsesCorrectPath.
+func createWorktreeDir(t *testing.T, repoSlug, name string) string {
+	t.Helper()
+	repoDir := filepath.Join(GetWorktreeBasePath(), repoSlug)
+	wtPath := filepath.Join(repoDir, name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("failed to create worktree dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(repoDir); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	})
+	return wtPath
+}
+
+// TestAggregateAgentState exercises the pure aggregation function directly
+// per ADR-0005's precedence: blocked > error > idle > busy > (no agent).
+// Ties and unrecognized values must fall back to "no agent" rank rather than
+// crashing or silently outranking a real value.
+func TestAggregateAgentState(t *testing.T) {
+	tests := []struct {
+		name   string
+		states []string
+		want   string
+	}{
+		{"empty input", nil, ""},
+		{"single empty state", []string{""}, ""},
+		{"single busy", []string{"busy"}, "busy"},
+		{"single idle", []string{"idle"}, "idle"},
+		{"single blocked", []string{"blocked"}, "blocked"},
+		{"single error", []string{"error"}, "error"},
+		{"idle outranks busy", []string{"idle", "busy"}, "idle"},
+		{"busy then idle - order independent", []string{"busy", "idle"}, "idle"},
+		{"error outranks idle", []string{"error", "idle"}, "error"},
+		{"blocked outranks error", []string{"blocked", "error"}, "blocked"},
+		{"blocked outranks everything", []string{"busy", "idle", "error", "blocked"}, "blocked"},
+		{"empty and busy - busy wins", []string{"", "busy"}, "busy"},
+		{"unknown value alone ranks as no agent", []string{"weird-future-state"}, ""},
+		{
+			"unknown value never outranks a real value",
+			[]string{"weird-future-state", "busy"},
+			"busy",
+		},
+		{
+			"unknown value does not beat idle",
+			[]string{"idle", "weird-future-state"},
+			"idle",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := aggregateAgentState(tt.states); got != tt.want {
+				t.Errorf("aggregateAgentState(%v) = %q, want %q", tt.states, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestRemove(t *testing.T) {

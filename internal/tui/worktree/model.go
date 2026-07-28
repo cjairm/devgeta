@@ -153,6 +153,7 @@ type Model struct {
 	removeSessionFn          func(repo, name string) error
 	repairFn                 func(repo, name string, layout worktree.Layout) error
 	windowSessionFn          func(window string) (string, bool)
+	clearAgentStateFn        func(window string) error
 	currentSessionFn         func() (string, bool)
 	createSessionFn          func(name, workdir string) error
 	switchToSessionFn        func(name string) error
@@ -199,6 +200,7 @@ func newModel(
 		return mgr.RepairInRepo(repo, name, layout)
 	}
 	m.windowSessionFn = tmuxApp.WindowSession
+	m.clearAgentStateFn = tmuxApp.ClearAgentStateForWindow
 	// CurrentSession (tmux display-message) rather than scanning ListSessions
 	// for the first session_attached: it resolves the session of *this*
 	// client specifically, so it stays correct when several clients are
@@ -956,6 +958,8 @@ func (m Model) handleAttach() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	windowName := worktree.GetWindowName(sel.Repo, sel.Name)
+
 	// A missing window makes attachToWindowCmd auto-repair — rebuilding the tmux
 	// window, as slow as a create — before it attaches. Surface the same
 	// "repairing…" feedback the r keybinding shows so the enter keypress isn't
@@ -963,9 +967,15 @@ func (m Model) handleAttach() (tea.Model, tea.Cmd) {
 	// so it needs no status. This re-checks the window (the cmd checks again in
 	// its goroutine): a cheap read-only tmux lookup, kept here rather than
 	// restructuring the shared cmd the create-success path also uses.
-	if _, ok := m.windowSessionFn(worktree.GetWindowName(sel.Repo, sel.Name)); !ok {
+	if _, ok := m.windowSessionFn(windowName); !ok {
 		m.status = layoutActionStatus("repairing", sel.Name, "", m.gc)
 	}
+	// Attaching is the user acknowledging this row's state - clear it now so
+	// the window you're about to sit in doesn't keep showing a stale ◆/!/✕.
+	// No-op when the window doesn't exist yet. Best-effort: a failed clear
+	// is cosmetic (the dot stays stale until the next real state write), it
+	// must never block the attach itself.
+	_ = m.clearAgentStateFn(windowName)
 	return m, m.attachToWindowCmd(sel.Repo, sel.Name)
 }
 
@@ -1283,7 +1293,7 @@ func (m Model) renderLeft(width int) string {
 				)
 			}
 		} else {
-			state := tuicomponents.SessionStateFromWorktree(r.status, false, 0)
+			state := tuicomponents.SessionStateFromWorktree(r.status, r.status.AgentState, 0)
 			// Tree connector: "└ " for last child, "  " otherwise (both 2 display cols).
 			connectorRaw := "  "
 			connectorStyled := "  "

@@ -37,6 +37,13 @@ const (
 	// name created by configs/alacritty/starter.sh on terminal startup and is
 	// created on demand when missing. It is never killed itself.
 	fallbackSession = "misc"
+
+	// Agent state constants representing the aggregated state of AI agents
+	// in a worktree's window panes (per ADR-0005).
+	AgentStateBusy    = "busy"
+	AgentStateIdle    = "idle"
+	AgentStateError   = "error"
+	AgentStateBlocked = "blocked"
 )
 
 // isWorktreeWindow reports whether a tmux window name belongs to a worktree
@@ -66,7 +73,13 @@ type WorktreeStatus struct {
 	Branch       string
 	TmuxWindow   string
 	WindowActive bool
-	Repo         string
+	// AgentState is the aggregated agent state of the worktree's window,
+	// computed by aggregating over its panes' @dg_agent_state values per
+	// ADR-0005 (blocked > error > idle > busy > no agent). "" means no pane
+	// in the window ever had an agent write to it (or the window doesn't
+	// exist), not "idle" - see aggregateAgentState.
+	AgentState string
+	Repo       string
 }
 
 // SessionStatus describes a standalone tmux session for the workspace
@@ -411,6 +424,36 @@ func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, e
 	return state, nil
 }
 
+// agentStateRank ranks a pane's @dg_agent_state value by aggregation urgency
+// per ADR-0005: blocked > error > idle > busy > (no agent) - higher wins.
+// The empty string (no agent has ever written to this pane) and any
+// unrecognized value both resolve to the zero value here (Go's map lookup
+// default), so a value this cycle didn't anticipate can never silently
+// outrank a real one; it just falls back to "no agent" for ranking purposes.
+var agentStateRank = map[string]int{
+	AgentStateBusy:    1,
+	AgentStateIdle:    2,
+	AgentStateError:   3,
+	AgentStateBlocked: 4,
+}
+
+// aggregateAgentState reduces one window's pane states to the single value a
+// worktree row should report, per ADR-0005's precedence. Pure function of
+// the pane states so it's testable without a WorktreeManager. Returns "" when
+// states is empty or nil, or every entry is "" / unrecognized - i.e. no pane
+// in the window has a real agent state to report.
+func aggregateAgentState(states []string) string {
+	best := ""
+	bestRank := 0
+	for _, s := range states {
+		if rank := agentStateRank[s]; rank > bestRank {
+			bestRank = rank
+			best = s
+		}
+	}
+	return best
+}
+
 // List returns all worktrees with their window status across all repos
 func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 	basePath := GetWorktreeBasePath()
@@ -421,6 +464,19 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 			return []WorktreeStatus{}, nil
 		}
 		return nil, err
+	}
+
+	// One list-panes -a scan for the whole dashboard refresh, instead of a
+	// WindowSession() call per worktree - each of which ran its own fresh
+	// list-windows -a scan (N tmux execs per 3-second refresh). Indexed by
+	// window name: a window's presence as a key is the direct equivalent of
+	// "does a window with this name exist" (PaneStates enumerates every pane
+	// on the server, and a window with zero panes cannot exist in tmux), and
+	// its slice of pane states is what aggregateAgentState reduces to
+	// AgentState. See ADR-0005.
+	paneStatesByWindow := make(map[string][]string)
+	for _, ps := range w.Tmux.PaneStates() {
+		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
 	}
 
 	var statuses []WorktreeStatus
@@ -457,13 +513,17 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 				}
 			}
 
-			_, windowActive := w.Tmux.WindowSession(windowName)
+			// Comma-ok reports key presence, not slice non-emptiness: a
+			// window in the index always has at least one pane state
+			// appended above, so ok alone is the "window exists" signal.
+			states, windowActive := paneStatesByWindow[windowName]
 			statuses = append(statuses, WorktreeStatus{
 				Name:         name,
 				Path:         wtPath,
 				Branch:       branch,
 				TmuxWindow:   windowName,
 				WindowActive: windowActive,
+				AgentState:   aggregateAgentState(states),
 				Repo:         repoSlug,
 			})
 		}

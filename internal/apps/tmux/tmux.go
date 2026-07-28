@@ -249,6 +249,14 @@ type SessionWindow struct {
 	Window  string
 }
 
+// PaneState holds the current state of a single pane.
+type PaneState struct {
+	Session string
+	Window  string
+	PaneID  string
+	State   string // "@dg_agent_state" value; "" means no agent has written to this pane
+}
+
 // SessionWindows returns every (session, window) pair on the tmux server from
 // a single list-windows -a scan. It is the shared shape callers reach for when
 // they need to correlate windows to their sessions in bulk - e.g.
@@ -275,6 +283,90 @@ func (t *Tmux) SessionWindows() []SessionWindow {
 		pairs = append(pairs, SessionWindow{Session: parts[0], Window: parts[1]})
 	}
 	return pairs
+}
+
+// PaneStates returns every pane on the tmux server with its session, window, pane ID, and
+// agent state from a single list-panes -a scan. The agent state field may be an empty string
+// when the @dg_agent_state pane option has not yet been set by an agent. Returns nil when no
+// server is reachable or the query fails, matching SessionWindows's existing tolerance for
+// this same command.
+func (t *Tmux) PaneStates() []PaneState {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args: []string{
+			"list-panes",
+			"-a",
+			"-F",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{@dg_agent_state}",
+		},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return nil
+	}
+	var states []PaneState
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		parts := strings.SplitN(scanner.Text(), "\t", 4)
+		if len(parts) != 4 {
+			continue
+		}
+		states = append(
+			states,
+			PaneState{
+				Session: strings.TrimSpace(parts[0]),
+				Window:  strings.TrimSpace(parts[1]),
+				PaneID:  strings.TrimSpace(parts[2]),
+				State:   strings.TrimSpace(parts[3]),
+			},
+		)
+	}
+	return states
+}
+
+// ClearAgentStateForWindow unsets @dg_agent_state on every pane belonging to
+// the named window, across all sessions (mirroring WindowSession's "search
+// every session" semantics - a window name is unique in practice, but this
+// doesn't assume it). Called when the user attaches to a window: attaching is
+// the user acknowledging whatever state was showing, and the next real turn
+// writes busy/idle/etc. itself - clearing (not writing a value) restores the
+// pane to "no agent state to report", matching what an agent that has never
+// run in that pane looks like (ADR-0005). Also clears the window-level mirror
+// (@dg_window_agent_state) used by the status bar to flag unattended windows.
+// A window with no matching panes (e.g. one that doesn't exist yet) is a silent
+// no-op - safe to call unconditionally. Best-effort per pane: continues past a
+// failure on one pane (e.g. a pane that closed between the scan and the clear)
+// rather than aborting the rest; returns the first error encountered, if any,
+// purely for logging - callers are not expected to treat this as fatal.
+func (t *Tmux) ClearAgentStateForWindow(window string) error {
+	var firstErr error
+	var matchedPaneID string
+	for _, ps := range t.PaneStates() {
+		if ps.Window != window {
+			continue
+		}
+		matchedPaneID = ps.PaneID
+		if err := t.ExecuteCommand(
+			"set-option", "-p", "-u", "-t", ps.PaneID, "@dg_agent_state",
+		); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	if matchedPaneID != "" {
+		// Also clear the window-level status-bar mirror (Step 8,
+		// @dg_window_agent_state) - otherwise a stale "wants you" flag can
+		// reappear on tmux's own status bar once the user leaves this window,
+		// even though the dashboard (which reads the pane-level values just
+		// cleared above) correctly shows nothing pending. -w -t <any matching
+		// pane> targets the window that pane belongs to; a window-level
+		// option only needs clearing once, not once per pane.
+		if err := t.ExecuteCommand(
+			"set-option", "-w", "-u", "-t", matchedPaneID, "@dg_window_agent_state",
+		); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // SwitchToWindow moves the attached client to the given session and selects the

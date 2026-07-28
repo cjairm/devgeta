@@ -38,6 +38,7 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.removeSessionFn = func(_, _ string) error { return nil }
 	m.repairFn = func(_, _ string, _ worktree.Layout) error { return nil }
 	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
+	m.clearAgentStateFn = func(_ string) error { return nil }
 	m.currentSessionFn = func() (string, bool) { return "", false }
 	m.createSessionFn = func(_, _ string) error { return nil }
 	m.switchToSessionFn = func(_ string) error { return nil }
@@ -1026,6 +1027,30 @@ func TestAttachNoRepairingStatusWhenWindowPresent(t *testing.T) {
 	}
 }
 
+func TestAttachClearsAgentStateForSelectedWindow(t *testing.T) {
+	t.Setenv("TMUX", "1")
+	m := makeTestModel(testStatuses())
+	m.windowSessionFn = func(string) (string, bool) { return "misc", true } // window present
+	var gotCalls int
+	var gotWindow string
+	m.clearAgentStateFn = func(window string) error {
+		gotCalls++
+		gotWindow = window
+		return nil
+	}
+
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+
+	if gotCalls != 1 {
+		t.Fatalf("expected clearAgentStateFn to be called exactly once, got %d", gotCalls)
+	}
+	// cursor starts on the first row (testStatuses()[0]: repo-a/feature-a).
+	want := worktree.GetWindowName("repo-a", "feature-a")
+	if gotWindow != want {
+		t.Errorf("clearAgentStateFn called with window %q, want %q", gotWindow, want)
+	}
+}
+
 // mgrWithMockedTmux builds a real *worktree.WorktreeManager backed by a
 // mocked Tmux, mirroring the pattern internal/tooling/worktree's own tests
 // use (see TestListSessions in worktree_test.go). List() never touches Git
@@ -1333,6 +1358,191 @@ func TestRenderLeftSessionRowCursorAndArmedStyling(t *testing.T) {
 		t.Errorf(
 			"expected armed (pendingKillSession match) session row to use the Armed style, got %q",
 			armedLine,
+		)
+	}
+}
+
+// TestRenderLeftWorktreeRowShowsAgentStateGlyph verifies that unselected worktree
+// rows render the correct glyph for each agent state by checking the stripped output.
+// This mirrors TestRenderLeftSessionRowShowsGlyphAndLabel but for worktrees with
+// agent states (blocked, idle, error, busy, or "").
+func TestRenderLeftWorktreeRowShowsAgentStateGlyph(t *testing.T) {
+	testCases := []struct {
+		agentState string
+		wantGlyph  string
+	}{
+		{agentState: worktree.AgentStateBlocked, wantGlyph: "!"},
+		{agentState: worktree.AgentStateIdle, wantGlyph: "◆"},
+		{agentState: worktree.AgentStateError, wantGlyph: "✕"},
+		{agentState: worktree.AgentStateBusy, wantGlyph: "●"},
+		{agentState: "", wantGlyph: "●"}, // No agent state renders as running
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("agentState_%s", tc.agentState), func(t *testing.T) {
+			statuses := []worktree.WorktreeStatus{
+				{
+					Name:         "test-wt",
+					Repo:         "test-repo",
+					Path:         "/tmp/test",
+					TmuxWindow:   "wt-test",
+					WindowActive: true,
+					AgentState:   tc.agentState,
+				},
+			}
+			m := makeTestModel(statuses)
+			m.rebuildRows()
+
+			out := ansi.Strip(m.renderLeft(40))
+			lines := strings.Split(out, "\n")
+
+			// Find the worktree row (skipping the repo header, which is the first row)
+			var wtLine string
+			for i, r := range m.rows {
+				if r.kind == rowWorktree && r.status.Name == "test-wt" {
+					if i < len(lines) {
+						wtLine = lines[i]
+					}
+				}
+			}
+
+			if wtLine == "" {
+				t.Fatal("expected a worktree row for 'test-wt'")
+			}
+
+			if !strings.Contains(wtLine, tc.wantGlyph) {
+				t.Errorf(
+					"agent state %q: expected glyph %q in unselected worktree row, got %q",
+					tc.agentState, tc.wantGlyph, wtLine,
+				)
+			}
+		})
+	}
+}
+
+// TestRenderLeftWorktreeRowAgentStateSelectedAndStyling verifies that selected
+// worktree rows (with cursor on them) correctly render agent-state glyphs nested
+// inside the Selected style, matching the unstyled glyph checked above and
+// confirming the Selected prefix is present. This mirrors
+// TestRenderLeftSessionRowCursorAndArmedStyling.
+func TestRenderLeftWorktreeRowAgentStateSelectedAndStyling(t *testing.T) {
+	testCases := []struct {
+		agentState string
+		wantGlyph  string
+	}{
+		{agentState: worktree.AgentStateBlocked, wantGlyph: "!"},
+		{agentState: worktree.AgentStateIdle, wantGlyph: "◆"},
+		{agentState: worktree.AgentStateError, wantGlyph: "✕"},
+		{agentState: worktree.AgentStateBusy, wantGlyph: "●"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("agentState_%s_selected", tc.agentState), func(t *testing.T) {
+			statuses := []worktree.WorktreeStatus{
+				{
+					Name:         "test-wt",
+					Repo:         "test-repo",
+					Path:         "/tmp/test",
+					TmuxWindow:   "wt-test",
+					WindowActive: true,
+					AgentState:   tc.agentState,
+				},
+			}
+			m := makeTestModel(statuses)
+			m.rebuildRows()
+
+			// Find the worktree row index
+			wtIdx := -1
+			for i, r := range m.rows {
+				if r.kind == rowWorktree && r.status.Name == "test-wt" {
+					wtIdx = i
+					break
+				}
+			}
+			if wtIdx == -1 {
+				t.Fatal("expected a worktree row for 'test-wt'")
+			}
+
+			m.cursor = wtIdx
+			selectedPrefix := strings.SplitN(m.palette.Selected.Render("X"), "X", 2)[0]
+
+			// Render and check the stripped output contains the expected glyph
+			rawLines := strings.Split(m.renderLeft(40), "\n")
+			strippedLines := strings.Split(ansi.Strip(m.renderLeft(40)), "\n")
+
+			if wtIdx >= len(strippedLines) {
+				t.Fatal("worktree row index out of bounds")
+			}
+
+			strippedLine := strippedLines[wtIdx]
+			rawLine := rawLines[wtIdx]
+
+			// Check that the glyph appears in the stripped output
+			if !strings.Contains(strippedLine, tc.wantGlyph) {
+				t.Errorf(
+					"agent state %q (selected): expected glyph %q in stripped output, got %q",
+					tc.agentState, tc.wantGlyph, strippedLine,
+				)
+			}
+
+			// Check that the raw output contains the Selected style prefix,
+			// proving the glyph was successfully nested inside Selected.Render()
+			if !strings.Contains(rawLine, selectedPrefix) {
+				t.Errorf(
+					"agent state %q (selected): expected Selected style prefix in raw output, got %q",
+					tc.agentState,
+					rawLine,
+				)
+			}
+		})
+	}
+}
+
+// TestRenderLeftWorktreeRowNoAgentStateRendersDot verifies that a worktree row
+// with WindowActive but no agent state (AgentState == "") still renders the
+// plain running dot "●", guarding against regression on the empty-string fallback.
+func TestRenderLeftWorktreeRowNoAgentStateRendersDot(t *testing.T) {
+	statuses := []worktree.WorktreeStatus{
+		{
+			Name:         "test-wt",
+			Repo:         "test-repo",
+			Path:         "/tmp/test",
+			TmuxWindow:   "wt-test",
+			WindowActive: true,
+			AgentState:   "",
+		},
+	}
+	m := makeTestModel(statuses)
+	m.rebuildRows()
+
+	out := ansi.Strip(m.renderLeft(40))
+	lines := strings.Split(out, "\n")
+
+	// Find the worktree row
+	var wtLine string
+	for i, r := range m.rows {
+		if r.kind == rowWorktree && r.status.Name == "test-wt" {
+			if i < len(lines) {
+				wtLine = lines[i]
+			}
+		}
+	}
+
+	if wtLine == "" {
+		t.Fatal("expected a worktree row for 'test-wt'")
+	}
+
+	// Must contain the plain running dot, not any of the agent-state glyphs
+	if !strings.Contains(wtLine, "●") {
+		t.Errorf(
+			"expected unselected row with no agent state to show running dot ●, got %q",
+			wtLine,
+		)
+	}
+	if strings.ContainsAny(wtLine, "!◆✕") {
+		t.Errorf(
+			"expected unselected row with no agent state to not show agent-state glyphs, got %q",
+			wtLine,
 		)
 	}
 }

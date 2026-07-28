@@ -36,6 +36,12 @@ The full v2 is larger than one cycle, so it is **phased**:
 - **Phase 2 (future):** Inline **new worktree** creation, **open in nvim**.
 - **Phase 3 (future):** Completion notifications via Claude Code Stop hook writing a
   marker file the TUI watches, plus optional desktop notification.
+  > **Superseded (2026-07-28).** Phase 3 is now planned in
+  > [2026-07-28-agent-activity-notifications.md](2026-07-28-agent-activity-notifications.md).
+  > The marker-file sketch above was reconsidered and rejected — see
+  > [ADR-0005](../../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md),
+  > which stores the state in a tmux pane option instead, and covers both AI coders
+  > rather than Claude Code alone.
 
 Design reference: the wireframe set the maintainer approved selects **Layout A
 (classic two-pane)**, **tree grouping T1 (by repo)**, **right pane R1 (underline

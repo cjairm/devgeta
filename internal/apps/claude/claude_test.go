@@ -254,10 +254,101 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
 			}
 			// devgeta's own hooks must be present in every rendering.
-			for _, hook := range []string{"task-redirect.sh", "format.sh"} {
+			for _, hook := range []string{"task-redirect.sh", "format.sh", "agent-state.sh"} {
 				if !strings.Contains(string(data), hook) {
 					t.Errorf("rendered settings.json is missing %s", hook)
 				}
+			}
+
+			// Structural check (not just strings.Contains): Step 0 of the
+			// agent-activity-notifications cycle confirmed the exact hook
+			// registration shape for agent-state.sh (see ADR-0005 and
+			// task-4-brief.md). A substring check alone would pass even if
+			// the Notification matcher were missing or wrong, silently
+			// reintroducing the bug Step 0 exists to prevent: an unfiltered
+			// Notification hook mapping every notification (including idle
+			// nags) onto "blocked".
+			var rendered map[string]any
+			if err := json.Unmarshal(data, &rendered); err != nil {
+				t.Fatalf("failed to unmarshal rendered settings.json: %v", err)
+			}
+			hooks, ok := rendered["hooks"].(map[string]any)
+			if !ok {
+				t.Fatalf("rendered settings.json has no top-level \"hooks\" object")
+			}
+
+			firstHookEntry := func(t *testing.T, event string) map[string]any {
+				t.Helper()
+				entries, ok := hooks[event].([]any)
+				if !ok || len(entries) == 0 {
+					t.Fatalf(
+						"expected %q to be a non-empty array in hooks, got %v",
+						event,
+						hooks[event],
+					)
+				}
+				entry, ok := entries[0].(map[string]any)
+				if !ok {
+					t.Fatalf("expected %q[0] to be an object, got %v", event, entries[0])
+				}
+				return entry
+			}
+			commandOf := func(t *testing.T, entry map[string]any) string {
+				t.Helper()
+				innerHooks, ok := entry["hooks"].([]any)
+				if !ok || len(innerHooks) == 0 {
+					t.Fatalf("expected entry to have a non-empty \"hooks\" array, got %v", entry)
+				}
+				inner, ok := innerHooks[0].(map[string]any)
+				if !ok {
+					t.Fatalf("expected hooks[0] to be an object, got %v", innerHooks[0])
+				}
+				command, _ := inner["command"].(string)
+				return command
+			}
+
+			for _, tt := range []struct {
+				event       string
+				wantCommand string
+			}{
+				{"Stop", "agent-state.sh idle"},
+				{"UserPromptSubmit", "agent-state.sh busy"},
+			} {
+				entry := firstHookEntry(t, tt.event)
+				if _, hasMatcher := entry["matcher"]; hasMatcher {
+					t.Errorf(
+						"%s hook must not have a matcher key, got %v",
+						tt.event,
+						entry["matcher"],
+					)
+				}
+				command := commandOf(t, entry)
+				if !strings.Contains(command, tt.wantCommand) {
+					t.Errorf(
+						"%s hook command %q does not contain %q",
+						tt.event,
+						command,
+						tt.wantCommand,
+					)
+				}
+			}
+
+			notificationEntry := firstHookEntry(t, "Notification")
+			matcher, _ := notificationEntry["matcher"].(string)
+			if matcher != "permission_prompt" {
+				t.Errorf(
+					"Notification hook matcher = %q, want exactly %q",
+					matcher,
+					"permission_prompt",
+				)
+			}
+			notificationCommand := commandOf(t, notificationEntry)
+			if !strings.Contains(notificationCommand, "agent-state.sh blocked") {
+				t.Errorf(
+					"Notification hook command %q does not contain %q",
+					notificationCommand,
+					"agent-state.sh blocked",
+				)
 			}
 		})
 	}
@@ -355,6 +446,13 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "agent-state.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json"),
 		[]byte(`{}`),
 		0o644,
@@ -399,8 +497,8 @@ func TestForceConfigure(t *testing.T) {
 		t.Errorf("unexpected rendered settings.json: %s", rendered)
 	}
 
-	// statusline.sh, format.sh, and task-redirect.sh deployed and executable
-	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh"} {
+	// statusline.sh, format.sh, task-redirect.sh, and agent-state.sh deployed and executable
+	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh", "agent-state.sh"} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
 			t.Fatalf("Expected %s: %v", script, err)

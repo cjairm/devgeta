@@ -10,6 +10,8 @@ type Palette struct {
 	NeedsReview lip.Style // ANSI 5 purple
 	Dirty       lip.Style // ANSI 3 yellow
 	NoSession   lip.Style // ANSI 8 gray
+	Blocked     lip.Style // ANSI 1 red
+	Error       lip.Style // ANSI 1 red, bold
 
 	// Branch glyph
 	BranchGlyph lip.Style // ANSI 8 dim
@@ -67,6 +69,8 @@ func NewPalette() *Palette {
 		NeedsReview: lip.NewStyle().Foreground(lip.Color("5")),
 		Dirty:       lip.NewStyle().Foreground(lip.Color("3")),
 		NoSession:   lip.NewStyle().Foreground(lip.Color("8")),
+		Blocked:     lip.NewStyle().Foreground(lip.Color("1")),
+		Error:       lip.NewStyle().Bold(true).Foreground(lip.Color("1")),
 		BranchGlyph: lip.NewStyle().Foreground(lip.Color("8")),
 
 		DiffAdded:      lip.NewStyle().Foreground(lip.Color("2")),

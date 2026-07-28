@@ -1566,3 +1566,221 @@ func TestSelectPane(t *testing.T) {
 		t.Errorf("expected target '%%67' in args %v", last.Args)
 	}
 }
+
+func TestPaneStates(t *testing.T) {
+	t.Run(
+		"parses tab-separated 4-field pane lines across multiple sessions/windows/panes, including empty last field",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult(
+				"my-session\twt-feature-a\t%1\tworking\nmy-session\teditor\t%2\t\nother\tnotes\t%3\tblocked\n",
+				"",
+				nil,
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			states := app.PaneStates()
+
+			expected := []tmux.PaneState{
+				{Session: "my-session", Window: "wt-feature-a", PaneID: "%1", State: "working"},
+				{Session: "my-session", Window: "editor", PaneID: "%2", State: ""},
+				{Session: "other", Window: "notes", PaneID: "%3", State: "blocked"},
+			}
+			if len(states) != len(expected) {
+				t.Fatalf("expected %d states, got %d: %+v", len(expected), len(states), states)
+			}
+			for i, exp := range expected {
+				if states[i] != exp {
+					t.Errorf("state[%d] = %+v, want %+v", i, states[i], exp)
+				}
+			}
+		},
+	)
+
+	t.Run("exec error returns nil", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "error", errors.New("no server"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if states := app.PaneStates(); states != nil {
+			t.Errorf("expected nil on exec error, got %+v", states)
+		}
+	})
+
+	t.Run("empty stdout returns nil", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if states := app.PaneStates(); states != nil {
+			t.Errorf("expected nil when no panes exist, got %+v", states)
+		}
+	})
+}
+
+func TestClearAgentStateForWindow(t *testing.T) {
+	t.Run("clears every pane belonging to the matching window only", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(
+			"my-session\twt-feature-a\t%1\tworking\nmy-session\twt-feature-a\t%2\tidle\nother\tnotes\t%3\tblocked\n",
+			"",
+			nil,
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForWindow("wt-feature-a"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// call 0 is the list-panes scan; the two matching panes (%1, %2) should
+		// each get exactly one set-option -p -u call, and %3 (a different
+		// window) should never appear in a set-option call at all. Call 3 is the
+		// window-level clear of @dg_window_agent_state.
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 4 {
+			t.Fatalf(
+				"expected 4 calls (1 scan + 2 pane clears + 1 window clear), got %d: %+v",
+				len(calls),
+				calls,
+			)
+		}
+		expectedTargets := []string{"%1", "%2"}
+		for i, target := range expectedTargets {
+			call := calls[i+1]
+			expectedArgs := []string{"set-option", "-p", "-u", "-t", target, "@dg_agent_state"}
+			if len(call.Args) != len(expectedArgs) {
+				t.Fatalf("call[%d] args = %v, want %v", i+1, call.Args, expectedArgs)
+			}
+			for j, arg := range expectedArgs {
+				if call.Args[j] != arg {
+					t.Errorf("call[%d] arg[%d] = %q, want %q", i+1, j, call.Args[j], arg)
+				}
+			}
+		}
+		for _, call := range calls {
+			if call.Args[0] == "set-option" {
+				for _, arg := range call.Args {
+					if arg == "%3" {
+						t.Errorf(
+							"set-option call must not target %%3 (different window): %v",
+							call.Args,
+						)
+					}
+				}
+			}
+		}
+		// Verify the window-level clear call (call 3) targets %2 (last matched pane)
+		// with -w -u flags for the window-level option @dg_window_agent_state.
+		windowClearCall := calls[3]
+		expectedWindowClearArgs := []string{
+			"set-option",
+			"-w",
+			"-u",
+			"-t",
+			"%2",
+			"@dg_window_agent_state",
+		}
+		if len(windowClearCall.Args) != len(expectedWindowClearArgs) {
+			t.Fatalf(
+				"window clear call args = %v, want %v",
+				windowClearCall.Args,
+				expectedWindowClearArgs,
+			)
+		}
+		for j, arg := range expectedWindowClearArgs {
+			if windowClearCall.Args[j] != arg {
+				t.Errorf("window clear call arg[%d] = %q, want %q", j, windowClearCall.Args[j], arg)
+			}
+		}
+	})
+
+	t.Run("window with no matching panes issues zero set-option calls", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(
+			"my-session\teditor\t%1\t\nother\tnotes\t%2\tblocked\n",
+			"",
+			nil,
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForWindow("wt-does-not-exist"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+			t.Fatalf("expected 1 call (only the list-panes scan), got %d", calls)
+		}
+	})
+
+	t.Run("a failure on one matching pane does not stop the rest", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			// scan
+			commands.ExecCommandResult(
+				"s\twt-feature-a\t%1\tworking\ns\twt-feature-a\t%2\tworking\ns\twt-feature-a\t%3\tworking\n",
+				"",
+				nil,
+			),
+			// clear %1: fails
+			commands.ExecCommandResult("", "error", errors.New("pane closed")),
+			// clear %2: succeeds
+			commands.ExecCommandResult("", "", nil),
+			// clear %3: succeeds
+			commands.ExecCommandResult("", "", nil),
+			// clear window-level: succeeds (best-effort, independent of pane failures)
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		err := app.ClearAgentStateForWindow("wt-feature-a")
+		if err == nil {
+			t.Fatal("expected the first pane's error to be returned")
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 5 {
+			t.Fatalf(
+				"expected 5 calls (1 scan + 3 pane clears + 1 window clear), got %d: %+v",
+				len(calls),
+				calls,
+			)
+		}
+		expectedTargets := []string{"%1", "%2", "%3"}
+		for i, target := range expectedTargets {
+			call := calls[i+1]
+			found := false
+			for _, arg := range call.Args {
+				if arg == target {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("call[%d] args %v does not target %q", i+1, call.Args, target)
+			}
+		}
+		// Verify window-level clear is still attempted (call 4), even though
+		// a pane-level clear failed. It should target %3 (last matched pane).
+		windowClearCall := calls[4]
+		expectedWindowClearArgs := []string{
+			"set-option",
+			"-w",
+			"-u",
+			"-t",
+			"%3",
+			"@dg_window_agent_state",
+		}
+		if len(windowClearCall.Args) != len(expectedWindowClearArgs) {
+			t.Fatalf(
+				"window clear call args = %v, want %v",
+				windowClearCall.Args,
+				expectedWindowClearArgs,
+			)
+		}
+		for j, arg := range expectedWindowClearArgs {
+			if windowClearCall.Args[j] != arg {
+				t.Errorf("window clear call arg[%d] = %q, want %q", j, windowClearCall.Args[j], arg)
+			}
+		}
+	})
+}

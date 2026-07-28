@@ -395,7 +395,23 @@ only. Every top-level row in the dashboard is exactly one of two kinds:
 The two kinds carry different marker shapes so they're distinguishable at a glance, not just
 by their label: worktree rows use a circle (`●` running / `○` not), session rows use a square
 (`■` attached / `□` detached) — in both, a filled glyph means active and the color matches
-(green active, dim inactive). Both kinds share the existing worktree-row keys (`j`/`k` nav,
+(green active, dim inactive).
+
+For a worktree row with a live window, the dot also reports what the AI coder inside is
+doing, not just that the window exists. On top of running (`●` green) / not-running (`○`
+gray, no window), three "wants you" states layer on top of a live window: finished and
+waiting on you (`◆` purple), blocked on a permission prompt (`!` red), and errored (`✕` bold
+red). See [ADR-0005](decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md) for the
+underlying signal — each coder writes its activity to a tmux pane option, and a window
+holding more than one coder pane (e.g. a split-pane review beside a working coder) is
+aggregated most-urgent-first (`blocked > error > idle > busy`), so one finished pane is
+enough to show `◆` even while its neighbor keeps working. Attaching to a row (`enter`) clears
+its state — attaching is the user acknowledging it. tmux's own status bar
+(`configs/tmux/tmux.conf`) separately flags any other window in the current session whose
+coder wants attention while you're looking elsewhere, so `dg ws` doesn't have to stay open to
+notice.
+
+Both kinds share the existing worktree-row keys (`j`/`k` nav,
 `h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit).
 Session rows add:
 

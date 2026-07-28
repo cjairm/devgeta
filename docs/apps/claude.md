@@ -18,6 +18,7 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 | `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                 |
 | `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                 |
 | `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                 |
+| `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                 |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                              |
 | `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                         |
 
@@ -181,6 +182,46 @@ comment.
 Upstream-synced skills under `configs/shared/skills/` still hand-roll these raw
 git sequences in their prose (they can't be edited without conflicting with
 upstream syncs); this hook is the durable, runtime answer for those flows.
+
+## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
+
+`settings.json` registers three more hooks that report this coder's activity
+into the tmux pane it's running in, so `dg ws`'s status dot and tmux's status
+bar can show working / finished / blocked without switching to the window:
+
+| Hook               | Matcher                       | Writes    |
+| ------------------ | ----------------------------- | --------- |
+| `Stop`             | none — fires every turn end   | `idle`    |
+| `UserPromptSubmit` | none — fires every turn start | `busy`    |
+| `Notification`     | `permission_prompt`           | `blocked` |
+
+All three run `~/.claude/agent-state.sh <value>`. Unlike `format.sh` and
+`task-redirect.sh`, this script reads no data from the hook's JSON stdin
+payload — which value to write is fully determined by which hook fired,
+passed as `$1`. It no-ops silently when `$TMUX_PANE` is unset (Claude Code run
+outside tmux) and swallows any `tmux` failure, the same no-op contract the
+other hooks use. `Notification`'s matcher is narrowed specifically to
+`permission_prompt` so it excludes `idle_prompt` and Notification's other
+types — an unfiltered `Notification` hook would map every notification onto
+`blocked`, which is wrong.
+
+`agent-state.sh` also writes/clears a window-level mirror
+(`@dg_window_agent_state`) alongside its pane-level write, the same way the
+OpenCode plugin does — this is what lets tmux's own status bar flag a window
+nobody is looking at, since the status bar can't read one pane's option
+directly.
+
+See [ADR-0005](../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
+for the full design and value table. The OpenCode plugin equivalent
+(`~/.config/opencode/plugin/notify.js`) writes the same pane option, keeping
+both coders behaviourally matched for `busy`/`idle`/`blocked` — but not for
+`error`: Claude's three registered hooks above have no counterpart for
+OpenCode's `session.error` event. Claude Code does have a `StopFailure` event
+("when the turn ends due to an API error") that could serve this purpose, but
+it isn't wired up — it was out of scope for this cycle. A Claude Code coder
+that errors out currently surfaces as an ordinary `Stop`/`idle` transition,
+not as the red `✕` state. This is a real, current asymmetry between the two
+coders, not a hypothetical one.
 
 ## Statusline
 
