@@ -2,21 +2,10 @@
 description: Reviews agent, command, and skill prompt files — triggering, structure, permissions, truthfulness across states, and testability. Use whenever a change adds or edits files under agents/, commands/, or a SKILL.md.
 temperature: 0.1
 permission:
+  # No `bash` key on purpose: the host's global bash policy applies (allow
+  # everything, deny/ask the dangerous commands). An allowlist here would
+  # override that catch-all and prompt for every unlisted command.
   edit: deny
-  bash:
-    "*": ask
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git rev-parse*": allow
-    "git symbolic-ref*": allow
-    "git branch --show-current": allow
-    "git status*": allow
-    "git fetch*": allow
-    "devgeta task *": allow
-    "grep *": allow
-    "rg *": allow
-    "wc *": allow
   webfetch: deny
   read: allow
   glob: allow

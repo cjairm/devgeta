@@ -75,6 +75,9 @@ case "$FILE" in
 *.sh | *.bash)
 	fmt "$BIN/shfmt" -w "$FILE"
 	;;
+*.c | *.h | *.cpp | *.hpp)
+	fmt "$BIN/clang-format" -i "$FILE"
+	;;
 esac
 
 # Surface lint findings (if any) as context Claude sees on its next turn.

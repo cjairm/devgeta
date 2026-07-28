@@ -341,6 +341,7 @@ Things that must never happen silently (always require explicit PR discussion an
 - Removing support for a platform (macOS or Linux) without major version bump
 - Modifying what "terminal tools" category includes — users depend on this being stable
 - Changing installation paths or config directories — affects existing installations
+- Changing an AI agent's permissions or formatters in only one of the two agents — see [Keeping the two AI agents in sync](#keeping-the-two-ai-agents-in-sync)
 
 ---
 
@@ -452,6 +453,44 @@ Where to find and add code:
 2. Rebuild and reinstall the binary before deploying — `dg configure` extracts configs from the running binary, so an old binary silently deploys the old config
 3. Deploy with `dg configure <app> --force`
 4. If the config must satisfy a constraint imposed by an external tool (a plugin or program that parses, splices, or re-executes the value), enforce that constraint with a test against the embedded configs FS — a comment in the config alone will not survive future edits
+5. If the config governs an AI coding agent, apply the change to **both** agents — see below
+
+### Keeping the two AI agents in sync
+
+Devgeta configures two AI coding agents, and they must behave the same. Every
+policy change goes into **both** files, expressed in each one's own format:
+
+| Concern            | Claude Code                         | OpenCode                                   |
+| ------------------ | ----------------------------------- | ------------------------------------------ |
+| Permissions        | `configs/claude/settings.json.tmpl` | `configs/opencode/opencode.json.tmpl`      |
+| Formatting on save | `configs/claude/format.sh`          | `formatter` block in `opencode.json.tmpl`  |
+| Command redirects  | `configs/claude/task-redirect.sh`   | `configs/opencode/plugin/task-redirect.js` |
+| Agents / commands  | `configs/shared/` (synced to both)  | `configs/shared/` (synced to both)         |
+
+Rules:
+
+- **Never add a deny/ask rule, or a formatter language, to one agent only.** The
+  two permission sets must stay the same rule for rule, and the two formatter
+  language lists must cover the same file extensions.
+- `internal/apps/opencode/permissions_test.go` enforces this and fails the build
+  on any asymmetry, in either direction. It is the reason the lists cannot drift
+  again — do not weaken it to land a one-sided change. If a rule genuinely cannot
+  be expressed in one agent, drop it from both.
+- Deploy both after any change: `dg configure claude --force` **and**
+  `dg configure opencode --force`.
+
+Accepted differences (deliberate, do not "fix" by halves):
+
+- **Agent and command frontmatter is enforced by OpenCode only.** The shared
+  `.md` files use OpenCode's `permission:` schema; Claude Code ignores it. The two
+  cannot share one key — OpenCode's `tools:` is `object<string, boolean>`, Claude
+  Code's is a comma-separated string. So the reviewer agents are read-only in
+  OpenCode but unrestricted in Claude Code. Unifying this needs per-agent
+  frontmatter rendering from one policy source (an ADR-level change, not yet made).
+- **The lint feedback loop is Claude-only.** `format.sh` returns linter findings
+  via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
+  return context, and OpenCode surfaces LSP diagnostics instead.
+- **`statusLine` has no OpenCode equivalent.**
 
 ---
 

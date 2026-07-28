@@ -2,34 +2,10 @@
 description: Reviews code for bugs, performance, security, and best practices
 temperature: 0.1
 permission:
+  # No `bash` key on purpose: the host's global bash policy applies (allow
+  # everything, deny/ask the dangerous commands). An allowlist here would
+  # override that catch-all and prompt for every unlisted command.
   edit: deny
-  bash:
-    "*": ask
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git rev-parse*": allow
-    "git symbolic-ref*": allow
-    "git branch --show-current": allow
-    "git status*": allow
-    "git fetch*": allow
-    "devgeta task *": allow
-    "cat *": allow
-    "npm list*": allow
-    "npm view*": allow
-    "yarn list*": allow
-    "yarn info*": allow
-    "pnpm list*": allow
-    "grep *": allow
-    "rg *": allow
-    "head *": allow
-    "tail *": allow
-    "wc *": allow
-    "awk *": allow
-    "cut *": allow
-    "sort *": allow
-    "uniq *": allow
-    "jq *": allow
   webfetch: deny
   read: allow
   glob: allow
