@@ -38,6 +38,7 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.removeSessionFn = func(_, _ string) error { return nil }
 	m.repairFn = func(_, _ string, _ worktree.Layout) error { return nil }
 	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
+	m.currentSessionFn = func() (string, bool) { return "", false }
 	m.createSessionFn = func(_, _ string) error { return nil }
 	m.switchToSessionFn = func(_ string) error { return nil }
 	m.killSessionFn = func(_ string) error { return nil }

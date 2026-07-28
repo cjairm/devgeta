@@ -83,12 +83,14 @@ type Model struct {
 	statuses []worktree.WorktreeStatus
 	// sessions holds standalone tmux sessions with no worktree-backed window;
 	// see sessionsLoadCmd for refresh cadence and failure handling.
-	sessions     []worktree.SessionStatus
-	loaded       bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
-	rows         []row
-	cursor       int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
-	collapsed    map[string]bool
-	allCollapsed bool
+	sessions       []worktree.SessionStatus
+	loaded         bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
+	sessionsLoaded bool // true once the first ListSessions() result is in; mirrors loaded, for placeCursorOnActive's give-up condition
+	cursorPlaced   bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
+	rows           []row
+	cursor         int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
+	collapsed      map[string]bool
+	allCollapsed   bool
 
 	diffContent   string
 	diffFiles     int
@@ -151,6 +153,7 @@ type Model struct {
 	removeSessionFn          func(repo, name string) error
 	repairFn                 func(repo, name string, layout worktree.Layout) error
 	windowSessionFn          func(window string) (string, bool)
+	currentSessionFn         func() (string, bool)
 	createSessionFn          func(name, workdir string) error
 	switchToSessionFn        func(name string) error
 	killSessionFn            func(name string) error
@@ -196,6 +199,13 @@ func newModel(
 		return mgr.RepairInRepo(repo, name, layout)
 	}
 	m.windowSessionFn = tmuxApp.WindowSession
+	// CurrentSession (tmux display-message) rather than scanning ListSessions
+	// for the first session_attached: it resolves the session of *this*
+	// client specifically, so it stays correct when several clients are
+	// attached to different sessions at once. Verified to report the right
+	// session both for a plain `dg ws` and for a dashboard launched into a
+	// window spawned by the tmux binding's `new-window`.
+	m.currentSessionFn = tmuxApp.CurrentSession
 	m.createSessionFn = tmuxApp.CreateSession
 	m.switchToSessionFn = tmuxApp.SwitchToSession
 	m.killSessionFn = tmuxApp.KillSession
@@ -455,10 +465,52 @@ func (m Model) applyStatuses(statuses []worktree.WorktreeStatus) (tea.Model, tea
 	m.statuses = statuses
 	m.loaded = true
 	m.rebuildRows()
+	m.placeCursorOnActive()
 	if sel, ok := m.selectedStatus(); ok {
 		return m, m.selectionChangedCmd(sel)
 	}
 	return m, nil
+}
+
+// placeCursorOnActive points the cursor at the row for the tmux session
+// dg ws is actually running in — the same session it reopens into whether
+// launched by typing `dg ws` or via the tmux binding that runs it in a new
+// *window* of the current session (new-window never changes session, only
+// which window is focused within it). No persistence needed: tmux's own
+// session_name is the source of truth for "where the user currently is."
+//
+// This deliberately does NOT use WorktreeStatus.WindowActive: that field
+// means "this worktree's tmux window exists somewhere on the server," true
+// for every worktree that's ever been created and not closed — not "this is
+// the one I'm in right now." Since worktree rows are listed before session
+// rows (see buildRows), the first such row would almost always win, even
+// when the user is actually sitting in an unrelated standalone session.
+// Comparing against currentSessionFn's actual session name avoids that.
+//
+// It's a no-op once cursorPlaced is set, so periodic reloads after startup
+// never fight the user's own j/k navigation. If the current session isn't
+// found in either initial load (e.g. a worktree whose repo session hasn't
+// loaded yet), give up once both loads have completed at least once, rather
+// than retrying forever.
+func (m *Model) placeCursorOnActive() {
+	if m.cursorPlaced {
+		return
+	}
+	current, ok := m.currentSessionFn()
+	if ok {
+		for i, r := range m.rows {
+			switch {
+			case r.kind == rowSession && r.session.Name == current,
+				r.kind == rowWorktree && worktree.TmuxSessionName(r.status.Repo) == current:
+				m.cursor = i
+				m.cursorPlaced = true
+				return
+			}
+		}
+	}
+	if m.loaded && m.sessionsLoaded {
+		m.cursorPlaced = true
+	}
 }
 
 // navigableIndices returns row indices that j/k visit: all worktree rows,
@@ -526,7 +578,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a failure produces a statusMsg instead, which never reaches this
 		// case and so never touches m.sessions - see that comment for why.
 		m.sessions = []worktree.SessionStatus(msg)
+		m.sessionsLoaded = true
 		m.rebuildRows()
+		m.placeCursorOnActive()
 		return m, nil
 
 	case deletedMsg:
