@@ -6,7 +6,7 @@ permission:
   edit: deny
   bash:
     "*": deny
-    "devgita task *": allow
+    "devgeta task *": allow
 ---
 
 Confirm that the feedback on an already-reviewed PR was actually addressed, then approve it — or report what still blocks the merge.
@@ -28,7 +28,7 @@ This is the **deciding-approver** step, not a review — the full review lives i
 If a `PR_NUMBER` was given, use it (pass `--pr PR_NUMBER` below). Otherwise:
 
 ```bash
-devgita task current-pr
+devgeta task current-pr
 ```
 
 If it prints "No pull request found for the current branch.", stop and tell the user this branch has no PR. Do nothing else.
@@ -36,7 +36,7 @@ If it prints "No pull request found for the current branch.", stop and tell the 
 ### 2. Confirm it's reviewable
 
 ```bash
-devgita task pr-view          # add --pr PR_NUMBER if you have one
+devgeta task pr-view          # add --pr PR_NUMBER if you have one
 ```
 
 Confirm the state is open. The `review:` line shows whether it already carries reviews — if it has none, say so and recommend `/review-pr` first rather than approving cold.
@@ -46,7 +46,7 @@ Confirm the state is open. The `review:` line shows whether it already carries r
 Read the unresolved threads — these are the blockers:
 
 ```bash
-devgita task review-threads --state unresolved
+devgeta task review-threads --state unresolved
 ```
 
 "No unresolved review threads." means everything raised was at least marked resolved.
@@ -54,7 +54,7 @@ devgita task review-threads --state unresolved
 Then confirm the resolved ones were actually fixed, not just replied to and forgotten:
 
 ```bash
-devgita task review-threads --state resolved
+devgeta task review-threads --state resolved
 ```
 
 Skim these; only open a file to verify when a resolution looks doubtful. Trust GitHub's resolution state as the primary signal — don't re-litigate the whole diff.
@@ -62,7 +62,7 @@ Skim these; only open a file to verify when a resolution looks doubtful. Trust G
 Finally, look at CI — but treat it as a signal, not a gate:
 
 ```bash
-devgita task pr-checks
+devgeta task pr-checks
 ```
 
 A failing or errored check is often flaky, an unrelated job, or otherwise still valid, so it does **not** by itself block approval. Flag it in the report so the user can judge; don't let it decide.
@@ -74,7 +74,7 @@ A failing or errored check is often flaky, an unrelated job, or otherwise still 
 **Approve when both gates hold:** the PR is open and there are no unresolved threads (and any resolved one you spot-checked holds up). Failing checks are noted, not blocking.
 
 ```bash
-devgita task approve-pr --body "<body picked below>"
+devgeta task approve-pr --body "<body picked below>"
 ```
 
 **The body must match what actually happened on this PR — never thank the author for addressing feedback that was never given.** Pick by situation:
@@ -90,7 +90,7 @@ Don't paste the gate summary or per-thread detail into the PR — that belongs i
 **If a real gate blocks** (an unresolved thread, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment — not a per-thread recap:
 
 ```bash
-devgita task comment-pr --body "<one short line naming what's left>"
+devgeta task comment-pr --body "<one short line naming what's left>"
 ```
 
 ## Output

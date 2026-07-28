@@ -6,7 +6,7 @@ permission:
   edit: allow
   bash:
     "*": deny
-    "devgita task *": allow
+    "devgeta task *": allow
     "git add *": allow
     "git commit *": allow
     "git push*": allow
@@ -39,7 +39,7 @@ If a `PR_NUMBER` was given, use it and pass `--pr PR_NUMBER` to every command be
 Otherwise resolve it from the branch:
 
 ```bash
-devgita task current-pr
+devgeta task current-pr
 ```
 
 If that prints "No pull request found for the current branch.", stop and tell the user this branch has no PR — they can open one with `/create-pr`. Do nothing else.
@@ -47,7 +47,7 @@ If that prints "No pull request found for the current branch.", stop and tell th
 ### 2. Read the unresolved threads
 
 ```bash
-devgita task review-threads --state unresolved   # add --pr PR_NUMBER if you have one
+devgeta task review-threads --state unresolved   # add --pr PR_NUMBER if you have one
 ```
 
 `--state unresolved` is the default, but pass it explicitly — these are the only threads to act on; resolved ones are already handled. The output is compact markdown. Each block is headed `## path:line (thread <id>)`, may include a diff hunk, then `**author** (comment-id): body`. The thread `<id>` is what you reply to and resolve.
@@ -94,8 +94,8 @@ Group related fixes into meaningful commits and push so reviewers can see what c
 For each thread you handled, reply then resolve:
 
 ```bash
-devgita task reply-thread <thread-id> "Done in <short-sha> — <what changed>"
-devgita task resolve-thread <thread-id>
+devgeta task reply-thread <thread-id> "Done in <short-sha> — <what changed>"
+devgeta task resolve-thread <thread-id>
 ```
 
 Use `--body-file <path>` instead of an inline body when the reply needs multi-line Markdown.
@@ -117,7 +117,7 @@ Bad: `Per your astute observation, I have refactored the aforementioned logic to
 After all threads are handled and pushed, add each reviewer whose feedback you addressed back to the PR's reviewers list so GitHub asks them for a fresh review:
 
 ```bash
-devgita task request-review <reviewer1> [reviewer2 ...]   # add --pr PR_NUMBER if you have one
+devgeta task request-review <reviewer1> [reviewer2 ...]   # add --pr PR_NUMBER if you have one
 ```
 
 Get the reviewer usernames from the thread authors in step 2. Request every distinct human reviewer you replied to in one command; skip bot authors.

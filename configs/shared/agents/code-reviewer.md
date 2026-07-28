@@ -13,7 +13,7 @@ permission:
     "git branch --show-current": allow
     "git status*": allow
     "git fetch*": allow
-    "devgita task *": allow
+    "devgeta task *": allow
     "cat *": allow
     "npm list*": allow
     "npm view*": allow
@@ -59,11 +59,11 @@ Determine what to review, in priority order:
 
 1. User-specified files → read exactly those
 2. "Uncommitted" → `git diff HEAD`
-3. Feature branch → `devgita task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats) — this must run first, before `devgita task branch-diff` for the full noise-filtered diff — or `devgita task branch-diff --file <path>` per file on large branches. Both exclude lockfile-style noise by default and note what they excluded; fall back to raw `git diff` only if these commands are unavailable.
-4. Arbitrary range (a PR that isn't checked out, or any historical `<base>..<head>` not tied to the current branch's default-branch merge-base) → `devgita task review-package <base> <head>` for the commit list, noise-filtered stat table, and full diff in one call, or `devgita task review-package <base> <head> --file <path>` per file on large ranges.
+3. Feature branch → `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats) — this must run first, before `devgeta task branch-diff` for the full noise-filtered diff — or `devgeta task branch-diff --file <path>` per file on large branches. Both exclude lockfile-style noise by default and note what they excluded; fall back to raw `git diff` only if these commands are unavailable.
+4. Arbitrary range (a PR that isn't checked out, or any historical `<base>..<head>` not tied to the current branch's default-branch merge-base) → `devgeta task review-package <base> <head>` for the commit list, noise-filtered stat table, and full diff in one call, or `devgeta task review-package <base> <head> --file <path>` per file on large ranges.
 5. On the default branch with no instruction → ask for clarification
 
-Never pull or merge — either would mutate the branch under review and change what you're reviewing; the only remote sync allowed is `review-scope`'s read-only fetch of origin, which is why it must run before `branch-diff`. Invoke the `devgita` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
+Never pull or merge — either would mutate the branch under review and change what you're reviewing; the only remote sync allowed is `review-scope`'s read-only fetch of origin, which is why it must run before `branch-diff`. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
 
 State in every review: branch name, the diff command you ran, files reviewed, total lines reviewed, and the change type you classified (below).
 

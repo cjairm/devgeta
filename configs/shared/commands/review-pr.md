@@ -6,7 +6,7 @@ permission:
   edit: deny
   bash:
     "*": deny
-    "devgita task *": allow
+    "devgeta task *": allow
     "git diff*": allow
     "git fetch*": allow
     "git log*": allow
@@ -30,7 +30,7 @@ The PR is resolved from the current branch unless you pass a number.
 If a `PR_NUMBER` was given, use it (pass `--pr PR_NUMBER` below). Otherwise:
 
 ```bash
-devgita task current-pr
+devgeta task current-pr
 ```
 
 If it prints "No pull request found for the current branch.", stop and tell the user this branch has no PR.
@@ -38,15 +38,15 @@ If it prints "No pull request found for the current branch.", stop and tell the 
 ### 2. Load context
 
 ```bash
-devgita task pr-view          # add --pr PR_NUMBER if you have one
+devgeta task pr-view          # add --pr PR_NUMBER if you have one
 ```
 
-Read the PR's purpose first — the description and linked ticket — before any code. Gather the findings already in the conversation. If there are none, review the change yourself with the lens in step 4. For a locally checked-out branch, run `devgita task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats), then `devgita task branch-diff` (or `--file <path>` for one file) for the full noise-filtered diff. `review-scope` does a read-only fetch of origin and must run first, so the diff reflects current remote state — never `git pull` or merge, which would mutate the branch under review.
+Read the PR's purpose first — the description and linked ticket — before any code. Gather the findings already in the conversation. If there are none, review the change yourself with the lens in step 4. For a locally checked-out branch, run `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats), then `devgeta task branch-diff` (or `--file <path>` for one file) for the full noise-filtered diff. `review-scope` does a read-only fetch of origin and must run first, so the diff reflects current remote state — never `git pull` or merge, which would mutate the branch under review.
 
 ### 3. Fetch existing threads and dedup — never repeat addressed feedback
 
 ```bash
-devgita task review-threads --state all
+devgeta task review-threads --state all
 ```
 
 This returns three surfaces: inline review threads (resolved and unresolved), a "## Review summaries" section (submitted review bodies), and a "## Conversation" section (top-level PR comments). All prior feedback lives in one of these three — dedup a finding against all of them, not just inline threads.
@@ -150,7 +150,7 @@ Post the body and the inline comments together as a single review, choosing the 
 When approving **with** comments the author should look at before merging (non-blocking, but worth addressing), open the body's Summary with `LGWC; <one short clause>`. A clean approve with no comments opens with `LGTM.` instead.
 
 ```bash
-devgita task submit-review \
+devgeta task submit-review \
   --event request-changes \
   --body-file /tmp/review.md \
   --comments-file /tmp/comments.json      # omit when there are no inline findings
@@ -179,7 +179,7 @@ Return a terse summary to the user:
 ## Notes
 
 - This command never edits code. It reads, then posts exactly one review.
-- Invoke the `devgita` binary only — never a `dg` alias, `go run`, or a local build. Only the installed binary is available in this environment.
+- Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the installed binary is available in this environment.
 - **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern.
 - A line that isn't part of the diff can't take an inline comment — move that finding to the body's "General notes" instead.
 

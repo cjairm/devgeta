@@ -13,7 +13,7 @@ permission:
     "git branch --show-current": allow
     "git status*": allow
     "git fetch*": allow
-    "devgita task *": allow
+    "devgeta task *": allow
     "grep *": allow
     "rg *": allow
     "wc *": allow
@@ -34,9 +34,9 @@ Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its su
 
 1. User-specified files → read exactly those
 2. "Uncommitted" → `git diff HEAD` filtered to prompt files
-3. Feature branch → `devgita task review-scope` first, then `devgita task branch-diff` filtered to prompt files; fall back to raw `git diff` against the default branch only if these commands are unavailable
+3. Feature branch → `devgeta task review-scope` first, then `devgeta task branch-diff` filtered to prompt files; fall back to raw `git diff` against the default branch only if these commands are unavailable
 
-Never pull or merge. Invoke the `devgita` binary only — never a `dg` alias, `go run`, or a local build.
+Never pull or merge. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build.
 
 State in every review: the files reviewed and the diff command you ran.
 

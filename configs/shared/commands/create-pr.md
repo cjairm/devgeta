@@ -6,7 +6,7 @@ permission:
   edit: deny
   bash:
     "*": deny
-    "devgita task *": allow
+    "devgeta task *": allow
     "git branch*": allow
     "git push*": allow
     "git status": allow
@@ -21,12 +21,12 @@ Open a pull request describing the branch's overall impact. Commits are granular
 ### 1. Gather context
 
 ```bash
-devgita task review-scope --bodies
+devgeta task review-scope --bodies
 ```
 
 This reports the branch, the repo's actual default branch (never assume `main`), ahead/behind, commit lines (short SHA, ISO date, subject) each with its commit body indented beneath it, and a per-file stat table (lockfile-style noise excluded and noted).
 
-If the stat isn't enough to understand the change, read the full diff: `devgita task branch-diff` (or `--file <path>` for one file). Self-review it here — catch the obvious before a reviewer spends attention on it.
+If the stat isn't enough to understand the change, read the full diff: `devgeta task branch-diff` (or `--file <path>` for one file). Self-review it here — catch the obvious before a reviewer spends attention on it.
 
 ### 2. Check for a PR template
 
@@ -94,12 +94,12 @@ Prefer `--body-file` over inline `--body`: a body with fenced code blocks or bac
 ```bash
 git push -u origin $(git branch --show-current)
 # write the assembled Markdown body to /tmp/pr-body.md, then:
-devgita task create-pr --title "<title>" --body-file /tmp/pr-body.md   # add --base <branch> for a non-default target
+devgeta task create-pr --title "<title>" --body-file /tmp/pr-body.md   # add --base <branch> for a non-default target
 ```
 
 Inline `--body "<text>"` is fine only for a trivial one-line body with no backticks or apostrophes.
 
-`devgita task create-pr` prints the new PR's URL. If it fails, output the title + body so the user can open the PR manually.
+`devgeta task create-pr` prints the new PR's URL. If it fails, output the title + body so the user can open the PR manually.
 
 ## Rules
 

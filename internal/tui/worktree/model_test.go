@@ -305,6 +305,63 @@ func TestCursorSkipsRepoHeaders(t *testing.T) {
 	}
 }
 
+// The left panel accepts arrows as aliases for j/k. Asserting they match j/k
+// rather than hardcoding indices keeps the two paths from drifting apart if
+// row layout or the skip-headers rule changes.
+func TestArrowKeysMoveCursorLikeJK(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		vim, arrow tea.KeyPressMsg
+	}{
+		{"down", tea.KeyPressMsg{Code: 'j'}, tea.KeyPressMsg{Code: tea.KeyDown}},
+		{"up", tea.KeyPressMsg{Code: 'k'}, tea.KeyPressMsg{Code: tea.KeyUp}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Start mid-list so "up" has somewhere to go.
+			start := makeTestModel(testStatuses())
+			mi, _ := start.Update(tea.KeyPressMsg{Code: 'j'})
+			start = mi.(Model)
+
+			vi, _ := start.Update(tc.vim)
+			ai, _ := start.Update(tc.arrow)
+			wantCursor := vi.(Model).cursor
+			gotCursor := ai.(Model).cursor
+
+			if gotCursor == start.cursor {
+				t.Fatalf("arrow key did not move the cursor at all (stayed at %d)", gotCursor)
+			}
+			if gotCursor != wantCursor {
+				t.Errorf("arrow moved cursor to %d, j/k moved it to %d — they must match",
+					gotCursor, wantCursor)
+			}
+		})
+	}
+}
+
+// Arrows must keep belonging to the filter's text caret while it's active: the
+// filter check in handleKey returns before the navigation switch, and this
+// pins that ordering so a future reshuffle can't let the list steal them.
+func TestArrowKeysDoNotMoveCursorWhileFiltering(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	mi, _ := m.Update(tea.KeyPressMsg{Code: 'j'}) // move off row 0 so a stray move is visible
+	m = mi.(Model)
+	m.filter.Active = true
+	before := m.cursor
+
+	for _, k := range []tea.KeyPressMsg{
+		{Code: tea.KeyDown},
+		{Code: tea.KeyUp},
+	} {
+		mi, _ = m.Update(k)
+		m = mi.(Model)
+	}
+
+	if m.cursor != before {
+		t.Errorf("arrows moved the list cursor from %d to %d while the filter was active",
+			before, m.cursor)
+	}
+}
+
 func TestFoldHide(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	// Collapse repo-a

@@ -70,3 +70,41 @@ func TestZshenvStaysPathRepairSafe(t *testing.T) {
 		)
 	}
 }
+
+// The project was renamed devgita -> devgeta, and the installed binary is now
+// devgeta. Embedded configs are the one place where the old name fails silently
+// rather than loudly: the agent and command prompts under configs/shared invoke
+// `devgeta task ...` as shell commands and allowlist those same strings in their
+// frontmatter, so a stale name there produces "command not found" (or a
+// permission prompt that never matches) inside an agent run, far from anything
+// a compiler or a normal test would catch. Nothing embedded has a legitimate
+// reason to name the old binary, so this guard covers the whole FS rather than
+// enumerating files, and it will catch the next rename's leftovers too.
+func TestEmbeddedConfigsDoNotReferenceOldProjectName(t *testing.T) {
+	err := fs.WalkDir(ConfigsFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(ConfigsFS, path)
+		if err != nil {
+			return err
+		}
+		for lineNo, line := range strings.Split(string(data), "\n") {
+			if strings.Contains(strings.ToLower(line), "devgita") {
+				t.Errorf(
+					"%s:%d references the old project name \"devgita\" — use \"devgeta\": %s",
+					path,
+					lineNo+1,
+					strings.TrimSpace(line),
+				)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to walk embedded configs: %v", err)
+	}
+}

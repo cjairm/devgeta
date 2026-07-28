@@ -488,28 +488,37 @@ func (m Model) applyStatuses(statuses []worktree.WorktreeStatus) (tea.Model, tea
 // Comparing against currentSessionFn's actual session name avoids that.
 //
 // It's a no-op once cursorPlaced is set, so periodic reloads after startup
-// never fight the user's own j/k navigation. If the current session isn't
-// found in either initial load (e.g. a worktree whose repo session hasn't
-// loaded yet), give up once both loads have completed at least once, rather
-// than retrying forever.
+// never fight the user's own j/k navigation.
+//
+// It also waits for BOTH initial loads before placing anything. m.cursor is a
+// positional index into m.rows, and rebuildRows only clamps it to the nearest
+// leaf (ClampCursor) — it cannot re-find the row the index used to mean. Init
+// dispatches loadCmd and sessionsLoadCmd concurrently and ListSessions (one
+// tmux call) beats List (a filesystem + git scan per repo), so placing on the
+// sessions-only row list would land on the right index, then statusesMsg would
+// prepend every repo header and worktree row (see buildRows) and slide that
+// same index onto a worktree. Waiting until both lists are in means the row
+// composition is final when the index is computed. It also subsumes the old
+// give-up condition: one attempt happens, against complete rows, and stands.
 func (m *Model) placeCursorOnActive() {
-	if m.cursorPlaced {
+	if m.cursorPlaced || !m.loaded || !m.sessionsLoaded {
 		return
 	}
+	// From here this runs exactly once, so it either lands on the current
+	// session's row or gives up for good — a missing match means the session
+	// genuinely isn't in the dashboard, not that rows are still filling in.
+	m.cursorPlaced = true
 	current, ok := m.currentSessionFn()
-	if ok {
-		for i, r := range m.rows {
-			switch {
-			case r.kind == rowSession && r.session.Name == current,
-				r.kind == rowWorktree && worktree.TmuxSessionName(r.status.Repo) == current:
-				m.cursor = i
-				m.cursorPlaced = true
-				return
-			}
-		}
+	if !ok {
+		return
 	}
-	if m.loaded && m.sessionsLoaded {
-		m.cursorPlaced = true
+	for i, r := range m.rows {
+		switch {
+		case r.kind == rowSession && r.session.Name == current,
+			r.kind == rowWorktree && worktree.TmuxSessionName(r.status.Repo) == current:
+			m.cursor = i
+			return
+		}
 	}
 }
 
@@ -753,7 +762,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return m, tea.Quit
 
-	case "j":
+	// Arrows are accepted alongside j/k, matching handleDiffKey and the shared
+	// fuzzy picker. Safe here in a way it isn't inside the picker or the filter
+	// field: this handler only runs when no text input has focus, so there's no
+	// query for a bare keystroke to compete with.
+	case "j", "down":
 		m.diffScroll = 0
 		m.moveCursor(1)
 		if sel, ok := m.selectedStatus(); ok {
@@ -761,7 +774,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case "k":
+	case "k", "up":
 		m.diffScroll = 0
 		m.moveCursor(-1)
 		if sel, ok := m.selectedStatus(); ok {
@@ -1493,7 +1506,7 @@ func (m Model) renderHelpPopup() string {
 		{Key: "n", Desc: "create a new worktree (repo picker → name prompt)"},
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},
 		{Key: "s", Desc: "create a new tmux session (folder picker → name prompt)"},
-		{Key: "j / k", Desc: "move cursor down / up"},
+		{Key: "j / k  ↓ / ↑", Desc: "move cursor down / up"},
 		{Key: "h / l", Desc: "collapse / expand repo"},
 		{Key: "z", Desc: "toggle collapse all repos"},
 		{
