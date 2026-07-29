@@ -452,7 +452,7 @@ Session rows add:
   no separate pre-check.
 
 - `D`/`r`/`R` are worktree-only actions and are no-ops on a session row. `R` is additionally a
-  no-op on a collapsed repo-header row, since only a worktree row has a specific worktree to
+  no-op on a repo-header row, since only a worktree row has a specific worktree to
   review.
 
 Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf`) — it previously
