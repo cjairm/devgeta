@@ -1448,6 +1448,31 @@ func TestSendKeysToWindowInSession(t *testing.T) {
 	}
 }
 
+func TestSendKeysToPane(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult("", "", nil)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.SendKeysToPane("%12", "claude"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	last := mockApp.Base.GetLastExecCommandCall()
+	if last == nil || last.Args[0] != "send-keys" {
+		t.Fatalf("expected 'send-keys', got %v", last)
+	}
+	// Verify target is the bare pane id, not a window/session-qualified form.
+	found := false
+	for _, arg := range last.Args {
+		if arg == "%12" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected target '%%12' in args %v", last.Args)
+	}
+}
+
 func TestCurrentSession(t *testing.T) {
 	t.Run("returns session name inside tmux", func(t *testing.T) {
 		t.Setenv("TMUX", "/tmp/tmux-1000/default,123,0")

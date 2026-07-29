@@ -828,7 +828,12 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 // and launches reviewCmd there, restoring focus to the window's original
 // (coder) pane afterward on both success and failure - see
 // LaunchReviewInRepo's doc comment for why the review command is never sent
-// to the window's existing pane directly.
+// to the window's existing pane directly. The command is sent with
+// SendKeysToPane(newPaneID, ...), not a window/session-targeted send-keys:
+// the latter resolves to whatever pane is active in the window at send time,
+// which could have changed in the gap between the split and the send (e.g. a
+// user keystroke, a tmux hook), landing the review command in the coder's
+// pane instead - the exact outcome this function exists to prevent.
 func (w *WorktreeManager) launchReviewInLiveWindow(
 	session, windowName, wtPath, reviewCmd string,
 ) error {
@@ -854,7 +859,7 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 		return fmt.Errorf("failed to identify new pane in %s: %w", windowName, err)
 	}
 
-	if err := w.Tmux.SendKeysToWindowInSession(session, windowName, reviewCmd); err != nil {
+	if err := w.Tmux.SendKeysToPane(newPaneID, reviewCmd); err != nil {
 		// Roll back only the pane this call added - never the window or the
 		// worktree (there is none to roll back; R doesn't create one).
 		_ = w.Tmux.KillPane(newPaneID)

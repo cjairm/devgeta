@@ -436,6 +436,24 @@ func callsContain(calls []commands.CommandParams, verb, arg string) bool {
 	return false
 }
 
+// sendKeysTarget returns the "-t" target argument of the recorded send-keys
+// call whose keys argument equals wantKeys, and whether such a call was
+// found. Args are ["send-keys", "-t", target, keys, "Enter"] for both
+// SendKeysToPane and SendKeysToWindowInSession, so this pins down exactly
+// what the call targeted - a pane id (e.g. "%2") vs. a "session:window"
+// string - which callsContain's substring-anywhere check cannot distinguish.
+func sendKeysTarget(calls []commands.CommandParams, wantKeys string) (string, bool) {
+	for _, c := range calls {
+		if len(c.Args) < 4 || c.Args[0] != "send-keys" || c.Args[1] != "-t" {
+			continue
+		}
+		if c.Args[3] == wantKeys {
+			return c.Args[2], true
+		}
+	}
+	return "", false
+}
+
 // TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath proves that, when
 // the worktree's window doesn't exist yet, LaunchReviewInRepo drives the
 // same create-if-missing path ensureWindow already gives Create/Repair, with
@@ -579,9 +597,19 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	if !callsContain(mockTmuxBase.ExecCommandCalls, "send-keys", reviewCmd) {
-		t.Errorf("expected send-keys to carry the review command %q (into the new pane, not the "+
-			"pre-existing one), calls: %+v", reviewCmd, mockTmuxBase.ExecCommandCalls)
+
+	// The review command's send-keys must target the new pane id (%2)
+	// directly - never "session:window", which tmux would resolve to
+	// whatever pane happens to be active at send time, possibly the coder's
+	// pane if focus shifted in the gap since the split.
+	target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+	if !found {
+		t.Fatalf("expected a send-keys call carrying the review command %q, calls: %+v",
+			reviewCmd, mockTmuxBase.ExecCommandCalls)
+	}
+	if target != "%2" {
+		t.Errorf("expected send-keys to target the new pane %%2 directly, got target %q "+
+			"(calls: %+v)", target, mockTmuxBase.ExecCommandCalls)
 	}
 
 	// Focus must be restored to the coder's pane (%1), captured before the
@@ -623,7 +651,7 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 			"",
 			"",
 			errors.New("boom"),
-		), // SendKeysToWindowInSession fails
+		), // SendKeysToPane fails
 		commands.ExecCommandResult("", "", nil), // KillPane rollback
 		commands.ExecCommandResult(
 			"",
@@ -649,8 +677,33 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 		t.Fatal("expected an error when send-keys fails after a successful split")
 	}
 
+	reviewCmd, cmdErr := ReviewCommand("code")
+	if cmdErr != nil {
+		t.Fatalf("setup: %v", cmdErr)
+	}
+
+	// Even on the failing path, the attempted send-keys must have been
+	// pane-targeted (%2), not "session:window" - proving the fix applies
+	// before the failure, not just in the (already-passing) success case.
+	target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+	if !found {
+		t.Fatalf("expected a send-keys call carrying the review command %q, calls: %+v",
+			reviewCmd, mockTmuxBase.ExecCommandCalls)
+	}
+	if target != "%2" {
+		t.Errorf("expected the failing send-keys to target the new pane %%2 directly, got "+
+			"target %q (calls: %+v)", target, mockTmuxBase.ExecCommandCalls)
+	}
+
 	if !callsContain(mockTmuxBase.ExecCommandCalls, "kill-pane", "%2") {
 		t.Errorf("expected kill-pane targeting the new pane %%2, calls: %+v",
+			mockTmuxBase.ExecCommandCalls)
+	}
+
+	// The coder's original pane (%1) must never be killed - only the new
+	// pane (%2) this call added should be rolled back.
+	if callsContain(mockTmuxBase.ExecCommandCalls, "kill-pane", "%1") {
+		t.Errorf("must never kill-pane the coder's original pane %%1, calls: %+v",
 			mockTmuxBase.ExecCommandCalls)
 	}
 

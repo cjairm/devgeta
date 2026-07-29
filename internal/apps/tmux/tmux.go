@@ -534,6 +534,17 @@ func (t *Tmux) SendKeysToWindow(window, keys string) error {
 	return t.ExecuteCommand("send-keys", "-t", window, keys, "Enter")
 }
 
+// SendKeysToPane sends keystrokes to the pane identified by paneID (a tmux
+// pane_id like "%12", as returned by ActivePaneID). Pane IDs are unique
+// server-wide, so no window or session qualification is needed - the same
+// property KillPane and SelectPane already rely on. Unlike
+// SendKeysToWindow/SendKeysToWindowInSession, which resolve to whatever pane
+// is active in the target window at send time, this always lands in the
+// exact pane captured earlier, even if the active pane has since changed.
+func (t *Tmux) SendKeysToPane(paneID, keys string) error {
+	return t.ExecuteCommand("send-keys", "-t", paneID, keys, "Enter")
+}
+
 // SelectWindow switches focus to a specific window by name
 func (t *Tmux) SelectWindow(name string) error {
 	return t.ExecuteCommand("select-window", "-t", name)
