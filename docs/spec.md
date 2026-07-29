@@ -375,8 +375,8 @@ dg wt prune                                 # Remove all worktrees (prompts for 
   If the window already has a coder running, a new pane is split beside it and the review
   launches there instead — it never types into the existing coder's pane.
 - `R` only applies to worktree rows (see the `D`/`r`/`R` note below for the exact no-ops), and
-  it's a no-op while a review launch for that row is already in flight, so repeated presses
-  can't start a second launch.
+  it's a no-op on every row while any review launch is already in flight (a single global guard,
+  not per-row), so repeated presses can't start a second launch.
 - Esc at the picker cancels and returns to the dashboard unchanged.
 
 **In-progress feedback**: any dashboard action that builds or tears down tmux state shows a

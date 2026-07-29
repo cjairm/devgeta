@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-28
 **Estimated Duration:** ~5 hours
-**Status:** Approved — **Unblocked** (cycle 1 shipped 2026-07-29; per-pane `@dg_agent_state`
+**Status:** Done (cycle 1 shipped 2026-07-29; per-pane `@dg_agent_state`
 with explicit `busy` confirmed in `internal/tooling/worktree/worktree.go`)
 **Order:** **Cycle 2 of 2.**
 [2026-07-28-agent-activity-notifications.md](2026-07-28-agent-activity-notifications.md) has
@@ -96,13 +96,13 @@ completion on its own.
 
 ### In Scope
 
-- [ ] `R` keybinding on worktree rows, plus hint-bar and help-popup entries
-- [ ] A reviewer picker (code / document / skill) modeled on `enterLayoutPick`
-- [ ] A review launch that runs `oc --agent <reviewer> --prompt <text>` in the worktree
-- [ ] Correct behavior when the worktree's window already exists and is busy (see the
+- [x] `R` keybinding on worktree rows, plus hint-bar and help-popup entries
+- [x] A reviewer picker (code / document / skill) modeled on `enterLayoutPick`
+- [x] A review launch that runs `oc --agent <reviewer> --prompt <text>` in the worktree
+- [x] Correct behavior when the worktree's window already exists and is busy (see the
       open design question in §7 — resolve it before Step 3)
-- [ ] Correct behavior when the worktree has no live window (create one)
-- [ ] Tests; `docs/spec.md` and the `dg ws` docs updated
+- [x] Correct behavior when the worktree has no live window (create one)
+- [x] Tests; `docs/spec.md` and the `dg ws` docs updated
 
 ### Explicitly Out of Scope
 
@@ -373,13 +373,25 @@ distinction needs to be visible in v1, because that changes the row renderer, no
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Should `R` fall back to `r`'s repair behavior when the window is missing, or is
+- [x] Should `R` fall back to `r`'s repair behavior when the window is missing, or is
       creating a review-only window there confusing?
-- [ ] Is a three-item `FuzzyPicker` overkill versus a which-key style single-keypress prompt
+      **Resolved:** creates a review-only window, via `ensureWindow`'s (now
+      `createWindowWithLayout`'s) create-if-missing path — the same path `Create`/`Repair`
+      already use. This was the decision made and implemented in Task 3.
+- [x] Is a three-item `FuzzyPicker` overkill versus a which-key style single-keypress prompt
       (`c` / `d` / `s`)?
-- [ ] Does the fixed prompt need to differ per reviewer, or is one line enough for all three?
-- [ ] Should the split be vertical or horizontal, and should the reviewer pane take focus or
+      **Resolved:** kept the three-item `FuzzyPicker`, as implemented in Task 4
+      (`internal/tui/worktree/review_flow.go`'s `handleKickReview`), matching `enterLayoutPick`'s
+      shape rather than inventing a second picker style.
+- [x] Does the fixed prompt need to differ per reviewer, or is one line enough for all three?
+      **Resolved:** one fixed prompt ("Review this branch against the default branch.") shared
+      by all three reviewer types, as implemented in Task 2 (`reviewPrompt` in
+      `internal/tooling/worktree/layout.go`).
+- [x] Should the split be vertical or horizontal, and should the reviewer pane take focus or
       leave the user in the coder pane they were in?
+      **Resolved:** split "vertical" (side by side, matching the existing `claude-nvim` layout's
+      editor-pane convention), and focus returns to the original coder pane (best-effort, via
+      `SelectPane`) — as implemented in Task 3's `launchReviewInLiveWindow`.
 
 **Reviewer notes:**
 

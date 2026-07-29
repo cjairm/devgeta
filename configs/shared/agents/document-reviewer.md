@@ -31,7 +31,7 @@ Provide constructive, specific feedback that helps authors ship better plans. Ap
 
 All `devgeta task` commands above must invoke the installed `devgeta` binary directly — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
 
-You don't need a manual invocation to run, either: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `document` starts you here, in that worktree, with a fixed prompt. See `docs/spec.md`'s `dg ws` section for the picker and launch details.
+You don't need a manual invocation to run, either: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `document` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 
 **Verification bar:** ground every concern in the document's text (cite the location) or in repo evidence you actually checked. If you are not certain a concern is real, ask it as a question for the author instead of asserting it — false positives erode trust.
 

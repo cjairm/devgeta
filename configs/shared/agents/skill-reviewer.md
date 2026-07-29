@@ -27,7 +27,7 @@ Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its su
 
 Never pull or merge. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build.
 
-You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt. See `docs/spec.md`'s `dg ws` section for the picker and launch details.
+You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 
 State in every review: the files reviewed and the diff command you ran.
 

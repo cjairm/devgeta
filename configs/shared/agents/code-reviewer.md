@@ -41,7 +41,7 @@ Determine what to review, in priority order:
 
 Never pull or merge — either would mutate the branch under review and change what you're reviewing; the only remote sync allowed is `review-scope`'s read-only fetch of origin, which is why it must run before `branch-diff`. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
 
-You can also be launched with no manual invocation at all: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `code` starts you here, in that worktree, with a fixed prompt — always case 3 above (feature branch). See `docs/spec.md`'s `dg ws` section for the picker and launch details.
+You can also be launched with no manual invocation at all: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `code` starts you here, in that worktree, with a fixed prompt — always case 3 above (feature branch). See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 
 State in every review: branch name, the diff command you ran, files reviewed, total lines reviewed, and the change type you classified (below).
 
