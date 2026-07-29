@@ -51,3 +51,6 @@ devgeta-linux-*
 
 # Development worktrees (superpowers)
 .worktrees/
+
+# SDD scratch space (review diffs, task briefs/reports)
+.superpowers/

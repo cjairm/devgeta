@@ -653,24 +653,25 @@ a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to
 set of raw-git and `gh` patterns and deny with the exact `devgeta task`
 replacement. **Global rules** (fire in every repo, since these hooks deploy to
 the user's global config): `git diff <ref>..<ref>` / `git log <ref>..<ref>`
-(any flags) → `review-package`; `git worktree add` → `worktree-start`; `git
-worktree remove` → `worktree-finish`; `gh pr checks` → `pr-checks`; `gh api
+(any flags) → `review-package`; `gh pr checks` → `pr-checks`; `gh api
 graphql ... reviewThreads` → `review-threads`; `gh pr review` → `submit-review`.
-**Devgeta-repo-only rules**: `git reset --soft HEAD~N` (N ≥ 1) and `git tag -a
-v<semver>` → `release` — these encode devgeta's own release policy, so they
-fire only when the command runs inside the devgeta repo (detected by walking up
-from the payload's `.cwd`, falling back to `$PWD`, to a `go.mod` with module
-`github.com/cjairm/devgeta`); the check runs only after a release pattern
-matches and fails toward not firing, so a general `git reset`/`git tag` in any
-other repo is never blocked. Matching checks every command segment (split on
+**Devgeta-repo-only rules**: `git worktree add` → `worktree-start`, `git
+worktree remove` → `worktree-finish`, `git reset --soft HEAD~N` (N ≥ 1), and
+`git tag -a v<semver>` — these encode devgeta's own worktree storage layout
+(`~/.local/share/devgeta/worktrees/...`) and release policy, so they fire only
+when the command runs inside the devgeta repo (detected by walking up from the
+payload's `.cwd`, falling back to `$PWD`, to a `go.mod` with module
+`github.com/cjairm/devgeta`); the check runs only after a pattern matches and
+fails toward not firing, so a general `git worktree`/`git reset`/`git tag` in
+any other repo is never blocked. Matching checks every command segment (split on
 unquoted `&&`, `||`, `;`, `|`, and tolerant of a leading `VAR=value` prefix), so
 `cd x && git worktree add y` and `git fetch && git diff a..b` are caught too —
 while a bare `git diff`, `git log`, `git tag` (list), `git reset --soft HEAD`
 (no `~N`), `gh pr view`, or a bare `gh api graphql` is still never intercepted.
 Deny is exit-code-based (exit 2 + a one-line stderr reason for
 Claude Code; a thrown `Error` for OpenCode), never a silent rewrite, and every
-deny message states the bypass: set `DEVGETA_SKIP_TASK_REDIRECT=1` for the
-session to let raw git through when genuinely needed. See
+deny message states the bypass: export `DEVGETA_SKIP_TASK_REDIRECT=1` in the shell
+that launches the agent (e.g. the repo's `.envrc`), before invoking it. See
 [docs/apps/claude.md](apps/claude.md#command-redirect-pretooluse-hook) for the
 full contract.
 

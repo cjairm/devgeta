@@ -18,8 +18,9 @@
 # or any ambiguity reading the staged diff falls through to exit 0 (allow) —
 # this hook must never accidentally block all commits.
 #
-# Escape hatch: set DEVGETA_SKIP_SECRET_GUARD=1 for the session to bypass this
-# hook when a match is a known false positive.
+# Escape hatch: set DEVGETA_SKIP_SECRET_GUARD=1 in the shell that launches this
+# agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+# hook — this hook reads its own environment, not one set inside the command.
 #
 # NB: `git diff --cached`/`git rev-parse` are read-only introspection of what
 # is already staged — this hook never stages, commits, or mutates anything.
@@ -56,7 +57,7 @@ CWD=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 DIR="${CWD:-$PWD}"
 [ -z "$DIR" ] && exit 0
 
-BYPASS_HINT="set DEVGETA_SKIP_SECRET_GUARD=1 to bypass this session if this is a false positive"
+BYPASS_HINT="bypass: export DEVGETA_SKIP_SECRET_GUARD=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment"
 
 # DEVGETA_GIT_GLOBAL_OPT (from lib/segments.sh, shared with
 # task-redirect.sh's GIT_ANCHOR) tolerates git global options between `git`

@@ -17,9 +17,9 @@
 # unmatched command, jq missing — falls through to exit 0 (allow): this hook
 # must never accidentally block all Bash calls.
 #
-# Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 for the session to bypass this
-# hook entirely when raw git is genuinely needed. Every deny message repeats
-# this so no flow dead-ends.
+# Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 in the shell that launches this
+# agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+# hook — this hook reads its own environment, not one set inside the command.
 #
 # NB: the command string is only ever pattern-matched (grep), never eval'd or
 # executed — no command-injection surface from the JSON payload.
@@ -34,13 +34,15 @@
 #
 # Rule scope (these hooks deploy to the user's GLOBAL config, so they fire in
 # EVERY repo):
-#   - Global rules fire everywhere: review-package (git diff/log <ref>..<ref>),
-#     worktree-start (git worktree add), worktree-finish (git worktree remove),
+#   - Global rules fire everywhere: review-package (git diff/log <ref>..<ref>)
 #     and the gh redirects pr-checks / review-threads / submit-review. These
 #     impose no repo-specific convention — they're better/compressed forms of
 #     universal git/gh operations.
-#   - The two release rules (git reset --soft HEAD~N, git tag -a v<semver>) are
-#     devgeta-repo-only: they encode devgeta's own release policy and would be
+#   - Four rules are devgeta-repo-only: worktree-start (git worktree add),
+#     worktree-finish (git worktree remove), and the two release rules (git
+#     reset --soft HEAD~N, git tag -a v<semver>). The worktree rules encode
+#     devgeta's own worktree storage layout (~/.local/share/devgeta/worktrees/...)
+#     and the release rules encode devgeta's own release policy — both would be
 #     wrong to steer in other repos. They fire only when is_devgeta_repo
 #     confirms a go.mod with module github.com/cjairm/devgeta, and fail toward
 #     NOT firing on any uncertainty (see is_devgeta_repo).
@@ -76,12 +78,13 @@ COMMAND=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/nul
 [ -z "$COMMAND" ] && exit 0
 
 # Claude Code's PreToolUse payload includes the agent's working directory at
-# top-level `.cwd`. It gates the release rules (rules 4 & 5) to the devgeta
-# repo only (see is_devgeta_repo). If absent/empty, fall back to this shell's
-# own $PWD; if that too is indeterminate, the gate fails toward NOT firing.
+# top-level `.cwd`. It gates the four devgeta-repo-only rules (worktree add,
+# worktree remove, and the two release rules) to the devgeta repo only (see
+# is_devgeta_repo). If absent/empty, fall back to this shell's own $PWD; if
+# that too is indeterminate, the gate fails toward NOT firing.
 CWD=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 
-BYPASS_HINT="set DEVGETA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed"
+BYPASS_HINT="bypass: export DEVGETA_SKIP_TASK_REDIRECT=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment"
 
 deny() {
 	echo "$1 — $BYPASS_HINT" >&2
@@ -111,21 +114,23 @@ GIT_ANCHOR="^(${DEVGETA_ENV_ASSIGN}[[:space:]]+)*git([[:space:]]+${DEVGETA_GIT_G
 GH_ANCHOR="^(${DEVGETA_ENV_ASSIGN}[[:space:]]+)*gh([[:space:]]+${DEVGETA_GH_GLOBAL_OPT})*"
 
 # is_devgeta_repo answers "is the command running inside the devgeta repo?" —
-# the gate for the release rules (rules 4 & 5). Those rules encode devgeta's
-# OWN repo-specific release policy (CLAUDE.md §9), so redirecting the universal
-# `git reset --soft`/`git tag -a` techniques must NOT happen in other repos.
+# the gate for the devgeta-repo-only rules (worktree-start, worktree-finish,
+# and the two release rules). Those rules encode devgeta's OWN repo-specific
+# conventions (worktree storage layout; release policy, CLAUDE.md §9), so
+# redirecting the universal `git worktree add/remove`, `git reset --soft`, and
+# `git tag -a` techniques must NOT happen in other repos.
 #
 # Delegates the actual go.mod walk (CWD, falling back to $PWD) to
 # devgeta_is_repo (lib/devgeta-repo.sh, sourced above — shared with
 # suppression-guard.sh, see ADR-0006), memoizing the result here so multiple
-# release segments/rules in one invocation check at most once.
+# gated segments/rules in one invocation check at most once.
 #
 # CRITICAL: this fails TOWARD NOT firing. If the working dir is indeterminate,
 # no go.mod is found, or the module doesn't match, it returns non-zero (repo is
 # NOT devgeta) — so the raw git command is allowed through rather than a
-# general reset/tag being wrongly blocked outside devgeta. It is only ever
-# called AFTER a release pattern has already matched, so the common allow path
-# never pays the go.mod-lookup cost.
+# general worktree/reset/tag operation being wrongly blocked outside devgeta.
+# It is only ever called AFTER a matching pattern has already matched, so the
+# common allow path never pays the go.mod-lookup cost.
 DEVGETA_REPO_MEMO=""
 is_devgeta_repo() {
 	if [ -z "$DEVGETA_REPO_MEMO" ]; then
@@ -153,13 +158,22 @@ check_segment() {
 		deny "Use: devgeta task review-package <base> <head> (one call: verified range, commits, noise-filtered stats + full diff)"
 	fi
 
-	# --- git worktree add ... ---
-	if printf '%s\n' "$segment" | grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+add([[:space:]]|\$)"; then
+	# --- git worktree add ... — devgeta-repo-only ---
+	# Gated by is_devgeta_repo (checked last, only after the pattern matches):
+	# devgeta's worktree storage location (~/.local/share/devgeta/worktrees/...)
+	# is devgeta's own layout convention, so this stays out of other repos.
+	if printf '%s\n' "$segment" |
+		grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+add([[:space:]]|\$)" &&
+		is_devgeta_repo; then
 		deny "Use: devgeta task worktree-start <name> [--base <ref>]"
 	fi
 
-	# --- git worktree remove ... ---
-	if printf '%s\n' "$segment" | grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+remove([[:space:]]|\$)"; then
+	# --- git worktree remove ... — devgeta-repo-only ---
+	# Same gate as worktree add above, same reason (devgeta's own worktree
+	# storage layout).
+	if printf '%s\n' "$segment" |
+		grep -qE "${GIT_ANCHOR}[[:space:]]+worktree[[:space:]]+remove([[:space:]]|\$)" &&
+		is_devgeta_repo; then
 		deny "Use: devgeta task worktree-finish [<name>] --merge|--discard"
 	fi
 

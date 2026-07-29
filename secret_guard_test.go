@@ -145,6 +145,14 @@ func TestSecretGuardHook_DeniesSensitiveStagedFilenames(t *testing.T) {
 			if !strings.Contains(stderr, "DEVGETA_SKIP_SECRET_GUARD") {
 				t.Errorf("expected deny reason to state the bypass escape hatch, got %q", stderr)
 			}
+			if !strings.Contains(stderr, "shell that launches this agent") ||
+				!strings.Contains(stderr, "this hook reads its own environment") {
+				t.Errorf(
+					"expected deny reason for staged %q to contain the reworded bypass hint, got %q",
+					tc.path,
+					stderr,
+				)
+			}
 		})
 	}
 }
@@ -202,6 +210,14 @@ func TestSecretGuardHook_DeniesSecretShapedContent(t *testing.T) {
 			}
 			if !strings.Contains(stderr, "DEVGETA_SKIP_SECRET_GUARD") {
 				t.Errorf("expected deny reason to state the bypass escape hatch, got %q", stderr)
+			}
+			if !strings.Contains(stderr, "shell that launches this agent") ||
+				!strings.Contains(stderr, "this hook reads its own environment") {
+				t.Errorf(
+					"expected deny reason for content %q to contain the reworded bypass hint, got %q",
+					tc.content,
+					stderr,
+				)
 			}
 		})
 	}

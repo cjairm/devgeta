@@ -29,14 +29,15 @@ import {
 
 // This test file lives at the repo root, so its own directory is a devgeta
 // repo (repo-root go.mod has module github.com/cjairm/devgeta). Used as the
-// devgeta-cwd for the release-gating tests below.
+// devgeta-cwd for the release- and worktree-gating tests below.
 const DEVGETA_DIR = dirname(fileURLToPath(import.meta.url));
 
 // runHook drives the plugin exactly as OpenCode would: build the plugin,
 // invoke its tool.execute.before hook with a bash tool call, and report
 // whether it denied (threw) or allowed (returned normally). `ctx` is the
 // OpenCode plugin context (defaults to the devgeta repo dir so the release
-// rules are exercised in their firing state unless a test overrides it).
+// and worktree rules are exercised in their firing state unless a test
+// overrides it).
 async function runHook(command, env = {}, ctx = { directory: DEVGETA_DIR }) {
   const previous = {};
   for (const [key, value] of Object.entries(env)) {
@@ -133,6 +134,10 @@ test("denies narrow patterns, including compound commands and env-var prefixes",
     ["git diff v1.2.0..v1.3.0", "devgeta task review-package"],
     ["git diff --stat A..B", "devgeta task review-package"],
     ["git log --oneline base..head", "devgeta task review-package"],
+    // The two worktree cases below also rely on runHook's default ctx
+    // (the devgeta dir): the devgeta-repo gate they share with the release
+    // rules resolves to "yes" here, same as the "worktree rules gated to
+    // devgeta repo" test asserts explicitly.
     ["git worktree add ../wt -b feature-x", "devgeta task worktree-start"],
     ["git worktree remove ../wt", "devgeta task worktree-finish"],
     // New gh rules — all GLOBAL, so they deny regardless of cwd. (runHook
@@ -176,6 +181,15 @@ test("denies narrow patterns, including compound commands and env-var prefixes",
     // recognized `--flag=value`/bare `--flag`, never `--flag value`).
     ["gh --repo owner/repo pr checks", "devgeta task pr-checks"],
     ["gh --repo=owner/repo pr checks", "devgeta task pr-checks"],
+    // Regression-verify the three exact -C/-R anchor shapes named by this
+    // cycle's hook-rescope plan (assert, do not re-implement — the fix
+    // itself is the GIT_GLOBAL_OPT/GH_GLOBAL_OPT global-option handling
+    // above). `git -C .` uses "." as the dir arg rather than a relative
+    // path, and the gh case carries a trailing PR-number argument after
+    // `checks` — neither shape was covered by an existing case above.
+    ["git -C . worktree add wt", "devgeta task worktree-start"],
+    ["git -C . diff main..HEAD", "devgeta task review-package"],
+    ["gh -R o/r pr checks 1", "devgeta task pr-checks"],
   ];
   for (const [command, wantReplacement] of cases) {
     const result = await runHook(command);
@@ -191,6 +205,11 @@ test("denies narrow patterns, including compound commands and env-var prefixes",
     assert.ok(
       result.message.includes("DEVGETA_SKIP_TASK_REDIRECT"),
       `expected deny reason for ${JSON.stringify(command)} to state the bypass escape hatch, got ${JSON.stringify(result.message)}`,
+    );
+    assert.ok(
+      result.message.includes("shell that launches this agent") &&
+        result.message.includes("this hook reads its own environment"),
+      `expected deny reason for ${JSON.stringify(command)} to contain the reworded bypass hint, got ${JSON.stringify(result.message)}`,
     );
   }
 });
@@ -257,6 +276,69 @@ test("release rules deny inside devgeta, allow everywhere else", async () => {
         `expected allow outside devgeta (${dir}) for ${JSON.stringify(command)}, got: ${outside.message}`,
       );
     }
+  }
+});
+
+test("worktree rules gated to devgeta repo, allow elsewhere", async () => {
+  const worktreeCommands = [
+    ["git worktree add ../wt -b x", "devgeta task worktree-start"],
+    ["git worktree remove ../wt", "devgeta task worktree-finish"],
+    [
+      "cd some/dir && git worktree add ../wt -b x",
+      "devgeta task worktree-start",
+    ],
+  ];
+
+  const noGoMod = mkdtempSync(join(tmpdir(), "no-gomod-"));
+  const otherModule = mkdtempSync(join(tmpdir(), "other-mod-"));
+  writeFileSync(
+    join(otherModule, "go.mod"),
+    "module github.com/other/thing\n\ngo 1.25\n",
+  );
+
+  for (const [command, wantReplacement] of worktreeCommands) {
+    // Inside devgeta: deny.
+    const inside = await runHook(command, {}, { directory: DEVGETA_DIR });
+    assert.equal(
+      inside.denied,
+      true,
+      `expected deny inside devgeta for ${JSON.stringify(command)}`,
+    );
+    assert.ok(
+      inside.message.includes(wantReplacement),
+      `expected deny reason for ${JSON.stringify(command)} to mention ${JSON.stringify(wantReplacement)}, got ${JSON.stringify(inside.message)}`,
+    );
+
+    // Outside devgeta (no go.mod, and a different module): allow.
+    for (const dir of [noGoMod, otherModule]) {
+      const outside = await runHook(command, {}, { directory: dir });
+      assert.equal(
+        outside.denied,
+        false,
+        `expected allow outside devgeta (${dir}) for ${JSON.stringify(command)}, got: ${outside.message}`,
+      );
+    }
+  }
+});
+
+test("global rules unaffected by cwd: gh pr checks and git diff <range> still deny outside devgeta", async () => {
+  const nonDevgetaDir = mkdtempSync(join(tmpdir(), "no-gomod-"));
+
+  const cases = [
+    ["gh pr checks", "devgeta task pr-checks"],
+    ["git diff main..feature", "devgeta task review-package"],
+  ];
+  for (const [command, wantReplacement] of cases) {
+    const result = await runHook(command, {}, { directory: nonDevgetaDir });
+    assert.equal(
+      result.denied,
+      true,
+      `expected deny outside devgeta for global rule ${JSON.stringify(command)}`,
+    );
+    assert.ok(
+      result.message.includes(wantReplacement),
+      `expected deny reason for ${JSON.stringify(command)} to mention ${JSON.stringify(wantReplacement)}, got ${JSON.stringify(result.message)}`,
+    );
   }
 });
 

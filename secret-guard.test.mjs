@@ -107,6 +107,11 @@ test("denies sensitive staged filenames", async () => {
     const result = await runHook('git commit -m "add file"', dir);
     assert.equal(result.denied, true, `expected deny for staged ${path}`);
     assert.match(result.message, /DEVGETA_SKIP_SECRET_GUARD/);
+    assert.ok(
+      result.message.includes("shell that launches this agent") &&
+        result.message.includes("this hook reads its own environment"),
+      `expected deny reason for staged ${path} to contain the reworded bypass hint, got ${JSON.stringify(result.message)}`,
+    );
   }
 });
 
@@ -139,6 +144,11 @@ test("denies secret-shaped content in added lines", async () => {
       `expected deny for content ${JSON.stringify(content)}`,
     );
     assert.match(result.message, /DEVGETA_SKIP_SECRET_GUARD/);
+    assert.ok(
+      result.message.includes("shell that launches this agent") &&
+        result.message.includes("this hook reads its own environment"),
+      `expected deny reason for content ${JSON.stringify(content)} to contain the reworded bypass hint, got ${JSON.stringify(result.message)}`,
+    );
   }
 });
 

@@ -20,7 +20,9 @@
 // file (without re-exporting it) adds nothing to either file's own export
 // surface, so it carries none of that risk.
 //
-// Escape hatch: set DEVGETA_SKIP_SECRET_GUARD=1 in the environment.
+// Escape hatch: set DEVGETA_SKIP_SECRET_GUARD=1 in the shell that launches this
+// agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+// plugin — this plugin reads its own environment, not one set inside the command.
 //
 // Three things beyond simple pattern-matching, all closing bypasses found
 // in review or in manual end-to-end verification:
@@ -46,7 +48,7 @@ import { execFileSync } from "node:child_process";
 import { splitCommandSegments } from "./task-redirect.js";
 
 const BYPASS_HINT =
-  "set DEVGETA_SKIP_SECRET_GUARD=1 to bypass this session if this is a false positive";
+  "bypass: export DEVGETA_SKIP_SECRET_GUARD=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment";
 
 const STAGE_SEPARATELY_MESSAGE =
   "This hook can only check what is ALREADY staged — run staging (git add/mv) and git commit as two separate commands so a staged secret can be caught before it's committed";

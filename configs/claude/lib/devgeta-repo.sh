@@ -1,7 +1,8 @@
 # Shared bash helper for devgeta's PreToolUse hook scripts that gate a rule to
-# the devgeta repo only (task-redirect.sh's two release rules,
-# suppression-guard.sh's lint-suppression ban — see ADR-0006 for why that ban
-# must NOT fire in other repos). Sourced, never executed directly.
+# the devgeta repo only (task-redirect.sh's worktree-add/worktree-remove and
+# release rules, suppression-guard.sh's lint-suppression ban — see ADR-0006
+# for why that ban must NOT fire in other repos). Sourced, never executed
+# directly.
 
 # devgeta_is_repo answers "is <dir> (or an ancestor of it) the devgeta repo?"
 # by walking UP from <dir> looking for the FIRST go.mod and checking its

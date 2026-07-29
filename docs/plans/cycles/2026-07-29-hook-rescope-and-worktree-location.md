@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 **Estimated Duration:** ~3 hours
-**Status:** Draft
+**Status:** Done
 
 ---
 
@@ -121,7 +121,10 @@ Two defects:
   environment. Nothing is wrong with the detection — the guard did its job — the
   message just names an action the reader can't take.
 - A parity test asserting the two hooks carry the same deny-rule set and the same
-  bypass text (see step 5 — no such test exists today).
+  bypass text (see step 5 — no such test exists today). Landed as two tests: a
+  deny-message-set comparison scoped to task-redirect (the only pair with a
+  comparable "list of redirect messages"), and a separate bypass-text-only
+  comparison spanning all three hook pairs.
 - Regression-verify the anchor coverage the guardrails cycle already added.
 - Mirror every change across both agents, with cases in `task_redirect_test.go`
   **and** `task-redirect.test.mjs`.
@@ -233,6 +236,11 @@ formatter extension parity (`TestClaudeAndOpenCodeFormatterParity`) only.
   rule being gated to the devgeta repo while the other stays global. Those
   remain covered only by the behavioral cases in `task_redirect_test.go` and
   `task-redirect.test.mjs`, which must be added in pairs.
+- Bypass text is shared across all three hook pairs (task-redirect, secret-guard,
+  suppression-guard — see the In Scope section above), so the bypass-text half of
+  this parity test covers all three pairs, table-driven; the deny-message-set
+  half stays task-redirect-only, since the other two pairs don't have a
+  comparable "list of redirect messages" to compare.
 - A stronger option, **not** in scope here: drive both suites from one shared
   declarative fixture (command in, expected decision out) so pattern and scope
   drift fail the build too. Worth its own cycle if rule drift ever actually bites.
@@ -273,8 +281,14 @@ make build                              # produces ./devgeta (Makefile:60)
 Install to `PATH` only once the change is verified, so `dg` keeps pointing at a
 known-good binary while testing.
 
-- Expected outcome: the originally-broken workflow in the other repository
-  completes; devgeta's own redirects still fire in devgeta.
+- Expected outcome: the two originally-broken worktree call sites in the other
+  repository (a bare `git worktree remove` in its cleanup command, a bare `git
+worktree add` in its fan-out script — see §8) now pass, since neither is the
+  devgeta repo. `gh pr review` is **not** fixed by this cycle and is expected
+  to still deny there — `submit-review` stays global by explicit scope
+  decision (see "Explicitly Out of Scope" above), so the bypass export is the
+  intended answer for that one, not a further code change. Devgeta's own
+  redirects still fire in devgeta.
 - Verify: the commands above, then re-run the manual matrix in §6 against the
   **deployed** `~/.claude/task-redirect.sh`.
 

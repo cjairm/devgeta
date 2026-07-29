@@ -30,7 +30,9 @@
 # whole file and there is no "before" to diff against — CLAUDE.md's ban has
 # no carve-out for a suppression comment surviving a rewrite.
 #
-# Escape hatch: set DEVGETA_SKIP_SUPPRESSION_GUARD=1 for the session.
+# Escape hatch: set DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the shell that launches this
+# agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+# hook — this hook reads its own environment, not one set inside the command.
 #
 # Keep this file's PATTERNS list and
 # configs/opencode/plugin/suppression-guard.js's in sync — they mirror each
@@ -52,7 +54,7 @@ source "$SCRIPT_DIR/lib/devgeta-repo.sh"
 
 devgeta_is_repo "$DIR" || exit 0
 
-BYPASS_HINT="set DEVGETA_SKIP_SUPPRESSION_GUARD=1 to bypass this session if this is a false positive"
+BYPASS_HINT="bypass: export DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment"
 
 case "$TOOL" in
 Edit)

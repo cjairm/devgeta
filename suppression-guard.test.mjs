@@ -109,6 +109,11 @@ test("denies introduced suppression comments inside the devgeta repo", async () 
       `expected deny for ${JSON.stringify(args)}`,
     );
     assert.match(result.message, /DEVGETA_SKIP_SUPPRESSION_GUARD/);
+    assert.ok(
+      result.message.includes("shell that launches this agent") &&
+        result.message.includes("this hook reads its own environment"),
+      `expected deny reason for ${JSON.stringify(args)} to contain the reworded bypass hint, got ${JSON.stringify(result.message)}`,
+    );
   }
 });
 

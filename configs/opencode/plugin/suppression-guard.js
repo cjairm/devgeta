@@ -10,12 +10,14 @@
 // why this file does not introduce its own standalone "lib" module under
 // plugin/.
 //
-// Escape hatch: set DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the environment.
+// Escape hatch: set DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the shell that launches this
+// agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+// plugin — this plugin reads its own environment, not one set inside the command.
 
 import { isDevgetaRepo } from "./task-redirect.js";
 
 const BYPASS_HINT =
-  "set DEVGETA_SKIP_SUPPRESSION_GUARD=1 to bypass this session if this is a false positive";
+  "bypass: export DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment";
 
 // PATTERNS mirrors suppression-guard.sh's PATTERNS exactly — keep the two
 // lists in sync. Checked as plain substrings, not regexes.

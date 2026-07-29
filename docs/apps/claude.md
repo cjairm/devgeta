@@ -110,8 +110,8 @@ replacement to run instead:
 | Raw pattern                                                                              | Replacement                                                     | Scope             |
 | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------- |
 | `git diff <ref>..<ref>` / `git log <ref>..<ref>` (any flags, e.g. `--stat`, `--oneline`) | `devgeta task review-package <base> <head>`                     | global            |
-| `git worktree add ...`                                                                   | `devgeta task worktree-start <name> [--base <ref>]`             | global            |
-| `git worktree remove ...`                                                                | `devgeta task worktree-finish [<name>] --merge\|--discard`      | global            |
+| `git worktree add ...`                                                                   | `devgeta task worktree-start <name> [--base <ref>]`             | devgeta repo only |
+| `git worktree remove ...`                                                                | `devgeta task worktree-finish [<name>] --merge\|--discard`      | devgeta repo only |
 | `gh pr checks ...`                                                                       | `devgeta task pr-checks`                                        | global            |
 | `gh api graphql ... reviewThreads ...`                                                   | `devgeta task review-threads`                                   | global            |
 | `gh pr review ...`                                                                       | `devgeta task submit-review --event ...`                        | global            |
@@ -119,23 +119,24 @@ replacement to run instead:
 | `git tag -a v<semver> ...`                                                               | `devgeta task release <version> --message-file <file> [--push]` | devgeta repo only |
 
 **Scope.** These hooks deploy to the user's global config, so they fire on
-every Bash call in every repo. The `review-package`, `worktree-start`,
-`worktree-finish`, `pr-checks`, `review-threads`, and `submit-review` rules are
-**global**: each is a better/compressed form of a universal git or `gh`
-operation that imposes no devgeta-specific convention, so redirecting it
-everywhere is correct. The two **release** rules (`git reset --soft HEAD~N` and
-`git tag -a v<semver>`) are **devgeta-repo-only**: they encode devgeta's own
-release policy (§9 squash-before-tag, strict `vX.Y.Z`), which would be wrong to
-steer in any other project. A release rule fires only when the command is
-running inside the devgeta repo — detected by walking up from the payload's
-working directory (`.cwd`, falling back to the shell's `$PWD`) to the first
-`go.mod` and confirming its module path is `github.com/cjairm/devgeta`. This
-check runs only after a release pattern has already matched (the common allow
-path pays no lookup cost) and it **fails toward not firing**: if the working
-directory is indeterminate, no `go.mod` is found, or the module doesn't match,
-the raw git command is allowed through — the acceptable failure is "the release
-redirect didn't help here", never "a general `git reset`/`git tag` got blocked
-in another repo". The gh rules are narrow: `gh pr checks` and `gh pr review`
+every Bash call in every repo. The `review-package`, `pr-checks`,
+`review-threads`, and `submit-review` rules are **global**: each is a
+better/compressed form of a universal git or `gh` operation that imposes no
+devgeta-specific convention, so redirecting it everywhere is correct. Four rules
+are **devgeta-repo-only**: `git worktree add` → `worktree-start` and `git
+worktree remove` → `worktree-finish` (devgeta's worktree storage location
+`~/.local/share/devgeta/worktrees/...` is devgeta's own layout convention, so
+redirecting would wrongly impose it in other repos), and `git reset --soft
+HEAD~N` and `git tag -a v<semver>` (which encode devgeta's own release policy,
+§9 squash-before-tag, strict `vX.Y.Z`). All devgeta-repo-only rules fire only
+when the command runs inside the devgeta repo — detected by walking up from the
+payload's working directory (`.cwd`, falling back to the shell's `$PWD`) to the
+first `go.mod` and confirming its module path is `github.com/cjairm/devgeta`. This check runs only after a devgeta-repo-only pattern has already matched (the
+common allow path pays no lookup cost) and it **fails toward not firing**: if the
+working directory is indeterminate, no `go.mod` is found, or the module doesn't
+match, the raw git command is allowed through — the acceptable failure is "the
+devgeta redirect didn't help here", never "a general `git worktree`/`git
+reset`/`git tag` got blocked in another repo". The gh rules are narrow: `gh pr checks` and `gh pr review`
 match only those exact subcommands (never `gh pr view`/`status`/`list`), and
 the review-threads rule requires a `gh` invocation carrying both `api` and
 `graphql` plus the literal `reviewThreads` (a bare `gh api graphql` or `gh api`
@@ -174,16 +175,17 @@ failure mode). A missing/unparseable command, or jq itself being unavailable,
 falls through to exit 0 (allow) — this hook must never accidentally block all
 Bash calls.
 
-**Bypass:** every deny message ends with `set DEVGETA_SKIP_TASK_REDIRECT=1 to
-bypass this session if raw git is genuinely needed`. Set that environment
-variable for the session to let raw git through unconditionally, or edit
-`~/.claude/settings.json` to remove the `PreToolUse` entry entirely if you
-never want this hook active.
+**Bypass:** export `DEVGETA_SKIP_TASK_REDIRECT=1` in the shell that launches this
+agent (e.g. the repo's `.envrc` file or your shell profile), BEFORE invoking the
+agent — not inside the denied command, and not fixable mid-session, because the
+hook reads its own process environment. Alternatively, edit `~/.claude/settings.json`
+to remove the `PreToolUse` entry entirely if you never want this hook active.
 
 The OpenCode plugin equivalent (`~/.config/opencode/plugin/task-redirect.js`,
 a `tool.execute.before` hook) mirrors the same pattern table, the same
 global-vs-devgeta scoping, and the same `DEVGETA_SKIP_TASK_REDIRECT` bypass. It
-reads the working directory for the release gate from the plugin context's
+reads the working directory for the devgeta-repo-only gate (worktree add,
+worktree remove, and the two release rules) from the plugin context's
 `directory` (falling back to `worktree`, then `process.cwd()`) and applies the
 identical fail-toward-not-firing `go.mod` check — see that file's header
 comment.
@@ -237,7 +239,9 @@ Either denies with a message asking for two separate Bash calls: run the
 staging command to completion first, then commit as its own call — at that
 point `git diff --cached` faithfully reflects what will be committed.
 
-**Bypass:** `DEVGETA_SKIP_SECRET_GUARD=1` for the session.
+**Bypass:** export `DEVGETA_SKIP_SECRET_GUARD=1` in the shell that launches this
+agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
+command — because the hook reads its own environment.
 
 The OpenCode plugin equivalent
 (`~/.config/opencode/plugin/secret-guard.js`) mirrors the same pattern lists
@@ -263,14 +267,16 @@ needle in the new content denies, since Write replaces the whole file and
 there is no "before" to diff against.
 
 **Scope:** DEVGETA-REPO-ONLY — gated by the same `is_devgeta_repo` go.mod walk
-task-redirect.sh's release rules use. Banning suppression comments outright is
-_devgeta's own_ stance, not a universal one (plenty of codebases use them
-deliberately), so it must not fire in any other repo — see
+task-redirect.sh's worktree and release rules use. Banning suppression
+comments outright is _devgeta's own_ stance, not a universal one (plenty of
+codebases use them deliberately), so it must not fire in any other repo — see
 [ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md). Denies
 via exit 2; a missing/unparseable payload or `jq` being unavailable falls
 through to exit 0 (allow).
 
-**Bypass:** `DEVGETA_SKIP_SUPPRESSION_GUARD=1` for the session.
+**Bypass:** export `DEVGETA_SKIP_SUPPRESSION_GUARD=1` in the shell that launches this
+agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
+command — because the hook reads its own environment.
 
 The OpenCode plugin equivalent
 (`~/.config/opencode/plugin/suppression-guard.js`) mirrors the same pattern

@@ -10,21 +10,24 @@
 // Rule scope (these hooks deploy to the user's GLOBAL config, so they fire in
 // EVERY repo):
 //   - Global rules fire everywhere: review-package (git diff/log
-//     <ref>..<ref>), worktree-start (git worktree add), worktree-finish (git
-//     worktree remove), and the gh redirects pr-checks / review-threads /
+//     <ref>..<ref>) and the gh redirects pr-checks / review-threads /
 //     submit-review. They impose no repo-specific convention.
-//   - The two release rules (git reset --soft HEAD~N, git tag -a v<semver>)
-//     are devgeta-repo-only: they encode devgeta's own release policy and
-//     would be wrong to steer in other repos. They fire only when
-//     isDevgetaRepo confirms a go.mod with module github.com/cjairm/devgeta,
-//     and fail toward NOT firing on any uncertainty (see isDevgetaRepo).
+//   - Four rules are devgeta-repo-only: worktree-start (git worktree add),
+//     worktree-finish (git worktree remove), and the two release rules (git
+//     reset --soft HEAD~N, git tag -a v<semver>). The worktree rules encode
+//     devgeta's own worktree storage layout
+//     (~/.local/share/devgeta/worktrees/...) and the release rules encode
+//     devgeta's own release policy — both would be wrong to steer in other
+//     repos. They fire only when isDevgetaRepo confirms a go.mod with module
+//     github.com/cjairm/devgeta, and fail toward NOT firing on any
+//     uncertainty (see isDevgetaRepo).
 //
-// Working directory for the release gate: the plugin factory receives an
+// Working directory for the devgeta-repo gate: the plugin factory receives an
 // OpenCode context object with `directory` (current working dir) and
 // `worktree` (git worktree path) per opencode.ai/docs/plugins/. We prefer
 // `directory`, fall back to `worktree`, then process.cwd(). isDevgetaRepo
 // walks up from there for a matching go.mod; if none of these yield a devgeta
-// go.mod, the release rules simply do not fire.
+// go.mod, the devgeta-repo-only rules simply do not fire.
 //
 // API shape (tool.execute.before: async (input, output) => {...}, deny by
 // throwing) is per OpenCode's plugin docs (opencode.ai/docs/plugins/) as of
@@ -35,9 +38,9 @@
 // file's deploy path (configs/opencode/plugin/, singular, mirroring the
 // Claude Code side) loads correctly either way.
 //
-// Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 in the environment to bypass
-// this plugin entirely when raw git is genuinely needed. Every deny message
-// repeats this so no flow dead-ends.
+// Escape hatch: set DEVGETA_SKIP_TASK_REDIRECT=1 in the shell that launches this
+// agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
+// hook — this hook reads its own environment, not one set inside the command.
 //
 // NB: the command string is only ever pattern-matched (regex), never eval'd
 // or executed — no command-injection surface from the tool call payload.
@@ -63,21 +66,22 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const BYPASS_HINT =
-  "set DEVGETA_SKIP_TASK_REDIRECT=1 to bypass this session if raw git is genuinely needed";
+  "bypass: export DEVGETA_SKIP_TASK_REDIRECT=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment";
 
 // isDevgetaRepo answers "is the command running inside the devgeta repo?" —
-// the gate for the release rules (git reset --soft HEAD~N, git tag -a
-// v<semver>), which encode devgeta's OWN release policy and must not steer the
-// universal git techniques in other repos. It walks UP from startDir looking
-// for the FIRST go.mod; the repo IS devgeta only if that go.mod's module path
-// is exactly github.com/cjairm/devgeta.
+// the gate for the devgeta-repo-only rules (worktree-start, worktree-finish,
+// and the release rules: git reset --soft HEAD~N, git tag -a v<semver>),
+// which encode devgeta's OWN conventions (worktree storage layout; release
+// policy) and must not steer the universal git techniques in other repos. It
+// walks UP from startDir looking for the FIRST go.mod; the repo IS devgeta
+// only if that go.mod's module path is exactly github.com/cjairm/devgeta.
 //
-// CRITICAL: it fails TOWARD false (release rules do NOT fire) on any
-// uncertainty — no startDir, no go.mod found, an unreadable go.mod, or a
-// non-matching module path. The unacceptable outcome is a general reset/tag
-// being wrongly blocked outside devgeta; "the release redirect didn't fire" is
-// always the safe fallback. Exported so it is unit-testable with injected
-// paths.
+// CRITICAL: it fails TOWARD false on any uncertainty — no startDir, no
+// go.mod found, an unreadable go.mod, or a non-matching module path — so the
+// devgeta-repo-only rules do NOT fire. The unacceptable outcome is a general
+// worktree/reset/tag operation being wrongly blocked outside devgeta; "the
+// redirect didn't fire" is always the safe fallback. Exported so it is
+// unit-testable with injected paths.
 const DEVGETA_MODULE_RE = /^module\s+github\.com\/cjairm\/devgeta($|\/)/m;
 export function isDevgetaRepo(startDir) {
   if (!startDir || typeof startDir !== "string") {
@@ -156,16 +160,19 @@ const RULES = [
     scope: "global",
   },
   {
-    // git worktree add ...
+    // git worktree add ... — devgeta-repo-only: devgeta's worktree storage
+    // location (~/.local/share/devgeta/worktrees/...) is devgeta's own layout
+    // convention, so this stays out of other repos.
     pattern: new RegExp(`^${GIT_PREFIX}\\s+worktree\\s+add(\\s|$)`),
     message: "Use: devgeta task worktree-start <name> [--base <ref>]",
-    scope: "global",
+    scope: "devgeta",
   },
   {
-    // git worktree remove ...
+    // git worktree remove ... — devgeta-repo-only, same reason as worktree
+    // add above.
     pattern: new RegExp(`^${GIT_PREFIX}\\s+worktree\\s+remove(\\s|$)`),
     message: "Use: devgeta task worktree-finish [<name>] --merge|--discard",
-    scope: "global",
+    scope: "devgeta",
   },
   {
     // git reset --soft HEAD~N (N >= 1). `git reset --soft HEAD` (no ~N,
@@ -296,10 +303,10 @@ export function splitCommandSegments(command) {
 
 // findDenyMessage returns the deny message for the first matching rule across
 // all segments, or null. `isDevgetaRepoFn` is a zero-arg memoized predicate:
-// a devgeta-scoped rule (release) only denies when it returns true, and it is
-// called ONLY after a release pattern has already matched — so a command with
-// no release pattern, or a repo where release patterns never match, pays zero
-// go.mod-lookup cost.
+// a devgeta-scoped rule (worktree-start, worktree-finish, release) only
+// denies when it returns true, and it is called ONLY after a devgeta-scoped
+// pattern has already matched — so a command with no devgeta-scoped pattern,
+// or a repo where those patterns never match, pays zero go.mod-lookup cost.
 function findDenyMessage(command, isDevgetaRepoFn) {
   const segments = splitCommandSegments(command);
   for (const segment of segments) {
@@ -324,7 +331,7 @@ function findDenyMessage(command, isDevgetaRepoFn) {
 
 export const TaskRedirect = async (ctx = {}) => {
   // Prefer the OpenCode context's working dir, then the git worktree path,
-  // then this process's cwd — used only by the devgeta-repo release gate.
+  // then this process's cwd — used only by the devgeta-repo gate.
   const projectDir = ctx.directory || ctx.worktree || process.cwd();
   return {
     "tool.execute.before": async (input, output) => {
@@ -340,7 +347,7 @@ export const TaskRedirect = async (ctx = {}) => {
       }
 
       // Memoize the repo check per invocation: computed at most once, and
-      // only if a release pattern actually matches a segment.
+      // only if a devgeta-scoped pattern actually matches a segment.
       let repoMemo;
       const isDevgetaRepoFn = () => {
         if (repoMemo === undefined) {
