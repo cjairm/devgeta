@@ -179,6 +179,67 @@ func ReviewerAgentNames() []string {
 	return names
 }
 
+// reviewPrompt is the single fixed opening prompt sent to every reviewer
+// agent, regardless of which one (code/document/skill) was picked. It's
+// deliberately short and generic: each reviewer agent's own instructions
+// already run `devgeta task review-scope` and `devgeta task branch-diff` to
+// scope itself (see configs/shared/agents/*.md), so this prompt only needs
+// to start the conversation, not describe the diff. It is also deliberately
+// free of shell metacharacters, even though shellSingleQuote below makes the
+// command safe either way - keeping the shipped prompt simple means the
+// common case never depends on the escaping path being exercised.
+const reviewPrompt = "Review this branch against the default branch."
+
+// shellSingleQuote wraps s in single quotes so it is safe to embed as one
+// literal word in a POSIX shell command line, escaping any embedded single
+// quote with the standard close/escape/reopen trick: '\” - this closes the
+// current quoted string, appends an escaped literal single quote, then
+// reopens quoting for the rest of s. This is needed because ReviewCommand's
+// output is sent to a live tmux pane via send-keys, which types it into an
+// interactive shell exactly as written - unlike a Go exec.Command argument
+// list, there is no shell parser on devgeta's side to lean on.
+//
+// There is no existing shell-quoting helper in this codebase (internal/ and
+// pkg/ have no shellescape/shellquote hits) and this is the only call site,
+// so this stays a few lines here rather than pulling in a library - see
+// CLAUDE.md's "prefer existing over new."
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ReviewCommand returns the shell command to send to a tmux pane (via
+// send-keys) to launch the reviewer agent registered under key ("code",
+// "document", or "skill") against the current branch, or an error if key is
+// not a registered reviewer.
+//
+// It reuses OpenCodeCoder.Command() for the launch token (the "oc" devgeta
+// alias) rather than hardcoding "oc" or the raw "opencode" binary, so the
+// one definition of how to launch OpenCode stays in devgeta.zsh - the same
+// reasoning builtinLayouts() already applies to its own OpenCode pane.
+// Reviewer launches are OpenCode-only by design (see the cycle plan's scope
+// boundary: the reviewer agents' permission: frontmatter is enforced by
+// OpenCode and ignored by Claude Code), so unlike deriveLayoutFromAlias this
+// does not accept an aiAlias.
+//
+// reviewPrompt is single-quoted via shellSingleQuote because this string is
+// typed literally into an interactive shell by send-keys - an unquoted
+// prompt would let shell metacharacters in it corrupt or hijack the command.
+func ReviewCommand(key string) (string, error) {
+	reviewer, ok := builtinReviewers()[key]
+	if !ok {
+		return "", fmt.Errorf(
+			"unknown reviewer %q. Valid reviewers: %s",
+			key, strings.Join(reviewerKeys, ", "),
+		)
+	}
+
+	opencode := &OpenCodeCoder{}
+	return fmt.Sprintf(
+		"%s --agent %s --prompt %s",
+		opencode.Command(), reviewer.Agent, shellSingleQuote(reviewPrompt),
+	), nil
+}
+
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable
 // order, for callers outside this package that need to list them (e.g. the
 // TUI's N layout picker). Returns a copy so a caller can't mutate the

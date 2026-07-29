@@ -2,6 +2,7 @@ package worktree
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -425,5 +426,118 @@ func TestBuiltinReviewersKeysAreComplete(t *testing.T) {
 		if reviewer.Label == "" {
 			t.Errorf("reviewer %q: expected non-empty label", key)
 		}
+	}
+}
+
+// --- review pane command ---
+
+// TestReviewCommandBuildsExpectedCommand asserts the exact command string
+// for every registered reviewer key: the OpenCodeCoder launch token ("oc"),
+// not a hardcoded "opencode", followed by --agent <name> and the fixed,
+// single-quoted review prompt.
+func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
+	wantOpenCodeToken := (&OpenCodeCoder{}).Command()
+
+	tests := []struct {
+		key       string
+		wantAgent string
+	}{
+		{"code", "code-reviewer"},
+		{"document", "document-reviewer"},
+		{"skill", "skill-reviewer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got, err := ReviewCommand(tt.key)
+			if err != nil {
+				t.Fatalf("ReviewCommand(%q) returned error: %v", tt.key, err)
+			}
+
+			want := wantOpenCodeToken + " --agent " + tt.wantAgent +
+				" --prompt 'Review this branch against the default branch.'"
+			if got != want {
+				t.Errorf("ReviewCommand(%q) = %q, want %q", tt.key, got, want)
+			}
+		})
+	}
+}
+
+// TestReviewCommandUnknownKeyErrors mirrors lookupBuiltinLayout's "unknown
+// name" contract: an invalid reviewer key must error, not silently build a
+// command for a zero-value Reviewer (which would send `oc --agent
+// --prompt '...'` - a broken command - to a live tmux pane).
+func TestReviewCommandUnknownKeyErrors(t *testing.T) {
+	_, err := ReviewCommand("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown reviewer key, got nil")
+	}
+}
+
+// TestShellSingleQuoteHandCheckedCases hand-verifies shellSingleQuote's
+// output for exact string equality, including the embedded-single-quote
+// escape case (the standard POSIX close-escape-reopen trick: '\”), before
+// trusting the round-trip test below to cross-check the same logic a second
+// way.
+func TestShellSingleQuoteHandCheckedCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain text", "hello world", "'hello world'"},
+		{"empty string", "", "''"},
+		{"single embedded quote", "it's", `'it'\''s'`},
+		{"leading and trailing quotes", "'quoted'", `''\''quoted'\'''`},
+		{
+			"shell metacharacters stay inert inside quotes",
+			`$(rm -rf /); echo "hi" | cat & ` + "`whoami`",
+			`'$(rm -rf /); echo "hi" | cat & ` + "`whoami`'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shellSingleQuote(tt.input)
+			if got != tt.want {
+				t.Errorf("shellSingleQuote(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestShellSingleQuoteRoundTripsThroughRealShell proves shellSingleQuote is
+// correct in general, not just for today's metacharacter-free review
+// prompt: it shells out to `sh -c` and confirms the quoted argument is
+// parsed back to exactly the original string, for inputs containing a
+// single quote and other shell metacharacters ($, ;, |, &, backticks,
+// double quotes). This is pure shell-syntax validation of a built string -
+// it exercises no devgeta tmux/git behavior, so it does not need
+// testutil.MockApp (see CLAUDE.md's testing rule and this task's brief).
+func TestShellSingleQuoteRoundTripsThroughRealShell(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available in PATH, skipping shell round-trip test")
+	}
+
+	inputs := []string{
+		"Review this branch against the default branch.",
+		"it's a test",
+		`$(rm -rf /); echo "hi" | cat & ` + "`whoami`",
+		"''leading and trailing''",
+		"multiple 'quotes' in 'one' string",
+	}
+
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			quoted := shellSingleQuote(input)
+
+			out, err := exec.Command("sh", "-c", "printf '%s' "+quoted).Output()
+			if err != nil {
+				t.Fatalf("sh -c failed for quoted=%q: %v", quoted, err)
+			}
+			if string(out) != input {
+				t.Errorf("round trip mismatch: got %q, want %q (quoted was %q)", out, input, quoted)
+			}
+		})
 	}
 }
