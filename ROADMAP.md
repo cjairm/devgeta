@@ -80,6 +80,29 @@ inferred."
   `--layout`/`--ai`/env/`default_layout`/`default_ai`. Requires storing a layout name per
   worktree in `global_config.yaml`.
 
+The three items below come from a July 2026 review of herdr.dev, a standalone (non-tmux)
+multiplexer built specifically for orchestrating coding agents. Its headline feature —
+per-agent state (blocked/working/done/idle) surfaced at a glance — is already covered by
+[ADR-0005](docs/decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md); herdr's
+persistent sidebar isn't something tmux panes can replicate (a pane belongs to one window,
+full stop — herdr can only do it because it's its own multiplexer, not a tmux client), so
+these lean on tmux's own idioms (status bar, popups) instead of chasing that literally.
+
+- ⚪ **Cross-session status-bar indicator** — Aggregate `@dg_window_agent_state` across every
+  session (not just the current one) into `status-right`, e.g. via a `dg status --brief`
+  one-liner, so "N sessions want attention" is visible without opening `dg ws` or switching
+  sessions.
+- ⚪ **`dg ws` as a tmux popup** — Add a `worktree.dashboard_mode: window|popup` config option
+  so `C-t` can open `dg ws` via `display-popup -E` instead of `new-window`: a dismissable
+  overlay that doesn't disrupt the current window/pane layout, closer to what a "sidebar"
+  is actually used for. Opt-in, since it changes the existing `C-t` binding's behavior
+  (CLAUDE.md §10).
+- ⚪ **Agent-orchestrable `dg ws` state** — Expose the per-worktree/session agent-state data
+  ADR-0005 already collects through a scriptable interface (list sessions, wait-for-idle,
+  last output), so an agent or wrapper script can drive `dg ws` the way herdr's socket API
+  lets agents drive it. Highest-value gap versus herdr; most of the underlying plumbing
+  already exists.
+
 ---
 
 ## Planned Categories & Tools
