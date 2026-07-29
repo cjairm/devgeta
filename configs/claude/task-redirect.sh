@@ -27,6 +27,11 @@
 # Keep this file's pattern table and configs/opencode/plugin/task-redirect.js's
 # pattern table in sync — they intentionally mirror each other one-for-one.
 #
+# Command segmentation (devgeta_split_command_segments/devgeta_trim) and the
+# devgeta-repo gate (devgeta_is_repo) live in lib/segments.sh and
+# lib/devgeta-repo.sh, sourced below — shared with secret-guard.sh and (for
+# the repo gate) suppression-guard.sh. See ADR-0006.
+#
 # Rule scope (these hooks deploy to the user's GLOBAL config, so they fire in
 # EVERY repo):
 #   - Global rules fire everywhere: review-package (git diff/log <ref>..<ref>),
@@ -62,6 +67,10 @@ if [ -n "${DEVGETA_SKIP_TASK_REDIRECT:-}" ]; then
 	exit 0
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$SCRIPT_DIR/lib/segments.sh"
+source "$SCRIPT_DIR/lib/devgeta-repo.sh"
+
 input=$(cat)
 COMMAND=$(printf '%s' "$input" | jq -r '.tool_input.command // empty' 2>/dev/null)
 [ -z "$COMMAND" ] && exit 0
@@ -86,22 +95,30 @@ RANGE_TOKEN='[A-Za-z0-9._/~^{}@:-]+\.\.\.?[A-Za-z0-9._/~^{}@:-]+'
 
 # Matches the start of a segment that is a `git` invocation, optionally
 # preceded by one or more shell VAR=value assignments (e.g.
-# `GIT_PAGER=cat git diff ...`, `FOO=1 BAR=2 git worktree add ...`).
-ENV_ASSIGN='[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*'
-GIT_ANCHOR="^(${ENV_ASSIGN}[[:space:]]+)*git"
-# Same anchor for `gh` invocations (the GitHub CLI rules below), tolerating the
-# same leading VAR=value prefix run.
-GH_ANCHOR="^(${ENV_ASSIGN}[[:space:]]+)*gh"
+# `GIT_PAGER=cat git diff ...`, `FOO=1 BAR=2 git worktree add ...`) AND
+# tolerating git global options between `git` and the subcommand (e.g.
+# `git -C ../wt worktree add x`, `git -R`-style equivalents for gh below) —
+# without that second part, a plain `git\s+<subcommand>` anchor missed the
+# everyday `git -C <dir> <subcommand> ...`, letting that whole class of
+# command bypass these redirects entirely (found in review of the sibling
+# secret-guard.sh hook, then fixed here too). DEVGETA_ENV_ASSIGN,
+# DEVGETA_GIT_GLOBAL_OPT, and DEVGETA_GH_GLOBAL_OPT come from lib/segments.sh
+# (sourced above) — shared with secret-guard.sh's GIT_ANCHOR.
+GIT_ANCHOR="^(${DEVGETA_ENV_ASSIGN}[[:space:]]+)*git([[:space:]]+${DEVGETA_GIT_GLOBAL_OPT})*"
+# Same anchor for `gh` invocations (the GitHub CLI rules below), tolerating
+# the same leading VAR=value prefix run and gh's own global options (most
+# notably `-R <owner/repo>`/`--repo <owner/repo>`).
+GH_ANCHOR="^(${DEVGETA_ENV_ASSIGN}[[:space:]]+)*gh([[:space:]]+${DEVGETA_GH_GLOBAL_OPT})*"
 
 # is_devgeta_repo answers "is the command running inside the devgeta repo?" —
 # the gate for the release rules (rules 4 & 5). Those rules encode devgeta's
 # OWN repo-specific release policy (CLAUDE.md §9), so redirecting the universal
 # `git reset --soft`/`git tag -a` techniques must NOT happen in other repos.
 #
-# It walks UP from the payload's working dir (CWD, falling back to $PWD)
-# looking for the FIRST go.mod; the repo IS devgeta only if that go.mod's
-# module path is exactly github.com/cjairm/devgeta. It memoizes its result so
-# multiple release segments/rules in one invocation check at most once.
+# Delegates the actual go.mod walk (CWD, falling back to $PWD) to
+# devgeta_is_repo (lib/devgeta-repo.sh, sourced above — shared with
+# suppression-guard.sh, see ADR-0006), memoizing the result here so multiple
+# release segments/rules in one invocation check at most once.
 #
 # CRITICAL: this fails TOWARD NOT firing. If the working dir is indeterminate,
 # no go.mod is found, or the module doesn't match, it returns non-zero (repo is
@@ -111,97 +128,14 @@ GH_ANCHOR="^(${ENV_ASSIGN}[[:space:]]+)*gh"
 # never pays the go.mod-lookup cost.
 DEVGETA_REPO_MEMO=""
 is_devgeta_repo() {
-	if [ -n "$DEVGETA_REPO_MEMO" ]; then
-		[ "$DEVGETA_REPO_MEMO" = "yes" ]
-		return
-	fi
-	local dir="${CWD:-$PWD}"
-	if [ -z "$dir" ]; then
-		DEVGETA_REPO_MEMO="no"
-		return 1
-	fi
-	while [ -n "$dir" ] && [ "$dir" != "/" ]; do
-		if [ -f "$dir/go.mod" ]; then
-			if grep -qE '^module[[:space:]]+github\.com/cjairm/devgeta($|/)' "$dir/go.mod" 2>/dev/null; then
-				DEVGETA_REPO_MEMO="yes"
-				return 0
-			fi
+	if [ -z "$DEVGETA_REPO_MEMO" ]; then
+		if devgeta_is_repo "${CWD:-$PWD}"; then
+			DEVGETA_REPO_MEMO="yes"
+		else
 			DEVGETA_REPO_MEMO="no"
-			return 1
 		fi
-		dir=$(dirname "$dir")
-	done
-	DEVGETA_REPO_MEMO="no"
-	return 1
-}
-
-# split_command_segments prints each shell "command segment" of its argument
-# on its own line, splitting on unquoted &&, ||, ;, and | (a superset of
-# everywhere a shell treats a new command as starting). A single-quoted or
-# double-quoted span is tracked so a separator character inside it (e.g. in a
-# commit message) is not treated as a boundary. See the matching-scope
-# comment at the top of this file for what this deliberately does not handle.
-split_command_segments() {
-	local command="$1"
-	local -a segments=()
-	local current=""
-	local in_single=0 in_double=0
-	local len=${#command}
-	local i=0 c two
-	while [ "$i" -lt "$len" ]; do
-		c="${command:i:1}"
-		if [ "$in_single" -eq 1 ]; then
-			current+="$c"
-			[ "$c" = "'" ] && in_single=0
-			i=$((i + 1))
-			continue
-		fi
-		if [ "$in_double" -eq 1 ]; then
-			current+="$c"
-			[ "$c" = '"' ] && in_double=0
-			i=$((i + 1))
-			continue
-		fi
-		if [ "$c" = "'" ]; then
-			in_single=1
-			current+="$c"
-			i=$((i + 1))
-			continue
-		fi
-		if [ "$c" = '"' ]; then
-			in_double=1
-			current+="$c"
-			i=$((i + 1))
-			continue
-		fi
-		two="${command:i:2}"
-		if [ "$two" = "&&" ] || [ "$two" = "||" ]; then
-			segments+=("$current")
-			current=""
-			i=$((i + 2))
-			continue
-		fi
-		if [ "$c" = ";" ] || [ "$c" = "|" ]; then
-			segments+=("$current")
-			current=""
-			i=$((i + 1))
-			continue
-		fi
-		current+="$c"
-		i=$((i + 1))
-	done
-	segments+=("$current")
-	printf '%s\n' "${segments[@]}"
-}
-
-# trim strips leading/trailing whitespace so a segment that followed a
-# separator (e.g. " git worktree add y") anchors correctly against
-# GIT_ANCHOR's `^`.
-trim() {
-	local s="$1"
-	s="${s#"${s%%[![:space:]]*}"}"
-	s="${s%"${s##*[![:space:]]}"}"
-	printf '%s' "$s"
+	fi
+	[ "$DEVGETA_REPO_MEMO" = "yes" ]
 }
 
 # check_segment applies every rule to a single trimmed command segment,
@@ -282,7 +216,7 @@ check_segment() {
 }
 
 while IFS= read -r raw_segment; do
-	check_segment "$(trim "$raw_segment")"
-done < <(split_command_segments "$COMMAND")
+	check_segment "$(devgeta_trim "$raw_segment")"
+done < <(devgeta_split_command_segments "$COMMAND")
 
 exit 0

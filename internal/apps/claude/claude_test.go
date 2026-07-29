@@ -254,7 +254,13 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
 			}
 			// devgeta's own hooks must be present in every rendering.
-			for _, hook := range []string{"task-redirect.sh", "format.sh", "agent-state.sh"} {
+			for _, hook := range []string{
+				"task-redirect.sh",
+				"secret-guard.sh",
+				"suppression-guard.sh",
+				"format.sh",
+				"agent-state.sh",
+			} {
 				if !strings.Contains(string(data), hook) {
 					t.Errorf("rendered settings.json is missing %s", hook)
 				}
@@ -412,7 +418,7 @@ func TestForceConfigure(t *testing.T) {
 	userConfigDir := filepath.Join(tc.ConfigDir, "..", ".claude")
 
 	// Create source structure
-	for _, sub := range []string{"themes"} {
+	for _, sub := range []string{"themes", "lib"} {
 		if err := os.MkdirAll(filepath.Join(appConfigDir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -446,6 +452,20 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "secret-guard.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "suppression-guard.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "agent-state.sh"),
 		[]byte(`#!/bin/bash`),
 		0o644,
@@ -455,6 +475,13 @@ func TestForceConfigure(t *testing.T) {
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json"),
 		[]byte(`{}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "lib", "segments.sh"),
+		[]byte(`# test fixture`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -497,8 +524,16 @@ func TestForceConfigure(t *testing.T) {
 		t.Errorf("unexpected rendered settings.json: %s", rendered)
 	}
 
-	// statusline.sh, format.sh, task-redirect.sh, and agent-state.sh deployed and executable
-	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh", "agent-state.sh"} {
+	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
+	// suppression-guard.sh, and agent-state.sh deployed and executable
+	for _, script := range []string{
+		"statusline.sh",
+		"format.sh",
+		"task-redirect.sh",
+		"secret-guard.sh",
+		"suppression-guard.sh",
+		"agent-state.sh",
+	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
 			t.Fatalf("Expected %s: %v", script, err)
@@ -511,6 +546,11 @@ func TestForceConfigure(t *testing.T) {
 	// themes deployed
 	if _, err := os.Stat(filepath.Join(userConfigDir, "themes")); err != nil {
 		t.Errorf("Expected themes dir: %v", err)
+	}
+
+	// hook lib (sourced by task-redirect.sh/secret-guard.sh/suppression-guard.sh) deployed
+	if _, err := os.Stat(filepath.Join(userConfigDir, "lib", "segments.sh")); err != nil {
+		t.Errorf("Expected lib/segments.sh: %v", err)
 	}
 
 	// shared dirs deployed

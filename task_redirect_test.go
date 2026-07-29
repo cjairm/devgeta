@@ -54,6 +54,7 @@ func runTaskRedirectHookInDir(
 	}
 
 	dir := t.TempDir()
+	writeClaudeHookLib(t, dir)
 	scriptPath := filepath.Join(dir, "task-redirect.sh")
 	if err := os.WriteFile(scriptPath, scriptBytes, 0o755); err != nil {
 		t.Fatalf("failed to write script: %v", err)
@@ -88,6 +89,33 @@ func runTaskRedirectHookInDir(
 		t.Fatalf("failed to run task-redirect.sh for command %q: %v", command, runErr)
 	}
 	return exitErr.ExitCode(), stderrBuf.String()
+}
+
+// writeClaudeHookLib extracts configs/claude/lib/*.sh from the embedded
+// ConfigsFS into <dir>/lib/, so a hook script written to a temp dir can
+// `source "$SCRIPT_DIR/lib/..."` exactly as it does when deployed to
+// ~/.claude/ (see internal/apps/claude.ForceConfigure's lib CopyDir). Every
+// script under test here sources these unconditionally once past its own
+// bypass-env-var check, so any test that doesn't set that bypass needs this.
+func writeClaudeHookLib(t *testing.T, dir string) {
+	t.Helper()
+	libDir := filepath.Join(dir, "lib")
+	if err := os.MkdirAll(libDir, 0o755); err != nil {
+		t.Fatalf("failed to create lib dir: %v", err)
+	}
+	entries, err := fs.ReadDir(ConfigsFS, "configs/claude/lib")
+	if err != nil {
+		t.Fatalf("failed to read embedded configs/claude/lib: %v", err)
+	}
+	for _, entry := range entries {
+		data, err := fs.ReadFile(ConfigsFS, filepath.Join("configs/claude/lib", entry.Name()))
+		if err != nil {
+			t.Fatalf("failed to read embedded configs/claude/lib/%s: %v", entry.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(libDir, entry.Name()), data, 0o644); err != nil {
+			t.Fatalf("failed to write lib/%s: %v", entry.Name(), err)
+		}
+	}
 }
 
 // repoRoot returns this test binary's repo root (the directory holding the
@@ -153,6 +181,12 @@ func TestTaskRedirectHook_AllowsLegitimateSingleCommands(t *testing.T) {
 		"gh pr list",
 		"gh api graphql -f query='{ viewer { login } }'",
 		"gh api repos/cjairm/devgeta",
+		// Bare long-flag sanity check for the space-separated-long-flag
+		// alternative added to DEVGETA_GH_GLOBAL_OPT: a bare boolean flag
+		// followed by an unrelated command must not have that command
+		// mistaken for the flag's "value".
+		"git --no-pager status",
+		"gh --paginate pr view",
 	}
 	for _, command := range allowed {
 		t.Run(command, func(t *testing.T) {
@@ -207,6 +241,15 @@ func TestTaskRedirectHook_DeniesNarrowPatterns(t *testing.T) {
 		// repeated, in front of `git` still denies.
 		{"GIT_PAGER=cat git diff main..feature", "devgeta task review-package"},
 		{"FOO=bar BAZ=qux git worktree add ../wt -b x", "devgeta task worktree-start"},
+		// Global-option-prefix case (same class of bypass a reviewer found in
+		// secret-guard.sh, fixed here too): a git/gh global option between the
+		// binary and its subcommand must not defeat the anchor.
+		{"git -C ../wt worktree add ../other -b x", "devgeta task worktree-start"},
+		{"gh -R owner/repo pr checks", "devgeta task pr-checks"},
+		// Space-separated long-flag case (reviewer-found: the alternation only
+		// recognized `--flag=value`/bare `--flag`, never `--flag value`).
+		{"gh --repo owner/repo pr checks", "devgeta task pr-checks"},
+		{"gh --repo=owner/repo pr checks", "devgeta task pr-checks"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.command, func(t *testing.T) {
@@ -339,6 +382,7 @@ func TestTaskRedirectHook_FailsOpenOnMalformedInput(t *testing.T) {
 		t.Fatalf("failed to read embedded task-redirect.sh: %v", err)
 	}
 	dir := t.TempDir()
+	writeClaudeHookLib(t, dir)
 	scriptPath := filepath.Join(dir, "task-redirect.sh")
 	if err := os.WriteFile(scriptPath, scriptBytes, 0o755); err != nil {
 		t.Fatalf("failed to write script: %v", err)
@@ -378,6 +422,7 @@ func TestTaskRedirectHook_BypassEnvVarAllowsEverything(t *testing.T) {
 		t.Fatalf("failed to read embedded task-redirect.sh: %v", err)
 	}
 	dir := t.TempDir()
+	writeClaudeHookLib(t, dir)
 	scriptPath := filepath.Join(dir, "task-redirect.sh")
 	if err := os.WriteFile(scriptPath, scriptBytes, 0o755); err != nil {
 		t.Fatalf("failed to write script: %v", err)

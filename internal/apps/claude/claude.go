@@ -106,7 +106,14 @@ func (c *Claude) ForceConfigure() error {
 		return fmt.Errorf("failed to render claude settings: %w", err)
 	}
 
-	for _, script := range []string{"statusline.sh", "format.sh", "task-redirect.sh", "agent-state.sh"} {
+	for _, script := range []string{
+		"statusline.sh",
+		"format.sh",
+		"task-redirect.sh",
+		"secret-guard.sh",
+		"suppression-guard.sh",
+		"agent-state.sh",
+	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(
 			filepath.Join(paths.Paths.App.Configs.Claude, script),
@@ -124,6 +131,16 @@ func (c *Claude) ForceConfigure() error {
 		filepath.Join(paths.Paths.Config.Claude, "themes"),
 	); err != nil {
 		return fmt.Errorf("failed to copy claude themes: %w", err)
+	}
+
+	// task-redirect.sh, secret-guard.sh, and suppression-guard.sh source
+	// these at runtime (see ADR-0006) — plain function/constant definitions,
+	// never executed directly, so no chmod +x needed.
+	if err := files.CopyDir(
+		filepath.Join(paths.Paths.App.Configs.Claude, "lib"),
+		filepath.Join(paths.Paths.Config.Claude, "lib"),
+	); err != nil {
+		return fmt.Errorf("failed to copy claude hook lib: %w", err)
 	}
 
 	if err := baseapp.SyncSharedParts(

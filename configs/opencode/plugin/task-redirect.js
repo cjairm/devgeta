@@ -108,12 +108,33 @@ export function isDevgetaRepo(startDir) {
 const REF_CHARS = "[A-Za-z0-9._/~^{}@:-]+";
 const RANGE_TOKEN = `${REF_CHARS}\\.\\.\\.?${REF_CHARS}`;
 
+// GIT_GLOBAL_OPT mirrors secret-guard.js's — a git global option that can
+// appear between `git` and its subcommand (`-C <dir>`, `-c name=value`,
+// `--git-dir=<path>` or `--git-dir /path`, a bare `--long-flag`, or a bare
+// short `-x` flag). Without the value-taking alternatives, a plain
+// `git\s+<subcommand>` anchor missed the everyday
+// `git -C ../other-repo <subcommand> ...`, bypassing these redirects
+// entirely (found in review, then fixed here too — see secret-guard.js). The
+// space-separated long-flag alternative (alongside the bare one) lets the
+// engine pick whichever reading makes the overall anchored pattern match —
+// see secret-guard.js's GIT_GLOBAL_OPT comment for the `--repo owner/repo`
+// vs. `--no-pager` worked example.
+const GIT_GLOBAL_OPT =
+  "(?:-[Cc]\\s+\\S+|--[A-Za-z-]+=\\S+|--[A-Za-z-]+\\s+\\S+|--[A-Za-z-]+|-[A-Za-z])";
+// GH_GLOBAL_OPT is the same shape for `gh`'s global options — most notably
+// `-R <owner/repo>`/`--repo owner/repo`/`--repo=owner/repo`, the `gh`
+// equivalent of git's `-C`.
+const GH_GLOBAL_OPT =
+  "(?:-R\\s+\\S+|--[A-Za-z-]+=\\S+|--[A-Za-z-]+\\s+\\S+|--[A-Za-z-]+|-[A-Za-z])";
+
 // Matches the start of a segment that is a `git` invocation, optionally
 // preceded by one or more shell VAR=value assignments (e.g.
-// `GIT_PAGER=cat git diff ...`, `FOO=1 BAR=2 git worktree add ...`).
-const GIT_PREFIX = "(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*git";
-// Same anchor for `gh` invocations (the GitHub CLI rules below).
-const GH_PREFIX = "(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gh";
+// `GIT_PAGER=cat git diff ...`, `FOO=1 BAR=2 git worktree add ...`) and
+// tolerating git global options between `git` and the subcommand.
+const GIT_PREFIX = `(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*git(?:\\s+${GIT_GLOBAL_OPT})*`;
+// Same anchor for `gh` invocations (the GitHub CLI rules below), tolerating
+// gh's own global options.
+const GH_PREFIX = `(?:[A-Za-z_][A-Za-z0-9_]*=\\S*\\s+)*gh(?:\\s+${GH_GLOBAL_OPT})*`;
 
 // Each rule: { pattern, message, scope }. `pattern` is tested against a single
 // command segment (see splitCommandSegments below), anchored with `^` at the
@@ -217,7 +238,13 @@ function matchesReviewThreads(segment) {
 // as a boundary. This is a best-effort, non-adversarial split — see the
 // matching-scope comment at the top of this file for what it deliberately
 // does not handle (escaped quotes, command substitution, heredocs).
-function splitCommandSegments(command) {
+//
+// Exported (like isDevgetaRepo above) so secret-guard.js can reuse it
+// instead of duplicating it — see ADR-0006 for why that plugin imports this
+// named export rather than the two of them sharing a new standalone helper
+// file under plugin/ (OpenCode's plugin loader invokes every export of every
+// file there as if it were a plugin factory).
+export function splitCommandSegments(command) {
   const segments = [];
   let current = "";
   let inSingle = false;

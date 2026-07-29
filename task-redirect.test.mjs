@@ -110,6 +110,12 @@ test("allows legitimate single commands", async () => {
     "gh pr list",
     "gh api graphql -f query='{ viewer { login } }'",
     "gh api repos/cjairm/devgeta",
+    // Bare long-flag sanity check for the space-separated-long-flag
+    // alternative added to GH_GLOBAL_OPT/GIT_GLOBAL_OPT: a bare boolean flag
+    // followed by an unrelated command must not have that command mistaken
+    // for the flag's "value".
+    "git --no-pager status",
+    "gh --paginate pr view",
   ];
   for (const command of allowed) {
     const result = await runHook(command);
@@ -161,6 +167,15 @@ test("denies narrow patterns, including compound commands and env-var prefixes",
       "FOO=bar BAZ=qux git worktree add ../wt -b x",
       "devgeta task worktree-start",
     ],
+    // Global-option-prefix case (same class of bypass a reviewer found in
+    // secret-guard.js, fixed here too): a git/gh global option between the
+    // binary and its subcommand must not defeat the anchor.
+    ["git -C ../wt worktree add ../other -b x", "devgeta task worktree-start"],
+    ["gh -R owner/repo pr checks", "devgeta task pr-checks"],
+    // Space-separated long-flag case (reviewer-found: the alternation only
+    // recognized `--flag=value`/bare `--flag`, never `--flag value`).
+    ["gh --repo owner/repo pr checks", "devgeta task pr-checks"],
+    ["gh --repo=owner/repo pr checks", "devgeta task pr-checks"],
   ];
   for (const [command, wantReplacement] of cases) {
     const result = await runHook(command);

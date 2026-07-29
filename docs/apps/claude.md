@@ -18,7 +18,10 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 | `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                 |
 | `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                 |
 | `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                 |
+| `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                 |
+| `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                 |
 | `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                 |
+| `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly       |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                              |
 | `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                         |
 
@@ -143,9 +146,15 @@ command string: the script splits the command into segments on unquoted
 `&&`, `||`, `;`, and `|`, and checks every segment — so `cd some/dir && git
 worktree add ../wt`, `git status; git worktree remove ../wt`, and `git fetch
 && git diff main..feature` are all caught, not just a bare `git ...` with
-nothing else on the line. Each segment's `git` anchor also tolerates a
+nothing else on the line. Each segment's `git`/`gh` anchor also tolerates a
 leading run of shell `VAR=value` assignments (e.g. `GIT_PAGER=cat git diff
-a..b`). Splitting respects single- and double-quoted spans (a separator
+a..b`) and a run of the binary's own global options between it and the
+subcommand — `-C <dir>`/`-c name=value`/`--git-dir=<path>` for `git`,
+`-R <owner/repo>`/`--repo <owner/repo>`/`--repo=<owner/repo>` for `gh`, or any
+other bare `--long`/`-x` flag — so `git -C ../wt worktree add x` and
+`gh --repo owner/repo pr checks` still redirect (a global option defeating
+the anchor entirely was a bypass found in review). Splitting respects single-
+and double-quoted spans (a separator
 character inside a commit message is not treated as a boundary), but it is a
 best-effort, non-adversarial split — it does not handle backslash-escaped
 quotes, command substitution (`$(...)`/`` `...` ``), or heredocs; a command
@@ -182,6 +191,98 @@ comment.
 Upstream-synced skills under `configs/shared/skills/` still hand-roll these raw
 git sequences in their prose (they can't be edited without conflicting with
 upstream syncs); this hook is the durable, runtime answer for those flows.
+
+## Secret-commit guard (PreToolUse hook)
+
+`settings.json` registers `~/.claude/secret-guard.sh` as a second hook under
+the same `Bash` `PreToolUse` matcher as task-redirect.sh. Before a `git
+commit` runs (anywhere in a compound command, using the same segment-splitting
+logic as task-redirect.sh), it inspects what is actually staged
+(`git diff --cached`, read-only) and denies with what to unstage if it finds:
+
+| Signal                                                                                                            | Excluded                                                                        |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Staged filename: `.env`/`.env.*`, `*.pem`, `id_rsa`/`id_ed25519`/`id_ecdsa`, `*.p12`/`*.pfx`/`*.keystore`/`*.jks` | `.env.example`/`.env.sample`/`.env.template` (templates), `*.pub` (public keys) |
+| Staged content (added lines only): a private-key header, an AWS access key ID, a GitHub token, or a Slack token   | —                                                                               |
+
+**Scope:** GLOBAL — fires in every repo, since "never commit a secret" is
+universal practice, not a devgeta convention (see
+[ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md)). This
+is a safety net (a small, high-confidence pattern list), not a replacement for
+a real secret scanner or CI pre-commit hooks. Denies via exit 2, same
+mechanism as task-redirect.sh; a missing/unparseable command, `jq`/`git` being
+unavailable, or the target not being a git repo falls through to exit 0
+(allow).
+
+**`git -C <dir> commit` is checked against `<dir>`, not the agent's own
+working directory.** The hook resolves the actual git target from the LAST
+`-C` in the commit invocation (uppercase only — `-c` is git's unrelated
+inline-config flag), falling back to the payload's own working directory
+when no `-C` is present. Scanning the wrong repository was a bypass found in
+review.
+
+**A commit that could stage NEW content this hook hasn't already seen is
+denied outright, not checked.** This is a PreToolUse hook: it runs before
+any part of the Bash command executes, so `git diff --cached` at check time
+cannot reflect a staging action that's part of the SAME, not-yet-run
+command. Two shapes trigger this:
+
+- A compound command that stages before committing in one call
+  (`git add -A && git commit ...`, also `git mv`/`git stage` — not `git rm`,
+  which only removes content).
+- A commit that self-stages via `-a`/`-am`/`--all` (`--amend` alone is
+  unaffected).
+
+Either denies with a message asking for two separate Bash calls: run the
+staging command to completion first, then commit as its own call — at that
+point `git diff --cached` faithfully reflects what will be committed.
+
+**Bypass:** `DEVGETA_SKIP_SECRET_GUARD=1` for the session.
+
+The OpenCode plugin equivalent
+(`~/.config/opencode/plugin/secret-guard.js`) mirrors the same pattern lists
+and the same bypass variable, importing `splitCommandSegments` from
+`task-redirect.js` rather than duplicating it (ADR-0006 explains why it does
+not introduce a separate shared helper file).
+
+## Lint-suppression guard (PreToolUse hook)
+
+`settings.json` registers `~/.claude/suppression-guard.sh` under a new
+`Edit|Write` `PreToolUse` matcher. It denies an Edit or Write that
+**introduces** a lint-suppression comment — `//nolint` (Go), `# noqa` /
+`# type: ignore` / `# pylint: disable` (Python), `eslint-disable` /
+`@ts-ignore` / `@ts-nocheck` (JS/TS), `@SuppressWarnings` (Java/Kotlin), or
+`rubocop:disable` (Ruby) — instead of fixing the underlying issue. This makes
+CLAUDE.md's "Lint issues" rule (`//nolint` is "never acceptable") structurally
+impossible to violate rather than a convention to remember.
+
+For an Edit, only a needle present in `new_string` but **absent** from
+`old_string` counts as introduced — editing code around an existing,
+untouched suppression elsewhere in the file is unaffected. For a Write, any
+needle in the new content denies, since Write replaces the whole file and
+there is no "before" to diff against.
+
+**Scope:** DEVGETA-REPO-ONLY — gated by the same `is_devgeta_repo` go.mod walk
+task-redirect.sh's release rules use. Banning suppression comments outright is
+_devgeta's own_ stance, not a universal one (plenty of codebases use them
+deliberately), so it must not fire in any other repo — see
+[ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md). Denies
+via exit 2; a missing/unparseable payload or `jq` being unavailable falls
+through to exit 0 (allow).
+
+**Bypass:** `DEVGETA_SKIP_SUPPRESSION_GUARD=1` for the session.
+
+The OpenCode plugin equivalent
+(`~/.config/opencode/plugin/suppression-guard.js`) mirrors the same pattern
+list and bypass variable, importing `isDevgetaRepo` from `task-redirect.js`.
+
+**Shared hook code:** `task-redirect.sh`, `secret-guard.sh`, and
+`suppression-guard.sh` all source small helper files from `~/.claude/lib/`
+(command segmentation, the devgeta-repo gate) instead of duplicating that
+logic — safe on the Claude side since nothing auto-executes files there. The
+OpenCode side deliberately does **not** mirror this with a standalone helper
+file under `plugin/`: see ADR-0006 for why (OpenCode's plugin loader invokes
+every export of every file in that directory as if it were a plugin).
 
 ## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
 

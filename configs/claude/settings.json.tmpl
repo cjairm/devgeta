@@ -95,6 +95,10 @@
           {
             "type": "command",
             "command": "~/.claude/task-redirect.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.claude/secret-guard.sh"
           }
         ]
       }{{if .RtkClaudeHook}},
@@ -106,7 +110,16 @@
             "command": "rtk hook claude"
           }
         ]
-      }{{end}}
+      }{{end}},
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/suppression-guard.sh"
+          }
+        ]
+      }
     ],
     "Stop": [
       {
