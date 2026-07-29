@@ -780,6 +780,98 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 	return w.ensureWindow(repoSlug, windowName, wtPath, layout)
 }
 
+// LaunchReviewInRepo gets the reviewer agent registered under reviewerKey
+// running against name's branch, in the right place in tmux, disambiguated
+// by repo slug (mirrors RepairInRepo). Two cases, per the cycle plan's Step
+// 3:
+//
+//   - No live window: the review command becomes the window's only pane,
+//     built via the same create-if-missing path ensureWindow already gives
+//     Create/Repair/RepairInRepo.
+//   - Live window: a new pane is split off and the review command is sent
+//     there - never into the window's existing pane, which may already be
+//     running a coder's interactive TUI (send-keys would type the review
+//     command into its composer instead of executing it).
+//
+// A failed launch in the live-window case rolls back only what this call
+// added - the new pane it just split - never the user's window, its
+// existing pane, or the worktree: unlike buildWindowFromLayout's rollback
+// (which also kills the window and removes the worktree it just created),
+// R never creates a worktree, and the window here is the user's, already
+// holding their work.
+func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string) error {
+	reviewCmd, err := ReviewCommand(reviewerKey)
+	if err != nil {
+		return err
+	}
+
+	wtPath := w.worktreePath(repoSlug, name)
+	windowName := GetWindowName(repoSlug, name)
+
+	session, exists := w.Tmux.WindowSession(windowName)
+	if !exists {
+		// Passed straight to ensureWindow, not through validateLayout: this
+		// ad-hoc one-pane layout has no install checker to run (a review
+		// launch never introduces a new tool to check for), and ensureWindow
+		// already does the create-if-missing behavior this case needs.
+		layout := Layout{
+			Name:  "review-" + reviewerKey,
+			Panes: []Pane{{Command: reviewCmd}},
+		}
+		return w.ensureWindow(repoSlug, windowName, wtPath, layout)
+	}
+
+	return w.launchReviewInLiveWindow(session, windowName, wtPath, reviewCmd)
+}
+
+// launchReviewInLiveWindow splits a new pane off an existing (live) window
+// and launches reviewCmd there, restoring focus to the window's original
+// (coder) pane afterward on both success and failure - see
+// LaunchReviewInRepo's doc comment for why the review command is never sent
+// to the window's existing pane directly.
+func (w *WorktreeManager) launchReviewInLiveWindow(
+	session, windowName, wtPath, reviewCmd string,
+) error {
+	target := session + ":" + windowName
+
+	// Capture the coder's pane before touching anything, so focus can be
+	// restored to it afterward. If this fails, nothing has been created yet,
+	// so there is nothing to roll back.
+	coderPaneID, err := w.Tmux.ActivePaneID(target)
+	if err != nil {
+		return fmt.Errorf("failed to identify active pane in %s: %w", windowName, err)
+	}
+
+	if err := w.Tmux.SplitWindow(target, wtPath, "vertical"); err != nil {
+		return fmt.Errorf("failed to split window %s: %w", windowName, err)
+	}
+
+	// split-window always makes the new pane active (see buildWindowPanes's
+	// comment on the same property), so this second ActivePaneID call -
+	// immediately after the split - captures the new pane's id.
+	newPaneID, err := w.Tmux.ActivePaneID(target)
+	if err != nil {
+		return fmt.Errorf("failed to identify new pane in %s: %w", windowName, err)
+	}
+
+	if err := w.Tmux.SendKeysToWindowInSession(session, windowName, reviewCmd); err != nil {
+		// Roll back only the pane this call added - never the window or the
+		// worktree (there is none to roll back; R doesn't create one).
+		_ = w.Tmux.KillPane(newPaneID)
+		// Best-effort: this is cleanup after an already-failed operation, not
+		// something to fail loudly over.
+		_ = w.Tmux.SelectPane(coderPaneID)
+		return fmt.Errorf("failed to launch review in %s: %w", windowName, err)
+	}
+
+	// Best-effort: land the user back on their coder pane, not the reviewer,
+	// the next time they attach to this window - the review is already
+	// running correctly in its own pane regardless of which pane is "active"
+	// here. Swallow the error: not fatal, at most log-worthy.
+	_ = w.Tmux.SelectPane(coderPaneID)
+	return nil
+}
+
 // ensureWindow guarantees a tmux window for the worktree exists and reflects
 // layout. If the window already lives in some session, it is reused - but
 // only pane 0's command is (re)launched into it, never a full rebuild: an

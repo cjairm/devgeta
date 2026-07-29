@@ -520,6 +520,15 @@ func (t *Tmux) KillWindow(name string) error {
 	return t.ExecuteCommand("kill-window", "-t", name)
 }
 
+// KillPane closes a specific pane by its tmux pane_id (e.g. "%12"). Pane ids
+// are unique server-wide, so no window or session qualification is needed -
+// the same property ActivePaneID and SelectPane already rely on. Used to
+// roll back a review launch that failed after splitting a new pane, without
+// touching the window or session that pane lived in.
+func (t *Tmux) KillPane(paneID string) error {
+	return t.ExecuteCommand("kill-pane", "-t", paneID)
+}
+
 // SendKeysToWindow sends keystrokes to a specific window
 func (t *Tmux) SendKeysToWindow(window, keys string) error {
 	return t.ExecuteCommand("send-keys", "-t", window, keys, "Enter")
