@@ -455,11 +455,16 @@ func sendKeysTarget(calls []commands.CommandParams, wantKeys string) (string, bo
 }
 
 // TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath proves that, when
-// the worktree's window doesn't exist yet, LaunchReviewInRepo drives the
-// same create-if-missing path ensureWindow already gives Create/Repair, with
-// a one-pane layout whose only pane's command is the review command - never
-// a split (there's nothing to split yet).
+// the worktree's window doesn't exist yet, LaunchReviewInRepo drives the same
+// create-if-missing path ensureWindow's own no-window branch uses
+// (createWindowWithLayout), with a one-pane layout whose only pane's command
+// is the review command - never a split (there's nothing to split yet), and
+// never a second WindowSession lookup (LaunchReviewInRepo's own check already
+// established the window is missing, so it calls createWindowWithLayout
+// directly instead of routing back through ensureWindow).
 func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
 	repoSlug := "myrepo"
 	name := "feat"
 
@@ -467,7 +472,6 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 	mockTmuxBase := commands.NewMockBaseCommand()
 	mockTmuxBase.SetExecCommandResults(
 		commands.ExecCommandResult("", "", nil), // WindowSession (LaunchReviewInRepo's own check)
-		commands.ExecCommandResult("", "", nil), // WindowSession (ensureWindow's internal check)
 		commands.ExecCommandResult("", "", nil), // HasSession -> true (nil err)
 		commands.ExecCommandResult("", "", nil), // CreateWindowInSession: new-window
 		commands.ExecCommandResult("", "", nil), // SendKeysToWindowInSession (the one review pane)
@@ -475,21 +479,11 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	wtPath := wm.worktreePath(repoSlug, name)
-	if err := os.MkdirAll(wtPath, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
-			t.Logf("cleanup: %v", err)
-		}
-	})
-
 	if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	wantOrder := []string{"list-windows", "list-windows", "has-session", "new-window", "send-keys"}
+	wantOrder := []string{"list-windows", "has-session", "new-window", "send-keys"}
 	gotOrder := tmuxCommandOrder(mockTmuxBase)
 	if len(gotOrder) != len(wantOrder) {
 		t.Fatalf("expected %v, got %v", wantOrder, gotOrder)
@@ -521,6 +515,8 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 // into the window's existing (coder) pane - it splits a new pane and sends
 // the command there instead, then restores focus to the original pane.
 func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
 	repoSlug := "myrepo"
 	name := "feat"
 	windowName := GetWindowName(repoSlug, name)
@@ -545,7 +541,7 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 			"",
 			"",
 			nil,
-		), // SendKeysToWindowInSession (review cmd)
+		), // SendKeysToPane (review cmd)
 		commands.ExecCommandResult(
 			"",
 			"",
@@ -554,16 +550,6 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 	)
 
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
-
-	wtPath := wm.worktreePath(repoSlug, name)
-	if err := os.MkdirAll(wtPath, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
-			t.Logf("cleanup: %v", err)
-		}
-	})
 
 	if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -627,6 +613,8 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 // pane) and never the worktree (R never creates one, so there's none to roll
 // back).
 func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
 	repoSlug := "myrepo"
 	name := "feat"
 	windowName := GetWindowName(repoSlug, name)
@@ -661,16 +649,6 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 	)
 
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
-
-	wtPath := wm.worktreePath(repoSlug, name)
-	if err := os.MkdirAll(wtPath, 0o755); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
-			t.Logf("cleanup: %v", err)
-		}
-	})
 
 	err := wm.LaunchReviewInRepo(repoSlug, name, "code")
 	if err == nil {
@@ -737,6 +715,30 @@ func TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall(t *testing.T) {
 	err := wm.LaunchReviewInRepo("myrepo", "feat", "not-a-real-reviewer")
 	if err == nil {
 		t.Fatal("expected an error for an unknown reviewer key")
+	}
+
+	testutil.VerifyNoRealCommands(t, mockGitBase)
+	testutil.VerifyNoRealCommands(t, mockTmuxBase)
+}
+
+// TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing proves
+// LaunchReviewInRepo checks that "oc" resolves before touching tmux at all -
+// mirroring TestCreateValidateLayoutFailsBeforeAnyTmuxCall's shape for the
+// analogous check on the create path. A user whose default layout is
+// claude/claude-nvim has never needed oc, so pressing R without this
+// pre-flight check would build a window/pane whose command prints "oc:
+// command not found" while the dashboard still reports "review started",
+// with no error surfaced anywhere.
+func TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing(t *testing.T) {
+	setShellCommandExistsFn(t, func(string) bool { return false })
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	err := wm.LaunchReviewInRepo("myrepo", "feat", "code")
+	if err == nil {
+		t.Fatal("expected an error when oc is not installed")
 	}
 
 	testutil.VerifyNoRealCommands(t, mockGitBase)

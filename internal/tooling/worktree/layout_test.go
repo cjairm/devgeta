@@ -500,7 +500,8 @@ func TestReviewCommandUnknownKeyErrors(t *testing.T) {
 
 // TestShellSingleQuoteHandCheckedCases hand-verifies shellSingleQuote's
 // output for exact string equality, including the embedded-single-quote
-// escape case (the standard POSIX close-escape-reopen trick: '\”), before
+// escape case (the standard POSIX close-escape-reopen trick: quote,
+// backslash, quote, quote), before
 // trusting the round-trip test below to cross-check the same logic a second
 // way.
 func TestShellSingleQuoteHandCheckedCases(t *testing.T) {

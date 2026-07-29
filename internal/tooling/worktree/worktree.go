@@ -805,20 +805,40 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		return err
 	}
 
+	// A review is always launched via OpenCode (the "oc" alias), regardless
+	// of the worktree's own layout - a user whose default layout is
+	// claude/claude-nvim has never needed oc, so it may never have been
+	// installed. Checking here, before any tmux call, turns that into one
+	// actionable error instead of a pane that prints "oc: command not found"
+	// while the dashboard reports "review started" with no error anywhere.
+	// EnsureInstalled checks the "oc" alias itself (see its doc comment), not
+	// the raw "opencode" binary, so a coder installed outside devgeta (whose
+	// alias was never written to devgeta.zsh) correctly fails this check.
+	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
+		return err
+	}
+
 	wtPath := w.worktreePath(repoSlug, name)
 	windowName := GetWindowName(repoSlug, name)
 
 	session, exists := w.Tmux.WindowSession(windowName)
 	if !exists {
-		// Passed straight to ensureWindow, not through validateLayout: this
-		// ad-hoc one-pane layout has no install checker to run (a review
-		// launch never introduces a new tool to check for), and ensureWindow
-		// already does the create-if-missing behavior this case needs.
+		// Goes straight to createWindowWithLayout, not ensureWindow: this
+		// call's own WindowSession check just above already established the
+		// window doesn't exist, so routing through ensureWindow (which would
+		// query WindowSession again internally) would open a race - if
+		// something else creates this exact window in the gap between the
+		// two queries, ensureWindow's existing-window branch would send the
+		// review command via a window-targeted send-keys into whatever pane
+		// is active, exactly the unsafe behavior this cycle exists to
+		// prevent. This ad-hoc one-pane layout has no install checker to run
+		// (a review launch never introduces a new tool to check for beyond
+		// the oc check above).
 		layout := Layout{
 			Name:  "review-" + reviewerKey,
 			Panes: []Pane{{Command: reviewCmd}},
 		}
-		return w.ensureWindow(repoSlug, windowName, wtPath, layout)
+		return w.createWindowWithLayout(repoSlug, windowName, wtPath, layout)
 	}
 
 	return w.launchReviewInLiveWindow(session, windowName, wtPath, reviewCmd)
@@ -899,7 +919,32 @@ func (w *WorktreeManager) ensureWindow(repoSlug, windowName, wtPath string, layo
 		return nil
 	}
 
-	session = TmuxSessionName(repoSlug)
+	return w.createWindowWithLayout(repoSlug, windowName, wtPath, layout)
+}
+
+// createWindowWithLayout creates windowName in repoSlug's repo-slug tmux
+// session (created when absent, reused otherwise) and builds layout's panes
+// into it. This is ensureWindow's create-if-missing branch, extracted so a
+// caller that has already established (via its own WindowSession call) that
+// the window does not exist can go straight here instead of routing through
+// ensureWindow, which would otherwise re-query WindowSession a second time
+// internally. That redundant second query left a narrow race: if something
+// else created the window in the gap between the caller's check and
+// ensureWindow's internal one, ensureWindow's existing-window branch would
+// send the caller's pane-0 command via a window-targeted send-keys into
+// whatever pane is active - unsafe for LaunchReviewInRepo, whose whole point
+// is never to type into a pane that might already be running a coder's
+// interactive TUI. Callers must only invoke this right after their own
+// WindowSession lookup has returned false, never speculatively.
+//
+// Preserves ensureWindow's existing create-path behavior exactly: same calls,
+// same rollback (kill only the window, never the session - other worktrees'
+// windows may already live here).
+func (w *WorktreeManager) createWindowWithLayout(
+	repoSlug, windowName, wtPath string,
+	layout Layout,
+) error {
+	session := TmuxSessionName(repoSlug)
 	if w.Tmux.HasSession(session) {
 		if err := w.Tmux.CreateWindowInSession(session, windowName, wtPath); err != nil {
 			return fmt.Errorf("failed to create tmux window: %w", err)

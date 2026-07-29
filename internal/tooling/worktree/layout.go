@@ -192,7 +192,8 @@ const reviewPrompt = "Review this branch against the default branch."
 
 // shellSingleQuote wraps s in single quotes so it is safe to embed as one
 // literal word in a POSIX shell command line, escaping any embedded single
-// quote with the standard close/escape/reopen trick: '\” - this closes the
+// quote with the standard close/escape/reopen trick (quote, backslash,
+// quote, quote) - this closes the
 // current quoted string, appends an escaped literal single quote, then
 // reopens quoting for the rest of s. This is needed because ReviewCommand's
 // output is sent to a live tmux pane via send-keys, which types it into an
