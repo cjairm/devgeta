@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
 // --- R opens the picker ---
@@ -244,5 +243,3 @@ func TestReviewLaunchFailureSetsStatusAndClearsGuard(t *testing.T) {
 		t.Errorf("expected final status to surface the failure, got %q", m7.status)
 	}
 }
-
-var _ = worktree.ReviewerChoice{} // ensure package import stays used if choices type is referenced elsewhere later
