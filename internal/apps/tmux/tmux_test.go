@@ -1217,6 +1217,41 @@ func TestKillWindow(t *testing.T) {
 	})
 }
 
+func TestKillPane(t *testing.T) {
+	t.Run("kills the pane by id, no window/session qualification", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.KillPane("%12"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil || last.Args[0] != "kill-pane" {
+			t.Fatalf("expected 'kill-pane', got %v", last)
+		}
+		found := false
+		for _, arg := range last.Args {
+			if arg == "%12" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("expected target '%%12' in args %v", last.Args)
+		}
+	})
+
+	t.Run("returns error when kill-pane fails", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "error", errors.New("no such pane"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.KillPane("%12"); err == nil {
+			t.Error("expected error when kill-pane fails")
+		}
+	})
+}
+
 func TestCreateWindow(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	mockApp.Base.SetExecCommandResult("", "", nil)
@@ -1410,6 +1445,31 @@ func TestSendKeysToWindowInSession(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected target 'my-session:wt-feature' in args %v", last.Args)
+	}
+}
+
+func TestSendKeysToPane(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult("", "", nil)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.SendKeysToPane("%12", "claude"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	last := mockApp.Base.GetLastExecCommandCall()
+	if last == nil || last.Args[0] != "send-keys" {
+		t.Fatalf("expected 'send-keys', got %v", last)
+	}
+	// Verify target is the bare pane id, not a window/session-qualified form.
+	found := false
+	for _, arg := range last.Args {
+		if arg == "%12" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected target '%%12' in args %v", last.Args)
 	}
 }
 

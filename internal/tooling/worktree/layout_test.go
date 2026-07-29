@@ -1,6 +1,9 @@
 package worktree
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -347,4 +350,219 @@ func TestNewLayoutPanicsOnPaneCheckerMismatch(t *testing.T) {
 	newLayout("broken", []Pane{{Command: "a"}, {Command: "b"}}, []func() error{
 		func() error { return nil },
 	})
+}
+
+// --- reviewer registry ---
+
+// reviewerAgentsDir is configs/shared/agents/ read directly off disk
+// (relative to this package's directory, internal/tooling/worktree) rather
+// than through ConfigsFS (embedded in package main, which this package
+// cannot import without an import cycle). This is safe: main.go's
+// `//go:embed all:configs` embeds these files byte-for-byte with no
+// transformation, so reading them from disk here checks exactly what ships
+// in the binary — see TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles
+// (package main, root of the repo, beside task_redirect_test.go) for the
+// companion test that runs the same check against the embedded bytes, so a
+// file that fails to embed is still caught.
+var reviewerAgentsDir = filepath.Join("..", "..", "..", "configs", "shared", "agents")
+
+// reviewerAgentFilesOnDisk lists the agent names (filenames minus ".md")
+// present in dir.
+func reviewerAgentFilesOnDisk(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	names := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		names[strings.TrimSuffix(entry.Name(), ".md")] = true
+	}
+	return names
+}
+
+// TestBuiltinReviewersAgentNamesMatchAgentFiles is builtinReviewers' rule-5
+// embedded-config constraint test (CLAUDE.md's "if a config must satisfy a
+// constraint imposed by an external tool... enforce that constraint with a
+// test"): each Reviewer.Agent is handed straight to `opencode --agent
+// <name>` by a later step, so it must equal a real file in
+// configs/shared/agents/ — a renamed or deleted agent file must fail the
+// build rather than ship a flag naming an agent that no longer exists.
+func TestBuiltinReviewersAgentNamesMatchAgentFiles(t *testing.T) {
+	onDisk := reviewerAgentFilesOnDisk(t, reviewerAgentsDir)
+
+	for key, reviewer := range builtinReviewers() {
+		if !onDisk[reviewer.Agent] {
+			t.Errorf(
+				"reviewer %q: agent %q has no matching file in %s",
+				key, reviewer.Agent, reviewerAgentsDir,
+			)
+		}
+	}
+}
+
+// TestBuiltinReviewersKeysAreComplete guards the registry's shape: exactly
+// the three documented keys, each with a non-empty agent name and label.
+func TestBuiltinReviewersKeysAreComplete(t *testing.T) {
+	wantKeys := []string{"code", "document", "skill"}
+	reviewers := builtinReviewers()
+
+	if len(reviewers) != len(wantKeys) {
+		t.Fatalf("expected %d reviewers, got %d: %+v", len(wantKeys), len(reviewers), reviewers)
+	}
+	for _, key := range wantKeys {
+		reviewer, ok := reviewers[key]
+		if !ok {
+			t.Errorf("expected reviewer key %q to be registered", key)
+			continue
+		}
+		if reviewer.Agent == "" {
+			t.Errorf("reviewer %q: expected non-empty agent name", key)
+		}
+		if reviewer.Label == "" {
+			t.Errorf("reviewer %q: expected non-empty label", key)
+		}
+	}
+}
+
+// TestBuiltinReviewerChoicesOrderAndLabels guards the exported accessor the
+// TUI's R picker builds its item list from: it must come back in
+// reviewerKeys order ("code" first, the common case) with each choice's
+// label matching the registry, so the picker's dropdown can never drift from
+// builtinReviewers() (the thing TestBuiltinReviewersKeysAreComplete guards).
+func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
+	want := []ReviewerChoice{
+		{Key: "code", Label: "code — bugs, security"},
+		{Key: "document", Label: "document — plans, specs"},
+		{Key: "skill", Label: "skill — agents/commands"},
+	}
+
+	got := BuiltinReviewerChoices()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d choices, got %d: %+v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("choice %d: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+// --- review pane command ---
+
+// TestReviewCommandBuildsExpectedCommand asserts the exact command string
+// for every registered reviewer key: the OpenCodeCoder launch token ("oc"),
+// not a hardcoded "opencode", followed by --agent <name> and the fixed,
+// single-quoted review prompt.
+func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
+	wantOpenCodeToken := (&OpenCodeCoder{}).Command()
+
+	tests := []struct {
+		key       string
+		wantAgent string
+	}{
+		{"code", "code-reviewer"},
+		{"document", "document-reviewer"},
+		{"skill", "skill-reviewer"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			got, err := ReviewCommand(tt.key)
+			if err != nil {
+				t.Fatalf("ReviewCommand(%q) returned error: %v", tt.key, err)
+			}
+
+			want := wantOpenCodeToken + " --agent " + tt.wantAgent +
+				" --prompt 'Review this branch against the default branch.'"
+			if got != want {
+				t.Errorf("ReviewCommand(%q) = %q, want %q", tt.key, got, want)
+			}
+		})
+	}
+}
+
+// TestReviewCommandUnknownKeyErrors mirrors lookupBuiltinLayout's "unknown
+// name" contract: an invalid reviewer key must error, not silently build a
+// command for a zero-value Reviewer (which would send `oc --agent
+// --prompt '...'` - a broken command - to a live tmux pane).
+func TestReviewCommandUnknownKeyErrors(t *testing.T) {
+	_, err := ReviewCommand("nonexistent")
+	if err == nil {
+		t.Fatal("expected error for unknown reviewer key, got nil")
+	}
+}
+
+// TestShellSingleQuoteHandCheckedCases hand-verifies shellSingleQuote's
+// output for exact string equality, including the embedded-single-quote
+// escape case (the standard POSIX close-escape-reopen trick: quote,
+// backslash, quote, quote), before
+// trusting the round-trip test below to cross-check the same logic a second
+// way.
+func TestShellSingleQuoteHandCheckedCases(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"plain text", "hello world", "'hello world'"},
+		{"empty string", "", "''"},
+		{"single embedded quote", "it's", `'it'\''s'`},
+		{"leading and trailing quotes", "'quoted'", `''\''quoted'\'''`},
+		{
+			"shell metacharacters stay inert inside quotes",
+			`$(rm -rf /); echo "hi" | cat & ` + "`whoami`",
+			`'$(rm -rf /); echo "hi" | cat & ` + "`whoami`'",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := shellSingleQuote(tt.input)
+			if got != tt.want {
+				t.Errorf("shellSingleQuote(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestShellSingleQuoteRoundTripsThroughRealShell proves shellSingleQuote is
+// correct in general, not just for today's metacharacter-free review
+// prompt: it shells out to `sh -c` and confirms the quoted argument is
+// parsed back to exactly the original string, for inputs containing a
+// single quote and other shell metacharacters ($, ;, |, &, backticks,
+// double quotes). This is pure shell-syntax validation of a built string -
+// it exercises no devgeta tmux/git behavior, so it does not need
+// testutil.MockApp (see CLAUDE.md's testing rule and this task's brief).
+func TestShellSingleQuoteRoundTripsThroughRealShell(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available in PATH, skipping shell round-trip test")
+	}
+
+	inputs := []string{
+		"Review this branch against the default branch.",
+		"it's a test",
+		`$(rm -rf /); echo "hi" | cat & ` + "`whoami`",
+		"''leading and trailing''",
+		"multiple 'quotes' in 'one' string",
+	}
+
+	for _, input := range inputs {
+		t.Run(input, func(t *testing.T) {
+			quoted := shellSingleQuote(input)
+
+			out, err := exec.Command("sh", "-c", "printf '%s' "+quoted).Output()
+			if err != nil {
+				t.Fatalf("sh -c failed for quoted=%q: %v", quoted, err)
+			}
+			if string(out) != input {
+				t.Errorf("round trip mismatch: got %q, want %q (quoted was %q)", out, input, quoted)
+			}
+		})
+	}
 }

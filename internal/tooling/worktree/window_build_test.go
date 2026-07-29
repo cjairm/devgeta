@@ -418,3 +418,329 @@ func TestRepairExistingWindowOnlyResendsPaneZero(t *testing.T) {
 		t.Errorf("expected pane 0's command sent, got %v", last.Args)
 	}
 }
+
+// callsContain reports whether any recorded ExecCommand call's Args contains
+// arg — used below to look for a specific tmux target/pane id anywhere in
+// the recorded calls, without pinning exact argument positions.
+func callsContain(calls []commands.CommandParams, verb, arg string) bool {
+	for _, c := range calls {
+		if len(c.Args) == 0 || c.Args[0] != verb {
+			continue
+		}
+		for _, a := range c.Args {
+			if a == arg {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sendKeysTarget returns the "-t" target argument of the recorded send-keys
+// call whose keys argument equals wantKeys, and whether such a call was
+// found. Args are ["send-keys", "-t", target, keys, "Enter"] for both
+// SendKeysToPane and SendKeysToWindowInSession, so this pins down exactly
+// what the call targeted - a pane id (e.g. "%2") vs. a "session:window"
+// string - which callsContain's substring-anywhere check cannot distinguish.
+func sendKeysTarget(calls []commands.CommandParams, wantKeys string) (string, bool) {
+	for _, c := range calls {
+		if len(c.Args) < 4 || c.Args[0] != "send-keys" || c.Args[1] != "-t" {
+			continue
+		}
+		if c.Args[3] == wantKeys {
+			return c.Args[2], true
+		}
+	}
+	return "", false
+}
+
+// TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath proves that, when
+// the worktree's window doesn't exist yet, LaunchReviewInRepo drives the same
+// create-if-missing path ensureWindow's own no-window branch uses
+// (createWindowWithLayout), with a one-pane layout whose only pane's command
+// is the review command - never a split (there's nothing to split yet), and
+// never a second WindowSession lookup (LaunchReviewInRepo's own check already
+// established the window is missing, so it calls createWindowWithLayout
+// directly instead of routing back through ensureWindow).
+func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
+	repoSlug := "myrepo"
+	name := "feat"
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult("", "", nil), // WindowSession (LaunchReviewInRepo's own check)
+		commands.ExecCommandResult("", "", nil), // HasSession -> true (nil err)
+		commands.ExecCommandResult("", "", nil), // CreateWindowInSession: new-window
+		commands.ExecCommandResult("", "", nil), // SendKeysToWindowInSession (the one review pane)
+	)
+
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantOrder := []string{"list-windows", "has-session", "new-window", "send-keys"}
+	gotOrder := tmuxCommandOrder(mockTmuxBase)
+	if len(gotOrder) != len(wantOrder) {
+		t.Fatalf("expected %v, got %v", wantOrder, gotOrder)
+	}
+	for i, want := range wantOrder {
+		if gotOrder[i] != want {
+			t.Errorf(
+				"call %d: expected %q, got %q (full order: %v)",
+				i,
+				want,
+				gotOrder[i],
+				gotOrder,
+			)
+		}
+	}
+
+	reviewCmd, err := ReviewCommand("code")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if !callsContain(mockTmuxBase.ExecCommandCalls, "send-keys", reviewCmd) {
+		t.Errorf("expected send-keys to carry the review command %q, calls: %+v",
+			reviewCmd, mockTmuxBase.ExecCommandCalls)
+	}
+}
+
+// TestLaunchReviewLiveWindowSplitsNewPane proves that, when the worktree's
+// window already exists, LaunchReviewInRepo never sends the review command
+// into the window's existing (coder) pane - it splits a new pane and sends
+// the command there instead, then restores focus to the original pane.
+func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
+	repoSlug := "myrepo"
+	name := "feat"
+	windowName := GetWindowName(repoSlug, name)
+	session := "some-session"
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult(session+"\t"+windowName+"\n", "", nil), // WindowSession: exists
+		commands.ExecCommandResult(
+			"%1\n",
+			"",
+			nil,
+		), // ActivePaneID (coder pane, pre-split)
+		commands.ExecCommandResult("", "", nil), // SplitWindow
+		commands.ExecCommandResult(
+			"%2\n",
+			"",
+			nil,
+		), // ActivePaneID (new pane, post-split)
+		commands.ExecCommandResult(
+			"",
+			"",
+			nil,
+		), // SendKeysToPane (review cmd)
+		commands.ExecCommandResult(
+			"",
+			"",
+			nil,
+		), // SelectPane (restore focus)
+	)
+
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantOrder := []string{
+		"list-windows",
+		"display-message",
+		"split-window",
+		"display-message",
+		"send-keys",
+		"select-pane",
+	}
+	gotOrder := tmuxCommandOrder(mockTmuxBase)
+	if len(gotOrder) != len(wantOrder) {
+		t.Fatalf("expected %v, got %v", wantOrder, gotOrder)
+	}
+	for i, want := range wantOrder {
+		if gotOrder[i] != want {
+			t.Errorf(
+				"call %d: expected %q, got %q (full order: %v)",
+				i,
+				want,
+				gotOrder[i],
+				gotOrder,
+			)
+		}
+	}
+
+	reviewCmd, err := ReviewCommand("code")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// The review command's send-keys must target the new pane id (%2)
+	// directly - never "session:window", which tmux would resolve to
+	// whatever pane happens to be active at send time, possibly the coder's
+	// pane if focus shifted in the gap since the split.
+	target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+	if !found {
+		t.Fatalf("expected a send-keys call carrying the review command %q, calls: %+v",
+			reviewCmd, mockTmuxBase.ExecCommandCalls)
+	}
+	if target != "%2" {
+		t.Errorf("expected send-keys to target the new pane %%2 directly, got target %q "+
+			"(calls: %+v)", target, mockTmuxBase.ExecCommandCalls)
+	}
+
+	// Focus must be restored to the coder's pane (%1), captured before the
+	// split - not left on the new review pane (%2).
+	if !callsContain(mockTmuxBase.ExecCommandCalls, "select-pane", "%1") {
+		t.Errorf("expected select-pane to restore focus to coder pane %%1, calls: %+v",
+			mockTmuxBase.ExecCommandCalls)
+	}
+}
+
+// TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane proves the
+// rollback semantics that make this launch safe: when sending the review
+// command fails after a successful split, only the pane that was just split
+// off is killed - never the window (which holds the user's existing coder
+// pane) and never the worktree (R never creates one, so there's none to roll
+// back).
+func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
+	repoSlug := "myrepo"
+	name := "feat"
+	windowName := GetWindowName(repoSlug, name)
+	session := "some-session"
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult(session+"\t"+windowName+"\n", "", nil), // WindowSession: exists
+		commands.ExecCommandResult(
+			"%1\n",
+			"",
+			nil,
+		), // ActivePaneID (coder pane, pre-split)
+		commands.ExecCommandResult("", "", nil), // SplitWindow succeeds
+		commands.ExecCommandResult(
+			"%2\n",
+			"",
+			nil,
+		), // ActivePaneID (new pane, post-split)
+		commands.ExecCommandResult(
+			"",
+			"",
+			errors.New("boom"),
+		), // SendKeysToPane fails
+		commands.ExecCommandResult("", "", nil), // KillPane rollback
+		commands.ExecCommandResult(
+			"",
+			"",
+			nil,
+		), // SelectPane (best-effort restore)
+	)
+
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	err := wm.LaunchReviewInRepo(repoSlug, name, "code")
+	if err == nil {
+		t.Fatal("expected an error when send-keys fails after a successful split")
+	}
+
+	reviewCmd, cmdErr := ReviewCommand("code")
+	if cmdErr != nil {
+		t.Fatalf("setup: %v", cmdErr)
+	}
+
+	// Even on the failing path, the attempted send-keys must have been
+	// pane-targeted (%2), not "session:window" - proving the fix applies
+	// before the failure, not just in the (already-passing) success case.
+	target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+	if !found {
+		t.Fatalf("expected a send-keys call carrying the review command %q, calls: %+v",
+			reviewCmd, mockTmuxBase.ExecCommandCalls)
+	}
+	if target != "%2" {
+		t.Errorf("expected the failing send-keys to target the new pane %%2 directly, got "+
+			"target %q (calls: %+v)", target, mockTmuxBase.ExecCommandCalls)
+	}
+
+	if !callsContain(mockTmuxBase.ExecCommandCalls, "kill-pane", "%2") {
+		t.Errorf("expected kill-pane targeting the new pane %%2, calls: %+v",
+			mockTmuxBase.ExecCommandCalls)
+	}
+
+	// The coder's original pane (%1) must never be killed - only the new
+	// pane (%2) this call added should be rolled back.
+	if callsContain(mockTmuxBase.ExecCommandCalls, "kill-pane", "%1") {
+		t.Errorf("must never kill-pane the coder's original pane %%1, calls: %+v",
+			mockTmuxBase.ExecCommandCalls)
+	}
+
+	// Must never touch the window or the worktree - only the pane this call
+	// added.
+	for _, c := range mockTmuxBase.ExecCommandCalls {
+		if len(c.Args) > 0 && c.Args[0] == "kill-window" {
+			t.Errorf("must never kill-window, calls: %+v", mockTmuxBase.ExecCommandCalls)
+		}
+	}
+	for _, c := range mockGitBase.ExecCommandCalls {
+		for _, arg := range c.Args {
+			if arg == "remove" {
+				t.Errorf(
+					"must never remove the worktree, git calls: %+v",
+					mockGitBase.ExecCommandCalls,
+				)
+			}
+		}
+	}
+}
+
+// TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall proves an unknown reviewer
+// key's error from ReviewCommand propagates before any git or tmux state is
+// touched.
+func TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall(t *testing.T) {
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	err := wm.LaunchReviewInRepo("myrepo", "feat", "not-a-real-reviewer")
+	if err == nil {
+		t.Fatal("expected an error for an unknown reviewer key")
+	}
+
+	testutil.VerifyNoRealCommands(t, mockGitBase)
+	testutil.VerifyNoRealCommands(t, mockTmuxBase)
+}
+
+// TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing proves
+// LaunchReviewInRepo checks that "oc" resolves before touching tmux at all -
+// mirroring TestCreateValidateLayoutFailsBeforeAnyTmuxCall's shape for the
+// analogous check on the create path. A user whose default layout is
+// claude/claude-nvim has never needed oc, so pressing R without this
+// pre-flight check would build a window/pane whose command prints "oc:
+// command not found" while the dashboard still reports "review started",
+// with no error surfaced anywhere.
+func TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing(t *testing.T) {
+	setShellCommandExistsFn(t, func(string) bool { return false })
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockTmuxBase := commands.NewMockBaseCommand()
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	err := wm.LaunchReviewInRepo("myrepo", "feat", "code")
+	if err == nil {
+		t.Fatal("expected an error when oc is not installed")
+	}
+
+	testutil.VerifyNoRealCommands(t, mockGitBase)
+	testutil.VerifyNoRealCommands(t, mockTmuxBase)
+}

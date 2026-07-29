@@ -132,6 +132,134 @@ func builtinLayouts() map[string]Layout {
 	}
 }
 
+// Reviewer describes one of the reviewer agents `dg ws`'s (future) R
+// keybinding can launch: the OpenCode agent name passed to `opencode --agent
+// <name>`, and a human-readable label for the picker UI.
+type Reviewer struct {
+	Agent string
+	Label string
+}
+
+// reviewerKeys lists the valid reviewer picker keys in a stable order,
+// "code" first per the cycle plan (the common case) - used both to build the
+// registry and, later, to render the picker in a fixed order.
+var reviewerKeys = []string{"code", "document", "skill"}
+
+// builtinReviewers returns the registry of reviewer agents the (future) R
+// keybinding can launch, keyed by short picker key. Each Reviewer.Agent must
+// equal a filename (minus ".md") in configs/shared/agents/ -
+// TestBuiltinReviewersAgentNamesMatchAgentFiles (this package, on-disk read)
+// and TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles (package main,
+// embedded ConfigsFS read) both enforce that, per CLAUDE.md's "Changing an
+// embedded config" rule: a constraint an external tool imposes (here,
+// `opencode --agent <name>` failing silently on a typo) gets enforced by a
+// test, because a comment would not survive future edits.
+func builtinReviewers() map[string]Reviewer {
+	return map[string]Reviewer{
+		"code":     {Agent: "code-reviewer", Label: "code — bugs, security"},
+		"document": {Agent: "document-reviewer", Label: "document — plans, specs"},
+		"skill":    {Agent: "skill-reviewer", Label: "skill — agents/commands"},
+	}
+}
+
+// ReviewerAgentNames returns the OpenCode agent name for each built-in
+// reviewer, in reviewerKeys order. Exported so the root package's
+// TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles can assert the same
+// names against the embedded configs/shared/agents/ filenames that this
+// package's own on-disk test (TestBuiltinReviewersAgentNamesMatchAgentFiles)
+// checks - embedded.go's ConfigsFS lives in package main, which this package
+// cannot import without an import cycle, so package main needs its own way
+// to see these names.
+func ReviewerAgentNames() []string {
+	reviewers := builtinReviewers()
+	names := make([]string, 0, len(reviewerKeys))
+	for _, key := range reviewerKeys {
+		names = append(names, reviewers[key].Agent)
+	}
+	return names
+}
+
+// reviewPrompt is the single fixed opening prompt sent to every reviewer
+// agent, regardless of which one (code/document/skill) was picked. It's
+// deliberately short and generic: each reviewer agent's own instructions
+// already run `devgeta task review-scope` and `devgeta task branch-diff` to
+// scope itself (see configs/shared/agents/*.md), so this prompt only needs
+// to start the conversation, not describe the diff. It is also deliberately
+// free of shell metacharacters, even though shellSingleQuote below makes the
+// command safe either way - keeping the shipped prompt simple means the
+// common case never depends on the escaping path being exercised.
+const reviewPrompt = "Review this branch against the default branch."
+
+// shellSingleQuote wraps s in single quotes so it is safe to embed as one
+// literal word in a POSIX shell command line, escaping any embedded single
+// quote with the standard close/escape/reopen trick (quote, backslash,
+// quote, quote) - this closes the
+// current quoted string, appends an escaped literal single quote, then
+// reopens quoting for the rest of s. This is needed because ReviewCommand's
+// output is sent to a live tmux pane via send-keys, which types it into an
+// interactive shell exactly as written - unlike a Go exec.Command argument
+// list, there is no shell parser on devgeta's side to lean on.
+//
+// There is no existing shell-quoting helper in this codebase (internal/ and
+// pkg/ have no shellescape/shellquote hits) and this is the only call site,
+// so this stays a few lines here rather than pulling in a library - see
+// CLAUDE.md's "prefer existing over new."
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// ReviewerChoice is one entry for the R-keybinding picker: the short key
+// passed to LaunchReviewInRepo, and the reviewer's human label.
+type ReviewerChoice struct {
+	Key   string
+	Label string
+}
+
+// BuiltinReviewerChoices returns the reviewer picker's choices in
+// reviewerKeys order ("code" first, the common case), so the TUI can build
+// its picker without duplicating this package's registry.
+func BuiltinReviewerChoices() []ReviewerChoice {
+	reviewers := builtinReviewers()
+	choices := make([]ReviewerChoice, 0, len(reviewerKeys))
+	for _, key := range reviewerKeys {
+		choices = append(choices, ReviewerChoice{Key: key, Label: reviewers[key].Label})
+	}
+	return choices
+}
+
+// ReviewCommand returns the shell command to send to a tmux pane (via
+// send-keys) to launch the reviewer agent registered under key ("code",
+// "document", or "skill") against the current branch, or an error if key is
+// not a registered reviewer.
+//
+// It reuses OpenCodeCoder.Command() for the launch token (the "oc" devgeta
+// alias) rather than hardcoding "oc" or the raw "opencode" binary, so the
+// one definition of how to launch OpenCode stays in devgeta.zsh - the same
+// reasoning builtinLayouts() already applies to its own OpenCode pane.
+// Reviewer launches are OpenCode-only by design (see the cycle plan's scope
+// boundary: the reviewer agents' permission: frontmatter is enforced by
+// OpenCode and ignored by Claude Code), so unlike deriveLayoutFromAlias this
+// does not accept an aiAlias.
+//
+// reviewPrompt is single-quoted via shellSingleQuote because this string is
+// typed literally into an interactive shell by send-keys - an unquoted
+// prompt would let shell metacharacters in it corrupt or hijack the command.
+func ReviewCommand(key string) (string, error) {
+	reviewer, ok := builtinReviewers()[key]
+	if !ok {
+		return "", fmt.Errorf(
+			"unknown reviewer %q. Valid reviewers: %s",
+			key, strings.Join(reviewerKeys, ", "),
+		)
+	}
+
+	opencode := &OpenCodeCoder{}
+	return fmt.Sprintf(
+		"%s --agent %s --prompt %s",
+		opencode.Command(), reviewer.Agent, shellSingleQuote(reviewPrompt),
+	), nil
+}
+
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable
 // order, for callers outside this package that need to list them (e.g. the
 // TUI's N layout picker). Returns a copy so a caller can't mutate the

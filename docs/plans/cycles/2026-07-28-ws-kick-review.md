@@ -2,8 +2,9 @@
 
 **Date:** 2026-07-28
 **Estimated Duration:** ~5 hours
-**Status:** Approved — **Blocked** on cycle 1
-**Order:** **Cycle 2 of 2.** Do not start until
+**Status:** Done (cycle 1 shipped 2026-07-29; per-pane `@dg_agent_state`
+with explicit `busy` confirmed in `internal/tooling/worktree/worktree.go`)
+**Order:** **Cycle 2 of 2.**
 [2026-07-28-agent-activity-notifications.md](2026-07-28-agent-activity-notifications.md) has
 shipped.
 **Governed by:** [ADR-0005](../../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
@@ -95,13 +96,13 @@ completion on its own.
 
 ### In Scope
 
-- [ ] `R` keybinding on worktree rows, plus hint-bar and help-popup entries
-- [ ] A reviewer picker (code / document / skill) modeled on `enterLayoutPick`
-- [ ] A review launch that runs `oc --agent <reviewer> --prompt <text>` in the worktree
-- [ ] Correct behavior when the worktree's window already exists and is busy (see the
+- [x] `R` keybinding on worktree rows, plus hint-bar and help-popup entries
+- [x] A reviewer picker (code / document / skill) modeled on `enterLayoutPick`
+- [x] A review launch that runs `oc --agent <reviewer> --prompt <text>` in the worktree
+- [x] Correct behavior when the worktree's window already exists and is busy (see the
       open design question in §7 — resolve it before Step 3)
-- [ ] Correct behavior when the worktree has no live window (create one)
-- [ ] Tests; `docs/spec.md` and the `dg ws` docs updated
+- [x] Correct behavior when the worktree has no live window (create one)
+- [x] Tests; `docs/spec.md` and the `dg ws` docs updated
 
 ### Explicitly Out of Scope
 
@@ -144,6 +145,24 @@ Answer three questions and record them in this doc before proceeding:
 
 This step is deliberately first. Everything downstream assumes all three answers are
 favorable, and each has a cheap check and an expensive discovery-later cost.
+
+**Answers (2026-07-29, verified manually in a scratch worktree via tmux
+`send-keys`/`capture-pane`, matching how the real feature will launch it):**
+
+1. **`--prompt` submits the turn**, no follow-up `Enter` needed. The prompt appeared in the
+   transcript and the agent began responding within the same capture that showed the command
+   land — no composer pre-fill state was observed.
+2. **`--agent` resolves a user-level agent.** `~/.config/opencode/agents/code-reviewer.md`
+   (deployed there by `dg configure opencode`) loaded correctly; the status bar showed
+   "Code-Reviewer · GPT-5.6 Sol" and `tab agents` in the footer. No project-level agent
+   directory existed in the scratch clone, so this could only have come from the user-level
+   path.
+3. **The agent ran `devgeta task review-scope` on its own**, unprompted, as its first todo
+   item ("Run review-scope and identify branch intent and changed files"), and the pane
+   showed the actual command output (branch, commit list, changed files) before moving to
+   the next todo (reading repo standards).
+
+All three favorable. No fallback needed; proceeding as planned.
 
 ### Step 1: Reviewer registry
 
@@ -354,13 +373,25 @@ distinction needs to be visible in v1, because that changes the row renderer, no
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Should `R` fall back to `r`'s repair behavior when the window is missing, or is
+- [x] Should `R` fall back to `r`'s repair behavior when the window is missing, or is
       creating a review-only window there confusing?
-- [ ] Is a three-item `FuzzyPicker` overkill versus a which-key style single-keypress prompt
+      **Resolved:** creates a review-only window, via `ensureWindow`'s (now
+      `createWindowWithLayout`'s) create-if-missing path — the same path `Create`/`Repair`
+      already use. This was the decision made and implemented in Task 3.
+- [x] Is a three-item `FuzzyPicker` overkill versus a which-key style single-keypress prompt
       (`c` / `d` / `s`)?
-- [ ] Does the fixed prompt need to differ per reviewer, or is one line enough for all three?
-- [ ] Should the split be vertical or horizontal, and should the reviewer pane take focus or
+      **Resolved:** kept the three-item `FuzzyPicker`, as implemented in Task 4
+      (`internal/tui/worktree/review_flow.go`'s `handleKickReview`), matching `enterLayoutPick`'s
+      shape rather than inventing a second picker style.
+- [x] Does the fixed prompt need to differ per reviewer, or is one line enough for all three?
+      **Resolved:** one fixed prompt ("Review this branch against the default branch.") shared
+      by all three reviewer types, as implemented in Task 2 (`reviewPrompt` in
+      `internal/tooling/worktree/layout.go`).
+- [x] Should the split be vertical or horizontal, and should the reviewer pane take focus or
       leave the user in the coder pane they were in?
+      **Resolved:** split "vertical" (side by side, matching the existing `claude-nvim` layout's
+      editor-pane convention), and focus returns to the original coder pane (best-effort, via
+      `SelectPane`) — as implemented in Task 3's `launchReviewInLiveWindow`.
 
 **Reviewer notes:**
 
