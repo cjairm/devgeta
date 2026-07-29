@@ -2,8 +2,9 @@
 
 **Date:** 2026-07-28
 **Estimated Duration:** ~5 hours
-**Status:** Approved — **Blocked** on cycle 1
-**Order:** **Cycle 2 of 2.** Do not start until
+**Status:** Approved — **Unblocked** (cycle 1 shipped 2026-07-29; per-pane `@dg_agent_state`
+with explicit `busy` confirmed in `internal/tooling/worktree/worktree.go`)
+**Order:** **Cycle 2 of 2.**
 [2026-07-28-agent-activity-notifications.md](2026-07-28-agent-activity-notifications.md) has
 shipped.
 **Governed by:** [ADR-0005](../../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
@@ -144,6 +145,24 @@ Answer three questions and record them in this doc before proceeding:
 
 This step is deliberately first. Everything downstream assumes all three answers are
 favorable, and each has a cheap check and an expensive discovery-later cost.
+
+**Answers (2026-07-29, verified manually in a scratch worktree via tmux
+`send-keys`/`capture-pane`, matching how the real feature will launch it):**
+
+1. **`--prompt` submits the turn**, no follow-up `Enter` needed. The prompt appeared in the
+   transcript and the agent began responding within the same capture that showed the command
+   land — no composer pre-fill state was observed.
+2. **`--agent` resolves a user-level agent.** `~/.config/opencode/agents/code-reviewer.md`
+   (deployed there by `dg configure opencode`) loaded correctly; the status bar showed
+   "Code-Reviewer · GPT-5.6 Sol" and `tab agents` in the footer. No project-level agent
+   directory existed in the scratch clone, so this could only have come from the user-level
+   path.
+3. **The agent ran `devgeta task review-scope` on its own**, unprompted, as its first todo
+   item ("Run review-scope and identify branch intent and changed files"), and the pane
+   showed the actual command output (branch, commit list, changed files) before moving to
+   the next todo (reading repo standards).
+
+All three favorable. No fallback needed; proceeding as planned.
 
 ### Step 1: Reviewer registry
 
