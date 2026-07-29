@@ -429,6 +429,30 @@ func TestBuiltinReviewersKeysAreComplete(t *testing.T) {
 	}
 }
 
+// TestBuiltinReviewerChoicesOrderAndLabels guards the exported accessor the
+// TUI's R picker builds its item list from: it must come back in
+// reviewerKeys order ("code" first, the common case) with each choice's
+// label matching the registry, so the picker's dropdown can never drift from
+// builtinReviewers() (the thing TestBuiltinReviewersKeysAreComplete guards).
+func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
+	want := []ReviewerChoice{
+		{Key: "code", Label: "code — bugs, security"},
+		{Key: "document", Label: "document — plans, specs"},
+		{Key: "skill", Label: "skill — agents/commands"},
+	}
+
+	got := BuiltinReviewerChoices()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d choices, got %d: %+v", len(want), len(got), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("choice %d: got %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
 // --- review pane command ---
 
 // TestReviewCommandBuildsExpectedCommand asserts the exact command string

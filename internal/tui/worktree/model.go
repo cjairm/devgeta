@@ -146,6 +146,20 @@ type Model struct {
 	pendingHookWarning bool // armed by a first enter when CheckHookCompatibility found warnings; a second enter confirms, any other key (or edited name) de-arms it
 	creating           bool // true from the moment the create tea.Cmd is dispatched until its result (createdMsg/createFailedMsg) is processed; the ONLY thing that actually enforces "one create at a time" (see createFn's WarnFn-swap comment below) — handleNewWorktree checks this and ignores n while it's true
 
+	// reviewMode and its companion fields back the R -> picker -> launch flow
+	// (see review_flow.go): a single-step flow triggered directly from the
+	// cursor row, with no repo-pick or name-input, so it's its own small
+	// sibling enum next to createMode/sessionMode rather than a new
+	// createXxx value. reviewRepo/reviewWorktreeName are captured at
+	// pick-open time (the cursor row's Repo/Name), not re-derived later,
+	// matching how createRepo/createInput are captured before their own
+	// later steps run.
+	reviewMode         reviewMode
+	reviewPicker       *tuicomponents.FuzzyPicker
+	reviewRepo         string // repo slug captured when the picker opened
+	reviewWorktreeName string // worktree name captured when the picker opened
+	reviewLaunching    bool   // true from the moment the launch tea.Cmd is dispatched until reviewLaunchedMsg is processed; the re-entry guard handleKickReview checks
+
 	// Injected I/O seams (overridable in tests)
 	diffFn                   func(path string) (task.BranchDiffResult, error)
 	attachFn                 func(session, window string) error
@@ -165,6 +179,7 @@ type Model struct {
 	checkHookCompatibilityFn func(repoPath string) []string
 	createFn                 func(repoPath, name, layoutName string) (warning string, err error)
 	prTitleFn                func(branch, path string) string
+	launchReviewFn           func(repo, name, reviewerKey string) error
 }
 
 func newModel(
@@ -198,6 +213,9 @@ func newModel(
 	}
 	m.repairFn = func(repo, name string, layout worktree.Layout) error {
 		return mgr.RepairInRepo(repo, name, layout)
+	}
+	m.launchReviewFn = func(repo, name, reviewerKey string) error {
+		return mgr.LaunchReviewInRepo(repo, name, reviewerKey)
 	}
 	m.windowSessionFn = tmuxApp.WindowSession
 	m.clearAgentStateFn = tmuxApp.ClearAgentStateForWindow
@@ -634,6 +652,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "create failed: " + msg.err.Error()
 		return m, nil
 
+	case reviewLaunchedMsg:
+		m.reviewLaunching = false
+		m.status = string(msg)
+		return m, nil
+
 	case sessionCreatedMsg:
 		// Only reached for a successful createSessionFn call made outside
 		// tmux (see dispatchSessionCreate) - inside tmux, success
@@ -732,6 +755,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.sessionMode == sessionNameInput {
 		return m.handleSessionNameInputKey(key)
+	}
+	if m.reviewMode == reviewPick {
+		return m.handleReviewPickKey(key)
 	}
 
 	if m.filter.Active {
@@ -867,6 +893,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case "r":
 		return m.handleRepair()
+
+	case "R":
+		return m.handleKickReview()
 
 	case "s":
 		return m.handleNewSession()
@@ -1161,6 +1190,9 @@ func (m Model) renderContent() string {
 	if m.sessionMode == sessionNameInput {
 		return tuicomponents.Overlay(background, m.renderSessionNameInputPopup(), m.width, m.height)
 	}
+	if m.reviewMode == reviewPick {
+		return tuicomponents.Overlay(background, m.renderReviewPickPopup(), m.width, m.height)
+	}
 	return background
 }
 
@@ -1439,10 +1471,11 @@ func (m Model) renderHint(width int) string {
 	if m.pendingDelete != "" {
 		return m.armedDeleteHint(m.pendingDelete, "d", "delete", "", width)
 	}
-	// createRepoPick and createLayoutPick are both plain FuzzyPicker
-	// interactions (list nav + select + cancel), so they share one hint set
-	// instead of two copy-pasted literals.
-	if m.createMode == createRepoPick || m.createMode == createLayoutPick {
+	// createRepoPick, createLayoutPick, and reviewPick are all plain
+	// FuzzyPicker interactions (list nav + select + cancel), so they share
+	// one hint set instead of copy-pasted literals.
+	if m.createMode == createRepoPick || m.createMode == createLayoutPick ||
+		m.reviewMode == reviewPick {
 		hints := []tuicomponents.KeyHint{
 			{Key: "esc", Desc: "cancel"},
 			{Key: "enter", Desc: "select"},

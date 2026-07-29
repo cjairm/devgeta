@@ -207,6 +207,25 @@ func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// ReviewerChoice is one entry for the R-keybinding picker: the short key
+// passed to LaunchReviewInRepo, and the reviewer's human label.
+type ReviewerChoice struct {
+	Key   string
+	Label string
+}
+
+// BuiltinReviewerChoices returns the reviewer picker's choices in
+// reviewerKeys order ("code" first, the common case), so the TUI can build
+// its picker without duplicating this package's registry.
+func BuiltinReviewerChoices() []ReviewerChoice {
+	reviewers := builtinReviewers()
+	choices := make([]ReviewerChoice, 0, len(reviewerKeys))
+	for _, key := range reviewerKeys {
+		choices = append(choices, ReviewerChoice{Key: key, Label: reviewers[key].Label})
+	}
+	return choices
+}
+
 // ReviewCommand returns the shell command to send to a tmux pane (via
 // send-keys) to launch the reviewer agent registered under key ("code",
 // "document", or "skill") against the current branch, or an error if key is

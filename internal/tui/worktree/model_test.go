@@ -50,6 +50,7 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.checkHookCompatibilityFn = func(_ string) []string { return nil }
 	m.createFn = func(_, _, _ string) (string, error) { return "", nil }
 	m.prTitleFn = func(_, _ string) string { return "" }
+	m.launchReviewFn = func(_, _, _ string) error { return nil }
 	m.statuses = statuses
 	m.rebuildRows()
 	return m
