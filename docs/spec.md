@@ -363,11 +363,28 @@ dg wt prune                                 # Remove all worktrees (prompts for 
   `global_config.yaml`'s `worktree.recent_repos` (MRU-ordered, capped at 20). This is what lets
   the picker offer a repo that currently has zero worktrees.
 
+**Kicking a review from the dashboard (`R`)**:
+
+- `R` on a worktree row opens a floating picker with three choices, `code` first:
+  `code — bugs, security`, `document — plans, specs`, `skill — agents/commands`.
+- Selecting one launches the matching reviewer agent (`code-reviewer`, `document-reviewer`, or
+  `skill-reviewer`) via OpenCode, in that worktree, with the fixed prompt "Review this branch
+  against the default branch." — the agent scopes itself from there (each reviewer agent already
+  runs `devgeta task review-scope` on its own).
+- If the worktree's window isn't live, a new window is created with the review as its only pane.
+  If the window already has a coder running, a new pane is split beside it and the review
+  launches there instead — it never types into the existing coder's pane.
+- `R` only applies to worktree rows (see the `D`/`r`/`R` note below for the exact no-ops), and
+  it's a no-op while a review launch for that row is already in flight, so repeated presses
+  can't start a second launch.
+- Esc at the picker cancels and returns to the dashboard unchanged.
+
 **In-progress feedback**: any dashboard action that builds or tears down tmux state shows a
 status line at the bottom while it runs, so the dashboard is never silently unresponsive during
 the (occasionally slow) git/tmux work: `creating worktree: <name> (<layout>)…` on create,
 `repairing: <name> (<layout>)…` on `r` (and on attaching to a worktree whose window is missing,
-which auto-repairs), and `deleting: <name>…` on the confirming `d`/`D` press. The layout is named
+which auto-repairs), `deleting: <name>…` on the confirming `d`/`D` press, and `review: <name>
+(<label>)…` on `R`, resolving to `review started: <name>` or `review failed: <error>`. The layout is named
 by its tools (`claude`, `opencode`, `neovim`, `claude + neovim`). Each message is replaced by the
 result the moment the action finishes (and is moot inside tmux on a create/attach that succeeds,
 since the TUI then attaches and exits).
@@ -434,7 +451,9 @@ Session rows add:
   duplicate typed name surfaces tmux's own "duplicate session" error on the status line — there's
   no separate pre-check.
 
-- `D`/`r` are worktree-only actions and are no-ops on a session row.
+- `D`/`r`/`R` are worktree-only actions and are no-ops on a session row. `R` is additionally a
+  no-op on a collapsed repo-header row, since only a worktree row has a specific worktree to
+  review.
 
 Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf`) — it previously
 opened tmux's native `choose-tree -Zs` popup, which this replaces. This is the only key bound
