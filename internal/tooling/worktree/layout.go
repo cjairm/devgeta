@@ -132,6 +132,53 @@ func builtinLayouts() map[string]Layout {
 	}
 }
 
+// Reviewer describes one of the reviewer agents `dg ws`'s (future) R
+// keybinding can launch: the OpenCode agent name passed to `opencode --agent
+// <name>`, and a human-readable label for the picker UI.
+type Reviewer struct {
+	Agent string
+	Label string
+}
+
+// reviewerKeys lists the valid reviewer picker keys in a stable order,
+// "code" first per the cycle plan (the common case) - used both to build the
+// registry and, later, to render the picker in a fixed order.
+var reviewerKeys = []string{"code", "document", "skill"}
+
+// builtinReviewers returns the registry of reviewer agents the (future) R
+// keybinding can launch, keyed by short picker key. Each Reviewer.Agent must
+// equal a filename (minus ".md") in configs/shared/agents/ -
+// TestBuiltinReviewersAgentNamesMatchAgentFiles (this package, on-disk read)
+// and TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles (package main,
+// embedded ConfigsFS read) both enforce that, per CLAUDE.md's "Changing an
+// embedded config" rule: a constraint an external tool imposes (here,
+// `opencode --agent <name>` failing silently on a typo) gets enforced by a
+// test, because a comment would not survive future edits.
+func builtinReviewers() map[string]Reviewer {
+	return map[string]Reviewer{
+		"code":     {Agent: "code-reviewer", Label: "code — bugs, security"},
+		"document": {Agent: "document-reviewer", Label: "document — plans, specs"},
+		"skill":    {Agent: "skill-reviewer", Label: "skill — agents/commands"},
+	}
+}
+
+// ReviewerAgentNames returns the OpenCode agent name for each built-in
+// reviewer, in reviewerKeys order. Exported so the root package's
+// TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles can assert the same
+// names against the embedded configs/shared/agents/ filenames that this
+// package's own on-disk test (TestBuiltinReviewersAgentNamesMatchAgentFiles)
+// checks - embedded.go's ConfigsFS lives in package main, which this package
+// cannot import without an import cycle, so package main needs its own way
+// to see these names.
+func ReviewerAgentNames() []string {
+	reviewers := builtinReviewers()
+	names := make([]string, 0, len(reviewerKeys))
+	for _, key := range reviewerKeys {
+		names = append(names, reviewers[key].Agent)
+	}
+	return names
+}
+
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable
 // order, for callers outside this package that need to list them (e.g. the
 // TUI's N layout picker). Returns a copy so a caller can't mutate the

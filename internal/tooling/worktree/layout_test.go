@@ -1,6 +1,8 @@
 package worktree
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -347,4 +349,81 @@ func TestNewLayoutPanicsOnPaneCheckerMismatch(t *testing.T) {
 	newLayout("broken", []Pane{{Command: "a"}, {Command: "b"}}, []func() error{
 		func() error { return nil },
 	})
+}
+
+// --- reviewer registry ---
+
+// reviewerAgentsDir is configs/shared/agents/ read directly off disk
+// (relative to this package's directory, internal/tooling/worktree) rather
+// than through ConfigsFS (embedded in package main, which this package
+// cannot import without an import cycle). This is safe: main.go's
+// `//go:embed all:configs` embeds these files byte-for-byte with no
+// transformation, so reading them from disk here checks exactly what ships
+// in the binary — see TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles
+// (package main, root of the repo, beside task_redirect_test.go) for the
+// companion test that runs the same check against the embedded bytes, so a
+// file that fails to embed is still caught.
+var reviewerAgentsDir = filepath.Join("..", "..", "..", "configs", "shared", "agents")
+
+// reviewerAgentFilesOnDisk lists the agent names (filenames minus ".md")
+// present in dir.
+func reviewerAgentFilesOnDisk(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	names := map[string]bool{}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		names[strings.TrimSuffix(entry.Name(), ".md")] = true
+	}
+	return names
+}
+
+// TestBuiltinReviewersAgentNamesMatchAgentFiles is builtinReviewers' rule-5
+// embedded-config constraint test (CLAUDE.md's "if a config must satisfy a
+// constraint imposed by an external tool... enforce that constraint with a
+// test"): each Reviewer.Agent is handed straight to `opencode --agent
+// <name>` by a later step, so it must equal a real file in
+// configs/shared/agents/ — a renamed or deleted agent file must fail the
+// build rather than ship a flag naming an agent that no longer exists.
+func TestBuiltinReviewersAgentNamesMatchAgentFiles(t *testing.T) {
+	onDisk := reviewerAgentFilesOnDisk(t, reviewerAgentsDir)
+
+	for key, reviewer := range builtinReviewers() {
+		if !onDisk[reviewer.Agent] {
+			t.Errorf(
+				"reviewer %q: agent %q has no matching file in %s",
+				key, reviewer.Agent, reviewerAgentsDir,
+			)
+		}
+	}
+}
+
+// TestBuiltinReviewersKeysAreComplete guards the registry's shape: exactly
+// the three documented keys, each with a non-empty agent name and label.
+func TestBuiltinReviewersKeysAreComplete(t *testing.T) {
+	wantKeys := []string{"code", "document", "skill"}
+	reviewers := builtinReviewers()
+
+	if len(reviewers) != len(wantKeys) {
+		t.Fatalf("expected %d reviewers, got %d: %+v", len(wantKeys), len(reviewers), reviewers)
+	}
+	for _, key := range wantKeys {
+		reviewer, ok := reviewers[key]
+		if !ok {
+			t.Errorf("expected reviewer key %q to be registered", key)
+			continue
+		}
+		if reviewer.Agent == "" {
+			t.Errorf("reviewer %q: expected non-empty agent name", key)
+		}
+		if reviewer.Label == "" {
+			t.Errorf("reviewer %q: expected non-empty label", key)
+		}
+	}
 }
