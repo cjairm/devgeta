@@ -525,6 +525,7 @@ Quick reference to where things live:
 | **Theming**            | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule |
 | **Claude Code app**    | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                           |
 | **Releasing**          | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                        |
+| **Migrations**         | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                             |
 | **Roadmap**            | `ROADMAP.md`                                 | Planned commands, future features, open questions                                           |
 | **Decisions**          | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                      |
 | **Contributing**       | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                       |
