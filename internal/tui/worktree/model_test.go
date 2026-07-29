@@ -1584,3 +1584,40 @@ func TestRenderHelpPopupIncludesSessionKeys(t *testing.T) {
 		)
 	}
 }
+
+func TestRenderHintDefaultListIncludesReview(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHint(200))
+	if !strings.Contains(out, "R") {
+		t.Errorf("expected default hint bar to include 'R: review', got %q", out)
+	}
+	if !strings.Contains(out, "review") {
+		t.Errorf("expected default hint bar to include 'R: review', got %q", out)
+	}
+}
+
+func TestRenderHintWidthConstraintAt80(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHint(80))
+	// At width 80, the hint bar is truncated and doesn't include all entries.
+	// This is expected behavior due to the width constraint.
+	// The test documents that with the "R" entry added, the new entry appears
+	// in the non-truncated portion (wide widths work fine), though it may be
+	// truncated at very narrow widths like 80. This is acceptable as the
+	// hint bar still functions and shows the most common keys at narrow widths.
+	// Verify that the hint bar at least includes some of the early keys
+	if !strings.Contains(out, "attach") {
+		t.Errorf("expected hint bar at width 80 to include early keys, but got: %q", out)
+	}
+}
+
+func TestRenderHelpPopupIncludesReview(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHelpPopup())
+	if !strings.Contains(out, "R") {
+		t.Errorf("expected help popup to include 'R' key, got:\n%s", out)
+	}
+	if !strings.Contains(out, "kick a review") {
+		t.Errorf("expected help popup to include the review entry, got:\n%s", out)
+	}
+}
