@@ -988,11 +988,26 @@ func (w *WorktreeManager) currentWorktreePath(repoSlug, repoRoot, name string) (
 // is treated as "no answer from git" and a plain directory check is the
 // fallback - mirroring worktreeStateFor's own tolerance for this same
 // failure mode.
+//
+// The comparison against git's answer goes through
+// config.CanonicalRepoPath on BOTH sides, not raw string equality: `git
+// worktree list --porcelain` reports symlink-resolved absolute paths, while
+// path is built via plain filepath.Join (sharedWorktreePath/
+// inRepoWorktreePath do no symlink resolution). On a system where the data
+// root (or $HOME) is itself a symlink - macOS's /tmp -> /private/tmp is the
+// most common real-world trigger - the two representations differ and a raw
+// == comparison would return a hard false even for a worktree that
+// genuinely exists, with no os.Stat fallback to catch it (by design, since
+// git DID answer successfully here). Canonicalizing the comparison closes
+// that gap without weakening the trust-git branch - never add an os.Stat
+// fallback here; that would re-admit the husk-directory bug this whole
+// cycle exists to close.
 func (w *WorktreeManager) isRealWorktreeAt(path string) bool {
 	worktrees, err := w.Git.ListWorktreesAt(path)
 	if err == nil {
+		canonicalPath := config.CanonicalRepoPath(path)
 		for _, wt := range worktrees {
-			if wt.Path == path {
+			if config.CanonicalRepoPath(wt.Path) == canonicalPath {
 				return true
 			}
 		}

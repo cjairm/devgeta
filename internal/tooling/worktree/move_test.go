@@ -1088,6 +1088,52 @@ func TestIsRealWorktreeAt(t *testing.T) {
 			)
 		}
 	})
+
+	// Important Finding 2 from the final whole-branch review:
+	// isRealWorktreeAt used to compare its input path against git's reported
+	// wt.Path with raw string equality. `git worktree list --porcelain`
+	// reports symlink-resolved absolute paths, while path is built via plain
+	// filepath.Join (sharedWorktreePath/inRepoWorktreePath do no symlink
+	// resolution) - so on a system where the data root (or $HOME) is itself
+	// a symlink (macOS's /tmp -> /private/tmp being the most common
+	// real-world trigger), the two representations differ and a raw ==
+	// comparison would wrongly return false for a worktree that genuinely
+	// exists. This constructs that exact mismatch: candidate reaches the
+	// worktree through a symlinked parent directory, while git's mocked
+	// answer reports the fully resolved (symlink-free) path - the shape a
+	// real git worktree list --porcelain would report.
+	t.Run(
+		"git's symlink-resolved answer still matches an unresolved candidate path",
+		func(t *testing.T) {
+			realParent := t.TempDir()
+			resolvedPath := filepath.Join(realParent, "feature-test")
+			if err := os.MkdirAll(resolvedPath, 0o755); err != nil {
+				t.Fatalf("setup: failed to create %s: %v", resolvedPath, err)
+			}
+
+			symlinkParent := filepath.Join(t.TempDir(), "linked-parent")
+			if err := os.Symlink(realParent, symlinkParent); err != nil {
+				t.Skipf("symlinks not supported in this environment: %v", err)
+			}
+			candidate := filepath.Join(symlinkParent, "feature-test")
+
+			mockGitBase := commands.NewMockBaseCommand()
+			wm := newMoveWM(mockGitBase, commands.NewMockBaseCommand(), nil)
+
+			// git reports the fully symlink-resolved path, not the symlinked one
+			// candidate is built through.
+			porcelain := "worktree " + resolvedPath +
+				"\nHEAD abc123\nbranch refs/heads/feature-test\n\n"
+			mockGitBase.SetExecCommandResult(porcelain, "", nil)
+
+			if !wm.isRealWorktreeAt(candidate) {
+				t.Error(
+					"expected isRealWorktreeAt to canonicalize both sides and match " +
+						"despite the symlink, but it returned false",
+				)
+			}
+		},
+	)
 }
 
 // sendKeysToPaneCalls filters mockTmuxBase's recorded calls down to
