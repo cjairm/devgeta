@@ -82,7 +82,18 @@ play_notify_sound() {
 		play_cmd=(printf '\a')
 	fi
 
-	("${play_cmd[@]}" >/dev/null 2>&1 &) >/dev/null 2>&1 || true
+	if [ "${play_cmd[0]}" = "printf" ]; then
+		# The fallback IS the bell: printf's BEL byte on ITS OWN stdout is
+		# the entire point of this branch, unlike afplay/paplay below whose
+		# stdout is just chatter - redirecting it to /dev/null (as the other
+		# branch does) would silently discard the one byte this branch
+		# exists to produce, so it must stay unredirected here. Still
+		# backgrounded (a shell hiccup here must not block the hook) and
+		# still tolerant of failure - just not silenced.
+		("${play_cmd[@]}" &) 2>/dev/null || true
+	else
+		("${play_cmd[@]}" >/dev/null 2>&1 &) >/dev/null 2>&1 || true
+	fi
 }
 
 case "$1" in
