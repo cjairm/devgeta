@@ -50,12 +50,19 @@ find them**.
 
 ### 1. The layout is a `dg config` setting, defaulting to today's behavior
 
-Register `worktree.layout` in the `dg config` registry with values `shared`
+Register `worktree.location` in the `dg config` registry with values `shared`
 (default, `~/.local/share/devgeta/worktrees/<repo-slug>/<name>`) and `in-repo`
 (`<repo>/.claude/worktrees/<name>`). Absent means `shared`, so no existing install
 changes and no major bump is needed.
 
-Rejected: **auto-detecting** the layout from the presence of
+The key is named `location`, not `layout`, deliberately: `worktree.default_layout`
+already exists and means the **tmux window pane layout** (`opencode`, `claude-nvim`,
+`nvim`…). Two keys a character apart meaning "where files live on disk" and "how
+panes are arranged in a window" would be a permanent source of wrong edits, and
+`dg config` lists them adjacently. This ADR originally said `worktree.layout`;
+renamed before any code was written.
+
+Rejected: **auto-detecting** the location from the presence of
 `<repo>/.claude/worktrees/`. It makes `dg wt create`'s destination depend on
 whether some other tool happened to create a directory, which is invisible and
 unpredictable. A setting the user can read with `dg config` is the whole point of
