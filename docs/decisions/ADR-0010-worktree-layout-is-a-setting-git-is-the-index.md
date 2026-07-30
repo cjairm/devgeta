@@ -50,12 +50,19 @@ find them**.
 
 ### 1. The layout is a `dg config` setting, defaulting to today's behavior
 
-Register `worktree.layout` in the `dg config` registry with values `shared`
+Register `worktree.location` in the `dg config` registry with values `shared`
 (default, `~/.local/share/devgeta/worktrees/<repo-slug>/<name>`) and `in-repo`
 (`<repo>/.claude/worktrees/<name>`). Absent means `shared`, so no existing install
 changes and no major bump is needed.
 
-Rejected: **auto-detecting** the layout from the presence of
+The key is named `location`, not `layout`, deliberately: `worktree.default_layout`
+already exists and means the **tmux window pane layout** (`opencode`, `claude-nvim`,
+`nvim`…). Two keys a character apart meaning "where files live on disk" and "how
+panes are arranged in a window" would be a permanent source of wrong edits, and
+`dg config` lists them adjacently. This ADR originally said `worktree.layout`;
+renamed before any code was written.
+
+Rejected: **auto-detecting** the location from the presence of
 `<repo>/.claude/worktrees/`. It makes `dg wt create`'s destination depend on
 whether some other tool happened to create a directory, which is invisible and
 unpredictable. A setting the user can read with `dg config` is the whole point of
@@ -75,9 +82,12 @@ source of truth over a parallel one that can drift."
 
 This is **cheaper than today, not dearer**. `List()` currently calls
 `ListWorktreesAt` once _per worktree_ (`worktree.go:506`) to recover each branch —
-N git execs. One call per _repo_ returns the same data for all of that repo's
-worktrees, so the exec count drops from per-worktree to per-repo, and the 3-second
-refresh gets faster wherever a repo has more than one worktree.
+N git execs. One call resolves a repo's whole worktree set, so a repo's
+worktree-name subdirectories are tried as a group, stopping at the first one that
+succeeds — the common case costs one exec per repo, not one per worktree. A
+directory that isn't a real worktree (a husk) fails and falls through to the next
+subdirectory in the same group, which is the one case that still costs an extra
+exec: it's the price of not letting one bad subdirectory hide a real sibling.
 
 It also kills the phantom-row class of bug outright: a directory git does not call
 a worktree stops being listed as one, whatever is left in it.

@@ -85,6 +85,21 @@ type RecentRepo struct {
 // maxRecentRepos caps the recent-repos store so it can't grow unbounded.
 const maxRecentRepos = 20
 
+// WorktreeLocationShared and WorktreeLocationInRepo are the two values
+// WorktreeConfig.Location accepts. They are named constants - rather than
+// bare string literals repeated across cmd/config_settings.go's Default,
+// Set's validation, and their tests - so the two spellings can't drift out of
+// sync with each other. Defined here rather than in internal/tooling/worktree
+// because internal/config cannot import that package (it already imports
+// internal/config in four files), so internal/config is the owner that adds
+// no new dependency edge - internal/tooling/worktree does read these
+// constants back through that existing edge (worktreePath, worktreeStateReal,
+// and their callers).
+const (
+	WorktreeLocationShared = "shared"
+	WorktreeLocationInRepo = "in-repo"
+)
+
 // WorktreeConfig stores worktree-specific settings
 type WorktreeConfig struct {
 	DefaultAI     string       `yaml:"default_ai,omitempty"`     // "opencode" | "claude"; empty = fallback to "opencode"
@@ -92,6 +107,16 @@ type WorktreeConfig struct {
 	SearchPaths   []string     `yaml:"search_paths,omitempty"`   // dirs to scan for git repos for the worktree picker; empty = scanning disabled (the only off-switch)
 	ScanDepth     int          `yaml:"scan_depth,omitempty"`     // max dir depth for the repo scan; 0 (or unset) = use the default of 4
 	DefaultLayout string       `yaml:"default_layout,omitempty"` // default tmux window layout for `dg ws`'s create; empty = derive a single-pane layout from DefaultAI
+
+	// Location selects where worktrees are created on disk, and where
+	// remove/repair/state checks look for one: WorktreeLocationShared (the
+	// default) or WorktreeLocationInRepo. Empty means WorktreeLocationShared,
+	// so existing installs are unaffected - hence omitempty. Read by
+	// worktree.go's worktreePath/worktreeStateIn (create) and, as a fallback
+	// only (the git-verified currentWorktreePath is tried first), by
+	// removeByRepo/Repair/RepairInRepo when no real worktree exists at
+	// either location shape - see worktree.go's realWorktreePathOrConfigured.
+	Location string `yaml:"location,omitempty"`
 
 	// AttachAfterCreate controls whether `dg ws`'s n/N create attaches into the
 	// new worktree's window (quitting the dashboard) or leaves you on the new

@@ -259,13 +259,14 @@ dg wt <subcommand> [flags]     # alias
 
 **Subcommands**:
 
-| Subcommand      | Description                                            |
-| --------------- | ------------------------------------------------------ |
-| `create <name>` | Create a new worktree + tmux window                    |
-| `list`          | List all managed worktrees                             |
-| `remove [name]` | Remove a worktree (interactive picker if name omitted) |
-| `repair <name>` | Recreate the tmux window for an existing worktree      |
-| `prune`         | Remove **all** managed worktrees after confirmation    |
+| Subcommand      | Description                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| `create <name>` | Create a new worktree + tmux window                                                                 |
+| `list`          | List all managed worktrees                                                                          |
+| `remove [name]` | Remove a worktree (interactive picker if name omitted)                                              |
+| `repair <name>` | Recreate the tmux window for an existing worktree                                                   |
+| `move <name>`   | Move a worktree between the shared and in-repo locations, retargeting its tmux window (alias: `mv`) |
+| `prune`         | Remove **all** managed worktrees after confirmation                                                 |
 
 **Flags for `create` and `repair`**:
 
@@ -306,6 +307,7 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 - `default_layout` — default window layout name (see the resolution order above). Default: empty, which means rule 5 (`default_ai`-derived single-pane layout) or the built-in `opencode` fallback applies instead.
 - `attach_after_create` — whether a successful `n`/`N` create in `dg ws` attaches into the new worktree's window (quitting the dashboard) or leaves you on the new row to keep working in the dashboard. Default: **absent, which means attach** — set it to `false` to stay put, which is the useful setting when you create several worktrees in one sitting, since attaching ejects you from the dashboard after the first one. Outside tmux there is no client to move, so the create already stays put regardless of this key. Unlike every other boolean in `global_config.yaml` (all feature flags where "off" is the right default), an absent key here must mean **on**, so the field is stored as a nullable boolean: absent is distinct from an explicit `false`, and configs written before this key existed keep attaching.
 - `notify_sound` — whether an agent pane finishing (`idle`), blocking on a permission prompt (`blocked`), or erroring (`error`) plays a sound while its window is unattended, per [ADR-0009](decisions/ADR-0009-audible-agent-notifications.md). Default: **absent/`false`, which means off**. Unlike `attach_after_create` just above, where the zero value would silently flip existing behavior and so needed a nullable bool, off is already the correct default here, so a plain boolean is enough — the zero value already means what it should. The two hooks that actually play the sound (`configs/claude/agent-state.sh`, `configs/opencode/plugin/notify.js`) cannot parse `global_config.yaml`, so this YAML value is only the durable source: `configs/tmux/tmux.conf.tmpl` renders it into the deployed `~/.tmux.conf` as the tmux global option `@dg_notify_sound`, which is what the hooks actually query at runtime. Changing this key therefore has no effect on a running tmux server by itself — it takes effect after `dg configure tmux --force` plus a config reload (or a fresh server), or immediately if you also run `tmux set-option -g @dg_notify_sound on` by hand.
+- `location` — where worktrees are created on disk, and where `remove`/`repair`/state checks look for an existing one. Default: `shared` (`~/.local/share/devgeta/worktrees/<repo-slug>/<name>`, today's behavior — no existing install changes). The other value, `in-repo`, creates worktrees at `<repo-root>/.claude/worktrees/<name>` instead, the same path Claude Code's own worktree feature uses. Changing this key only affects where _new_ worktrees are created — it does not relocate an existing one on its own. `remove`/`repair` always check git for a worktree's actual location first (both shapes), so they still find an existing worktree wherever it really lives even if this key changes underneath it; use `dg wt move` (below) to physically relocate one that already exists.
 
 **Flag for `create`**:
 
@@ -318,6 +320,21 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 **Flag for `remove`**:
 
 - `--force` / `-f` — Force removal even if the worktree has uncommitted changes.
+
+**Flag for `move`**:
+
+- `--to <shared|in-repo>` — Target location for this one move, regardless of the configured `worktree.location`. Without it, `move` targets whatever `worktree.location` currently resolves to — the common case right after changing that setting.
+- `--force` / `-f` — Move even if the worktree has uncommitted changes.
+
+If the worktree is already at the target location, `move` prints that and exits `0`
+without touching git. It refuses on a dirty worktree unless `--force` is given. If the
+worktree has a live tmux window, every pane is sent a `cd` to the new path, but only
+when every pane in the window is an idle shell — if any pane is running something else
+(an editor, a build, an AI agent), nothing is sent to any pane, a warning names the busy
+pane, and the move itself still succeeds (a busy window is a follow-up inconvenience,
+never a reason to fail the command). Moving `--to in-repo` warns, but does not refuse,
+when `.claude/worktrees/` is not gitignored in the target repo — devgeta never edits
+another repo's `.gitignore`.
 
 **Adopting an existing branch (`create`)**: if a branch named `<name>` already exists locally,
 `create` adopts it into the worktree instead of failing. If that branch is currently checked out
@@ -423,10 +440,10 @@ dg config unset <key>
 - `--plain` — Suppress the interactive hint line that follows the table (persistent flag; works on both `dg config` and `dg config list`).
 
 **Settable keys**: `worktree.default_ai`, `worktree.search_paths`, `worktree.scan_depth`,
-`worktree.default_layout`, `worktree.attach_after_create`, `worktree.notify_sound` — see
-"Worktree scan and layout config keys" above for what each one does. Setting
-`worktree.notify_sound` only persists the YAML value and the tmux-rendered default for the
-_next_ server — see that key's entry above for why it does not also flip the option on an
+`worktree.default_layout`, `worktree.attach_after_create`, `worktree.notify_sound`,
+`worktree.location` — see "Worktree scan and layout config keys" above for what each one does.
+Setting `worktree.notify_sound` only persists the YAML value and the tmux-rendered default for
+the _next_ server — see that key's entry above for why it does not also flip the option on an
 already-running tmux server.
 
 **Behavior**:

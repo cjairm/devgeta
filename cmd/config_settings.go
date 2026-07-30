@@ -282,6 +282,40 @@ var Settings = []Setting{
 		},
 		Unset: func(gc *config.GlobalConfig) { gc.Worktree.NotifySound = false },
 	},
+	{
+		Key: "worktree.location",
+		Description: "Where worktrees are created, and looked for by remove/repair/state checks: " +
+			"`shared` (default) or `in-repo`",
+		Kind: "string",
+		// Read by worktreePath/worktreeStateIn (new worktree creation),
+		// findRepoForWorktree/cursorRepoRoot (locating an existing one), and
+		// removeByRepo/Repair/RepairInRepo (mutating one) - see worktree.go.
+		// A mutation's actual path resolution goes through the git-verified
+		// currentWorktreePath first, falling back to this setting only when
+		// no real worktree exists at either location shape (see
+		// realWorktreePathOrConfigured's doc comment).
+		Default: func() string { return config.WorktreeLocationShared },
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			return gc.Worktree.Location, gc.Worktree.Location != ""
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			value, err := requireExactlyOne("worktree.location", raw)
+			if err != nil {
+				return err
+			}
+			switch value {
+			case config.WorktreeLocationShared, config.WorktreeLocationInRepo:
+				gc.Worktree.Location = value
+				return nil
+			default:
+				return fmt.Errorf(
+					"unknown worktree.location %q. Valid values: %s, %s",
+					value, config.WorktreeLocationShared, config.WorktreeLocationInRepo,
+				)
+			}
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Worktree.Location = "" },
+	},
 }
 
 // FindSetting looks up a registered setting by its dotted key.

@@ -6,13 +6,13 @@ moving folders, or re-running a command after you update devgeta.
 Most devgeta releases need nothing from you. A file only lands here when an
 upgrade cannot fix itself automatically.
 
-| Guide      | Applies when |
-| ---------- | ------------ |
-| _none yet_ | —            |
+| Guide                      | Applies when                                                                                                                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [v1-to-v2.md](v1-to-v2.md) | You want to move existing worktrees between the shared root and an in-repo `.claude/worktrees/` folder (or back) after changing `worktree.location`. Check with `dg wt list` — empty, or already at the location you want, means nothing to do. |
 
 A guide appears in that table only once the change it describes has shipped.
 Drafts for unshipped changes stay out of it, so nobody follows steps that don't
-work yet — [v1-to-v2.md](v1-to-v2.md) is one, and says so at the top.
+work yet.
 
 ## Naming
 

@@ -13,6 +13,7 @@ import (
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/spf13/cobra"
 )
 
 func init() { testutil.InitLogger() }
@@ -214,4 +215,75 @@ func TestWorktreeRepairCmd_LayoutFlagRegistered(t *testing.T) {
 	if flag.Shorthand != "l" {
 		t.Errorf("expected --layout shorthand -l, got %q", flag.Shorthand)
 	}
+}
+
+// TestWorktreeMove covers `dg wt move`'s CLI surface: flag/alias
+// registration and argument-count validation. This deliberately does NOT
+// exercise RunE (that would reach worktree.New() and real git/tmux, which
+// cmd package tests avoid throughout this file) - the full Move() behavior
+// (resolution, no-op semantics, dirty check, gitignore warning, tmux
+// retargeting including the busy-pane and no-window cases) is covered by
+// TestWorktreeMove in internal/tooling/worktree/move_test.go, which can
+// inject mocked Git/Tmux. This test's job is only to pin the command's
+// shape so it doesn't silently drift (see CLAUDE.md section 10, "Altering
+// command signatures... without a deprecation plan").
+func TestWorktreeMove(t *testing.T) {
+	t.Run("--to flag is registered with no shorthand", func(t *testing.T) {
+		flag := worktreeMoveCmd.Flags().Lookup("to")
+		if flag == nil {
+			t.Fatal("expected --to flag to be registered on dg wt move")
+		}
+		if flag.Shorthand != "" {
+			t.Errorf("expected --to to have no shorthand, got %q", flag.Shorthand)
+		}
+	})
+
+	t.Run("--force flag is registered with -f shorthand", func(t *testing.T) {
+		flag := worktreeMoveCmd.Flags().Lookup("force")
+		if flag == nil {
+			t.Fatal("expected --force flag to be registered on dg wt move")
+		}
+		if flag.Shorthand != "f" {
+			t.Errorf("expected --force shorthand -f, got %q", flag.Shorthand)
+		}
+	})
+
+	t.Run("mv alias is registered", func(t *testing.T) {
+		found := false
+		for _, alias := range worktreeMoveCmd.Aliases {
+			if alias == "mv" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf(
+				"expected alias %q on dg wt move, got aliases %v",
+				"mv",
+				worktreeMoveCmd.Aliases,
+			)
+		}
+	})
+
+	t.Run("requires exactly one argument", func(t *testing.T) {
+		if err := worktreeMoveCmd.Args(worktreeMoveCmd, []string{}); err == nil {
+			t.Error("expected an error with zero args")
+		}
+		if err := worktreeMoveCmd.Args(worktreeMoveCmd, []string{"a", "b"}); err == nil {
+			t.Error("expected an error with two args")
+		}
+		if err := worktreeMoveCmd.Args(worktreeMoveCmd, []string{"a"}); err != nil {
+			t.Errorf("expected no error with one arg, got: %v", err)
+		}
+	})
+
+	t.Run("ValidArgsFunction rejects completion once a name is already given", func(t *testing.T) {
+		_, directive := worktreeMoveCmd.ValidArgsFunction(
+			worktreeMoveCmd,
+			[]string{"already-given"},
+			"",
+		)
+		if directive != cobra.ShellCompDirectiveNoFileComp {
+			t.Errorf("expected ShellCompDirectiveNoFileComp, got %v", directive)
+		}
+	})
 }

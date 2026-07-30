@@ -403,6 +403,87 @@ func TestSettingsAttachAfterCreate_SetTooManyValues(t *testing.T) {
 	assert.Contains(t, err.Error(), "accepts exactly one value")
 }
 
+// --- worktree.location ---
+
+func TestSettingsLocation_Default(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	assert.Equal(t, config.WorktreeLocationShared, s.Default())
+}
+
+func TestSettingsLocation_GetUnset(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{}
+
+	value, isSet := s.Get(gc)
+
+	assert.False(t, isSet)
+	assert.Equal(t, "", value)
+}
+
+func TestSettingsLocation_SetShared(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"shared"})
+
+	require.NoError(t, err)
+	assert.Equal(t, config.WorktreeLocationShared, gc.Worktree.Location)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, config.WorktreeLocationShared, value)
+}
+
+func TestSettingsLocation_SetInRepo(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"in-repo"})
+
+	require.NoError(t, err)
+	assert.Equal(t, config.WorktreeLocationInRepo, gc.Worktree.Location)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, config.WorktreeLocationInRepo, value)
+}
+
+func TestSettingsLocation_SetInvalid(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"elsewhere"})
+
+	require.Error(t, err)
+	// The error must name both valid values, the way default_layout's does.
+	assert.Contains(t, err.Error(), config.WorktreeLocationShared)
+	assert.Contains(t, err.Error(), config.WorktreeLocationInRepo)
+	assert.Equal(t, "", gc.Worktree.Location)
+}
+
+func TestSettingsLocation_SetTooManyValues(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"shared", "in-repo"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts exactly one value")
+}
+
+func TestSettingsLocation_Unset(t *testing.T) {
+	s := findSettingForTest(t, "worktree.location")
+	gc := &config.GlobalConfig{
+		Worktree: config.WorktreeConfig{Location: config.WorktreeLocationInRepo},
+	}
+
+	s.Unset(gc)
+
+	assert.Equal(t, "", gc.Worktree.Location)
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+}
+
 func TestSettingsAttachAfterCreate_Unset(t *testing.T) {
 	s := findSettingForTest(t, "worktree.attach_after_create")
 	falseVal := false

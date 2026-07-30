@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1280,6 +1281,188 @@ func TestRemoveWorktree(t *testing.T) {
 
 		if err := app.RemoveWorktree("/nonexistent/path", false, ""); err == nil {
 			t.Fatal("Expected error but got none")
+		}
+	})
+}
+
+func TestMoveWorktree(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	t.Run("successful move runs from the main worktree", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"worktree /main/repo\nHEAD abc123\nbranch refs/heads/main\n",
+			"",
+			nil,
+		)
+
+		if err := app.MoveWorktree("/old/path", "/new/path"); err != nil {
+			t.Fatalf("MoveWorktree failed: %v", err)
+		}
+		if mockApp.Base.GetExecCommandCallCount() != 2 {
+			t.Fatalf("Expected 2 calls, got %d", mockApp.Base.GetExecCommandCallCount())
+		}
+
+		// First call: getMainWorktree, resolved from the source path
+		firstCall := mockApp.Base.ExecCommandCalls[0]
+		expectedFirst := []string{"-C", "/old/path", "worktree", "list", "--porcelain"}
+		if len(firstCall.Args) != len(expectedFirst) {
+			t.Fatalf(
+				"Expected %d args for first call, got %d",
+				len(expectedFirst),
+				len(firstCall.Args),
+			)
+		}
+
+		// Second call: worktree move, executed from the main worktree, not /old/path
+		secondCall := mockApp.Base.ExecCommandCalls[1]
+		expectedSecond := []string{"-C", "/main/repo", "worktree", "move", "/old/path", "/new/path"}
+		if len(secondCall.Args) != len(expectedSecond) {
+			t.Fatalf(
+				"Expected %d args for second call, got %d: %v",
+				len(expectedSecond),
+				len(secondCall.Args),
+				secondCall.Args,
+			)
+		}
+		for i, arg := range expectedSecond {
+			if secondCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, secondCall.Args[i])
+			}
+		}
+	})
+
+	t.Run("GetMainWorktree failure aborts before any move attempt", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"",
+			"fatal: not a git repository",
+			fmt.Errorf("not a repo"),
+		)
+
+		err := app.MoveWorktree("/old/path", "/new/path")
+		if err == nil {
+			t.Fatal("Expected error but got none")
+		}
+		if !strings.Contains(err.Error(), "cannot resolve main worktree") {
+			t.Fatalf("Expected error to mention resolving main worktree, got: %v", err)
+		}
+		if mockApp.Base.GetExecCommandCallCount() != 1 {
+			t.Fatalf(
+				"Expected only the GetMainWorktree call, got %d calls",
+				mockApp.Base.GetExecCommandCallCount(),
+			)
+		}
+	})
+
+	t.Run("git's move refusal surfaces to the caller", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree /main/repo\nHEAD abc123\nbranch refs/heads/main\n",
+				"",
+				nil,
+			),
+			commands.ExecCommandResult(
+				"",
+				"fatal: '/old/path' is locked",
+				fmt.Errorf("exit status 128"),
+			),
+		)
+
+		err := app.MoveWorktree("/old/path", "/new/path")
+		if err == nil {
+			t.Fatal("Expected error but got none")
+		}
+		if !strings.Contains(err.Error(), "locked") {
+			t.Fatalf("Expected git's refusal message to surface, got: %v", err)
+		}
+	})
+}
+
+// exitError builds a real *exec.ExitError with the given exit code by
+// actually running a trivial subprocess (sh -c "exit N") - the standard way
+// to construct one in Go, since exec.ExitError's fields are unexported and
+// there is no public constructor. This is not "executing a real command"
+// under this repo's test-safety rule (which forbids exercising real
+// git/tmux/etc business logic in tests): it never touches git, only
+// synthesizes a realistic error value to inject into MockBaseCommand, so
+// IsPathIgnored's exit-code branch is exercised against the same error shape
+// ExecCommand really returns, not a hand-rolled stand-in.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	if err == nil {
+		t.Fatalf("expected a non-nil error for exit code %d", code)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	return exitErr
+}
+
+func TestIsPathIgnored(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	t.Run("exit 0 means ignored", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+
+		ignored, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err != nil {
+			t.Fatalf("IsPathIgnored failed: %v", err)
+		}
+		if !ignored {
+			t.Error("expected ignored=true on exit 0")
+		}
+
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("No ExecCommand call recorded")
+		}
+		expectedArgs := []string{"-C", "/repo", "check-ignore", "-q", ".claude/worktrees"}
+		if len(lastCall.Args) != len(expectedArgs) {
+			t.Fatalf(
+				"Expected %d args, got %d: %v",
+				len(expectedArgs),
+				len(lastCall.Args),
+				lastCall.Args,
+			)
+		}
+		for i, arg := range expectedArgs {
+			if lastCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, lastCall.Args[i])
+			}
+		}
+	})
+
+	// This is the detail most likely to be gotten wrong: `git check-ignore`
+	// exits 1 to mean "not ignored" - a normal, expected result, not a
+	// failure. IsPathIgnored must return (false, nil), never propagate exit
+	// 1 as an error.
+	t.Run("exit 1 means not ignored, and is not an error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", exitError(t, 1))
+
+		ignored, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err != nil {
+			t.Fatalf("expected no error for exit code 1, got: %v", err)
+		}
+		if ignored {
+			t.Error("expected ignored=false on exit 1")
+		}
+	})
+
+	t.Run("any other non-zero exit is a real error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", exitError(t, 128))
+
+		_, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err == nil {
+			t.Fatal("expected an error for exit code 128")
 		}
 	})
 }

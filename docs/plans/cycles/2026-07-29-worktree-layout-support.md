@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 **Estimated Duration:** ~5 hours
-**Status:** Approved — in progress
+**Status:** Done
 
 ---
 
@@ -55,7 +55,7 @@ per-repo. Do not add a second git call per item anywhere in this path.
 `cmd/config_settings.go` — `var Settings []Setting` plus `FindSetting`. Note the
 import direction: `internal/config` **cannot** import `internal/tooling/worktree`
 (worktree already imports config in four files), which is why the registry is in
-`cmd/`. A `worktree.layout` entry's `Default`/`Set` must therefore call into
+`cmd/`. A `worktree.location` entry's `Default`/`Set` must therefore call into
 worktree from `cmd/`, exactly like `default_layout` already does.
 
 ### Testing
@@ -76,7 +76,7 @@ make lint
 ## 3. Objective
 
 Every `dg wt` command and the `dg ws` dashboard operate on a worktree wherever it
-lives on disk; `worktree.layout` selects where new ones are created; `dg wt move`
+lives on disk; `worktree.location` selects where new ones are created; `dg wt move`
 relocates an existing one and moves its tmux window with it; and the v1→v2 migration
 becomes a real, listed guide instead of a draft.
 
@@ -86,15 +86,15 @@ becomes a real, listed guide instead of a draft.
 
 ### In Scope
 
-- [ ] `Git.MoveWorktree` in `internal/apps/git/git.go` (wrapper, per CLAUDE.md)
-- [ ] `worktree.layout` registered in `cmd/config_settings.go` (`shared` | `in-repo`)
-- [ ] `worktreePath()` becomes layout-aware; all mutation paths inherit it
-- [ ] `List()` reasks git per repo instead of scanning the shared root
-- [ ] `findRepoForWorktree` and `repo_candidates.go:111` become layout-agnostic
-- [ ] `dg wt move <name> [--to <layout>]` — relocate + retarget the tmux window
-- [ ] Tests: both layouts, phantom-husk case, in-repo enumeration, move + window
-- [ ] Rewrite `docs/migrations/v1-to-v2.md` as a real guide; list it in the index
-- [ ] `docs/spec.md` + `README.md` for the new setting and command
+- [x] `Git.MoveWorktree` in `internal/apps/git/git.go` (wrapper, per CLAUDE.md)
+- [x] `worktree.location` registered in `cmd/config_settings.go` (`shared` | `in-repo`)
+- [x] `worktreePath()` becomes layout-aware; all mutation paths inherit it
+- [x] `List()` reasks git per repo instead of scanning the shared root
+- [x] `findRepoForWorktree` and `repo_candidates.go:111` become layout-agnostic
+- [x] `dg wt move <name> [--to <layout>]` — relocate + retarget the tmux window
+- [x] Tests: both layouts, phantom-husk case, in-repo enumeration, move + window
+- [x] Rewrite `docs/migrations/v1-to-v2.md` as a real guide; list it in the index
+- [x] `docs/spec.md` + `README.md` for the new setting and command
 
 ### Explicitly Out of Scope
 
@@ -116,7 +116,8 @@ becomes a real, listed guide instead of a draft.
 | Modify | `internal/apps/git/git.go`                                                              | `MoveWorktree`                         |
 | Modify | `internal/tooling/worktree/worktree.go`                                                 | layout-aware paths, git-based `List()` |
 | Modify | `internal/tooling/worktree/repo_candidates.go`                                          | drop the base-path join                |
-| Modify | `cmd/config_settings.go`                                                                | `worktree.layout` entry                |
+| Modify | `internal/config/fromFile.go`                                                           | `WorktreeConfig.Location` field        |
+| Modify | `cmd/config_settings.go`                                                                | `worktree.location` entry              |
 | Modify | `cmd/worktree.go`                                                                       | `dg wt move`                           |
 | Modify | `docs/migrations/v1-to-v2.md`, `docs/migrations/README.md`, `docs/spec.md`, `README.md` | docs                                   |
 
@@ -128,12 +129,21 @@ the safety net.
 
 - Verify: `go test ./internal/apps/git/ -run TestMoveWorktree`
 
-### Step 2: The `worktree.layout` setting
+### Step 2: The `worktree.location` setting
 
-Register it with `Default` returning the live default (`shared`) and `Set`
-validating against the two known values, listing them on error the way
-`default_layout` does. Add it to `knownStateFields`' sibling assertions so the
-completeness test stays green.
+Two files, not one — the setting needs somewhere to live:
+
+1. **`internal/config/fromFile.go`** — add `Location string` to `WorktreeConfig` with
+   `yaml:"location,omitempty"`, so absent keeps meaning `shared`.
+2. **`cmd/config_settings.go`** — register `worktree.location` with `Default`
+   returning the live default (`shared`) and `Set` validating against the two known
+   values, listing them on error the way `default_layout` does.
+
+The reflection completeness test then stays green **because the field is registered**
+— it must NOT be added to `knownStateFields`, which is only for fields devgeta writes
+as state and refuses to let users set. (An earlier draft of this plan said to add it
+there; that was wrong and would have exempted the very key this cycle exists to
+expose.)
 
 - Verify: `go test ./cmd/ -run TestSettings`
 
@@ -165,7 +175,8 @@ the shared root.
 
 ### Step 6: `dg wt move`
 
-`dg wt move <name> [--to shared|in-repo]` (default: the other layout). Move via
+`dg wt move <name> [--to shared|in-repo]` (default: the configured
+`worktree.location` — see §8, resolved on approval). Move via
 Step 1, then retarget the tmux window at the new path — `tmux respawn-pane` is wrong
 (it would kill a running agent); send a `cd` to an idle pane and, when a pane has a
 live foreground process, say so and leave it, since a running agent must not be
@@ -176,7 +187,7 @@ warn when moving `--to in-repo` if `.claude/worktrees/` is not gitignored.
 
 ### Step 7: Docs
 
-Rewrite `v1-to-v2.md` around `dg config set worktree.layout in-repo` + `dg wt move`,
+Rewrite `v1-to-v2.md` around `dg config set worktree.location in-repo` + `dg wt move`,
 delete the hand-rolled `git worktree move` steps and the stale warnings, and add it
 to `docs/migrations/README.md`'s table. Update `docs/spec.md` and `README.md`.
 
@@ -197,19 +208,19 @@ worktree, and `move` **refusing** rather than killing a pane with a live process
 ### Manual
 
 1. `go build -o ~/.local/bin/devgeta .` (there is still no `make install`).
-2. `dg config` shows `worktree.layout` as `(default)` → `shared`.
+2. `dg config` shows `worktree.location` as `(default)` → `shared`.
 3. `dg wt ls` unchanged for existing worktrees — the regression that matters most.
 4. `dg wt move ws-agent-panes --to in-repo` → moves, window follows, `dg wt ls`
    **still lists it**, `dg ws` still shows it.
 5. `dg wt remove`/`repair` work on it while in-repo.
-6. `dg config set worktree.layout in-repo` → a new `dg wt create` lands in-repo and
+6. `dg config set worktree.location in-repo` → a new `dg wt create` lands in-repo and
    is listed alongside a shared-root one.
 7. Leave an empty dir in the shared root → it does **not** appear as a row.
 8. `dg wt move` on a pane running an agent → refuses, does not kill it.
 
 ### Regression Check
 
-- A config with no `worktree.layout` behaves exactly as v1.6.0.
+- A config with no `worktree.location` behaves exactly as v1.6.0.
 - `dg ws`'s 3-second refresh does no more git execs than before (fewer, with 2+
   worktrees in a repo).
 
@@ -235,7 +246,7 @@ worktree, and `move` **refusing** rather than killing a pane with a live process
 
 ## 8. Cross-Model Review Notes
 
-- [x] **`--to` is optional, defaulting to the configured `worktree.layout`.**
+- [x] **`--to` is optional, defaulting to the configured `worktree.location`.**
       Resolved on approval. Neither offered option was right: the common intent is
       "bring this worktree in line with the layout I configured", which is exactly
       the migration case, so a bare `dg wt move <name>` means that. An explicit

@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -376,7 +378,10 @@ func TestRepairExistingWindowOnlyResendsPaneZero(t *testing.T) {
 
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	wtPath := wm.worktreePath(repoSlug, name)
+	wtPath, err := wm.worktreePath(repoSlug, name)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 	if err := os.MkdirAll(wtPath, 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -743,4 +748,78 @@ func TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing(t *testing.T) {
 
 	testutil.VerifyNoRealCommands(t, mockGitBase)
 	testutil.VerifyNoRealCommands(t, mockTmuxBase)
+}
+
+// TestLaunchReviewInRepoUsesRealLocationNotConfigured proves LaunchReviewInRepo
+// resolves the worktree's real on-disk path via realWorktreePathOrConfigured
+// (git-verified), not the config-derived worktreePath - the same bug class
+// 472dbaf closed for removeByRepo/Repair/RepairInRepo. worktree.location is
+// left at "shared" (the default) while the worktree is PHYSICALLY REAL at the
+// in-repo shape instead - exactly what `dg wt move --to in-repo` produces if
+// the global default isn't also changed (docs/migrations/v1-to-v2.md
+// recommends exactly this flow). Before this fix, LaunchReviewInRepo resolved
+// wtPath via the config-derived worktreePath, which would have computed the
+// never-created shared path here - launching the reviewer agent's window
+// rooted at a directory that doesn't hold the worktree at all.
+func TestLaunchReviewInRepoUsesRealLocationNotConfigured(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	t.Chdir(t.TempDir()) // cwd is NOT the owning repo, forcing resolution via recent-repos
+
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	name := "feature-review"
+	setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationShared, []config.RecentRepo{
+		{Path: repoRoot, LastUsed: time.Now()},
+	})
+
+	wtPath := inRepoWorktreePath(repoRoot, name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	sharedPath := sharedWorktreePath(repoSlug, name)
+
+	notInRepo := commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.SetExecCommandResults(
+		notInRepo, // 1: cursorRepoRoot's cwdRepoRoot
+		// 2+: the recent-repos anchor - truthful listing (reports the
+		// worktree only at the in-repo path), repeated after for
+		// currentWorktreePath's shared and in-repo candidate checks.
+		commands.ExecCommandResult(
+			worktreePorcelain(repoRoot, [2]string{wtPath, "feature-review-branch"}), "", nil,
+		),
+	)
+
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult("", "", nil), // WindowSession: no live window
+		commands.ExecCommandResult("", "", nil), // HasSession -> true
+		commands.ExecCommandResult("", "", nil), // CreateWindowInSession: new-window
+		commands.ExecCommandResult("", "", nil), // SendKeysToWindowInSession
+	)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+		t.Fatalf(
+			"LaunchReviewInRepo failed to find the real in-repo worktree "+
+				"(would have targeted the never-created shared path pre-fix): %v",
+			err,
+		)
+	}
+
+	if !callsContain(mockTmuxBase.ExecCommandCalls, "new-window", wtPath) {
+		t.Errorf(
+			"expected new-window to be rooted at the real in-repo path %q, calls: %+v",
+			wtPath,
+			mockTmuxBase.ExecCommandCalls,
+		)
+	}
+	if callsContain(mockTmuxBase.ExecCommandCalls, "new-window", sharedPath) {
+		t.Error(
+			"new-window was rooted at the never-created shared path - " +
+				"resolved via configured location, not verified reality",
+		)
+	}
 }

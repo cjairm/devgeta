@@ -1837,6 +1837,56 @@ func TestPaneStates(t *testing.T) {
 	})
 }
 
+func TestPanesInWindow(t *testing.T) {
+	t.Run(
+		"returns only panes belonging to the matching window, with pane_current_command",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult(
+				"wt-feature-a\t%1\tzsh\nwt-feature-a\t%2\tnvim\nother-window\t%3\tbash\n",
+				"",
+				nil,
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			panes := app.PanesInWindow("wt-feature-a")
+
+			expected := []tmux.WindowPane{
+				{PaneID: "%1", CurrentCommand: "zsh"},
+				{PaneID: "%2", CurrentCommand: "nvim"},
+			}
+			if len(panes) != len(expected) {
+				t.Fatalf("expected %d panes, got %d: %+v", len(expected), len(panes), panes)
+			}
+			for i, exp := range expected {
+				if panes[i] != exp {
+					t.Errorf("pane[%d] = %+v, want %+v", i, panes[i], exp)
+				}
+			}
+		},
+	)
+
+	t.Run("no matching window returns nil", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("other-window\t%3\tbash\n", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if panes := app.PanesInWindow("wt-feature-a"); panes != nil {
+			t.Errorf("expected nil when no pane matches, got %+v", panes)
+		}
+	})
+
+	t.Run("exec error returns nil", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "error", errors.New("no server"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if panes := app.PanesInWindow("wt-feature-a"); panes != nil {
+			t.Errorf("expected nil on exec error, got %+v", panes)
+		}
+	})
+}
+
 func TestClearAgentStateForWindow(t *testing.T) {
 	t.Run("clears every pane belonging to the matching window only", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()

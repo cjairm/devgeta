@@ -440,6 +440,58 @@ func TestSave_DefaultAIOmittedWhenEmpty(t *testing.T) {
 	)
 }
 
+// TestSave_LocationOmittedWhenEmpty proves worktree.location gets the same
+// omitempty treatment as every other user-settable worktree field: an unset
+// Location must not persist as a visible `location: ""` key, so existing
+// installs' saved configs are untouched by this field's addition.
+func TestSave_LocationOmittedWhenEmpty(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	// gc.Worktree.Location left at its zero value ("") on purpose.
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assert.NotContains(
+		t,
+		string(raw),
+		"location",
+		"an empty worktree.location must be omitted from the saved config, like every other unset worktree field",
+	)
+}
+
+// TestWorktreeConfig_LocationRoundTrips proves an explicit non-default
+// Location ("in-repo") survives Save/Load unchanged - the shape a `dg config
+// set worktree.location in-repo` round trip depends on.
+func TestWorktreeConfig_LocationRoundTrips(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	gc.Worktree.Location = WorktreeLocationInRepo
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded := &GlobalConfig{}
+	if err := loaded.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	assert.Equal(t, WorktreeLocationInRepo, loaded.Worktree.Location)
+}
+
 // TestLoad_LegacyConfigWithEmptyDefaultAIResolvesToOpencodeDefault is the
 // backward-compatibility check for the omitempty change: a config file
 // written before this change with an explicit `default_ai: ""` key must

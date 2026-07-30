@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cjairm/devgeta/internal/apps/git"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -98,31 +99,34 @@ func (w *WorktreeManager) cwdRepoRoot() string {
 	return root
 }
 
-// cursorRepoRoot resolves the root of the repo that owns cursorRepoSlug's
-// worktrees, by reading any one worktree directory under the slug (all
-// worktrees under a slug belong to the same repo) and resolving its main
-// worktree root via git.GetMainWorktree. Returns "" (no error) when the slug
-// is empty or has no worktrees on disk — the cursor repo is simply skipped as
-// a candidate source in that case, rather than treated as a failure.
+// cursorRepoRoot resolves the root of the repo whose slug is cursorRepoSlug.
+// Returns "" (no error) when the slug is empty or unresolvable — the cursor
+// repo is simply skipped as a candidate source in that case, rather than
+// treated as a failure.
+//
+// This answers a different question than enumerateWorktrees() (worktree.go)
+// can answer: "what is this specific slug's root", independent of whether
+// that repo currently has *any* linked worktrees. A repo whose only worktree
+// is its own main checkout (zero linked worktrees) produces zero rows from
+// enumerateWorktrees() — correctly, per List()'s contract — but
+// cursorRepoRoot must still be able to resolve its root. So this builds on
+// forEachKnownRepo (worktree.go) — the same group/anchor/dedup/early-exit
+// walk enumerateWorktrees uses — stopping the moment a group's resolved main
+// root matches the target slug, rather than collecting every worktree row
+// the way enumerateWorktrees does.
 func (w *WorktreeManager) cursorRepoRoot(cursorRepoSlug string) string {
 	if cursorRepoSlug == "" {
 		return ""
 	}
-	repoDir := filepath.Join(GetWorktreeBasePath(), cursorRepoSlug)
-	entries, err := os.ReadDir(repoDir)
-	if err != nil {
-		return ""
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	var found string
+	w.forEachKnownRepo(func(mainRoot string, _ []git.WorktreeInfo) bool {
+		if filepath.Base(mainRoot) == cursorRepoSlug {
+			found = mainRoot
+			return false
 		}
-		wtPath := filepath.Join(repoDir, e.Name())
-		if root, err := w.Git.GetMainWorktree(wtPath); err == nil {
-			return root
-		}
-	}
-	return ""
+		return true
+	})
+	return found
 }
 
 // zoxideCandidates runs `zoxide query -l` to list zoxide's tracked

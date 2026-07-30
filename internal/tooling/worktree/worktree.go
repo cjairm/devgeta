@@ -135,12 +135,117 @@ func New() *WorktreeManager {
 	}
 }
 
-// worktreePath returns ~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>
-// Slashes in the name are replaced with dashes to keep the worktree directory
-// directly under the repo slug. This ensures the parent directory is always
-// the repo slug (important for tools that display the parent dir, e.g. Claude Code).
-func (w *WorktreeManager) worktreePath(repoSlug, name string) string {
+// sharedWorktreePath returns ~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name> -
+// the WorktreeLocationShared path shape (today's only shape, and still the
+// default). Slashes in name are replaced with dashes to keep the worktree
+// directory directly under the repo slug. This ensures the parent directory
+// is always the repo slug (important for tools that display the parent dir,
+// e.g. Claude Code). The single implementation of this shape - every caller
+// that needs it (worktreePath, worktreePathIn) goes through here.
+func sharedWorktreePath(repoSlug, name string) string {
 	return filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, FlattenName(name))
+}
+
+// inRepoWorktreePath returns <repo-root>/.claude/worktrees/<flat-name> - the
+// WorktreeLocationInRepo path shape. Unlike the shared shape, there is no
+// repo-slug segment: repoRoot already identifies the repo. The single
+// implementation of this shape - every caller that needs it (worktreePath,
+// worktreePathIn) goes through here.
+func inRepoWorktreePath(repoRoot, name string) string {
+	return filepath.Join(repoRoot, ".claude", "worktrees", FlattenName(name))
+}
+
+// worktreePathIn returns the on-disk worktree path for name inside the repo
+// rooted at repoRoot, honoring gc.Worktree.Location. Unlike worktreePath
+// (below), it already holds the repo root - no slug->root resolution is
+// needed, so it cannot fail. Callers that already have repoRoot in hand
+// (e.g. create, which derives repoSlug from repoRoot on the very next line
+// anyway) should use this directly instead of round-tripping
+// root->slug->root through worktreePath: that round trip is not just
+// wasteful but lossy, since two repos sharing a basename in different
+// parents would collapse to the same slug.
+//
+// Loads the global config itself (see worktreePath's doc comment for why),
+// tolerating a load failure as "no config yet, use the shared default".
+func worktreePathIn(repoRoot, name string) string {
+	gc := &config.GlobalConfig{}
+	// A load failure (e.g. no config file yet) leaves gc at its zero value,
+	// which already means "shared" (Location's zero value) - the correct
+	// default, not an actionable error.
+	_ = gc.Load()
+	if gc.Worktree.Location == config.WorktreeLocationInRepo {
+		return inRepoWorktreePath(repoRoot, name)
+	}
+	return sharedWorktreePath(filepath.Base(repoRoot), name)
+}
+
+// worktreePath resolves the on-disk worktree path for repoSlug's name,
+// honoring gc.Worktree.Location: WorktreeLocationShared (the default, and
+// today's only behavior) needs nothing beyond repoSlug and cannot fail. For
+// WorktreeLocationInRepo, repoSlug (a bare directory basename) is not enough
+// - it must first be resolved back to an absolute repo root (resolveRepoRoot)
+// so the path can be nested under that repo's own .claude/worktrees. If the
+// root cannot be resolved, this returns an actionable error rather than
+// falling back to the shared path: silently doing so would recreate exactly
+// the split-brain state (a worktree devgeta creates in one place and looks
+// for in another) that this cycle exists to eliminate.
+//
+// Loads the global config itself via gc := &config.GlobalConfig{}; gc.Load()
+// (repo_candidates.go's established pattern), tolerating a load failure as
+// "no config yet, use defaults" the same way RepoCandidates does - rather
+// than accepting a gc parameter the way ResolveLayout does. None of this
+// function's 7 call sites already holds a *config.GlobalConfig in scope, so
+// threading one through would only push a load onto every caller for no
+// benefit; ResolveLayout's callers, by contrast, already have one on hand
+// when they call it.
+func (w *WorktreeManager) worktreePath(repoSlug, name string) (string, error) {
+	gc := &config.GlobalConfig{}
+	_ = gc.Load() // no config yet, or a transient read error: default to shared
+	if gc.Worktree.Location != config.WorktreeLocationInRepo {
+		return sharedWorktreePath(repoSlug, name), nil
+	}
+
+	repoRoot, err := w.resolveRepoRoot(gc, repoSlug)
+	if err != nil {
+		return "", err
+	}
+	return worktreePathIn(repoRoot, name), nil
+}
+
+// resolveRepoRoot resolves repoSlug (a bare directory basename, e.g.
+// "devgeta") back to the absolute repo root worktreePath's in-repo location
+// needs. cursorRepoRoot (repo_candidates.go) is not reusable for this: it
+// resolves a root by reading a worktree directory already living under the
+// shared root, which is circular here - computing where a worktree should
+// live must not require one already living somewhere else first.
+//
+// Resolution order, cheapest and most certain first:
+//  1. the current repo (w.Git.GetRepoRoot()), if its basename matches repoSlug
+//  2. gc.Worktree.RecentRepos, first entry whose basename matches - already
+//     in memory from the caller's config load, so this is neither a new
+//     state nor a filesystem walk
+//
+// Returns an actionable error (naming the slug) when neither source
+// resolves it - never a fallback to the shared-root trick.
+func (w *WorktreeManager) resolveRepoRoot(
+	gc *config.GlobalConfig,
+	repoSlug string,
+) (string, error) {
+	if root, err := w.Git.GetRepoRoot(); err == nil && filepath.Base(root) == repoSlug {
+		return root, nil
+	}
+	for _, r := range gc.Worktree.RecentRepos {
+		if filepath.Base(r.Path) == repoSlug {
+			return r.Path, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"worktree location is 'in-repo' but repo %q is not known to devgeta yet "+
+			"(it isn't the current repo and isn't in the recent-repos store); "+
+			"cd into the repo, or use a command/flag that takes the repo path "+
+			"directly (e.g. --repo <path>) instead of a bare name",
+		repoSlug,
+	)
 }
 
 // GetWorktreeBasePath returns the base path for all devgeta worktrees
@@ -202,13 +307,22 @@ func (w *WorktreeManager) create(
 	force, useRepoSession bool,
 ) error {
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := w.worktreePath(repoSlug, name)
+	// repoRoot is already known here, so worktreePathIn is used directly
+	// instead of round-tripping root->slug->root through the slug-based
+	// worktreePath - see worktreePathIn's doc comment for why that round
+	// trip would be both wasteful and lossy.
+	wtPath := worktreePathIn(repoRoot, name)
 	windowName := GetWindowName(repoSlug, name)
 
-	state, err := w.worktreeState(repoSlug, name)
-	if err != nil {
-		return err
-	}
+	// repoRoot is already known here, so worktreeStateIn is used directly
+	// instead of round-tripping root->slug->root through the slug-based
+	// worktreeState - see worktreeStateIn's doc comment. Before this, the slug
+	// round trip could fail create() outright on its very first invocation for
+	// a repo passed via --repo (CreateAt): resolveRepoRoot can only resolve a
+	// bare slug back to a root via the current directory or the recent-repos
+	// store, and recordRepoUsed only populates that store *after* a successful
+	// create - so a brand-new --repo target had no way to satisfy either path.
+	state := w.worktreeStateIn(repoRoot, name)
 
 	if state.WtExists && state.WindowExists {
 		return fmt.Errorf(
@@ -407,11 +521,43 @@ func (w *WorktreeManager) buildWindowPanes(
 	return nil
 }
 
-// worktreeState checks the current state of a worktree
+// worktreeState checks the current state of a worktree. Propagates
+// worktreePath's error unchanged (e.g. an unresolvable in-repo root) rather
+// than reporting a false "doesn't exist" - a caller must not treat "we
+// couldn't determine where this worktree would live" as "it doesn't exist".
+//
+// For a caller that already holds repoRoot in scope (e.g. create, Remove),
+// prefer worktreeStateIn below: it skips this function's slug->root
+// resolution entirely (via worktreePathIn instead of worktreePath) and so
+// cannot fail on an unresolvable slug in the first place.
 func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, error) {
+	wtPath, err := w.worktreePath(repoSlug, name)
+	if err != nil {
+		return WorktreeState{}, err
+	}
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name)), nil
+}
+
+// worktreeStateIn is worktreeState's root-taking counterpart, mirroring how
+// worktreePathIn relates to worktreePath: a caller that already resolved
+// repoRoot (create, Remove) uses worktreePathIn directly instead of
+// round-tripping root->slug->root through the fallible worktreePath, so this
+// cannot fail - hence no error return, unlike worktreeState.
+func (w *WorktreeManager) worktreeStateIn(repoRoot, name string) WorktreeState {
+	repoSlug := filepath.Base(repoRoot)
+	wtPath := worktreePathIn(repoRoot, name)
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name))
+}
+
+// worktreeStateFor computes a WorktreeState for a worktree already known to
+// live at wtPath under window windowName - the state-inspection logic shared
+// by worktreeState (slug-based, fallible root resolution) and worktreeStateIn
+// (root-taking, infallible), so the two path-resolution shapes don't each
+// carry their own copy of it.
+func (w *WorktreeManager) worktreeStateFor(wtPath, windowName string) WorktreeState {
 	state := WorktreeState{
-		WtPath:     w.worktreePath(repoSlug, name),
-		WindowName: GetWindowName(repoSlug, name),
+		WtPath:     wtPath,
+		WindowName: windowName,
 	}
 
 	if _, err := os.Stat(state.WtPath); err == nil {
@@ -432,7 +578,7 @@ func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, e
 		state.WindowExists = true
 	}
 
-	return state, nil
+	return state
 }
 
 // agentStateRank ranks a pane's @dg_agent_state value by aggregation urgency
@@ -465,26 +611,204 @@ func AggregateAgentState(states []string) string {
 	return best
 }
 
-// List returns all worktrees with their window status across all repos
-func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
-	basePath := GetWorktreeBasePath()
+// anchorGroup is a set of candidate anchor paths that are all believed to
+// belong to the same repo. List() tries the anchors in a group in order and
+// stops at the first one that resolves (a husk sibling never hides a good
+// one), so a group's cost is one exec in the common case where the first
+// anchor tried is real, and only grows if earlier anchors in the same group
+// fail.
+type anchorGroup []string
 
-	entries, err := os.ReadDir(basePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []WorktreeStatus{}, nil
-		}
-		return nil, err
+// knownRepoAnchorGroups collects one anchor group per repo devgeta knows
+// about - each anchor an actual worktree (main or linked) of that repo,
+// since `git worktree list --porcelain` resolves the whole repo's worktree
+// set from any single one of its worktrees (GetMainWorktree's own doc
+// comment relies on the same guarantee). Reused by forEachKnownRepo, which
+// both enumerateWorktrees (List()'s tmux-aware view and the tmux-agnostic
+// findRepoForWorktree search) and cursorRepoRoot (the repo picker's cursor-
+// repo resolution) build on, instead of each walking groups/anchors itself.
+//
+// Groups are collected, in this order (order only affects which group "wins"
+// List()'s dedup, which itself doesn't matter since that dedup is by
+// resolved main root, not by anchor):
+//
+//  1. the current repo (cwdRepoRoot, repo_candidates.go - reused rather than
+//     reimplemented with GetRepoRoot) - a single-anchor group, since it's
+//     already known to be one specific repo's root.
+//  2. the recent-repos store (gc.Worktree.PrunedRecentRepos(), already
+//     filters paths no longer on disk - reused rather than reimplemented). A
+//     config load failure is tolerated as "no config yet, skip this source",
+//     matching RepoCandidates' own convention. Each recent repo is likewise a
+//     single-anchor group.
+//  3. one group per shared-root repo-slug directory, containing every
+//     subdirectory found under that slug - not just the first. A repo-slug
+//     directory can contain a husk left behind by a botched move; taking
+//     only the first subdirectory found and having it turn out to be the
+//     husk would make List() give up on the entire slug, hiding every real
+//     worktree that repo has. Grouping every subdirectory under the slug
+//     into one group, and having List() try them in order with an early
+//     exit on the first success, means the common case (first subdirectory
+//     is a real worktree) costs exactly one exec, while a husk sibling still
+//     can't hide a good one under the same slug.
+//
+// Anchors are NOT deduplicated here: two anchors can't be known to resolve to
+// the same repo until git is asked, so dedup happens on the query result (in
+// List()), never on this list.
+func (w *WorktreeManager) knownRepoAnchorGroups() []anchorGroup {
+	var groups []anchorGroup
+
+	if cwdRoot := w.cwdRepoRoot(); cwdRoot != "" {
+		groups = append(groups, anchorGroup{cwdRoot})
 	}
 
-	// One list-panes -a scan for the whole dashboard refresh, instead of a
-	// WindowSession() call per worktree - each of which ran its own fresh
-	// list-windows -a scan (N tmux execs per 3-second refresh). Indexed by
-	// window name: a window's presence as a key is the direct equivalent of
-	// "does a window with this name exist" (PaneStates enumerates every pane
-	// on the server, and a window with zero panes cannot exist in tmux), and
-	// its slice of pane states is what AggregateAgentState reduces to
-	// AgentState. See ADR-0005.
+	gc := &config.GlobalConfig{}
+	if err := gc.Load(); err == nil {
+		for _, r := range gc.Worktree.PrunedRecentRepos() {
+			groups = append(groups, anchorGroup{r.Path})
+		}
+	}
+
+	basePath := GetWorktreeBasePath()
+	slugEntries, err := os.ReadDir(basePath)
+	if err == nil {
+		for _, slugEntry := range slugEntries {
+			if !slugEntry.IsDir() {
+				continue
+			}
+			repoDir := filepath.Join(basePath, slugEntry.Name())
+			wtEntries, err := os.ReadDir(repoDir)
+			if err != nil {
+				continue
+			}
+			var group anchorGroup
+			for _, wtEntry := range wtEntries {
+				if !wtEntry.IsDir() {
+					continue
+				}
+				group = append(group, filepath.Join(repoDir, wtEntry.Name()))
+			}
+			if len(group) > 0 {
+				groups = append(groups, group)
+			}
+		}
+	}
+
+	return groups
+}
+
+// forEachKnownRepo calls fn once per known repo - once per
+// knownRepoAnchorGroups group that successfully resolves to a repo not
+// already seen via an earlier group in this same call - passing the
+// resolved main worktree root and its full worktree list. fn returns false
+// to stop iterating early (e.g. cursorRepoRoot, once it finds the slug it's
+// looking for) or true to continue to the next group.
+//
+// This is the one place group/anchor resolution, dedup-by-main-root, and
+// the early-exit-within-a-group logic (try anchors in a group in order,
+// stop at the first one that resolves - a husk sibling never hides a good
+// one) live: enumerateWorktrees and cursorRepoRoot both build on it instead
+// of each maintaining its own copy of the same scaffolding that could
+// silently drift. Both also get the dedup-by-main-root guarantee for free -
+// previously only enumerateWorktrees had it; cursorRepoRoot could exec once
+// per source even when two sources (e.g. the cwd group and a recent-repos
+// entry) resolved to the same repo.
+//
+// So this costs one exec per known repo in the common case, not one per
+// worktree - and, unlike a directory walk, a husk directory git does not
+// report as a worktree can never appear (see ADR-0010,
+// docs/decisions/ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md).
+func (w *WorktreeManager) forEachKnownRepo(
+	fn func(mainRoot string, worktrees []git.WorktreeInfo) bool,
+) {
+	seenRoots := make(map[string]bool)
+	for _, group := range w.knownRepoAnchorGroups() {
+		for _, anchor := range group {
+			worktrees, err := w.Git.ListWorktreesAt(anchor)
+			if err != nil || len(worktrees) == 0 {
+				// Not a real worktree (husk, deleted, never existed) - try
+				// the next anchor in this same group, if any, before giving
+				// up on the group entirely.
+				continue
+			}
+			// git worktree list --porcelain always lists the main worktree
+			// first - a documented, stable git guarantee (GetMainWorktree
+			// relies on the same one), not an assumption to hedge.
+			mainRoot := worktrees[0].Path
+			if seenRoots[mainRoot] {
+				// This repo was already processed via an earlier group -
+				// move on to the next group without querying its remaining
+				// anchors.
+				break
+			}
+			seenRoots[mainRoot] = true
+
+			if !fn(mainRoot, worktrees) {
+				// fn asked to stop entirely (e.g. cursorRepoRoot found its match).
+				return
+			}
+
+			// This group resolved successfully - the successful anchor's
+			// result already has the repo's complete worktree list, so
+			// there's no reason to query sibling anchors in the same group.
+			// Breaking the inner (anchor) loop here falls straight through
+			// to the outer loop's next group, exactly like the pre-extraction
+			// code this replaces.
+			break
+		}
+	}
+}
+
+// enumerateWorktrees resolves every worktree across every known repo, via
+// forEachKnownRepo (see its doc comment for the group->anchor->dedup
+// mechanics). Only Name/Path/Branch/Repo are populated on the returned
+// WorktreeStatus values; TmuxWindow/WindowActive/AgentState are left at
+// their zero values - no tmux exec happens in this function at all. This is
+// the single enumeration implementation List() (the tmux-aware view) and
+// findRepoForWorktree (a tmux-agnostic search) both build on, instead of
+// each walking git separately.
+func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
+	statuses := []WorktreeStatus{}
+	w.forEachKnownRepo(func(mainRoot string, worktrees []git.WorktreeInfo) bool {
+		// Matches create()'s `repoSlug := filepath.Base(repoRoot)` -
+		// must be the identical derivation used elsewhere, or
+		// Repo/TmuxWindow won't match what create/repair/remove expect.
+		repoSlug := filepath.Base(mainRoot)
+		for _, wt := range worktrees {
+			if wt.Path == mainRoot {
+				// The repo's own checkout is not a devgeta-managed worktree row.
+				continue
+			}
+			// filepath.Base(wt.Path) gives the right Name regardless of
+			// location: for shared it's <basePath>/<slug>/<flat-name> ->
+			// <flat-name>; for in-repo it's
+			// <repo-root>/.claude/worktrees/<flat-name> -> <flat-name>. Both
+			// path shapes put the flattened name as the final path segment,
+			// so no location branching is needed here.
+			name := filepath.Base(wt.Path)
+			statuses = append(statuses, WorktreeStatus{
+				Name:   name,
+				Path:   wt.Path,
+				Branch: wt.Branch,
+				Repo:   repoSlug,
+			})
+		}
+		return true
+	})
+
+	return statuses
+}
+
+// List returns all worktrees with their window status across all repos.
+// enumerateWorktrees does all the git-backed resolution (see its doc
+// comment); List's own job is layering tmux state on top via a single
+// PaneStates() scan, instead of a WindowSession() call per worktree - each of
+// which ran its own fresh list-windows -a scan (N tmux execs per 3-second
+// refresh). paneStatesByWindow is indexed by window name: a window's
+// presence as a key is the direct equivalent of "does a window with this
+// name exist" (PaneStates enumerates every pane on the server, and a window
+// with zero panes cannot exist in tmux), and its slice of pane states is
+// what AggregateAgentState reduces to AgentState. See ADR-0005.
+func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 	paneStatesByWindow := make(map[string][]string)
 	paneFullStatesByWindow := make(map[string][]tmux.PaneState)
 	for _, ps := range w.Tmux.PaneStates() {
@@ -492,59 +816,21 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 		paneFullStatesByWindow[ps.Window] = append(paneFullStatesByWindow[ps.Window], ps)
 	}
 
-	var statuses []WorktreeStatus
-	for _, repoEntry := range entries {
-		if !repoEntry.IsDir() {
-			continue
+	statuses := w.enumerateWorktrees()
+	for i := range statuses {
+		windowName := GetWindowName(statuses[i].Repo, statuses[i].Name)
+		// Comma-ok reports key presence, not slice non-emptiness: a window
+		// in the index always has at least one pane state appended above, so
+		// ok alone is the "window exists" signal.
+		states, windowActive := paneStatesByWindow[windowName]
+		panes := paneFullStatesByWindow[windowName]
+		if panes == nil {
+			panes = []tmux.PaneState{}
 		}
-
-		repoSlug := repoEntry.Name()
-		repoDir := filepath.Join(basePath, repoSlug)
-
-		wtEntries, err := os.ReadDir(repoDir)
-		if err != nil {
-			continue
-		}
-
-		for _, wtEntry := range wtEntries {
-			if !wtEntry.IsDir() {
-				continue
-			}
-
-			name := wtEntry.Name()
-			wtPath := filepath.Join(repoDir, name)
-			windowName := GetWindowName(repoSlug, name)
-
-			branch := ""
-			worktrees, err := w.Git.ListWorktreesAt(wtPath)
-			if err == nil {
-				for _, wt := range worktrees {
-					if wt.Path == wtPath {
-						branch = wt.Branch
-						break
-					}
-				}
-			}
-
-			// Comma-ok reports key presence, not slice non-emptiness: a
-			// window in the index always has at least one pane state
-			// appended above, so ok alone is the "window exists" signal.
-			states, windowActive := paneStatesByWindow[windowName]
-			panes := paneFullStatesByWindow[windowName]
-			if panes == nil {
-				panes = []tmux.PaneState{}
-			}
-			statuses = append(statuses, WorktreeStatus{
-				Name:         name,
-				Path:         wtPath,
-				Branch:       branch,
-				TmuxWindow:   windowName,
-				WindowActive: windowActive,
-				AgentState:   AggregateAgentState(states),
-				Repo:         repoSlug,
-				Panes:        panes,
-			})
-		}
+		statuses[i].TmuxWindow = windowName
+		statuses[i].WindowActive = windowActive
+		statuses[i].AgentState = AggregateAgentState(states)
+		statuses[i].Panes = panes
 	}
 
 	return statuses, nil
@@ -611,26 +897,38 @@ func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
 	return statuses, nil
 }
 
-// findRepoForWorktree searches the centralized base path for a worktree by name
-// and returns the repo slug that owns it. Returns "" if not found or ambiguous.
+// findRepoForWorktree searches every known repo (via enumerateWorktrees, the
+// same git-backed enumeration List() uses - not a shared-root directory
+// scan, which could never see an in-repo-located worktree) for one named
+// name, and returns the repo slug that owns it. Returns "" if not found or
+// ambiguous (2+ distinct repos have a worktree by this name): Remove and
+// repoSlugForWorktree both treat "" as "cannot safely act", so this must
+// never loosen to "first match wins".
 func (w *WorktreeManager) findRepoForWorktree(name string) string {
-	entries, err := os.ReadDir(GetWorktreeBasePath())
-	if err != nil {
-		return ""
-	}
+	flat := FlattenName(name)
 	var matches []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(
-			filepath.Join(GetWorktreeBasePath(), e.Name(), FlattenName(name)),
-		); err == nil {
-			matches = append(matches, e.Name())
+	for _, wt := range w.enumerateWorktrees() {
+		if wt.Name == flat {
+			matches = append(matches, wt.Repo)
 		}
 	}
-	if len(matches) == 1 {
-		return matches[0]
+
+	// Dedupe to distinct repo slugs before applying the exactly-one-match
+	// rule below: the same repo can appear twice here if it has two
+	// worktrees that happen to share this flattened name (e.g. one
+	// shared-root, one in-repo, left over from a location change) - that's
+	// one repo owning the name, not an ambiguity between two repos.
+	seen := make(map[string]bool, len(matches))
+	var distinct []string
+	for _, m := range matches {
+		if !seen[m] {
+			seen[m] = true
+			distinct = append(distinct, m)
+		}
+	}
+
+	if len(distinct) == 1 {
+		return distinct[0]
 	}
 	return ""
 }
@@ -641,12 +939,16 @@ func (w *WorktreeManager) findRepoForWorktree(name string) string {
 func (w *WorktreeManager) Remove(name string, force bool) error {
 	var repoSlug string
 
-	// Try current repo first
+	// Try current repo first. repoRoot is already known here, so
+	// worktreeStateIn is used directly instead of the slug-based
+	// worktreeState - see worktreeStateIn's doc comment on create() for why
+	// that round trip is both wasteful and (for an in-repo location) can fail
+	// outright.
 	repoRoot, err := w.Git.GetRepoRoot()
 	if err == nil {
 		repoSlug = filepath.Base(repoRoot)
-		state, stateErr := w.worktreeState(repoSlug, name)
-		if stateErr == nil && (state.WtExists || state.WindowExists) {
+		state := w.worktreeStateIn(repoRoot, name)
+		if state.WtExists || state.WindowExists {
 			return w.removeByRepo(repoSlug, name, force)
 		}
 	}
@@ -682,13 +984,419 @@ func (w *WorktreeManager) Remove(name string, force bool) error {
 	}
 }
 
+// resolveWorktreeRepoForMove finds the repo that owns a worktree named name,
+// mirroring Remove()'s resolution order exactly: the current repo first
+// (cheapest and most certain via w.Git.GetRepoRoot() + worktreeStateIn), then
+// a fallback search across every known repo via findRepoForWorktree. Unlike
+// Remove, there is no last-resort "orphan window, unknown repo" path: move
+// operates on a real git worktree, so failing both steps is a plain "no such
+// worktree" error, not an orphan-window cleanup. repoRoot is returned
+// non-empty only when resolution succeeded via the current-repo branch (it
+// is already known there for free); the fallback branch returns it empty,
+// since findRepoForWorktree only yields a repo slug - Move resolves a root
+// lazily afterward, only if it turns out to be needed.
+func (w *WorktreeManager) resolveWorktreeRepoForMove(
+	name string,
+) (repoSlug, repoRoot string, err error) {
+	if root, gerr := w.Git.GetRepoRoot(); gerr == nil {
+		state := w.worktreeStateIn(root, name)
+		if state.WtExists || state.WindowExists {
+			return filepath.Base(root), root, nil
+		}
+	}
+
+	if slug := w.findRepoForWorktree(name); slug != "" {
+		return slug, "", nil
+	}
+
+	return "", "", fmt.Errorf("no such worktree '%s'", name)
+}
+
+// currentWorktreePath finds which of the two possible location shapes
+// (sharedWorktreePath, inRepoWorktreePath) a worktree named name actually
+// occupies on disk right now - checked directly against reality, never
+// inferred from the CURRENTLY CONFIGURED worktree.location the way
+// worktreePath/worktreeStateIn do. That distinction matters specifically for
+// Move: its whole purpose is relocating a worktree that is NOT YET at the
+// location the config now names (the maintainer's hand-migration incident
+// this cycle fixes - config was changed, but the worktree hadn't moved yet).
+// Computing "where should it be, per config" in that situation would find
+// the not-yet-existing target, not the worktree to move FROM. repoRoot, when
+// known, lets the in-repo candidate be checked too; when empty (name
+// resolved via the slug-only fallback path, no root resolved yet), only the
+// shared candidate is checked. Returns ok=false if neither candidate is a
+// real worktree.
+//
+// KNOWN GAP: if a worktree is somehow real at BOTH shapes simultaneously
+// (e.g. `git worktree add` was used by hand at the other shape, bypassing
+// devgeta entirely - a state findRepoForWorktree's own doc comment already
+// anticipates for its analogous ambiguity), this silently prefers shared,
+// since it is checked first and returned on match. `dg wt move X --to
+// shared` on such a worktree would then report "already at target" and
+// leave the in-repo twin completely untouched. Not handled here - at
+// minimum this would need surfacing to the caller as a warning, or a check
+// upstream, rather than silently picking one.
+func (w *WorktreeManager) currentWorktreePath(repoSlug, repoRoot, name string) (string, bool) {
+	if shared := sharedWorktreePath(repoSlug, name); w.isRealWorktreeAt(shared) {
+		return shared, true
+	}
+	if repoRoot != "" {
+		if inRepo := inRepoWorktreePath(repoRoot, name); w.isRealWorktreeAt(inRepo) {
+			return inRepo, true
+		}
+	}
+	return "", false
+}
+
+// isRealWorktreeAt reports whether path is a real, git-tracked worktree -
+// git's own worktree list is authoritative (ADR-0010, "git is the index"),
+// so a match there is trusted even if the directory has, say, been moved out
+// from under git's expectation. When git itself can't run at path at all
+// (e.g. the directory doesn't exist yet, so `-C path` fails outright), that
+// is treated as "no answer from git" and a plain directory check is the
+// fallback - mirroring worktreeStateFor's own tolerance for this same
+// failure mode.
+//
+// The comparison against git's answer goes through
+// config.CanonicalRepoPath on BOTH sides, not raw string equality: `git
+// worktree list --porcelain` reports symlink-resolved absolute paths, while
+// path is built via plain filepath.Join (sharedWorktreePath/
+// inRepoWorktreePath do no symlink resolution). On a system where the data
+// root (or $HOME) is itself a symlink - macOS's /tmp -> /private/tmp is the
+// most common real-world trigger - the two representations differ and a raw
+// == comparison would return a hard false even for a worktree that
+// genuinely exists, with no os.Stat fallback to catch it (by design, since
+// git DID answer successfully here). Canonicalizing the comparison closes
+// that gap without weakening the trust-git branch - never add an os.Stat
+// fallback here; that would re-admit the husk-directory bug this whole
+// cycle exists to close.
+func (w *WorktreeManager) isRealWorktreeAt(path string) bool {
+	worktrees, err := w.Git.ListWorktreesAt(path)
+	if err == nil {
+		canonicalPath := config.CanonicalRepoPath(path)
+		for _, wt := range worktrees {
+			if config.CanonicalRepoPath(wt.Path) == canonicalPath {
+				return true
+			}
+		}
+		return false
+	}
+	info, statErr := os.Stat(path)
+	return statErr == nil && info.IsDir()
+}
+
+// realWorktreePathOrConfigured resolves name's REAL on-disk path by checking
+// both location shapes against git (currentWorktreePath, which uses
+// isRealWorktreeAt), the same git-verified resolution Move already relies
+// on - falling back to the config-derived worktreePath ONLY when no real
+// worktree exists at either shape, so "genuinely doesn't exist" still
+// resolves to a deterministic path for prune/error-reporting purposes,
+// matching today's behavior for that case.
+//
+// This exists because worktreePath (and worktreeState, which calls it)
+// resolves purely from the CONFIGURED worktree.location - which can
+// silently disagree with where a worktree really lives, e.g. after `dg wt
+// move --to <x>` without also changing the global default (a flow this
+// cycle's own migration guide recommends). A mutation acting on the
+// config-derived guess instead of reality can report success on a worktree
+// it never touched. cursorRepoRoot resolves repoRoot (needed to check the
+// in-repo candidate) the same way Move does; an unresolvable repoRoot just
+// means the in-repo candidate can't be checked, not a failure.
+func (w *WorktreeManager) realWorktreePathOrConfigured(repoSlug, name string) (string, error) {
+	repoRoot := w.cursorRepoRoot(repoSlug)
+	if wtPath, ok := w.currentWorktreePath(repoSlug, repoRoot, name); ok {
+		return wtPath, nil
+	}
+	return w.worktreePath(repoSlug, name)
+}
+
+// worktreeStateReal is worktreeState's git-verified counterpart: it resolves
+// a worktree's state AND the actual path it was computed against via
+// realWorktreePathOrConfigured, instead of trusting the configured
+// worktree.location the way worktreeState does. Callers that mutate a
+// worktree (removeByRepo, Repair, RepairInRepo) must use this, not
+// worktreeState, and must use the returned path for both the state check
+// AND the actual git/filesystem operation - never one path for "does it
+// exist" and a different, possibly-wrong one for "act on it here".
+func (w *WorktreeManager) worktreeStateReal(repoSlug, name string) (WorktreeState, string, error) {
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
+	if err != nil {
+		return WorktreeState{}, "", err
+	}
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name)), wtPath, nil
+}
+
+// effectiveMoveLocation resolves --to into a concrete target location: the
+// flag value when given, otherwise the configured worktree.location
+// (defaulting to shared when empty, per config.WorktreeConfig.Location's own
+// semantics, unchanged here) - never "the other" location. A bare
+// `dg wt move <name>` means "bring this worktree in line with my configured
+// layout," which is the actual migration case.
+func effectiveMoveLocation(to string, gc *config.GlobalConfig) (string, error) {
+	switch to {
+	case "":
+		if gc.Worktree.Location == config.WorktreeLocationInRepo {
+			return config.WorktreeLocationInRepo, nil
+		}
+		return config.WorktreeLocationShared, nil
+	case config.WorktreeLocationShared, config.WorktreeLocationInRepo:
+		return to, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid --to value %q (want %q or %q)",
+			to, config.WorktreeLocationShared, config.WorktreeLocationInRepo,
+		)
+	}
+}
+
+// Move relocates a worktree between the shared and in-repo location shapes
+// and retargets its tmux window (if one exists) to the new path. to selects
+// the destination explicitly (config.WorktreeLocationShared or
+// config.WorktreeLocationInRepo); "" means "the configured
+// worktree.location" (see effectiveMoveLocation). Refuses on a dirty
+// worktree unless force is set. Returns moved=false (with err==nil) when the
+// worktree is already at the destination - the no-op case is reported here
+// as a plain message via utils.PrintInfo, not as an error, so a caller
+// doesn't print a second "moved" message on top of it. The git-level move
+// (Git.MoveWorktree) always happens before any tmux retargeting is
+// attempted, and a retargeting problem (a busy pane, or no window at all)
+// never turns a successful move into a reported failure - see
+// retargetWindowAfterMove's doc comment.
+func (w *WorktreeManager) Move(name, to string, force bool) (bool, error) {
+	repoSlug, repoRoot, err := w.resolveWorktreeRepoForMove(name)
+	if err != nil {
+		return false, err
+	}
+
+	gc := &config.GlobalConfig{}
+	_ = gc.Load() // no config yet, or a transient read error: default to shared
+
+	if repoRoot == "" {
+		// The fallback resolution above only yielded a slug. Best-effort
+		// resolve the root too, so the in-repo candidate can be checked
+		// below and an in-repo destination can be computed later without a
+		// second resolution attempt. A failure here isn't fatal yet: the
+		// shared candidate/destination may be all that's needed.
+		if root, rErr := w.resolveRepoRoot(gc, repoSlug); rErr == nil {
+			repoRoot = root
+		}
+	}
+
+	fromPath, ok := w.currentWorktreePath(repoSlug, repoRoot, name)
+	if !ok {
+		return false, fmt.Errorf("no such worktree '%s'", name)
+	}
+
+	location, err := effectiveMoveLocation(to, gc)
+	if err != nil {
+		return false, err
+	}
+
+	if location == config.WorktreeLocationInRepo && repoRoot == "" {
+		root, rErr := w.resolveRepoRoot(gc, repoSlug)
+		if rErr != nil {
+			return false, rErr
+		}
+		repoRoot = root
+	}
+
+	var toPath string
+	if location == config.WorktreeLocationInRepo {
+		toPath = inRepoWorktreePath(repoRoot, name)
+	} else {
+		toPath = sharedWorktreePath(repoSlug, name)
+	}
+
+	if fromPath == toPath {
+		utils.PrintInfo(fmt.Sprintf("worktree '%s' is already at %s", name, toPath))
+		return false, nil
+	}
+
+	if !force {
+		dirty, dirtyErr := w.Git.IsWorktreeDirty(fromPath)
+		if dirtyErr != nil {
+			return false, fmt.Errorf(
+				"failed to check worktree '%s' for uncommitted changes: %w",
+				name, dirtyErr,
+			)
+		}
+		if dirty {
+			return false, fmt.Errorf(
+				"worktree '%s' has uncommitted changes; use --force to move anyway",
+				name,
+			)
+		}
+	}
+
+	if location == config.WorktreeLocationInRepo {
+		w.warnIfWorktreesNotIgnored(repoRoot)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(toPath), 0o755); err != nil {
+		return false, fmt.Errorf("failed to create destination directory for '%s': %w", name, err)
+	}
+
+	if err := w.Git.MoveWorktree(fromPath, toPath); err != nil {
+		// Best-effort: remove the destination parent directory MkdirAll just
+		// created above, if git's refusal (e.g. a locked worktree) left it
+		// empty. os.Remove (never RemoveAll) only succeeds on an empty
+		// directory, so this is a safe no-op - never a data-loss risk - when
+		// the directory already held other worktrees, or already existed
+		// before this call. Without this, a failed --to in-repo move leaves
+		// behind the very .claude/worktrees/ directory the warning above
+		// just said isn't gitignored.
+		_ = os.Remove(filepath.Dir(toPath))
+		return false, fmt.Errorf("failed to move worktree '%s': %w", name, err)
+	}
+
+	w.retargetWindowAfterMove(repoSlug, name, toPath)
+
+	return true, nil
+}
+
+// warnIfWorktreesNotIgnored warns (never refuses) when repoRoot's effective
+// .gitignore does not already ignore .claude/worktrees/ - the directory
+// --to in-repo moves a worktree into. devgeta must never edit another repo's
+// .gitignore itself (ADR-0010), so this only prints a suggestion and lets
+// the move proceed regardless. A check-ignore failure (e.g. repoRoot isn't a
+// git repo, which shouldn't happen here but isn't this function's job to
+// diagnose) is tolerated as "can't tell, skip the warning" - best-effort,
+// like the rest of Move's non-fatal warnings.
+func (w *WorktreeManager) warnIfWorktreesNotIgnored(repoRoot string) {
+	ignored, err := w.Git.IsPathIgnored(repoRoot, filepath.Join(".claude", "worktrees"))
+	if err != nil || ignored {
+		return
+	}
+	w.warn(fmt.Sprintf(
+		"%s is not gitignored in %s; add it to .gitignore to keep worktree state out of commits",
+		filepath.Join(".claude", "worktrees"),
+		repoRoot,
+	))
+}
+
+// warn reports msg via WarnFn, falling back to utils.PrintWarning when unset
+// - the same fallback warnRepoRecordFailure already relies on, factored out
+// here since Move needs it for two distinct warnings (gitignore, busy pane).
+func (w *WorktreeManager) warn(msg string) {
+	warnFn := w.WarnFn
+	if warnFn == nil {
+		warnFn = utils.PrintWarning
+	}
+	warnFn(msg)
+}
+
+// idleShellCommands is the allowlist of pane_current_command values treated
+// as "safe to retarget" - a plain interactive shell prompt with nothing
+// running in it. This is deliberately an allowlist of known-idle shells, not
+// a denylist/heuristic for "is an agent running": ADR-0008
+// (docs/decisions/ADR-0008-agent-state-on-every-pane-row.md) documents, from
+// a real live capture, that Claude Code's own pane_current_command reports a
+// bare version string ("2.1.220" - tmux's automatic-rename following the
+// versioned binary directory), not a recognizable process name - so any
+// attempt to detect "an agent is running" by matching a process name is
+// already broken on the shipped installer and would break again on the next
+// release. An allowlist of known-idle shells sidesteps this entirely:
+// anything that isn't a plain shell prompt - an editor, a build, or an
+// agent's odd self-report - is correctly treated as "something is running
+// here," without needing to special-case any one program.
+var idleShellCommands = map[string]bool{
+	"zsh":  true,
+	"bash": true,
+	"fish": true,
+	"sh":   true,
+}
+
+// isIdleShellPane reports whether currentCommand (a pane's
+// #{pane_current_command}) looks like a bare interactive shell prompt - the
+// only case a pane returned by PanesInWindow is safe to `cd` into. Beyond
+// the fixed allowlist above, the basename of $SHELL (the user's own default
+// shell) is also accepted, covering a shell tmux reports under a name this
+// list didn't anticipate.
+func isIdleShellPane(currentCommand string) bool {
+	if idleShellCommands[currentCommand] {
+		return true
+	}
+	if shell := os.Getenv("SHELL"); shell != "" {
+		return filepath.Base(shell) == currentCommand
+	}
+	return false
+}
+
+// retargetWindowAfterMove sends `cd <newPath>` to every pane of the
+// worktree's tmux window - but only if a window exists AND every pane in it
+// is an idle shell. tmux respawn-pane is deliberately never used here: it
+// would kill whatever is running in the pane, including a live agent
+// session, to satisfy a path change - exactly the harm this command exists
+// to prevent (see the cycle's motivating incident: a hand-migrated worktree
+// left a tmux shell pointing at a deleted directory, where an agent could
+// have run git commands against the wrong repo). If even one pane is not an
+// idle shell, NOTHING is sent to ANY pane in the window - a partial
+// retarget would leave a more confusing half-updated window than doing
+// nothing - and a warning names the busy pane(s). A window that doesn't
+// exist at all is silently skipped (nothing to update). Either outcome is
+// reported as a warning (or silence), never an error: the git-level move has
+// already succeeded by the time this runs, and a stale tmux shell is a
+// follow-up inconvenience, never a reason to fail the whole command or roll
+// back the move.
+func (w *WorktreeManager) retargetWindowAfterMove(repoSlug, name, newPath string) {
+	windowName := GetWindowName(repoSlug, name)
+	panes := w.Tmux.PanesInWindow(windowName)
+	if len(panes) == 0 {
+		// No window for this worktree - nothing to retarget.
+		return
+	}
+
+	var busy []string
+	for _, p := range panes {
+		if !isIdleShellPane(p.CurrentCommand) {
+			busy = append(busy, fmt.Sprintf("%s (%s)", p.PaneID, p.CurrentCommand))
+		}
+	}
+	if len(busy) > 0 {
+		w.warn(fmt.Sprintf(
+			"worktree moved, but window %s has a busy pane and was not retargeted (%s); "+
+				"cd to %s manually once idle",
+			windowName, strings.Join(busy, ", "), newPath,
+		))
+		return
+	}
+
+	for _, p := range panes {
+		if err := w.Tmux.SendKeysToPane(p.PaneID, cdCommand(newPath)); err != nil {
+			w.warn(fmt.Sprintf(
+				"worktree moved, but failed to retarget pane %s in window %s: %v",
+				p.PaneID, windowName, err,
+			))
+		}
+	}
+}
+
+// cdCommand builds a `cd` command for tmux send-keys with newPath safely
+// single-quoted via shellSingleQuote (layout.go's existing quoting helper -
+// reused, not duplicated), so a destination containing spaces or shell
+// metacharacters (e.g. a repo root under a directory a user happened to name
+// with a space) still lands as one argument instead of being split by the
+// pane's shell.
+func cdCommand(newPath string) string {
+	return "cd " + shellSingleQuote(newPath)
+}
+
 // repoSlugForWorktree resolves the repo slug that owns a worktree, first trying
 // the current repo (if cwd is inside one) and falling back to a search of the
 // centralized base path so it works from any directory or session.
+//
+// The current-repo check goes through currentWorktreePath (git-verified,
+// checking both location shapes), not worktreePath+os.Stat: the
+// config-derived worktreePath can disagree with where the worktree actually
+// lives (e.g. after `dg wt move` without also changing the global default),
+// which would make this candidate wrongly report "not here" for a worktree
+// that is, falling through to findRepoForWorktree's slower search for no
+// reason - or, worse, for an ambiguous name across repos, resolving to the
+// wrong owner.
 func (w *WorktreeManager) repoSlugForWorktree(name string) string {
 	if repoRoot, err := w.Git.GetRepoRoot(); err == nil {
 		candidate := filepath.Base(repoRoot)
-		if _, statErr := os.Stat(w.worktreePath(candidate, name)); statErr == nil {
+		if _, ok := w.currentWorktreePath(candidate, repoRoot, name); ok {
 			return candidate
 		}
 	}
@@ -709,7 +1417,17 @@ func (w *WorktreeManager) Repair(name string, layout Layout) error {
 		return fmt.Errorf("no worktree '%s' to repair", name)
 	}
 
-	wtPath := w.worktreePath(repoSlug, name)
+	// realWorktreePathOrConfigured, not worktreePath: the worktree may
+	// actually live at the location shape git reports, not the one
+	// currently configured (e.g. after `dg wt move` without also changing
+	// the global default) - see its doc comment. Only when no real
+	// worktree exists at either shape does this fall back to the
+	// config-derived path, matching the pre-existing "directory missing,
+	// prune and tell the user to recreate" behavior below.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 
 	// If directory doesn't exist on disk but git knows about it, prune and error
@@ -792,7 +1510,12 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 	if err := validateLayout(layout); err != nil {
 		return err
 	}
-	wtPath := w.worktreePath(repoSlug, name)
+	// realWorktreePathOrConfigured, not worktreePath - see Repair's identical
+	// comment on why the git-verified real path must be used here.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 		if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr != nil {
@@ -849,7 +1572,17 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		return err
 	}
 
-	wtPath := w.worktreePath(repoSlug, name)
+	// Resolved via realWorktreePathOrConfigured, not the config-derived
+	// worktreePath: the worktree's real location can disagree with what the
+	// CONFIGURED worktree.location computes (e.g. after `dg wt move` without
+	// also changing the global default - the same split-brain
+	// worktreeStateReal's doc comment describes for removeByRepo/Repair).
+	// This function only needs the path, not a full WorktreeState, so it uses
+	// realWorktreePathOrConfigured directly rather than worktreeStateReal.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 
 	session, exists := w.Tmux.WindowSession(windowName)
@@ -1036,15 +1769,29 @@ func (w *WorktreeManager) Prune() error {
 
 // removeByRepo removes a worktree by repo slug and name.
 // Mirrors the same tolerant logic as Remove.
+//
+// Resolves state and path via worktreeStateReal, NOT worktreeState +
+// worktreePath: the worktree's real location can disagree with what the
+// CONFIGURED worktree.location computes (e.g. after `dg wt move` without
+// also changing the global default - a flow this cycle's own migration
+// guide recommends). Before this fix, a worktree moved that way was
+// invisible to this function: WtExists came back false for the real
+// worktree, so a still-live tmux window got killed while the worktree
+// itself was left completely untouched, and the function returned nil
+// (success) either way. state and wtPath below are the SAME git-verified
+// path throughout - used for the dirty check, the window kill, and the
+// actual git/filesystem removal - never a separately-recomputed
+// config-derived guess for any of them.
 func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error {
-	wtPath := w.worktreePath(repoSlug, name)
-	windowName := GetWindowName(repoSlug, name)
-
-	state, err := w.worktreeState(repoSlug, name)
+	state, wtPath, err := w.worktreeStateReal(repoSlug, name)
 	if err != nil {
 		return err
 	}
 
+	// Belt-and-suspenders: state is now resolved against reality (via
+	// currentWorktreePath's git check), so "neither exists" here is a
+	// legitimate no-op, not a false negative caused by a config/reality
+	// mismatch - the case this function used to get wrong.
 	if !state.WtExists && !state.WindowExists {
 		return nil
 	}
@@ -1061,7 +1808,7 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 
 	// Always try to kill the window, even if state check didn't find it
 	// (state check may fail if not in tmux or window detection is unreliable)
-	_ = w.Tmux.KillWindow(windowName)
+	_ = w.Tmux.KillWindow(state.WindowName)
 
 	if state.WtExists {
 		if err := w.Git.RemoveWorktree(wtPath, true, name); err != nil {
@@ -1177,15 +1924,9 @@ func (w *WorktreeManager) recordRepoUsed(repoRoot string) {
 // instead of via New) and always logs it at debug level.
 func (w *WorktreeManager) warnRepoRecordFailure(repoRoot string, err error) {
 	logger.L().Debugw("failed to record recent repo", "repo", repoRoot, "error", err)
-	warn := w.WarnFn
-	if warn == nil {
-		warn = utils.PrintWarning
-	}
-	warn(
-		fmt.Sprintf(
-			"worktree created, but failed to remember repo %s for later reuse: %v",
-			repoRoot,
-			err,
-		),
-	)
+	w.warn(fmt.Sprintf(
+		"worktree created, but failed to remember repo %s for later reuse: %v",
+		repoRoot,
+		err,
+	))
 }

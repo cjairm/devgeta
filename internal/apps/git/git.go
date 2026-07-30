@@ -23,8 +23,10 @@
 package git
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -589,6 +591,57 @@ func (g *Git) RemoveWorktree(path string, deleteBranch bool, branchName string) 
 	}
 
 	return nil
+}
+
+// MoveWorktree relocates a worktree on disk via `git worktree move`.
+// Resolves the main worktree first so the move command doesn't run from
+// within the worktree being relocated. Does not pass --force: git's
+// refusal to move a locked worktree (or one with submodule complications)
+// is the safety net and must reach the caller unchanged. Does not create
+// the destination's parent directory; git requires it to exist and fails
+// clearly if it doesn't.
+func (g *Git) MoveWorktree(from, to string) error {
+	mainWorktree, err := g.GetMainWorktree(from)
+	if err != nil {
+		return fmt.Errorf("cannot resolve main worktree for %s: %w", from, err)
+	}
+
+	if err := g.ExecuteCommandAt(mainWorktree, "worktree", "move", from, to); err != nil {
+		return fmt.Errorf("failed to move worktree from %s to %s: %w", from, to, err)
+	}
+
+	return nil
+}
+
+// IsPathIgnored reports whether relPath (relative to repoRoot) is matched by
+// a .gitignore rule in repoRoot, via `git check-ignore`. That command's exit
+// code carries the answer: 0 means the path IS ignored, 1 means it is NOT (a
+// normal, expected outcome - not a failure), and anything else is a real
+// error (e.g. not a git repository). ExecCommand surfaces a non-zero exit as
+// the raw *exec.ExitError from exec.Cmd.Wait(), so exit 1 is distinguished
+// from a genuine failure by its ExitCode(), not by treating every non-nil
+// error as "not ignored". Used by `dg wt move --to in-repo` to warn (never
+// refuse - devgeta must never edit another repo's .gitignore itself) when
+// the target repo doesn't already ignore its in-repo worktrees directory.
+func (g *Git) IsPathIgnored(repoRoot, relPath string) (bool, error) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Git,
+		Args:    []string{"-C", repoRoot, "check-ignore", "-q", relPath},
+	}
+	_, _, err := g.Base.ExecCommand(execCommand)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, fmt.Errorf(
+		"failed to check gitignore status for %s in %s: %w",
+		relPath,
+		repoRoot,
+		err,
+	)
 }
 
 // GetMainWorktree resolves the main worktree (repo root) path from any

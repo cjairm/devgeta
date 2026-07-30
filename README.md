@@ -190,6 +190,7 @@ dg install --skip databases,desktop
   - `dg wt list` - List all managed worktrees
   - `dg wt remove [name]` - Remove a worktree (fzf picker if name omitted)
   - `dg wt repair <name>` - Recreate the tmux window for an existing worktree
+  - `dg wt move <name>` - Move a worktree between the shared and in-repo locations (alias: `mv`)
   - `dg wt prune` - Remove all managed worktrees
 - `dg ws` (alias: `dg workspace`) - Unified TUI dashboard: repo workspaces (worktrees, circle `●`/`○` marker, expandable, `N trees` badge) and standalone tmux sessions (square `■`/`□` marker) in one flat list (`enter` switch/attach, `d` delete/kill, `s` new session, `n`/`N` new worktree, `/` filter, `q` quit). Also bound to bare `ctrl+t` in tmux.
 - `dg list` (alias: `dg installed`) - Show everything Devgeta has installed, grouped by category

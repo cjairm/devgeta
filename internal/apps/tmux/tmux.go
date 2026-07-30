@@ -333,6 +333,54 @@ func (t *Tmux) PaneStates() []PaneState {
 	return states
 }
 
+// WindowPane holds one pane's identity and current foreground command within
+// a specific tmux window - what PanesInWindow needs to decide whether a
+// window is safe to retarget to a new path (see its doc comment).
+type WindowPane struct {
+	PaneID         string
+	CurrentCommand string // #{pane_current_command}
+}
+
+// PanesInWindow returns every pane belonging to windowName (searched across
+// every session on the server, matching WindowSession's "search everywhere"
+// semantics) with its current foreground command, from a single list-panes
+// -a scan - modeled directly on PaneStates()/SessionWindows()'s existing
+// single-scan style, not one exec per pane. Returns nil when no server is
+// reachable, the query fails, or no pane belongs to windowName (including
+// the common "no window exists for this worktree" case - callers must treat
+// nil as "nothing to do", not an error).
+func (t *Tmux) PanesInWindow(windowName string) []WindowPane {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args: []string{
+			"list-panes",
+			"-a",
+			"-F",
+			"#{window_name}\t#{pane_id}\t#{pane_current_command}",
+		},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return nil
+	}
+	var panes []WindowPane
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		parts := strings.SplitN(scanner.Text(), "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		if strings.TrimSpace(parts[0]) != windowName {
+			continue
+		}
+		panes = append(panes, WindowPane{
+			PaneID:         strings.TrimSpace(parts[1]),
+			CurrentCommand: strings.TrimSpace(parts[2]),
+		})
+	}
+	return panes
+}
+
 // ClearAgentStateForWindow unsets @dg_agent_state on every pane belonging to
 // the named window, across all sessions (mirroring WindowSession's "search
 // every session" semantics - a window name is unique in practice, but this

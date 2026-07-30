@@ -244,14 +244,23 @@ func TestRepoCandidates(t *testing.T) {
 		cleanupPaths := testutil.SetupIsolatedPaths(t)
 		defer cleanupPaths()
 		failingLookPath(t)
+		// cwd must NOT resolve to a repo, or cursorRepoRoot's own group walk
+		// (which tries the cwd group before the shared-root group, per
+		// knownRepoAnchorGroups' order) would short-circuit on cwd and this
+		// test would stop exercising the shared-root path it's named for.
+		t.Chdir(t.TempDir())
 
 		wm, mockGitBase, _, mockBase := newRecordingWM()
 
 		cursorRoot := filepath.Join(t.TempDir(), "cursor-repo")
 		porcelain := "worktree " + cursorRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n"
-		mockGitBase.SetExecCommandResult(porcelain, "", nil)
-
-		repoSlug := "cursor-slug"
+		// cursorRepoRoot's new group walk now verifies the resolved main
+		// root's basename against the target slug (rather than trusting the
+		// shared-root directory name as-is), so the slug used here must
+		// equal cursorRoot's actual basename - exactly the invariant real
+		// usage already guarantees, since create() names the shared-root
+		// directory after the repo's own basename.
+		repoSlug := filepath.Base(cursorRoot)
 		wtDir := filepath.Join(GetWorktreeBasePath(), repoSlug, "some-worktree")
 		if err := os.MkdirAll(wtDir, 0o755); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -261,6 +270,23 @@ func TestRepoCandidates(t *testing.T) {
 				t.Logf("cleanup: %v", err)
 			}
 		})
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // RepoCandidates' own cwdRepoRoot()
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cursorRepoRoot's internal cwdRepoRoot()
+			commands.ExecCommandResult(
+				porcelain,
+				"",
+				nil,
+			), // shared-root anchor (wtDir)
+		)
 
 		candidates, err := wm.RepoCandidates(repoSlug)
 		if err != nil {
@@ -291,16 +317,25 @@ func TestRepoCandidates(t *testing.T) {
 		}
 
 		cursorRoot := filepath.Join(t.TempDir(), "cursor-repo")
+		cwdPorcelain := "worktree " + actualCwd + "\nHEAD abc123\nbranch refs/heads/main\n\n"
+		cursorPorcelain := "worktree " + cursorRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n"
+		// cursorRepoRoot's own group walk now verifies the resolved main
+		// root's basename against the target slug, so repoSlug must equal
+		// cursorRoot's actual basename (real usage already guarantees this:
+		// create() names the shared-root directory after the repo's own
+		// basename). Four calls total: RepoCandidates' own cwdRepoRoot()
+		// (resolves to actualCwd), cursorRepoRoot's internal cwdRepoRoot()
+		// (resolves to actualCwd again but doesn't match repoSlug, so the
+		// walk moves to the next group), then the shared-root group's
+		// anchor (resolves to cursorRoot, which does match).
 		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult(
-				"worktree "+actualCwd+"\nHEAD abc123\nbranch refs/heads/main\n\n", "", nil,
-			), // GetMainWorktree(cwd)
-			commands.ExecCommandResult(
-				"worktree "+cursorRoot+"\nHEAD abc123\nbranch refs/heads/main\n\n", "", nil,
-			), // GetMainWorktree(cursor worktree dir)
+			commands.ExecCommandResult(cwdPorcelain, "", nil),
+			commands.ExecCommandResult(cwdPorcelain, "", nil),
+			commands.ExecCommandResult(cwdPorcelain, "", nil),
+			commands.ExecCommandResult(cursorPorcelain, "", nil),
 		)
 
-		repoSlug := "cwd-slug"
+		repoSlug := filepath.Base(cursorRoot)
 		wtDir := filepath.Join(GetWorktreeBasePath(), repoSlug, "some-worktree")
 		if err := os.MkdirAll(wtDir, 0o755); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -571,6 +606,11 @@ func TestRepoCandidates(t *testing.T) {
 		cleanupPaths := testutil.SetupIsolatedPaths(t)
 		defer cleanupPaths()
 		okLookPath(t)
+		// cwd must NOT resolve to a repo, or cursorRepoRoot's own group walk
+		// (which tries the cwd group before the shared-root group, per
+		// knownRepoAnchorGroups' order) would short-circuit on cwd and this
+		// test would stop exercising the shared-root path it's named for.
+		t.Chdir(t.TempDir())
 
 		wm, mockGitBase, _, mockBase := newRecordingWM()
 
@@ -579,10 +619,13 @@ func TestRepoCandidates(t *testing.T) {
 		canonicalShared := config.CanonicalRepoPath(shared)
 		canonicalOnlyRecent := config.CanonicalRepoPath(onlyRecent)
 
-		// Cursor repo resolves to `shared`.
+		// Cursor repo resolves to `shared`. cursorRepoRoot's group walk
+		// verifies the resolved main root's basename against the target
+		// slug, so repoSlug must equal `shared`'s actual basename (real
+		// usage already guarantees this: create() names the shared-root
+		// directory after the repo's own basename).
 		porcelain := "worktree " + shared + "\nHEAD abc123\nbranch refs/heads/main\n\n"
-		mockGitBase.SetExecCommandResult(porcelain, "", nil)
-		repoSlug := "dedup-slug"
+		repoSlug := filepath.Base(shared)
 		wtDir := filepath.Join(GetWorktreeBasePath(), repoSlug, "some-worktree")
 		if err := os.MkdirAll(wtDir, 0o755); err != nil {
 			t.Fatalf("setup: %v", err)
@@ -592,6 +635,37 @@ func TestRepoCandidates(t *testing.T) {
 				t.Logf("cleanup: %v", err)
 			}
 		})
+		// `shared` itself is never created on disk (only wtDir is), so
+		// PrunedRecentRepos() drops the shared recent-repo entry (its Path
+		// fails os.Stat) before knownRepoAnchorGroups ever sees it - the only
+		// recent-repos group cursorRepoRoot's walk actually tries is
+		// onlyRecent. Four calls total: RepoCandidates' own cwdRepoRoot()
+		// (cwd isn't a repo), cursorRepoRoot's internal cwdRepoRoot() (same),
+		// the recent-repos group's anchor (onlyRecent, not a repo, so the
+		// walk moves on), then the shared-root group's anchor (wtDir, which
+		// resolves to `shared` and matches repoSlug).
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // RepoCandidates' own cwdRepoRoot()
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cursorRepoRoot's internal cwdRepoRoot()
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // recent-repos group anchor (onlyRecent)
+			commands.ExecCommandResult(
+				porcelain,
+				"",
+				nil,
+			), // shared-root anchor (wtDir)
+		)
 
 		// Recents contain the same repo (as `shared`, unresolved of any
 		// worktree) plus one repo only recents knows about.
@@ -624,6 +698,173 @@ func TestRepoCandidates(t *testing.T) {
 			}
 		}
 	})
+
+	// The caller-level proof that cursorRepoRoot's fix actually reaches
+	// RepoCandidates: an in-repo repo known only via the recent-repos store
+	// (zero linked worktrees, so it has no shared-root directory at all) must
+	// still be offered as a candidate.
+	t.Run(
+		"in-repo cursor repo with zero linked worktrees is offered as a candidate",
+		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+			failingLookPath(t)
+			t.Chdir(t.TempDir())
+
+			repoRoot := t.TempDir()
+			slug := filepath.Base(repoRoot)
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+				{Path: repoRoot, LastUsed: time.Now()},
+			})
+
+			wm, mockGitBase, _, _ := newRecordingWM()
+			notFound := commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			)
+			mockGitBase.SetExecCommandResults(
+				notFound, // RepoCandidates' own cwdRepoRoot()
+				notFound, // cursorRepoRoot's internal cwdRepoRoot()
+				commands.ExecCommandResult(
+					worktreePorcelain(repoRoot),
+					"",
+					nil,
+				), // recent-repos anchor, main only
+			)
+
+			candidates, err := wm.RepoCandidates(slug)
+			if err != nil {
+				t.Fatalf("RepoCandidates failed: %v", err)
+			}
+			want := config.CanonicalRepoPath(repoRoot)
+			if len(candidates) != 1 || candidates[0] != want {
+				t.Fatalf("expected [%q], got %+v", want, candidates)
+			}
+		},
+	)
+}
+
+// TestCursorRepoRoot exercises cursorRepoRoot directly: it must resolve a
+// repo's root by slug via its own knownRepoAnchorGroups() walk, not
+// enumerateWorktrees() (which would incorrectly report "no root" for a repo
+// with zero linked worktrees - see its doc comment), and it must still
+// resolve a shared-root repo's root exactly as before.
+func TestCursorRepoRoot(t *testing.T) {
+	t.Run("empty slug returns empty string without querying anything", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+
+		wm, mockGitBase, _, _ := newRecordingWM()
+		if got := wm.cursorRepoRoot(""); got != "" {
+			t.Errorf("expected empty string, got %q", got)
+		}
+		if got := mockGitBase.GetExecCommandCallCount(); got != 0 {
+			t.Errorf("expected no git calls for an empty slug, got %d", got)
+		}
+	})
+
+	t.Run("resolves an in-repo repo's root by slug, zero linked worktrees", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		t.Chdir(t.TempDir())
+
+		repoRoot := t.TempDir()
+		slug := filepath.Base(repoRoot)
+		setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+			{Path: repoRoot, LastUsed: time.Now()},
+		})
+
+		wm, mockGitBase, _, _ := newRecordingWM()
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			// recent-repos anchor: main worktree only, no linked worktrees -
+			// the exact case enumerateWorktrees() would (correctly per
+			// List()'s contract) produce zero rows for, yet cursorRepoRoot
+			// must still resolve it.
+			commands.ExecCommandResult(worktreePorcelain(repoRoot), "", nil),
+		)
+
+		if got := wm.cursorRepoRoot(slug); got != repoRoot {
+			t.Errorf("expected %q, got %q", repoRoot, got)
+		}
+	})
+
+	t.Run("still resolves a shared-root repo's root", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		t.Chdir(t.TempDir())
+
+		mainRoot := filepath.Join(t.TempDir(), "shared-slug-repo")
+		slug := filepath.Base(mainRoot)
+		wtDir := filepath.Join(GetWorktreeBasePath(), slug, "some-worktree")
+		if err := os.MkdirAll(wtDir, 0o755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := os.RemoveAll(filepath.Join(GetWorktreeBasePath(), slug)); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		})
+
+		wm, mockGitBase, _, _ := newRecordingWM()
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRoot),
+				"",
+				nil,
+			), // shared-root anchor
+		)
+
+		if got := wm.cursorRepoRoot(slug); got != mainRoot {
+			t.Errorf("expected %q, got %q", mainRoot, got)
+		}
+	})
+
+	t.Run(
+		"a group whose resolved root doesn't match the slug is skipped without stopping the walk",
+		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+			t.Chdir(t.TempDir())
+
+			otherRoot := t.TempDir()
+			wantRoot := t.TempDir()
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+				{Path: otherRoot, LastUsed: time.Now()},
+				{Path: wantRoot, LastUsed: time.Now().Add(-time.Hour)},
+			})
+
+			wm, mockGitBase, _, _ := newRecordingWM()
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					worktreePorcelain(otherRoot), "", nil,
+				), // recent-repos group 1: resolves, but not the target slug
+				commands.ExecCommandResult(
+					worktreePorcelain(wantRoot), "", nil,
+				), // recent-repos group 2: the target
+			)
+
+			slug := filepath.Base(wantRoot)
+			if got := wm.cursorRepoRoot(slug); got != wantRoot {
+				t.Errorf("expected %q, got %q", wantRoot, got)
+			}
+		},
+	)
 }
 
 func TestValidateRepoPath(t *testing.T) {
