@@ -98,28 +98,47 @@ func (w *WorktreeManager) cwdRepoRoot() string {
 	return root
 }
 
-// cursorRepoRoot resolves the root of the repo that owns cursorRepoSlug's
-// worktrees, by reading any one worktree directory under the slug (all
-// worktrees under a slug belong to the same repo) and resolving its main
-// worktree root via git.GetMainWorktree. Returns "" (no error) when the slug
-// is empty or has no worktrees on disk — the cursor repo is simply skipped as
-// a candidate source in that case, rather than treated as a failure.
+// cursorRepoRoot resolves the root of the repo whose slug is cursorRepoSlug.
+// Returns "" (no error) when the slug is empty or unresolvable — the cursor
+// repo is simply skipped as a candidate source in that case, rather than
+// treated as a failure.
+//
+// This answers a different question than enumerateWorktrees() (worktree.go)
+// can answer: "what is this specific slug's root", independent of whether
+// that repo currently has *any* linked worktrees. A repo whose only worktree
+// is its own main checkout (zero linked worktrees) produces zero rows from
+// enumerateWorktrees() — correctly, per List()'s contract — but
+// cursorRepoRoot must still be able to resolve its root. So this walks
+// knownRepoAnchorGroups() itself, checking each group's first
+// successfully-resolved main root against the target slug, rather than
+// reusing enumerateWorktrees()'s row output. It mirrors List()'s own
+// group/anchor/early-exit shape (same reasons: don't let a husk hide a real
+// sibling, don't requery a group once its repo is known), just applied to
+// "does this group's repo match the slug I want" instead of "collect every
+// worktree row".
 func (w *WorktreeManager) cursorRepoRoot(cursorRepoSlug string) string {
 	if cursorRepoSlug == "" {
 		return ""
 	}
-	repoDir := filepath.Join(GetWorktreeBasePath(), cursorRepoSlug)
-	entries, err := os.ReadDir(repoDir)
-	if err != nil {
-		return ""
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		wtPath := filepath.Join(repoDir, e.Name())
-		if root, err := w.Git.GetMainWorktree(wtPath); err == nil {
-			return root
+	for _, group := range w.knownRepoAnchorGroups() {
+		for _, anchor := range group {
+			worktrees, err := w.Git.ListWorktreesAt(anchor)
+			if err != nil || len(worktrees) == 0 {
+				// Not a real worktree (husk, deleted, never existed) - try
+				// the next anchor in this same group, if any.
+				continue
+			}
+			// git worktree list --porcelain always lists the main worktree
+			// first - the same stable git guarantee enumerateWorktrees and
+			// GetMainWorktree rely on.
+			mainRoot := worktrees[0].Path
+			if filepath.Base(mainRoot) == cursorRepoSlug {
+				return mainRoot
+			}
+			// This group's repo resolved but isn't the one we want - move to
+			// the next group, no need to try its remaining anchors (they'd
+			// only resolve to the same repo).
+			break
 		}
 	}
 	return ""

@@ -684,30 +684,25 @@ func (w *WorktreeManager) knownRepoAnchorGroups() []anchorGroup {
 	return groups
 }
 
-// List returns all worktrees with their window status across all repos. It
-// asks git, rather than scanning the shared-root directory: for each known
-// repo anchor group (see knownRepoAnchorGroups), anchors in the group are
-// tried in order and the first successful ListWorktreesAt call returns that
-// repo's whole worktree set (path and branch) - sibling anchors in the same
-// group are only tried as a fallback when an earlier one fails (e.g. a
-// husk). So this costs one exec per known repo in the common case, not one
-// per worktree - and, unlike a directory walk, a husk directory git does not
-// report as a worktree can never appear (see ADR-0010,
+// enumerateWorktrees resolves every worktree across every known repo -
+// group->anchor->ListWorktreesAt->dedup-by-main-root chain, exactly as
+// documented on knownRepoAnchorGroups: for each known repo anchor group,
+// anchors in the group are tried in order and the first successful
+// ListWorktreesAt call returns that repo's whole worktree set (path and
+// branch) - sibling anchors in the same group are only tried as a fallback
+// when an earlier one fails (e.g. a husk). So this costs one exec per known
+// repo in the common case, not one per worktree - and, unlike a directory
+// walk, a husk directory git does not report as a worktree can never appear
+// (see ADR-0010,
 // docs/decisions/ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md).
-func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
-	// One list-panes -a scan for the whole dashboard refresh, instead of a
-	// WindowSession() call per worktree - each of which ran its own fresh
-	// list-windows -a scan (N tmux execs per 3-second refresh). Indexed by
-	// window name: a window's presence as a key is the direct equivalent of
-	// "does a window with this name exist" (PaneStates enumerates every pane
-	// on the server, and a window with zero panes cannot exist in tmux), and
-	// its slice of pane states is what aggregateAgentState reduces to
-	// AgentState. See ADR-0005.
-	paneStatesByWindow := make(map[string][]string)
-	for _, ps := range w.Tmux.PaneStates() {
-		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
-	}
-
+//
+// Only Name/Path/Branch/Repo are populated on the returned WorktreeStatus
+// values; TmuxWindow/WindowActive/AgentState are left at their zero values -
+// no tmux exec happens in this function at all. This is the single
+// enumeration implementation List() (the tmux-aware view) and
+// findRepoForWorktree (a tmux-agnostic search) both build on, instead of each
+// walking git separately.
+func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
 	seenRoots := make(map[string]bool)
 	statuses := []WorktreeStatus{}
 	for _, group := range w.knownRepoAnchorGroups() {
@@ -747,19 +742,11 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 				// path shapes put the flattened name as the final path segment,
 				// so no location branching is needed here.
 				name := filepath.Base(wt.Path)
-				windowName := GetWindowName(repoSlug, name)
-				// Comma-ok reports key presence, not slice non-emptiness: a
-				// window in the index always has at least one pane state
-				// appended above, so ok alone is the "window exists" signal.
-				states, windowActive := paneStatesByWindow[windowName]
 				statuses = append(statuses, WorktreeStatus{
-					Name:         name,
-					Path:         wt.Path,
-					Branch:       wt.Branch,
-					TmuxWindow:   windowName,
-					WindowActive: windowActive,
-					AgentState:   aggregateAgentState(states),
-					Repo:         repoSlug,
+					Name:   name,
+					Path:   wt.Path,
+					Branch: wt.Branch,
+					Repo:   repoSlug,
 				})
 			}
 
@@ -768,6 +755,37 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 			// there's no reason to query sibling anchors in the same group.
 			break
 		}
+	}
+
+	return statuses
+}
+
+// List returns all worktrees with their window status across all repos.
+// enumerateWorktrees does all the git-backed resolution (see its doc
+// comment); List's own job is layering tmux state on top via a single
+// PaneStates() scan, instead of a WindowSession() call per worktree - each of
+// which ran its own fresh list-windows -a scan (N tmux execs per 3-second
+// refresh). paneStatesByWindow is indexed by window name: a window's
+// presence as a key is the direct equivalent of "does a window with this
+// name exist" (PaneStates enumerates every pane on the server, and a window
+// with zero panes cannot exist in tmux), and its slice of pane states is
+// what aggregateAgentState reduces to AgentState. See ADR-0005.
+func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
+	paneStatesByWindow := make(map[string][]string)
+	for _, ps := range w.Tmux.PaneStates() {
+		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
+	}
+
+	statuses := w.enumerateWorktrees()
+	for i := range statuses {
+		windowName := GetWindowName(statuses[i].Repo, statuses[i].Name)
+		// Comma-ok reports key presence, not slice non-emptiness: a window
+		// in the index always has at least one pane state appended above, so
+		// ok alone is the "window exists" signal.
+		states, windowActive := paneStatesByWindow[windowName]
+		statuses[i].TmuxWindow = windowName
+		statuses[i].WindowActive = windowActive
+		statuses[i].AgentState = aggregateAgentState(states)
 	}
 
 	return statuses, nil
@@ -821,26 +839,38 @@ func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
 	return statuses, nil
 }
 
-// findRepoForWorktree searches the centralized base path for a worktree by name
-// and returns the repo slug that owns it. Returns "" if not found or ambiguous.
+// findRepoForWorktree searches every known repo (via enumerateWorktrees, the
+// same git-backed enumeration List() uses - not a shared-root directory
+// scan, which could never see an in-repo-located worktree) for one named
+// name, and returns the repo slug that owns it. Returns "" if not found or
+// ambiguous (2+ distinct repos have a worktree by this name): Remove and
+// repoSlugForWorktree both treat "" as "cannot safely act", so this must
+// never loosen to "first match wins".
 func (w *WorktreeManager) findRepoForWorktree(name string) string {
-	entries, err := os.ReadDir(GetWorktreeBasePath())
-	if err != nil {
-		return ""
-	}
+	flat := FlattenName(name)
 	var matches []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		if _, err := os.Stat(
-			filepath.Join(GetWorktreeBasePath(), e.Name(), FlattenName(name)),
-		); err == nil {
-			matches = append(matches, e.Name())
+	for _, wt := range w.enumerateWorktrees() {
+		if wt.Name == flat {
+			matches = append(matches, wt.Repo)
 		}
 	}
-	if len(matches) == 1 {
-		return matches[0]
+
+	// Dedupe to distinct repo slugs before applying the exactly-one-match
+	// rule below: the same repo can appear twice here if it has two
+	// worktrees that happen to share this flattened name (e.g. one
+	// shared-root, one in-repo, left over from a location change) - that's
+	// one repo owning the name, not an ambiguity between two repos.
+	seen := make(map[string]bool, len(matches))
+	var distinct []string
+	for _, m := range matches {
+		if !seen[m] {
+			seen[m] = true
+			distinct = append(distinct, m)
+		}
+	}
+
+	if len(distinct) == 1 {
+		return distinct[0]
 	}
 	return ""
 }

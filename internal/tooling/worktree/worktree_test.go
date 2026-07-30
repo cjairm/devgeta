@@ -825,6 +825,210 @@ func createWorktreeDir(t *testing.T, repoSlug, name string) string {
 	return wtPath
 }
 
+// TestEnumerateWorktrees exercises the function List() and
+// findRepoForWorktree now share directly - Step 4's git-exec-count
+// regression test (see TestList's "shared-root slug with 2 worktrees costs
+// exactly one ListWorktreesAt call" above), re-run directly against the
+// extracted function itself rather than only observed indirectly through
+// List(), to prove the extraction didn't reintroduce one exec per worktree.
+func TestEnumerateWorktrees(t *testing.T) {
+	t.Run("costs exactly one ListWorktreesAt call per repo, not per worktree", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+
+		mainRoot := filepath.Join(t.TempDir(), "sharedslug")
+		firstPath := createWorktreeDir(t, "sharedslug", "aa-first")
+		secondPath := createWorktreeDir(t, "sharedslug", "bb-second")
+
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(
+					mainRoot,
+					[2]string{firstPath, "first-branch"},
+					[2]string{secondPath, "second-branch"},
+				),
+				"", nil,
+			), // aa-first anchor: succeeds and already has both worktrees
+		)
+
+		statuses := wm.enumerateWorktrees()
+		if len(statuses) != 2 {
+			t.Fatalf("expected 2 statuses, got %d: %+v", len(statuses), statuses)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, firstPath); got != 1 {
+			t.Errorf("expected exactly 1 call for anchor %q, got %d", firstPath, got)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, secondPath); got != 0 {
+			t.Errorf(
+				"expected 0 calls for sibling anchor %q once the first anchor in the group succeeded, got %d",
+				secondPath,
+				got,
+			)
+		}
+		if got := mockGitBase.GetExecCommandCallCount(); got != 2 {
+			t.Errorf("expected exactly 2 total git exec calls, got %d", got)
+		}
+	})
+
+	t.Run("leaves TmuxWindow/WindowActive/AgentState at their zero values", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+
+		mainRoot := filepath.Join(t.TempDir(), "reposlug")
+		wtPath := createWorktreeDir(t, "reposlug", "featx")
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRoot, [2]string{wtPath, "feature-x"}), "", nil,
+			),
+		)
+
+		statuses := wm.enumerateWorktrees()
+		if len(statuses) != 1 {
+			t.Fatalf("expected 1 status, got %d: %+v", len(statuses), statuses)
+		}
+		s := statuses[0]
+		if s.TmuxWindow != "" || s.WindowActive || s.AgentState != "" {
+			t.Errorf(
+				"expected zero-value tmux fields (List fills these in, not enumerateWorktrees), got TmuxWindow=%q WindowActive=%v AgentState=%q",
+				s.TmuxWindow,
+				s.WindowActive,
+				s.AgentState,
+			)
+		}
+	})
+}
+
+// TestFindRepoForWorktree exercises findRepoForWorktree directly:
+// findRepoForWorktree must resolve a worktree name to its owning repo slug
+// via enumerateWorktrees - the same git-backed enumeration List() uses, not
+// a shared-root-only directory scan (which could never see an
+// in-repo-located worktree at all - the bug this step fixes) - and must
+// preserve the exactly-one-match contract Remove and repoSlugForWorktree
+// both depend on to act safely.
+func TestFindRepoForWorktree(t *testing.T) {
+	t.Run("finds an in-repo-located worktree with no shared-root entry at all", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+
+		repoRoot := t.TempDir()
+		wtPath := inRepoWorktreePath(repoRoot, "irepofeat")
+		setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+			{Path: repoRoot, LastUsed: time.Now()},
+		})
+
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(repoRoot, [2]string{wtPath, "irepo-branch"}), "", nil,
+			), // recent-repos anchor
+		)
+
+		want := filepath.Base(repoRoot)
+		if got := wm.findRepoForWorktree("irepofeat"); got != want {
+			t.Errorf("expected %q, got %q", want, got)
+		}
+	})
+
+	t.Run("returns empty string for zero matches", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+
+		if got := wm.findRepoForWorktree("does-not-exist"); got != "" {
+			t.Errorf("expected empty string for zero matches, got %q", got)
+		}
+	})
+
+	t.Run(
+		"returns empty string for 2+ matches across different repos (ambiguous)",
+		func(t *testing.T) {
+			wm, mockGitBase, _ := newListTestWM(t)
+			t.Chdir(t.TempDir())
+
+			repoA := t.TempDir()
+			repoB := t.TempDir()
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+				{Path: repoA, LastUsed: time.Now()},
+				{Path: repoB, LastUsed: time.Now().Add(-time.Hour)},
+			})
+
+			wtA := inRepoWorktreePath(repoA, "dupfeat")
+			wtB := inRepoWorktreePath(repoB, "dupfeat")
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					worktreePorcelain(repoA, [2]string{wtA, "a-branch"}), "", nil,
+				), // repoA anchor
+				commands.ExecCommandResult(
+					worktreePorcelain(repoB, [2]string{wtB, "b-branch"}), "", nil,
+				), // repoB anchor
+			)
+
+			if got := wm.findRepoForWorktree("dupfeat"); got != "" {
+				t.Errorf("expected empty string for an ambiguous match across 2 repos, got %q", got)
+			}
+		},
+	)
+
+	t.Run(
+		"dedupes two matching worktrees under the same repo, does not miscount as ambiguous",
+		func(t *testing.T) {
+			wm, mockGitBase, _ := newListTestWM(t)
+			t.Chdir(t.TempDir())
+
+			repoRoot := t.TempDir()
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+				{Path: repoRoot, LastUsed: time.Now()},
+			})
+
+			// Two worktrees under the SAME repo happen to share a flattened
+			// name - e.g. left over from a location change (one created
+			// in-repo, one previously created shared-root, neither ever
+			// removed) - both ending in the same final path segment.
+			inRepoWt := inRepoWorktreePath(repoRoot, "foo")
+			sharedWt := sharedWorktreePath(filepath.Base(repoRoot), "foo")
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					worktreePorcelain(
+						repoRoot,
+						[2]string{inRepoWt, "in-repo-branch"},
+						[2]string{sharedWt, "shared-branch"},
+					),
+					"", nil,
+				), // recent-repos anchor: the repo has both entries
+			)
+
+			want := filepath.Base(repoRoot)
+			if got := wm.findRepoForWorktree("foo"); got != want {
+				t.Errorf("expected %q (one repo, not ambiguous), got %q", want, got)
+			}
+		},
+	)
+}
+
 // TestAggregateAgentState exercises the pure aggregation function directly
 // per ADR-0005's precedence: blocked > error > idle > busy > (no agent).
 // Ties and unrecognized values must fall back to "no agent" rank rather than
@@ -1432,6 +1636,90 @@ func TestRemoveByRepoHonorsLocation(t *testing.T) {
 	}
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Error("expected the in-repo worktree directory to be removed")
+	}
+}
+
+// TestRemoveFindsInRepoWorktreeViaFallback proves Remove's search fallback
+// (findRepoForWorktree) can locate and remove a worktree that only exists at
+// an in-repo path, when cwd is not inside the owning repo - the specific bug
+// Step 5 fixes: findRepoForWorktree previously only ever scanned the
+// shared-root directory, so it could never see an in-repo-located worktree
+// at all. Proven end-to-end through Remove itself, not just inferred from
+// findRepoForWorktree's own unit tests.
+func TestRemoveFindsInRepoWorktreeViaFallback(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	t.Chdir(t.TempDir()) // cwd is NOT the owning repo, forcing the fallback
+
+	repoRoot := t.TempDir()
+	name := "feature-a"
+	setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+		{Path: repoRoot, LastUsed: time.Now()},
+	})
+
+	wtPath := inRepoWorktreePath(repoRoot, name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	mockGitBase := commands.NewMockBaseCommand()
+	notFound := commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+	mockGitBase.SetExecCommandResults(
+		notFound, // 1: Remove's own GetRepoRoot (not in a repo)
+		notFound, // 2: cwdRepoRoot's GetMainWorktree (cwd isn't a repo either)
+		commands.ExecCommandResult(
+			worktreePorcelain(repoRoot, [2]string{wtPath, "feature-a-branch"}), "", nil,
+		), // 3: recent-repos anchor - the repo, found via enumerateWorktrees
+		// 4+: repeats "not found" for removeByRepo's own resolveRepoRoot
+		// calls and RemoveWorktree's GetMainWorktree call - all "not in a
+		// repo", forcing resolution via the recent-repos store and the
+		// os.RemoveAll fallback, same as TestRemoveByRepoHonorsLocation.
+		notFound,
+	)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.Remove(name, true); err != nil {
+		t.Fatalf("Remove failed: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Error("expected the in-repo worktree directory to be removed")
+	}
+}
+
+// TestRepoSlugForWorktreeFindsInRepoWorktreeViaFallback proves
+// repoSlugForWorktree's fallback (findRepoForWorktree) resolves an
+// in-repo-located worktree's owning repo slug when cwd isn't inside that
+// repo - the resolution path Repair relies on - exercised directly here
+// rather than only inferred from findRepoForWorktree's own tests.
+func TestRepoSlugForWorktreeFindsInRepoWorktreeViaFallback(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	t.Chdir(t.TempDir())
+
+	repoRoot := t.TempDir()
+	name := "feature-b"
+	setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+		{Path: repoRoot, LastUsed: time.Now()},
+	})
+	wtPath := inRepoWorktreePath(repoRoot, name)
+
+	mockGitBase := commands.NewMockBaseCommand()
+	notFound := commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+	mockGitBase.SetExecCommandResults(
+		notFound, // 1: repoSlugForWorktree's own GetRepoRoot
+		notFound, // 2: cwdRepoRoot's GetMainWorktree
+		commands.ExecCommandResult(
+			worktreePorcelain(repoRoot, [2]string{wtPath, "feature-b-branch"}), "", nil,
+		), // 3: recent-repos anchor
+	)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	want := filepath.Base(repoRoot)
+	if got := wm.repoSlugForWorktree(name); got != want {
+		t.Errorf("expected %q, got %q", want, got)
 	}
 }
 
