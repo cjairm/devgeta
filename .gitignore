@@ -43,10 +43,8 @@ Icon?
 devgeta-darwin-*
 devgeta-linux-*
 
-# Claude Code worktrees (legacy)
-.claude/worktrees/
-
-# Claude Code worktrees (legacy)
+# Claude Code worktrees — also where a v1->v2 layout migration puts devgeta's
+# (see docs/migrations/v1-to-v2.md; that guide is still a draft)
 .claude/worktrees/
 
 # Development worktrees (superpowers)

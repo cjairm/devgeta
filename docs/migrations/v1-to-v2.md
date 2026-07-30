@@ -125,7 +125,17 @@ git -C <your-repo> worktree list
 
 Git is the source of truth here and should show the new path.
 
-`dg wt list` will **not** show it — see the status note at the top of this file.
+`dg wt list` will **not** show it correctly — see the status note at the top of
+this file. Both shapes of wrong were confirmed by actually running this:
+
+- The worktree disappears from `dg wt list` and `dg ws` entirely, or
+- it shows as a **phantom row with an empty branch column**, if anything
+  git-ignored was left behind in the old directory (an empty `.superpowers/`
+  scratch dir is enough). `List()` enumerates _directories_ under the shared
+  root, so a leftover still registers as a worktree it can no longer read.
+
+Your tmux window also ends up pointing somewhere wrong — see "If something goes
+wrong" below; that section understated this.
 
 ### 5. Ignore the new folder
 
@@ -137,6 +147,21 @@ untracked files in your own repo:
 ```
 
 Skip only if the line is already there.
+
+### 6. There is no step 6, and that is the whole problem
+
+Nothing above makes devgeta _use_ the new location going forward. The path is
+hard-coded (`worktree.go:132` and `:137`), so once you migrate you are in a split
+layout permanently: the worktrees you moved sit at the new path, while every
+`dg wt create` and every `n`/`N` in `dg ws` keeps creating at the old shared root.
+`dg wt remove`, `dg wt repair`, and `dg wt prune` also stop working on anything
+you moved — `repair` cannot rebuild a moved worktree's tmux window, so a window
+broken by step 3 has to be fixed by hand.
+
+The setting that would close this does not exist. `dg config` (v1.6.0) is the
+mechanism it would use, but no layout key is registered, so there is nothing to
+set. Until that lands, this migration is a one-way trip into a split layout, and
+that — more than any individual step below — is why this guide is not usable.
 
 ## If something goes wrong
 
