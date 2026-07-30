@@ -1284,6 +1284,102 @@ func TestRemoveWorktree(t *testing.T) {
 	})
 }
 
+func TestMoveWorktree(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	t.Run("successful move runs from the main worktree", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"worktree /main/repo\nHEAD abc123\nbranch refs/heads/main\n",
+			"",
+			nil,
+		)
+
+		if err := app.MoveWorktree("/old/path", "/new/path"); err != nil {
+			t.Fatalf("MoveWorktree failed: %v", err)
+		}
+		if mockApp.Base.GetExecCommandCallCount() != 2 {
+			t.Fatalf("Expected 2 calls, got %d", mockApp.Base.GetExecCommandCallCount())
+		}
+
+		// First call: getMainWorktree, resolved from the source path
+		firstCall := mockApp.Base.ExecCommandCalls[0]
+		expectedFirst := []string{"-C", "/old/path", "worktree", "list", "--porcelain"}
+		if len(firstCall.Args) != len(expectedFirst) {
+			t.Fatalf(
+				"Expected %d args for first call, got %d",
+				len(expectedFirst),
+				len(firstCall.Args),
+			)
+		}
+
+		// Second call: worktree move, executed from the main worktree, not /old/path
+		secondCall := mockApp.Base.ExecCommandCalls[1]
+		expectedSecond := []string{"-C", "/main/repo", "worktree", "move", "/old/path", "/new/path"}
+		if len(secondCall.Args) != len(expectedSecond) {
+			t.Fatalf(
+				"Expected %d args for second call, got %d: %v",
+				len(expectedSecond),
+				len(secondCall.Args),
+				secondCall.Args,
+			)
+		}
+		for i, arg := range expectedSecond {
+			if secondCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, secondCall.Args[i])
+			}
+		}
+	})
+
+	t.Run("GetMainWorktree failure aborts before any move attempt", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"",
+			"fatal: not a git repository",
+			fmt.Errorf("not a repo"),
+		)
+
+		err := app.MoveWorktree("/old/path", "/new/path")
+		if err == nil {
+			t.Fatal("Expected error but got none")
+		}
+		if !strings.Contains(err.Error(), "cannot resolve main worktree") {
+			t.Fatalf("Expected error to mention resolving main worktree, got: %v", err)
+		}
+		if mockApp.Base.GetExecCommandCallCount() != 1 {
+			t.Fatalf(
+				"Expected only the GetMainWorktree call, got %d calls",
+				mockApp.Base.GetExecCommandCallCount(),
+			)
+		}
+	})
+
+	t.Run("git's move refusal surfaces to the caller", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree /main/repo\nHEAD abc123\nbranch refs/heads/main\n",
+				"",
+				nil,
+			),
+			commands.ExecCommandResult(
+				"",
+				"fatal: '/old/path' is locked",
+				fmt.Errorf("exit status 128"),
+			),
+		)
+
+		err := app.MoveWorktree("/old/path", "/new/path")
+		if err == nil {
+			t.Fatal("Expected error but got none")
+		}
+		if !strings.Contains(err.Error(), "locked") {
+			t.Fatalf("Expected git's refusal message to surface, got: %v", err)
+		}
+	})
+}
+
 func TestGetRepoRoot(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}

@@ -591,6 +591,26 @@ func (g *Git) RemoveWorktree(path string, deleteBranch bool, branchName string) 
 	return nil
 }
 
+// MoveWorktree relocates a worktree on disk via `git worktree move`.
+// Resolves the main worktree first so the move command doesn't run from
+// within the worktree being relocated. Does not pass --force: git's
+// refusal to move a locked worktree (or one with submodule complications)
+// is the safety net and must reach the caller unchanged. Does not create
+// the destination's parent directory; git requires it to exist and fails
+// clearly if it doesn't.
+func (g *Git) MoveWorktree(from, to string) error {
+	mainWorktree, err := g.GetMainWorktree(from)
+	if err != nil {
+		return fmt.Errorf("cannot resolve main worktree for %s: %w", from, err)
+	}
+
+	if err := g.ExecuteCommandAt(mainWorktree, "worktree", "move", from, to); err != nil {
+		return fmt.Errorf("failed to move worktree from %s to %s: %w", from, to, err)
+	}
+
+	return nil
+}
+
 // GetMainWorktree resolves the main worktree (repo root) path from any
 // worktree in the repo, via `git worktree list --porcelain`'s first
 // "worktree <path>" line (always the main worktree). Exported so callers
