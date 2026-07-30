@@ -29,3 +29,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0007](ADR-0007-task-redirects-stay-hard-deny.md) — The task redirects stay hard-deny, not `ask`
 - [ADR-0008](ADR-0008-agent-state-on-every-pane-row.md) — Agent state belongs to every row in `dg ws`, not just worktree rows
 - [ADR-0009](ADR-0009-audible-agent-notifications.md) — An agent that wants you makes a sound, from the hook that already knows
+- [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md) — Worktree layout is a setting, and git is the worktree index
