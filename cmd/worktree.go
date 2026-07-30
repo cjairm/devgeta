@@ -248,6 +248,64 @@ surviving panes already match the requested layout.`,
 	},
 }
 
+var worktreeMoveCmd = &cobra.Command{
+	Use:     "move <name>",
+	Aliases: []string{"mv"},
+	Short:   "Move a worktree between the shared and in-repo locations",
+	Long: `Move a git worktree between the shared and in-repo locations, then
+retarget its tmux window to the new path (alias: mv).
+
+Locations:
+  shared   ~/.local/share/devgeta/worktrees/<repo-slug>/<name>  (the default)
+  in-repo  <repo-root>/.claude/worktrees/<name>
+
+With no --to flag, the worktree is moved to match the CONFIGURED
+worktree.location - "bring this worktree in line with my configured layout,"
+the common case right after changing that setting. Pass --to explicitly to
+move to a specific location regardless of the current config.
+
+If the worktree is already at the target location, this prints that and
+exits 0 without touching git.
+
+Refuses on a dirty worktree (uncommitted changes) unless --force is given.
+
+If the worktree has a live tmux window, every pane is sent a ` + "`cd`" + ` to the new
+path - but only when every pane in the window is an idle shell. If any pane
+is running something else (an editor, a build, an AI agent), nothing is sent
+to any pane in the window (a partial retarget would be more confusing than
+none); a warning names the busy pane so it can be updated manually. The move
+itself still succeeds even when this happens - a busy tmux window is a
+follow-up inconvenience, never a reason to fail the command.
+
+Moving --to in-repo warns (but does not refuse) when .claude/worktrees/ is
+not gitignored in the target repo - devgeta never edits another repo's
+.gitignore itself.`,
+	Args: cobra.ExactArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) != 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		names, err := worktree.New().ListNames()
+		if err != nil {
+			return nil, cobra.ShellCompDirectiveError
+		}
+		return names, cobra.ShellCompDirectiveNoFileComp
+	},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name := args[0]
+		wm := worktree.New()
+
+		moved, err := wm.Move(name, moveToFlag, forceFlag)
+		if err != nil {
+			return err
+		}
+		if moved {
+			utils.PrintSuccess(fmt.Sprintf("Moved worktree: %s", name))
+		}
+		return nil
+	},
+}
+
 var worktreePruneCmd = &cobra.Command{
 	Use:   "prune",
 	Short: "Remove all worktrees",
@@ -290,6 +348,7 @@ var (
 	repairLayoutFlag string
 	forceFlag        bool
 	repoFlag         string
+	moveToFlag       string
 )
 
 func init() {
@@ -298,6 +357,7 @@ func init() {
 	worktreeCmd.AddCommand(worktreeListCmd)
 	worktreeCmd.AddCommand(worktreeRemoveCmd)
 	worktreeCmd.AddCommand(worktreeRepairCmd)
+	worktreeCmd.AddCommand(worktreeMoveCmd)
 	worktreeCmd.AddCommand(worktreePruneCmd)
 
 	worktreeCreateCmd.Flags().
@@ -323,6 +383,11 @@ func init() {
 	worktreeRepairCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	worktreeRemoveCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Force removal even if worktree has uncommitted changes")
+	worktreeMoveCmd.Flags().
+		StringVar(&moveToFlag, "to", "",
+			"Target location: shared or in-repo (defaults to the configured worktree.location)")
+	worktreeMoveCmd.Flags().
+		BoolVarP(&forceFlag, "force", "f", false, "Move even if the worktree has uncommitted changes")
 }
 
 var globalConfig config.GlobalConfig

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1376,6 +1377,92 @@ func TestMoveWorktree(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "locked") {
 			t.Fatalf("Expected git's refusal message to surface, got: %v", err)
+		}
+	})
+}
+
+// exitError builds a real *exec.ExitError with the given exit code by
+// actually running a trivial subprocess (sh -c "exit N") - the standard way
+// to construct one in Go, since exec.ExitError's fields are unexported and
+// there is no public constructor. This is not "executing a real command"
+// under this repo's test-safety rule (which forbids exercising real
+// git/tmux/etc business logic in tests): it never touches git, only
+// synthesizes a realistic error value to inject into MockBaseCommand, so
+// IsPathIgnored's exit-code branch is exercised against the same error shape
+// ExecCommand really returns, not a hand-rolled stand-in.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	if err == nil {
+		t.Fatalf("expected a non-nil error for exit code %d", code)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	return exitErr
+}
+
+func TestIsPathIgnored(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	t.Run("exit 0 means ignored", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+
+		ignored, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err != nil {
+			t.Fatalf("IsPathIgnored failed: %v", err)
+		}
+		if !ignored {
+			t.Error("expected ignored=true on exit 0")
+		}
+
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("No ExecCommand call recorded")
+		}
+		expectedArgs := []string{"-C", "/repo", "check-ignore", "-q", ".claude/worktrees"}
+		if len(lastCall.Args) != len(expectedArgs) {
+			t.Fatalf(
+				"Expected %d args, got %d: %v",
+				len(expectedArgs),
+				len(lastCall.Args),
+				lastCall.Args,
+			)
+		}
+		for i, arg := range expectedArgs {
+			if lastCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, lastCall.Args[i])
+			}
+		}
+	})
+
+	// This is the detail most likely to be gotten wrong: `git check-ignore`
+	// exits 1 to mean "not ignored" - a normal, expected result, not a
+	// failure. IsPathIgnored must return (false, nil), never propagate exit
+	// 1 as an error.
+	t.Run("exit 1 means not ignored, and is not an error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", exitError(t, 1))
+
+		ignored, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err != nil {
+			t.Fatalf("expected no error for exit code 1, got: %v", err)
+		}
+		if ignored {
+			t.Error("expected ignored=false on exit 1")
+		}
+	})
+
+	t.Run("any other non-zero exit is a real error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", exitError(t, 128))
+
+		_, err := app.IsPathIgnored("/repo", ".claude/worktrees")
+		if err == nil {
+			t.Fatal("expected an error for exit code 128")
 		}
 	})
 }
