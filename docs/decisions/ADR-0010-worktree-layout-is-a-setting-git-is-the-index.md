@@ -1,7 +1,7 @@
 # ADR-0010 — Worktree layout is a setting, and git is the worktree index
 
 **Date:** 2026-07-29
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

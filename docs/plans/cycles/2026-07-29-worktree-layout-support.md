@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 **Estimated Duration:** ~5 hours
-**Status:** Draft — awaiting approval
+**Status:** Approved — in progress
 
 ---
 
@@ -235,11 +235,18 @@ worktree, and `move` **refusing** rather than killing a pane with a live process
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Should `dg wt move` default `--to` to the _other_ layout, or require it
-      explicitly? Inferring is friendlier; explicit is harder to do by accident.
-- [ ] Is the recent-repos store ∪ shared-root ∪ current repo actually sufficient to
-      find every repo worth listing, or should `dg ws` offer a "scan search_paths"
-      fallback using the existing `worktree.search_paths`?
+- [x] **`--to` is optional, defaulting to the configured `worktree.layout`.**
+      Resolved on approval. Neither offered option was right: the common intent is
+      "bring this worktree in line with the layout I configured", which is exactly
+      the migration case, so a bare `dg wt move <name>` means that. An explicit
+      `--to` still overrides, and moving a worktree already at the target layout is a
+      no-op that says so rather than an error. Inferring "the other layout" was
+      rejected because it silently becomes wrong once a third layout exists.
+- [x] **No `search_paths` fallback.** Resolved on approval: `List()` runs on the
+      3-second `dg ws` refresh and `search_paths` scanning is a `filepath.WalkDir`
+      (`scan.go`), so it cannot go in that path at any depth limit. The three cheap
+      sources stand; if a repo genuinely goes missing in practice the fix is to
+      record it on use, not to walk the filesystem every 3 seconds.
 - [ ] Still open from the last cycle: there is no `make install`, so every manual
       verification silently requires `go build -o ~/.local/bin/devgeta .`. This has
       now bitten twice in one day.
