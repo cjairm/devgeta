@@ -305,6 +305,7 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 - `scan_depth` — max directory depth below each search path to descend. Unset, `0`, or negative all mean the default of `4` — there is no separate "unlimited" or "disabled via depth" mode; use an empty `search_paths` to disable scanning.
 - `default_layout` — default window layout name (see the resolution order above). Default: empty, which means rule 5 (`default_ai`-derived single-pane layout) or the built-in `opencode` fallback applies instead.
 - `attach_after_create` — whether a successful `n`/`N` create in `dg ws` attaches into the new worktree's window (quitting the dashboard) or leaves you on the new row to keep working in the dashboard. Default: **absent, which means attach** — set it to `false` to stay put, which is the useful setting when you create several worktrees in one sitting, since attaching ejects you from the dashboard after the first one. Outside tmux there is no client to move, so the create already stays put regardless of this key. Unlike every other boolean in `global_config.yaml` (all feature flags where "off" is the right default), an absent key here must mean **on**, so the field is stored as a nullable boolean: absent is distinct from an explicit `false`, and configs written before this key existed keep attaching.
+- `notify_sound` — whether an agent pane finishing (`idle`), blocking on a permission prompt (`blocked`), or erroring (`error`) plays a sound while its window is unattended, per [ADR-0009](decisions/ADR-0009-audible-agent-notifications.md). Default: **absent/`false`, which means off**. Unlike `attach_after_create` just above, where the zero value would silently flip existing behavior and so needed a nullable bool, off is already the correct default here, so a plain boolean is enough — the zero value already means what it should. The two hooks that actually play the sound (`configs/claude/agent-state.sh`, `configs/opencode/plugin/notify.js`) cannot parse `global_config.yaml`, so this YAML value is only the durable source: `configs/tmux/tmux.conf.tmpl` renders it into the deployed `~/.tmux.conf` as the tmux global option `@dg_notify_sound`, which is what the hooks actually query at runtime. Changing this key therefore has no effect on a running tmux server by itself — it takes effect after `dg configure tmux --force` plus a config reload (or a fresh server), or immediately if you also run `tmux set-option -g @dg_notify_sound on` by hand.
 
 **Flag for `create`**:
 
@@ -422,8 +423,11 @@ dg config unset <key>
 - `--plain` — Suppress the interactive hint line that follows the table (persistent flag; works on both `dg config` and `dg config list`).
 
 **Settable keys**: `worktree.default_ai`, `worktree.search_paths`, `worktree.scan_depth`,
-`worktree.default_layout`, `worktree.attach_after_create` — see "Worktree scan and layout
-config keys" above for what each one does.
+`worktree.default_layout`, `worktree.attach_after_create`, `worktree.notify_sound` — see
+"Worktree scan and layout config keys" above for what each one does. Setting
+`worktree.notify_sound` only persists the YAML value and the tmux-rendered default for the
+_next_ server — see that key's entry above for why it does not also flip the option on an
+already-running tmux server.
 
 **Behavior**:
 
@@ -484,7 +488,18 @@ enough to show `◆` even while its neighbor keeps working. Attaching to a row (
 its state — attaching is the user acknowledging it. tmux's own status bar
 (`configs/tmux/tmux.conf.tmpl`) separately flags any other window in the current session whose
 coder wants attention while you're looking elsewhere, so `dg ws` doesn't have to stay open to
-notice.
+notice. That status bar only paints windows of the **attached** session, though, and gives no
+signal at all when the terminal itself isn't the focused window — an agent blocked in another
+session, or in any window while you're looking at a different application, has nothing visual
+reaching you. [ADR-0009](decisions/ADR-0009-audible-agent-notifications.md) adds an audible
+signal for exactly that gap: the same two hooks that write `@dg_agent_state` also play a sound
+for the same three "wants you" states (`idle`, `blocked`, `error`) at the moment they write
+them — never for `busy`, since an agent starting work isn't an event you asked to hear — gated
+on `window_active_clients == 0`, the identical predicate the status-bar flag above already
+uses, so the audible and visual signals can never disagree about whether you've seen something.
+It is off by default and opt-in (see `notify_sound` below), each state has a distinct sound so
+the three are told apart without looking, and a missing sound player or audio device is silence
+rather than an error or a blocked hook.
 
 Both kinds share the existing worktree-row keys (`j`/`k` nav,
 `h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit).
