@@ -85,6 +85,22 @@ type RecentRepo struct {
 // maxRecentRepos caps the recent-repos store so it can't grow unbounded.
 const maxRecentRepos = 20
 
+// WorktreeLocationShared and WorktreeLocationInRepo are the two values
+// WorktreeConfig.Location accepts. They are named constants - rather than
+// bare string literals repeated across cmd/config_settings.go's Default,
+// Set's validation, and their tests - so the two spellings can't drift out of
+// sync with each other. Defined here rather than in
+// internal/tooling/worktree because that package cannot be touched by the
+// step that introduces this setting (see docs/plans/cycles's Step 2 scope
+// boundary): worktree already imports internal/config in four files, so
+// internal/config is the owner that adds no new dependency edge, whether or
+// not worktree ever needs to read these constants back through that existing
+// edge in a later step.
+const (
+	WorktreeLocationShared = "shared"
+	WorktreeLocationInRepo = "in-repo"
+)
+
 // WorktreeConfig stores worktree-specific settings
 type WorktreeConfig struct {
 	DefaultAI     string       `yaml:"default_ai,omitempty"`     // "opencode" | "claude"; empty = fallback to "opencode"
@@ -92,6 +108,13 @@ type WorktreeConfig struct {
 	SearchPaths   []string     `yaml:"search_paths,omitempty"`   // dirs to scan for git repos for the worktree picker; empty = scanning disabled (the only off-switch)
 	ScanDepth     int          `yaml:"scan_depth,omitempty"`     // max dir depth for the repo scan; 0 (or unset) = use the default of 4
 	DefaultLayout string       `yaml:"default_layout,omitempty"` // default tmux window layout for `dg ws`'s create; empty = derive a single-pane layout from DefaultAI
+
+	// Location selects where new worktrees are created on disk:
+	// WorktreeLocationShared (the default) or WorktreeLocationInRepo. Empty
+	// means WorktreeLocationShared, so existing installs are unaffected -
+	// hence omitempty. Registering this setting (cmd/config_settings.go) does
+	// not yet make anything read it; that arrives in a later cycle step.
+	Location string `yaml:"location,omitempty"`
 
 	// AttachAfterCreate controls whether `dg ws`'s n/N create attaches into the
 	// new worktree's window (quitting the dashboard) or leaves you on the new

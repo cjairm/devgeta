@@ -246,6 +246,34 @@ var Settings = []Setting{
 		},
 		Unset: func(gc *config.GlobalConfig) { gc.Worktree.AttachAfterCreate = nil },
 	},
+	{
+		Key:         "worktree.location",
+		Description: "Where new worktrees are created on disk: `shared` (default) or `in-repo`",
+		Kind:        "string",
+		// This setting only records the choice - it does not yet make
+		// anything read it (see the cycle's Step 2 scope boundary).
+		Default: func() string { return config.WorktreeLocationShared },
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			return gc.Worktree.Location, gc.Worktree.Location != ""
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			value, err := requireExactlyOne("worktree.location", raw)
+			if err != nil {
+				return err
+			}
+			switch value {
+			case config.WorktreeLocationShared, config.WorktreeLocationInRepo:
+				gc.Worktree.Location = value
+				return nil
+			default:
+				return fmt.Errorf(
+					"unknown worktree.location %q. Valid values: %s, %s",
+					value, config.WorktreeLocationShared, config.WorktreeLocationInRepo,
+				)
+			}
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Worktree.Location = "" },
+	},
 }
 
 // FindSetting looks up a registered setting by its dotted key.
