@@ -477,6 +477,64 @@ func TestWorktreeMove(t *testing.T) {
 	})
 
 	t.Run(
+		"IsWorktreeDirty failure is propagated as an error, not treated as clean",
+		func(t *testing.T) {
+			cleanup := testutil.SetupIsolatedPaths(t)
+			defer cleanup()
+
+			repoRoot := t.TempDir()
+			repoSlug := filepath.Base(repoRoot)
+			name := "feature-test"
+
+			fromPath := sharedWorktreePath(repoSlug, name)
+			mkdirAllForTest(t, fromPath)
+
+			mockGitBase := commands.NewMockBaseCommand()
+			mockTmuxBase := commands.NewMockBaseCommand()
+			wm := newMoveWM(mockGitBase, mockTmuxBase, nil)
+
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					repoRoot+"\n",
+					"",
+					nil,
+				), // 1 GetRepoRoot
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // 2 ListWorktreesAt (worktreeStateIn)
+				commands.ExecCommandResult(
+					"",
+					"not a git repository",
+					exitError(t, 128),
+				), // 3 ListWorktreesAt(shared candidate)
+				commands.ExecCommandResult(
+					"",
+					"fatal: unable to read current working directory",
+					exitError(t, 128),
+				), // 4 IsWorktreeDirty - transient git failure, not "clean"
+			)
+			mockTmuxBase.SetExecCommandResults(
+				commands.ExecCommandResult("", "", nil), // 1 WindowSession - no window
+			)
+
+			moved, err := wm.Move(name, config.WorktreeLocationInRepo, false)
+			if err == nil {
+				t.Fatal("expected an error when IsWorktreeDirty itself fails, not a silent proceed")
+			}
+			if moved {
+				t.Error("expected moved=false when the dirty check errors")
+			}
+			if hasMoveCall(mockGitBase) {
+				t.Error(
+					"expected no 'git worktree move' call when the dirty check errors",
+				)
+			}
+		},
+	)
+
+	t.Run(
 		"dirty worktree with --force proceeds, skipping the dirty check entirely",
 		func(t *testing.T) {
 			cleanup := testutil.SetupIsolatedPaths(t)
@@ -987,6 +1045,47 @@ func TestWorktreeMove(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "no such worktree") {
 			t.Errorf("expected a 'no such worktree' message, got: %v", err)
+		}
+	})
+}
+
+// TestIsRealWorktreeAt exercises isRealWorktreeAt's authoritative branch -
+// when w.Git.ListWorktreesAt succeeds, its answer is trusted outright
+// (ADR-0010), never falling through to the os.Stat fallback. Every other
+// test in this file that reaches isRealWorktreeAt (via currentWorktreePath)
+// forces ListWorktreesAt to fail so it falls through to that fallback
+// branch instead - this is the only coverage of the "git answered"
+// path itself.
+func TestIsRealWorktreeAt(t *testing.T) {
+	t.Run("path present in git's own worktree list is trusted", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		wm := newMoveWM(mockGitBase, commands.NewMockBaseCommand(), nil)
+
+		// Deliberately a path that does not exist on disk: if isRealWorktreeAt
+		// fell through to the os.Stat fallback here, it would wrongly return
+		// false. Only trusting git's porcelain answer makes this pass.
+		candidate := "/nonexistent/repo-slug/feature-test"
+		porcelain := "worktree " + candidate + "\nHEAD abc123\nbranch refs/heads/feature-test\n\n"
+		mockGitBase.SetExecCommandResult(porcelain, "", nil)
+
+		if !wm.isRealWorktreeAt(candidate) {
+			t.Error("expected isRealWorktreeAt to trust git's worktree list and return true")
+		}
+	})
+
+	t.Run("git runs fine but candidate path is absent from its list", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		wm := newMoveWM(mockGitBase, commands.NewMockBaseCommand(), nil)
+
+		other := "/some/repo-slug/other-worktree"
+		porcelain := "worktree " + other + "\nHEAD abc123\nbranch refs/heads/other\n\n"
+		mockGitBase.SetExecCommandResult(porcelain, "", nil)
+
+		if wm.isRealWorktreeAt("/some/repo-slug/feature-test") {
+			t.Error(
+				"expected isRealWorktreeAt to return false when git ran fine " +
+					"but doesn't know this path",
+			)
 		}
 	})
 }

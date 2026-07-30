@@ -1090,7 +1090,13 @@ func (w *WorktreeManager) Move(name, to string, force bool) (bool, error) {
 
 	if !force {
 		dirty, dirtyErr := w.Git.IsWorktreeDirty(fromPath)
-		if dirtyErr == nil && dirty {
+		if dirtyErr != nil {
+			return false, fmt.Errorf(
+				"failed to check worktree '%s' for uncommitted changes: %w",
+				name, dirtyErr,
+			)
+		}
+		if dirty {
 			return false, fmt.Errorf(
 				"worktree '%s' has uncommitted changes; use --force to move anyway",
 				name,
