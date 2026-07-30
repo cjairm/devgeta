@@ -82,9 +82,12 @@ source of truth over a parallel one that can drift."
 
 This is **cheaper than today, not dearer**. `List()` currently calls
 `ListWorktreesAt` once _per worktree_ (`worktree.go:506`) to recover each branch —
-N git execs. One call per _repo_ returns the same data for all of that repo's
-worktrees, so the exec count drops from per-worktree to per-repo, and the 3-second
-refresh gets faster wherever a repo has more than one worktree.
+N git execs. One call resolves a repo's whole worktree set, so a repo's
+worktree-name subdirectories are tried as a group, stopping at the first one that
+succeeds — the common case costs one exec per repo, not one per worktree. A
+directory that isn't a real worktree (a husk) fails and falls through to the next
+subdirectory in the same group, which is the one case that still costs an extra
+exec: it's the price of not letting one bad subdirectory hide a real sibling.
 
 It also kills the phantom-row class of bug outright: a directory git does not call
 a worktree stops being listed as one, whatever is left in it.

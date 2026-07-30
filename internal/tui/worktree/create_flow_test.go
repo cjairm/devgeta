@@ -17,7 +17,7 @@ import (
 // newTestWorktreeManager builds a WorktreeManager with harmless, fully mocked
 // Git/Tmux/Base fields for create-flow tests whose flow (via
 // handleCreateSuccess's loadCmd) reaches mgr.List(): List() now unconditionally
-// calls Tmux.PaneStates() and, via knownRepoAnchors, Git.GetMainWorktree - a
+// calls Tmux.PaneStates() and, via knownRepoAnchorGroups, Git.GetMainWorktree - a
 // bare zero-value WorktreeManager panics on those nil fields now that List()
 // asks git instead of just scanning directories (ADR-0010, the
 // worktree-layout-support cycle's Step 4). These tests don't care about
