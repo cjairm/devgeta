@@ -107,6 +107,77 @@ func TestCreateRecordsRepoOnSuccess(t *testing.T) {
 	}
 }
 
+// TestCreateRecordsRepoThroughUpdatePreservesOtherFields proves the
+// recent_repos write (now routed through config.Update, the Task-1
+// load-under-lock-then-save transaction) does not clobber unrelated config
+// state that was set before Create ran - e.g. a human's
+// worktree.attach_after_create setting must survive a concurrent-ish
+// worktree creation untouched.
+func TestCreateRecordsRepoThroughUpdatePreservesOtherFields(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+
+	// Seed a non-default value for an unrelated field before Create runs, to
+	// prove the Update-based write is a true read-modify-write and not a
+	// blind overwrite.
+	seed := &config.GlobalConfig{}
+	if err := seed.Create(); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	attachFalse := false
+	seed.Worktree.AttachAfterCreate = &attachFalse
+	seed.CurrentFont = "JetBrainsMono"
+	if err := seed.Save(); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	repoRoot := t.TempDir()
+	wm, mockGitBase, mockTmuxBase, _ := newRecordingWM()
+
+	mockGitBase.SetExecCommandResults(
+		commands.ExecCommandResult(repoRoot+"\n", "", nil),
+		commands.ExecCommandResult("", "", nil),
+	)
+	mockTmuxBase.SetExecCommandResult("", "", nil)
+
+	repoSlug := filepath.Base(repoRoot)
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test")
+	t.Cleanup(func() {
+		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	})
+
+	if err := wm.Create("feature-test", stubLayout, true); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Load(); err != nil {
+		t.Fatalf("failed to load global config: %v", err)
+	}
+	if len(gc.Worktree.RecentRepos) != 1 {
+		t.Fatalf(
+			"expected 1 recent repo, got %d: %+v",
+			len(gc.Worktree.RecentRepos),
+			gc.Worktree.RecentRepos,
+		)
+	}
+	wantPath := config.CanonicalRepoPath(repoRoot)
+	if gc.Worktree.RecentRepos[0].Path != wantPath {
+		t.Errorf("expected recorded path %q, got %q", wantPath, gc.Worktree.RecentRepos[0].Path)
+	}
+	if gc.Worktree.AttachAfterCreate == nil || *gc.Worktree.AttachAfterCreate {
+		t.Errorf(
+			"expected attach_after_create to remain false after recording a repo, got %+v",
+			gc.Worktree.AttachAfterCreate,
+		)
+	}
+	if gc.CurrentFont != "JetBrainsMono" {
+		t.Errorf("expected current_font to remain unclobbered, got %q", gc.CurrentFont)
+	}
+}
+
 // TestCreateSucceedsDespiteRecordFailure proves the recent-repos write is
 // truly best-effort: Create must still report success (the worktree and tmux
 // window already exist) even when the store write fails, but the failure

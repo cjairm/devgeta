@@ -298,9 +298,13 @@ Before any tmux window is touched, every pane's underlying tool is checked for i
 
 **Worktree scan and layout config keys** (`global_config.yaml`, under `worktree:`):
 
+Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editing
+`global_config.yaml` directly still works, but is no longer necessary.
+
 - `search_paths` — list of directories to scan for git repositories to offer in the `n`/`N` repo picker (see "Creating from the dashboard" below). Default: empty, which disables the scan entirely — this is the only off-switch. The scan walks each path with `filepath.WalkDir`, stops descending at a repo's `.git` boundary (so nested repos/submodules are not listed as separate entries), and skips `node_modules`, `.cache`, `vendor`, `target`, `dist`, and `.git` directories encountered during the walk (a configured root itself is still scanned even if its name matches one of these, e.g. a root literally named `vendor`).
 - `scan_depth` — max directory depth below each search path to descend. Unset, `0`, or negative all mean the default of `4` — there is no separate "unlimited" or "disabled via depth" mode; use an empty `search_paths` to disable scanning.
 - `default_layout` — default window layout name (see the resolution order above). Default: empty, which means rule 5 (`default_ai`-derived single-pane layout) or the built-in `opencode` fallback applies instead.
+- `attach_after_create` — whether a successful `n`/`N` create in `dg ws` attaches into the new worktree's window (quitting the dashboard) or leaves you on the new row to keep working in the dashboard. Default: **absent, which means attach** — set it to `false` to stay put, which is the useful setting when you create several worktrees in one sitting, since attaching ejects you from the dashboard after the first one. Outside tmux there is no client to move, so the create already stays put regardless of this key. Unlike every other boolean in `global_config.yaml` (all feature flags where "off" is the right default), an absent key here must mean **on**, so the field is stored as a nullable boolean: absent is distinct from an explicit `false`, and configs written before this key existed keep attaching.
 
 **Flag for `create`**:
 
@@ -390,6 +394,60 @@ result the moment the action finishes (and is moot inside tmux on a create/attac
 since the TUI then attaches and exits).
 
 **Planned commands**: See [ROADMAP.md](ROADMAP.md) for planned features and future commands.
+
+#### `dg config`
+
+Discover and change devgeta's user-settable configuration keys
+(`~/.config/devgeta/global_config.yaml`) without hand-editing YAML — the supported way to change
+the `worktree.*` settings documented above.
+
+```
+dg config [list] [--plain]
+dg config get <key>
+dg config set <key> <value...>
+dg config unset <key>
+```
+
+**Subcommands**:
+
+| Subcommand               | Description                                                                                        |
+| ------------------------ | -------------------------------------------------------------------------------------------------- |
+| _(bare, same as `list`)_ | Print every setting: key, current value (or `(default)` if unset), live default, and description   |
+| `get <key>`              | Print only the effective value, nothing else (bare, for scripts)                                   |
+| `set <key> <value...>`   | Validate and persist a value; `worktree.search_paths` is the only key that accepts multiple values |
+| `unset <key>`            | Clear a setting back to its default                                                                |
+
+**Flags**:
+
+- `--plain` — Suppress the interactive hint line that follows the table (persistent flag; works on both `dg config` and `dg config list`).
+
+**Settable keys**: `worktree.default_ai`, `worktree.search_paths`, `worktree.scan_depth`,
+`worktree.default_layout`, `worktree.attach_after_create` — see "Worktree scan and layout
+config keys" above for what each one does.
+
+**Behavior**:
+
+- `set` and `unset` both work on a fresh machine with no config file yet — the file is created
+  on first use.
+- An unrecognized key errors and lists every valid key.
+- `set` validates through the same resolver the value would hit elsewhere (e.g. an unknown AI
+  alias produces the identical error `dg wt create --ai <bad>` would); an invalid value writes
+  nothing.
+- `get` prints the value actually in effect, even for a setting that falls back through another
+  — an unset `worktree.default_layout` prints whatever `worktree.default_ai` resolves to, never
+  the literal word "unset".
+- `set`/`unset` print a before/after confirmation (previous value or default, then the new
+  state); `get` prints only the bare value.
+
+**Examples**:
+
+```
+dg config                                           # List every setting
+dg config get worktree.scan_depth                   # Print only the effective value, e.g. "4"
+dg config set worktree.scan_depth 6                 # Validate and persist
+dg config set worktree.search_paths ~/code ~/work   # search_paths is the only variadic set
+dg config unset worktree.attach_after_create        # Clear back to default (true)
+```
 
 #### `dg ws`
 

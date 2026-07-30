@@ -22,6 +22,14 @@ import (
 // so there is exactly one off-switch — scan_depth never doubles as one.
 const defaultScanDepth = 4
 
+// DefaultScanDepth returns the depth used whenever scan_depth is unset, zero,
+// or negative. Exported so callers outside this package (the `dg config`
+// settings registry in cmd/) can report the live default without restating
+// the constant as a literal, which would let the two drift.
+func DefaultScanDepth() int {
+	return defaultScanDepth
+}
+
 // excludedScanComponents are directory names the walk never descends into:
 // node_modules/vendor/target/dist/.cache are large dependency/build trees
 // unlikely to contain repos worth offering, and .git is the marker itself
