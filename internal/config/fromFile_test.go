@@ -412,6 +412,163 @@ func TestWorktreeConfig_ScanAndLayoutFieldsRoundTrip(t *testing.T) {
 	assert.Equal(t, gc.Worktree.DefaultLayout, loaded.Worktree.DefaultLayout)
 }
 
+// TestSave_DefaultAIOmittedWhenEmpty proves default_ai gets the same
+// omitempty treatment as every other user-settable worktree field: an unset
+// DefaultAI must not persist as a visible `default_ai: ""` key.
+func TestSave_DefaultAIOmittedWhenEmpty(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	// gc.Worktree.DefaultAI left at its zero value ("") on purpose.
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assert.NotContains(
+		t,
+		string(raw),
+		"default_ai",
+		"an empty default_ai must be omitted from the saved config, like every other unset worktree field",
+	)
+}
+
+// TestLoad_LegacyConfigWithEmptyDefaultAIResolvesToOpencodeDefault is the
+// backward-compatibility check for the omitempty change: a config file
+// written before this change with an explicit `default_ai: ""` key must
+// still load as "" (the same value ResolveLayout/ResolveAICoder already
+// treat as "fall back to opencode" - see internal/tooling/worktree/layout.go
+// ResolveLayout rung 4). omitempty only changes what Save writes; it must
+// not change what Load accepts.
+func TestLoad_LegacyConfigWithEmptyDefaultAIResolvesToOpencodeDefault(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	legacyContent := `app_path: ""
+config_path: ""
+current_font: ""
+current_theme: ""
+shell:
+  mise: false
+worktree:
+  default_ai: ""
+`
+	configPath := getGlobalConfigFilePath()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("failed to write legacy config file: %v", err)
+	}
+
+	gc := &GlobalConfig{}
+	if err := gc.Load(); err != nil {
+		t.Fatalf("Load failed on legacy config with explicit empty default_ai: %v", err)
+	}
+	assert.Equal(
+		t,
+		"",
+		gc.Worktree.DefaultAI,
+		"explicit default_ai: \"\" must still load as empty, the same as an absent key",
+	)
+}
+
+// TestShouldAttachAfterCreate covers the one bool in this config whose default
+// is true, so "absent" and "explicitly false" must not collapse to the same
+// answer. The nil-receiver case is not hypothetical: the TUI reads this off
+// m.gc, which worktree.ResolveLayout already treats as possibly-nil.
+func TestShouldAttachAfterCreate(t *testing.T) {
+	attachTrue := true
+	attachFalse := false
+
+	tests := []struct {
+		name string
+		gc   *GlobalConfig
+		want bool
+	}{
+		{name: "nil config attaches", gc: nil, want: true},
+		{name: "unset key attaches", gc: &GlobalConfig{}, want: true},
+		{
+			name: "explicit true attaches",
+			gc:   &GlobalConfig{Worktree: WorktreeConfig{AttachAfterCreate: &attachTrue}},
+			want: true,
+		},
+		{
+			name: "explicit false does not attach",
+			gc:   &GlobalConfig{Worktree: WorktreeConfig{AttachAfterCreate: &attachFalse}},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.gc.ShouldAttachAfterCreate())
+		})
+	}
+}
+
+// TestWorktreeConfig_AttachAfterCreateFalseRoundTrips proves an explicit false
+// survives Save/Load. This is the case `omitempty` could plausibly have eaten:
+// on a *bool it omits only a nil pointer, so a pointer to false still writes
+// `attach_after_create: false` and loads back as an explicit false rather than
+// silently reverting to the attach default.
+func TestWorktreeConfig_AttachAfterCreateFalseRoundTrips(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	attachFalse := false
+	gc.Worktree.AttachAfterCreate = &attachFalse
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded := &GlobalConfig{}
+	if err := loaded.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if loaded.Worktree.AttachAfterCreate == nil {
+		t.Fatal("an explicit false must not load back as nil (unset)")
+	}
+	assert.False(t, *loaded.Worktree.AttachAfterCreate)
+	assert.False(t, loaded.ShouldAttachAfterCreate())
+}
+
+// TestWorktreeConfig_AttachAfterCreateAbsentFromOldConfigs proves a config
+// written before this key existed still attaches on create — the backward
+// compatibility this field's *bool shape exists to protect.
+func TestWorktreeConfig_AttachAfterCreateAbsentFromOldConfigs(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded := &GlobalConfig{}
+	if err := loaded.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	assert.Nil(
+		t,
+		loaded.Worktree.AttachAfterCreate,
+		"key should stay absent, not be written as false",
+	)
+	assert.True(t, loaded.ShouldAttachAfterCreate())
+}
+
 func TestUpsertRecentRepo(t *testing.T) {
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 

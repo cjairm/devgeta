@@ -87,11 +87,45 @@ const maxRecentRepos = 20
 
 // WorktreeConfig stores worktree-specific settings
 type WorktreeConfig struct {
-	DefaultAI     string       `yaml:"default_ai"`               // "opencode" | "claude"; empty = fallback to "opencode"
+	DefaultAI     string       `yaml:"default_ai,omitempty"`     // "opencode" | "claude"; empty = fallback to "opencode"
 	RecentRepos   []RecentRepo `yaml:"recent_repos,omitempty"`   // MRU-ordered; new field, absent in old configs
 	SearchPaths   []string     `yaml:"search_paths,omitempty"`   // dirs to scan for git repos for the worktree picker; empty = scanning disabled (the only off-switch)
 	ScanDepth     int          `yaml:"scan_depth,omitempty"`     // max dir depth for the repo scan; 0 (or unset) = use the default of 4
 	DefaultLayout string       `yaml:"default_layout,omitempty"` // default tmux window layout for `dg ws`'s create; empty = derive a single-pane layout from DefaultAI
+
+	// AttachAfterCreate controls whether `dg ws`'s n/N create attaches into the
+	// new worktree's window (quitting the dashboard) or leaves you on the new
+	// row to keep working in the dashboard.
+	//
+	// It is a *bool, unlike every other bool in this file, because it is the
+	// only one whose default is true. The others are feature flags where the
+	// zero value (false, "not enabled") is already the right default, so a
+	// plain bool expresses "unset = default" for free. Here a plain bool
+	// cannot: an absent key would unmarshal to false and silently flip
+	// attach-on-create off for every existing config, which CLAUDE.md §10
+	// forbids. nil (absent) therefore means "use the default (attach)" -
+	// always read it through ShouldAttachAfterCreate rather than
+	// dereferencing.
+	AttachAfterCreate *bool `yaml:"attach_after_create,omitempty"`
+}
+
+// ShouldAttachAfterCreate reports whether a successful `dg ws` create should
+// attach into the new window. It is the only place the "unset means attach"
+// default lives, so no caller has to remember that a nil AttachAfterCreate is
+// not the same as an explicit false.
+//
+// It hangs off *GlobalConfig, not *WorktreeConfig, and tolerates a nil
+// receiver on purpose: its caller is the TUI's m.gc, which the rest of that
+// code path already treats as possibly-nil (see worktree.ResolveLayout, which
+// nil-guards the same pointer). Reading the setting as
+// m.gc.Worktree.AttachAfterCreate would be the first hard dereference of that
+// field and would panic where every neighbouring call survives. A nil config
+// means nothing was configured, which is exactly the default case.
+func (gc *GlobalConfig) ShouldAttachAfterCreate() bool {
+	if gc == nil || gc.Worktree.AttachAfterCreate == nil {
+		return true
+	}
+	return *gc.Worktree.AttachAfterCreate
 }
 
 // UpsertRecentRepo records path as the most-recently-used repo: if path is

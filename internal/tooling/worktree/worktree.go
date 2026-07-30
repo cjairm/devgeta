@@ -1131,19 +1131,12 @@ func (w *WorktreeManager) SelectWorktreeInteractively(prompt string) (string, er
 func (w *WorktreeManager) recordRepoUsed(repoRoot string) {
 	canonical := config.CanonicalRepoPath(repoRoot)
 
-	gc := &config.GlobalConfig{}
-	if err := gc.Create(); err != nil {
+	now := time.Now()
+	if err := config.Update(func(gc *config.GlobalConfig) error {
+		gc.Worktree.UpsertRecentRepo(canonical, now)
+		return nil
+	}); err != nil {
 		w.warnRepoRecordFailure(canonical, err)
-		return
-	}
-	if err := gc.Load(); err != nil {
-		w.warnRepoRecordFailure(canonical, err)
-		return
-	}
-	gc.Worktree.UpsertRecentRepo(canonical, time.Now())
-	if err := gc.Save(); err != nil {
-		w.warnRepoRecordFailure(canonical, err)
-		return
 	}
 }
 

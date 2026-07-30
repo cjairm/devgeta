@@ -400,14 +400,22 @@ func (m *Model) clearCreateState() {
 // non-empty warning (captured from mgr.WarnFn by createFn) is surfaced as
 // status prefixed with "created, but:" so the user still knows the create
 // itself succeeded, without blocking the attach/quit flow that follows.
+//
+// Two independent things can suppress the attach, and both leave the user in
+// the dashboard with a "worktree created:" status instead:
+//   - Outside tmux there is no client to move, so attaching is impossible.
+//   - worktree.attach_after_create: false is the user asking to stay put and
+//     keep working in the dashboard (see WorktreeConfig.AttachAfterCreate);
+//     unset means attach, so existing configs are unaffected.
 func (m Model) handleCreateSuccess(repoPath, name, warning string) (tea.Model, tea.Cmd) {
 	m.creating = false
+	attach := os.Getenv("TMUX") != "" && m.gc.ShouldAttachAfterCreate()
 	if warning != "" {
 		m.status = "created, but: " + warning
-	} else if os.Getenv("TMUX") == "" {
+	} else if !attach {
 		m.status = "worktree created: " + name
 	}
-	if os.Getenv("TMUX") == "" {
+	if !attach {
 		return m, m.loadCmd()
 	}
 	repoSlug := filepath.Base(repoPath)

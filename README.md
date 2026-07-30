@@ -194,6 +194,11 @@ dg install --skip databases,desktop
 - `dg ws` (alias: `dg workspace`) - Unified TUI dashboard: repo workspaces (worktrees, circle `●`/`○` marker, expandable, `N trees` badge) and standalone tmux sessions (square `■`/`□` marker) in one flat list (`enter` switch/attach, `d` delete/kill, `s` new session, `n`/`N` new worktree, `/` filter, `q` quit). Also bound to bare `ctrl+t` in tmux.
 - `dg list` (alias: `dg installed`) - Show everything Devgeta has installed, grouped by category
   - `--category <name>` - Filter to one bucket (`packages`, `desktop_apps`, `fonts`, `themes`, `terminal_tools`, `dev_languages`, `databases`)
+- `dg config` - View and change user-settable devgeta settings (`worktree.*` in `global_config.yaml`) without hand-editing YAML
+  - `dg config` / `dg config list` - List every setting: current value, default, and description
+  - `dg config get <key>` - Print one setting's effective value (for scripts)
+  - `dg config set <key> <value...>` - Validate and persist a value (`worktree.search_paths` takes multiple values)
+  - `dg config unset <key>` - Clear a setting back to its default
 - `dg task` (alias: `dg t`) - Developer utilities callable by agents and humans (mirrors `dge` shell function)
   - `dg task refresh-branch [target]` - Checkout target (default: `main`), pull, return to previous branch, merge
   - `dg task reset-main-branch` - Checkout `main`, hard-reset to `origin/main`

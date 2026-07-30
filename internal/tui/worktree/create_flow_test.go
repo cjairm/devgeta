@@ -436,6 +436,91 @@ func TestCreateSuccessAttachesAndQuits(t *testing.T) {
 	}
 }
 
+// TestCreateSuccessStaysInDashboardWhenAttachAfterCreateFalse proves
+// worktree.attach_after_create: false keeps the user in the dashboard after a
+// successful create — no attach, no quit — while still confirming the create
+// via the status line. It runs with TMUX set so the only thing suppressing the
+// attach is the config, not the "no tmux client to move" path.
+func TestCreateSuccessStaysInDashboardWhenAttachAfterCreateFalse(t *testing.T) {
+	t.Setenv("TMUX", "test-session")
+
+	attachFalse := false
+	m := makeTestModel(testStatuses())
+	m.mgr = &worktree.WorktreeManager{}
+	m.gc = &config.GlobalConfig{
+		Worktree: config.WorktreeConfig{AttachAfterCreate: &attachFalse},
+	}
+
+	attachCalled := false
+	m.windowSessionFn = func(_ string) (string, bool) { return "sess", true }
+	m.attachFn = func(_, _ string) error {
+		attachCalled = true
+		return nil
+	}
+
+	m2, cmd := m.Update(createdMsg{repoPath: "/repos/alpha", name: "feat"})
+	m3 := m2.(Model)
+
+	// flattenCmd runs the returned commands: attachFn fires from inside the
+	// async attach cmd, not from Update itself, so asserting before this point
+	// would pass even if the attach were still wired up.
+	msgs := flattenCmd(cmd)
+
+	if attachCalled {
+		t.Error("attach_after_create: false must not attach into the new window")
+	}
+	for _, mm := range msgs {
+		if _, ok := mm.(tea.QuitMsg); ok {
+			t.Error("attach_after_create: false must not quit the dashboard")
+		}
+	}
+	if m3.creating {
+		t.Error("creating should be cleared once createdMsg is processed")
+	}
+	if !strings.Contains(m3.status, "worktree created: feat") {
+		t.Errorf("expected a create confirmation in the status line, got %q", m3.status)
+	}
+}
+
+// TestCreateSuccessAttachesWhenAttachAfterCreateUnset is the backward-compat
+// guard: a real loaded config that simply never sets the key must still
+// attach-and-quit. TestCreateSuccessAttachesAndQuits covers the same default
+// with a nil m.gc; this one proves a present-but-unset config behaves
+// identically, which is the shape every pre-existing config on disk has.
+func TestCreateSuccessAttachesWhenAttachAfterCreateUnset(t *testing.T) {
+	t.Setenv("TMUX", "test-session")
+
+	m := makeTestModel(testStatuses())
+	m.mgr = &worktree.WorktreeManager{}
+	m.gc = &config.GlobalConfig{Worktree: config.WorktreeConfig{}}
+
+	attachCalled := false
+	m.windowSessionFn = func(_ string) (string, bool) { return "sess", true }
+	m.attachFn = func(_, _ string) error {
+		attachCalled = true
+		return nil
+	}
+
+	_, cmd := m.Update(createdMsg{repoPath: "/repos/alpha", name: "feat"})
+
+	// Runs the returned commands — the attach happens inside one of them, so
+	// this must come before asserting attachCalled.
+	msgs := flattenCmd(cmd)
+
+	if !attachCalled {
+		t.Error("an unset attach_after_create must keep attaching (the documented default)")
+	}
+	foundQuit := false
+	for _, mm := range msgs {
+		if _, ok := mm.(tea.QuitMsg); ok {
+			foundQuit = true
+		}
+	}
+	if !foundQuit {
+		t.Error("an unset attach_after_create must still quit after a successful attach")
+	}
+}
+
 func TestCreateFnFailureSetsStatusNoAttachNoQuit(t *testing.T) {
 	t.Setenv("TMUX", "test-session")
 

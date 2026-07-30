@@ -8,13 +8,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// taskHelpFunc restores standard Cobra help for the task subtree. The root sets
-// a branded help func (utils.PrompCustomHelp) that prints only Use+Long and is
-// inherited by children — which hides subcommands and flags. Agents re-reading
-// `dg task --help` or `dg task <sub> --help` need the full listing, so this
-// renders the long/short description followed by the default usage block
-// (Available Commands, Flags, Examples).
-func taskHelpFunc(cmd *cobra.Command, args []string) {
+// standardHelpFunc restores standard Cobra help for a command subtree (used
+// by both taskCmd and configCmd - see cmd/config.go). The root sets a
+// branded help func (utils.PrompCustomHelp) that prints only Use+Long and is
+// inherited by children — which hides subcommands and flags. Agents
+// re-reading `dg task --help`/`dg config --help` (or a `<sub> --help`) need
+// the full listing, so this renders the long/short description followed by
+// the default usage block (Available Commands, Flags, Examples).
+func standardHelpFunc(cmd *cobra.Command, args []string) {
 	if cmd.Long != "" {
 		cmd.Println(cmd.Long)
 		cmd.Println()
@@ -326,7 +327,7 @@ func init() {
 	// Standard Cobra help for the whole task subtree (overrides the branded
 	// root help func, which children would otherwise inherit and which hides
 	// subcommands/flags). Children inherit this from taskCmd.
-	taskCmd.SetHelpFunc(taskHelpFunc)
+	taskCmd.SetHelpFunc(standardHelpFunc)
 	taskCmd.AddCommand(taskRefreshBranchCmd)
 	taskCmd.AddCommand(taskResetMainBranchCmd)
 	taskCmd.AddCommand(taskDeleteBranchCmd)

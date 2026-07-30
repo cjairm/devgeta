@@ -39,6 +39,7 @@ Available Commands:
   uninstall      Remove previously installed apps or assets (fonts/themes) safely
   update         Update selected apps (e.g., --neovim, --aerospace)
   list           View all items installed via Devgeta
+  config         View and change devgeta settings (worktree.*)
   check-updates  See if any managed apps have updates
   backup         Create a backup of your current Devgeta-managed environment
   restore        Restore a previous backup configuration
