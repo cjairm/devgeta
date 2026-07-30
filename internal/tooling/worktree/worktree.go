@@ -1541,7 +1541,14 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		return err
 	}
 
-	wtPath, err := w.worktreePath(repoSlug, name)
+	// Resolved via realWorktreePathOrConfigured, not the config-derived
+	// worktreePath: the worktree's real location can disagree with what the
+	// CONFIGURED worktree.location computes (e.g. after `dg wt move` without
+	// also changing the global default - the same split-brain
+	// worktreeStateReal's doc comment describes for removeByRepo/Repair).
+	// This function only needs the path, not a full WorktreeState, so it uses
+	// realWorktreePathOrConfigured directly rather than worktreeStateReal.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
 	if err != nil {
 		return err
 	}
