@@ -107,6 +107,25 @@ type WorktreeConfig struct {
 	// always read it through ShouldAttachAfterCreate rather than
 	// dereferencing.
 	AttachAfterCreate *bool `yaml:"attach_after_create,omitempty"`
+
+	// NotifySound gates the audible ding ADR-0009 adds to the two agent-state
+	// hooks (configs/claude/agent-state.sh, configs/opencode/plugin/notify.js)
+	// for idle/blocked/error pane states while the window is unattended.
+	//
+	// Unlike AttachAfterCreate, a plain bool is right here: the default is
+	// false ("off") - ADR-0009 is explicit that a tool which starts making
+	// noise after an upgrade is a bug - so the zero value already IS the
+	// correct default and needs no separate resolver to express "unset =
+	// off" the way AttachAfterCreate's nil does for its true default.
+	//
+	// The hooks cannot read this field directly (no YAML parsing in bash or
+	// the OpenCode plugin - ADR-0009), so it is not the runtime source of
+	// truth: configs/tmux/tmux.conf.tmpl renders it into the deployed
+	// ~/.tmux.conf as the tmux global option @dg_notify_sound, which the
+	// hooks query with a plain `tmux show-option` call. This field is the
+	// durable source that survives a killed tmux server; the tmux option is
+	// the live one a fresh server is rendered with.
+	NotifySound bool `yaml:"notify_sound,omitempty"`
 }
 
 // ShouldAttachAfterCreate reports whether a successful `dg ws` create should

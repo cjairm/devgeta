@@ -9,7 +9,7 @@ Nothing devgeta ships makes a sound. Verified across every layer that could:
 
 - No `afplay`, `paplay`, `aplay`, `osascript display notification`, or bare `\a` anywhere in
   the repo. `osascript` appears only as a **permission rule** in both agents' configs.
-- `configs/tmux/tmux.conf` sets no `visual-bell`, `bell-action`, `monitor-activity`, or
+- `configs/tmux/tmux.conf.tmpl` sets no `visual-bell`, `bell-action`, `monitor-activity`, or
   `monitor-bell`. Its only bell line (`:151`) styles the window-status flag _if_ something
   else rings.
 - `configs/alacritty/alacritty.toml.tmpl` has no `[bell]` section, so `bell.command` is
@@ -72,7 +72,8 @@ A sound fires only when no client is currently viewing that pane's window:
 ```
 
 This is deliberately the **exact predicate `window-status-format` already uses**
-(`tmux.conf:126`) to decide whether to flag a window on the status bar. Reusing it means the
+(see `window-status-format` in `configs/tmux/tmux.conf.tmpl`) to decide whether to flag a
+window on the status bar. Reusing it means the
 audible and visual signals can never disagree about whether you have seen something, and it
 gives the behaviour everyone actually wants for free: no ding for the agent on screen, a ding
 for one in another window or another session, including while the whole session is detached.
@@ -86,11 +87,14 @@ for one in another window or another session, including while the whole session 
 **Off by default.** A tool that starts making noise after an upgrade is a bug.
 
 The tmux option is the _runtime_ source; `global_config.yaml` stays the durable one.
-`dg config set worktree.notify_sound on` writes the YAML **and** sets the live server option,
-and `configs/tmux/tmux.conf` renders the persisted value so a fresh server starts correct.
-This mirrors ADR-0005's reasoning — tmux already owns the runtime state that dies with the
-server — and it keeps the hook to `tmux`-only calls it was already making, with no YAML
-parsing in bash or JavaScript.
+`dg config set worktree.notify_sound true` writes the YAML value only — it does not by
+itself affect a running tmux server. `configs/tmux/tmux.conf.tmpl` renders the persisted
+value so a fresh server starts correct; making an already-running server pick up a change
+takes `dg configure tmux --force` plus a config reload (or a fresh server), or setting the
+tmux option directly by hand (`tmux set-option -g @dg_notify_sound on`). This mirrors
+ADR-0005's reasoning — tmux already owns the runtime state that dies with the server — and
+it keeps the hook to `tmux`-only calls it was already making, with no YAML parsing in bash
+or JavaScript.
 
 ### The player: probe, background, never fail
 

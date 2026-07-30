@@ -396,7 +396,7 @@ func (w *WorktreeManager) buildWindowPanes(
 		// Land the user on pane 0 (e.g. the AI coder), not whichever pane was
 		// split last (e.g. an editor pane), when they attach. Re-targeting by
 		// tmux pane index (e.g. target+".0") is NOT reliable: devgeta's own
-		// shipped tmux.conf sets pane-base-index to 1 (configs/tmux/tmux.conf),
+		// shipped tmux.conf sets pane-base-index to 1 (configs/tmux/tmux.conf.tmpl),
 		// so a window's first pane is index 1, not 0 - pane_id is tmux's own
 		// stable, globally-unique identifier and is unaffected by that option.
 		if err := w.Tmux.SelectPane(pane0ID); err != nil {

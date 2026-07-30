@@ -418,3 +418,83 @@ func TestSettingsAttachAfterCreate_Unset(t *testing.T) {
 	// Unset restores the documented default: attach.
 	assert.True(t, gc.ShouldAttachAfterCreate())
 }
+
+// --- worktree.notify_sound ---
+
+func TestSettingsNotifySound_Default(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	assert.Equal(t, "false", s.Default())
+}
+
+func TestSettingsNotifySound_GetUnset(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{}
+
+	value, isSet := s.Get(gc)
+
+	assert.False(t, isSet)
+	assert.Equal(t, "false", value)
+}
+
+func TestSettingsNotifySound_SetTrue(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"true"})
+
+	require.NoError(t, err)
+	assert.True(t, gc.Worktree.NotifySound)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, "true", value)
+}
+
+func TestSettingsNotifySound_SetFalse(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{Worktree: config.WorktreeConfig{NotifySound: true}}
+
+	err := s.Set(gc, []string{"false"})
+
+	require.NoError(t, err)
+	assert.False(t, gc.Worktree.NotifySound)
+
+	// false is notify_sound's zero value, so Get reports isSet=false right
+	// back - the same documented trade-off worktree.scan_depth's Set(0)
+	// round-trip has (TestSettingsScanDepth_SetZeroRoundTripsToUnset).
+	value, isSet := s.Get(gc)
+	assert.False(t, isSet)
+	assert.Equal(t, "false", value)
+}
+
+func TestSettingsNotifySound_SetInvalid(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"maybe"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be a boolean")
+	assert.False(t, gc.Worktree.NotifySound)
+}
+
+func TestSettingsNotifySound_SetTooManyValues(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"true", "false"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts exactly one value")
+}
+
+func TestSettingsNotifySound_Unset(t *testing.T) {
+	s := findSettingForTest(t, "worktree.notify_sound")
+	gc := &config.GlobalConfig{Worktree: config.WorktreeConfig{NotifySound: true}}
+
+	s.Unset(gc)
+
+	assert.False(t, gc.Worktree.NotifySound)
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+}

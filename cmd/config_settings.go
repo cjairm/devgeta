@@ -246,6 +246,42 @@ var Settings = []Setting{
 		},
 		Unset: func(gc *config.GlobalConfig) { gc.Worktree.AttachAfterCreate = nil },
 	},
+	{
+		Key:         "worktree.notify_sound",
+		Description: "Whether an agent pane finishing/blocking/erroring plays a sound while its window is unattended (ADR-0009)",
+		Kind:        "bool",
+		// Unlike worktree.attach_after_create, there is no separate resolver
+		// to call here: NotifySound's zero value (false) IS the true default
+		// (off), the same reasoning fromFile.go's own comment on the field
+		// gives, so restating it as a literal isn't restating something else
+		// owns - nothing else owns it. worktree.search_paths' Default takes
+		// the same shape for the same reason.
+		Default: func() string { return strconv.FormatBool(false) },
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			// isSet mirrors the value itself, same as worktree.scan_depth:
+			// a plain bool whose zero value is the default can't distinguish
+			// "never configured" from "explicitly set to false" - both read
+			// as isSet=false, which is the documented, accepted trade-off of
+			// choosing a plain bool over a *bool here (see fromFile.go).
+			return strconv.FormatBool(gc.Worktree.NotifySound), gc.Worktree.NotifySound
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			value, err := requireExactlyOne("worktree.notify_sound", raw)
+			if err != nil {
+				return err
+			}
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf(
+					"worktree.notify_sound must be a boolean (true/false), got %q: %w",
+					value, err,
+				)
+			}
+			gc.Worktree.NotifySound = parsed
+			return nil
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Worktree.NotifySound = false },
+	},
 }
 
 // FindSetting looks up a registered setting by its dotted key.

@@ -124,6 +124,16 @@ set-window-option -g window-status-current-style fg=#fe8019,bg=default # bright_
 # why this is a SEPARATE option name from the pane-level one.
 set-window-option -g window-status-format "#{?#{&&:#{@dg_window_agent_state},#{==:#{window_active_clients},0}},#[fg=#fb4934]● ,}#I:#W#{?window_flags,#{window_flags}, }"
 
+# Audible ding for the same "wants you" states (idle/blocked/error) on the
+# same unattended-window gate, played by configs/claude/agent-state.sh and
+# configs/opencode/plugin/notify.js alongside their @dg_agent_state write.
+# This global option is the live, runtime source the hooks actually read
+# (neither can parse global_config.yaml); worktree.notify_sound in
+# global_config.yaml is the durable source rendered in below on every
+# `dg configure tmux --force`, so a fresh server starts correct. Off by
+# default - see docs/decisions/ADR-0009-audible-agent-notifications.md.
+set -g @dg_notify_sound "{{if .NotifySound}}on{{else}}off{{end}}"
+
 # pane border
 set-option -g pane-border-style fg=#3c3836 # dark1
 set-option -g pane-active-border-style fg=#b8bb26 # bright_green

@@ -246,7 +246,7 @@ func TestForceConfigure(t *testing.T) {
 	paths.Paths.Home.Root = destDir
 
 	// Create source tmux.conf file (without leading dot in source)
-	sourceConfig := filepath.Join(sourceDir, "tmux.conf")
+	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
 	configContent := "# Test tmux configuration\nset -g default-terminal \"screen-256color\""
 	err = os.WriteFile(sourceConfig, []byte(configContent), 0o644)
 	if err != nil {
@@ -288,6 +288,115 @@ func TestForceConfigure(t *testing.T) {
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
+// TestForceConfigureRendersNotifySound proves ForceConfigure renders
+// worktree.notify_sound into the deployed ~/.tmux.conf as the tmux global
+// option the two agent-state hooks read (@dg_notify_sound), covering true,
+// explicit false, and absent (the pre-existing-config case CLAUDE.md §10
+// requires to keep sound off).
+func TestForceConfigureRendersNotifySound(t *testing.T) {
+	tests := []struct {
+		name         string
+		configYAML   string
+		wantRendered string
+	}{
+		{
+			name: "notify_sound: true renders on",
+			configYAML: `app_path: ""
+config_path: ""
+shell:
+  tmux: false
+worktree:
+  notify_sound: true
+`,
+			wantRendered: `set -g @dg_notify_sound "on"`,
+		},
+		{
+			name: "notify_sound: false renders off",
+			configYAML: `app_path: ""
+config_path: ""
+shell:
+  tmux: false
+worktree:
+  notify_sound: false
+`,
+			wantRendered: `set -g @dg_notify_sound "off"`,
+		},
+		{
+			name: "notify_sound absent (pre-existing config) renders off",
+			configYAML: `app_path: ""
+config_path: ""
+shell:
+  tmux: false
+`,
+			wantRendered: `set -g @dg_notify_sound "off"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := testutil.SetupCompleteTest(t)
+			defer tc.Cleanup()
+
+			sourceDir := filepath.Join(tc.AppDir, "tmux")
+			if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+				t.Fatalf("Failed to create source directory: %v", err)
+			}
+
+			destDir := tc.ConfigDir
+			if err := os.MkdirAll(destDir, 0o755); err != nil {
+				t.Fatalf("Failed to create destination directory: %v", err)
+			}
+
+			testutil.IsolateXDGDirs(t)
+			t.Setenv("TMUX", "") // ensure source-file reload is not triggered in this test
+
+			oldTmux := paths.Paths.App.Configs.Tmux
+			t.Cleanup(func() { paths.Paths.App.Configs.Tmux = oldTmux })
+			paths.Paths.App.Configs.Tmux = sourceDir
+
+			oldHome := paths.Paths.Home.Root
+			t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
+			paths.Paths.Home.Root = destDir
+
+			// Real template action, the same one shipped in
+			// configs/tmux/tmux.conf.tmpl.
+			sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
+			configContent := "set -g @dg_notify_sound \"{{if .NotifySound}}on{{else}}off{{end}}\"\n"
+			if err := os.WriteFile(sourceConfig, []byte(configContent), 0o644); err != nil {
+				t.Fatalf("Failed to create source config: %v", err)
+			}
+
+			// Seed the global config ForceConfigure will Load() - SetupCompleteTest
+			// already wrote one at tc.ConfigPath; overwrite it with this case's
+			// worktree.notify_sound value (or its absence).
+			if err := os.WriteFile(tc.ConfigPath, []byte(tt.configYAML), 0o644); err != nil {
+				t.Fatalf("Failed to seed global config: %v", err)
+			}
+
+			app := &tmux.Tmux{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+			if err := app.ForceConfigure(); err != nil {
+				t.Fatalf("ForceConfigure returned error: %v", err)
+			}
+
+			destConfig := filepath.Join(destDir, ".tmux.conf")
+			content, err := os.ReadFile(destConfig)
+			if err != nil {
+				t.Fatalf("Failed to read destination config: %v", err)
+			}
+
+			if !strings.Contains(string(content), tt.wantRendered) {
+				t.Errorf(
+					"expected rendered config to contain %q, got: %s",
+					tt.wantRendered,
+					string(content),
+				)
+			}
+
+			testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+		})
+	}
+}
+
 func TestForceConfigureReloadsInsideTmux(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
@@ -308,7 +417,7 @@ func TestForceConfigureReloadsInsideTmux(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 	paths.Paths.Home.Root = tc.ConfigDir
 
-	sourceConfig := filepath.Join(sourceDir, "tmux.conf")
+	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
 	if err := os.WriteFile(sourceConfig, []byte("# test"), 0o600); err != nil {
 		t.Fatalf("Failed to create source config: %v", err)
 	}
@@ -360,7 +469,7 @@ func TestSoftConfigure(t *testing.T) {
 		paths.Paths.Home.Root = destDir
 
 		// Create source tmux.conf file (without leading dot in source)
-		sourceConfig := filepath.Join(sourceDir, "tmux.conf")
+		sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
 		configContent := "# Test tmux configuration\nset -g default-terminal \"screen-256color\""
 		err = os.WriteFile(sourceConfig, []byte(configContent), 0o644)
 		if err != nil {
@@ -438,7 +547,7 @@ func TestSoftConfigure(t *testing.T) {
 		paths.Paths.App.Configs.Tmux = sourceDir
 
 		// Create a different source config to prove it's not copied (without leading dot in source)
-		sourceConfig := filepath.Join(sourceDir, "tmux.conf")
+		sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
 		sourceContent := "# Different config that should not be copied"
 		err = os.WriteFile(sourceConfig, []byte(sourceContent), 0o644)
 		if err != nil {

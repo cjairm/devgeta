@@ -116,12 +116,13 @@ pane, and it makes a distinct sound when you are not already looking at its wind
 
 ### In Scope — Part B (ADR-0009)
 
-- [ ] Sound on `idle`/`blocked`/`error`, never `busy`, in **both** hooks
-- [ ] Gated on `window_active_clients == 0`
-- [ ] Opt-in via `@dg_notify_sound`, **off by default**
-- [ ] Per-state sounds; `afplay` → `paplay` → `printf '\a'` probe; backgrounded; never fails
-- [ ] `worktree.notify_sound` in `WorktreeConfig`, rendered into `tmux.conf`
-- [ ] Tests: fake `tmux` + fake player on PATH (Go), stubbed seam (Node)
+- [x] Sound on `idle`/`blocked`/`error`, never `busy`, in **both** hooks
+- [x] Gated on `window_active_clients == 0`
+- [x] Opt-in via `@dg_notify_sound`, **off by default**
+- [x] Per-state sounds; `afplay` → `paplay` → `printf '\a'` probe; backgrounded; never fails
+- [x] `worktree.notify_sound` in `WorktreeConfig`, rendered into `tmux.conf`
+- [x] Tests: fake `tmux` + fake player on PATH (Go), stubbed seam (Node)
+- [x] `docs/spec.md` updated (this task); real-agent verification (plan Step 14) still pending
 
 ### Explicitly Out of Scope
 
