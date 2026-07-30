@@ -1384,6 +1384,87 @@ func TestCreateAt(t *testing.T) {
 				repoRoot, mockGitBase.ExecCommandCalls)
 		}
 	})
+
+	// TestCreateAt's regression case for the step-3 review finding: with
+	// worktree.location "in-repo", create() used to re-derive repoRoot from
+	// the bare repoSlug via the fallible worktreePath (through worktreeState),
+	// which resolves a slug back to a root only via the current directory or
+	// the recent-repos store - and recordRepoUsed only populates that store
+	// *after* a successful create. So a repo passed via --repo that was
+	// neither the current directory nor already in the store failed on its
+	// very first `dg wt create <name> --repo <path>` invocation, even though
+	// create() had already computed the correct in-repo wtPath via
+	// worktreePathIn two lines earlier. This proves that first invocation now
+	// succeeds and lands the worktree at the in-repo path.
+	t.Run(
+		"in-repo location succeeds on first invocation for a repo not yet known to devgeta",
+		func(t *testing.T) {
+			t.Setenv("TMUX", "") // outside tmux: no client switch at the end
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+			setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+			repoRoot := t.TempDir()
+
+			mockGitBase := commands.NewMockBaseCommand()
+			mockGitBase.SetExecCommandResults(
+				// GetRepoRootIn(repoRoot), called by CreateAt itself.
+				commands.ExecCommandResult(repoRoot+"\n", "", nil),
+				// Every subsequent git call sees an UNRELATED repo root -
+				// simulating a caller whose current directory is some other
+				// repo entirely, with worktree.recent_repos left empty (the
+				// default here). Before this fix, resolveRepoRoot's two
+				// resolution sources (current repo, recent-repos store) could
+				// therefore never resolve repoRoot from its bare slug, and
+				// create() failed here even though wtPath was already correct.
+				commands.ExecCommandResult("/some/other/repo\n", "", nil),
+			)
+			mockTmuxBase := commands.NewMockBaseCommand()
+			mockTmuxBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // worktreeStateIn: list-windows (no window)
+				commands.ExecCommandResult("", "", nil), // ensureWindow: list-windows (no window)
+				commands.ExecCommandResult(
+					"", "no such session", os.ErrNotExist,
+				), // has-session -> missing
+				commands.ExecCommandResult("", "", nil), // new-session
+				commands.ExecCommandResult("", "", nil), // send-keys
+			)
+
+			wm := &WorktreeManager{
+				Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+				Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+				Base: commands.NewMockBaseCommand(),
+			}
+
+			if err := wm.CreateAt(repoRoot, "feat", stubLayout, true); err != nil {
+				t.Fatalf(
+					"expected create to succeed for a repo that is neither the "+
+						"current directory nor in the recent-repos store, got: %v",
+					err,
+				)
+			}
+
+			wantWtPath := filepath.Join(repoRoot, ".claude", "worktrees", "feat")
+			sawWorktreeAdd := false
+			for _, call := range mockGitBase.ExecCommandCalls {
+				joined := strings.Join(call.Args, " ")
+				if strings.Contains(joined, "worktree add") &&
+					strings.Contains(joined, wantWtPath) {
+					sawWorktreeAdd = true
+				}
+			}
+			if !sawWorktreeAdd {
+				t.Errorf(
+					"expected 'git worktree add' for the in-repo path %q, calls: %+v",
+					wantWtPath, mockGitBase.ExecCommandCalls,
+				)
+			}
+		},
+	)
 }
 
 func TestListSessions(t *testing.T) {

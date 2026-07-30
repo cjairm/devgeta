@@ -231,7 +231,8 @@ func (w *WorktreeManager) resolveRepoRoot(
 	return "", fmt.Errorf(
 		"worktree location is 'in-repo' but repo %q is not known to devgeta yet "+
 			"(it isn't the current repo and isn't in the recent-repos store); "+
-			"run this from inside the repo, or create a worktree there first",
+			"cd into the repo, or use a command/flag that takes the repo path "+
+			"directly (e.g. --repo <path>) instead of a bare name",
 		repoSlug,
 	)
 }
@@ -302,10 +303,15 @@ func (w *WorktreeManager) create(
 	wtPath := worktreePathIn(repoRoot, name)
 	windowName := GetWindowName(repoSlug, name)
 
-	state, err := w.worktreeState(repoSlug, name)
-	if err != nil {
-		return err
-	}
+	// repoRoot is already known here, so worktreeStateIn is used directly
+	// instead of round-tripping root->slug->root through the slug-based
+	// worktreeState - see worktreeStateIn's doc comment. Before this, the slug
+	// round trip could fail create() outright on its very first invocation for
+	// a repo passed via --repo (CreateAt): resolveRepoRoot can only resolve a
+	// bare slug back to a root via the current directory or the recent-repos
+	// store, and recordRepoUsed only populates that store *after* a successful
+	// create - so a brand-new --repo target had no way to satisfy either path.
+	state := w.worktreeStateIn(repoRoot, name)
 
 	if state.WtExists && state.WindowExists {
 		return fmt.Errorf(
@@ -508,14 +514,39 @@ func (w *WorktreeManager) buildWindowPanes(
 // worktreePath's error unchanged (e.g. an unresolvable in-repo root) rather
 // than reporting a false "doesn't exist" - a caller must not treat "we
 // couldn't determine where this worktree would live" as "it doesn't exist".
+//
+// For a caller that already holds repoRoot in scope (e.g. create, Remove),
+// prefer worktreeStateIn below: it skips this function's slug->root
+// resolution entirely (via worktreePathIn instead of worktreePath) and so
+// cannot fail on an unresolvable slug in the first place.
 func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, error) {
 	wtPath, err := w.worktreePath(repoSlug, name)
 	if err != nil {
 		return WorktreeState{}, err
 	}
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name)), nil
+}
+
+// worktreeStateIn is worktreeState's root-taking counterpart, mirroring how
+// worktreePathIn relates to worktreePath: a caller that already resolved
+// repoRoot (create, Remove) uses worktreePathIn directly instead of
+// round-tripping root->slug->root through the fallible worktreePath, so this
+// cannot fail - hence no error return, unlike worktreeState.
+func (w *WorktreeManager) worktreeStateIn(repoRoot, name string) WorktreeState {
+	repoSlug := filepath.Base(repoRoot)
+	wtPath := worktreePathIn(repoRoot, name)
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name))
+}
+
+// worktreeStateFor computes a WorktreeState for a worktree already known to
+// live at wtPath under window windowName - the state-inspection logic shared
+// by worktreeState (slug-based, fallible root resolution) and worktreeStateIn
+// (root-taking, infallible), so the two path-resolution shapes don't each
+// carry their own copy of it.
+func (w *WorktreeManager) worktreeStateFor(wtPath, windowName string) WorktreeState {
 	state := WorktreeState{
 		WtPath:     wtPath,
-		WindowName: GetWindowName(repoSlug, name),
+		WindowName: windowName,
 	}
 
 	if _, err := os.Stat(state.WtPath); err == nil {
@@ -536,7 +567,7 @@ func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, e
 		state.WindowExists = true
 	}
 
-	return state, nil
+	return state
 }
 
 // agentStateRank ranks a pane's @dg_agent_state value by aggregation urgency
@@ -725,12 +756,16 @@ func (w *WorktreeManager) findRepoForWorktree(name string) string {
 func (w *WorktreeManager) Remove(name string, force bool) error {
 	var repoSlug string
 
-	// Try current repo first
+	// Try current repo first. repoRoot is already known here, so
+	// worktreeStateIn is used directly instead of the slug-based
+	// worktreeState - see worktreeStateIn's doc comment on create() for why
+	// that round trip is both wasteful and (for an in-repo location) can fail
+	// outright.
 	repoRoot, err := w.Git.GetRepoRoot()
 	if err == nil {
 		repoSlug = filepath.Base(repoRoot)
-		state, stateErr := w.worktreeState(repoSlug, name)
-		if stateErr == nil && (state.WtExists || state.WindowExists) {
+		state := w.worktreeStateIn(repoRoot, name)
+		if state.WtExists || state.WindowExists {
 			return w.removeByRepo(repoSlug, name, force)
 		}
 	}
