@@ -175,7 +175,8 @@ the shared root.
 
 ### Step 6: `dg wt move`
 
-`dg wt move <name> [--to shared|in-repo]` (default: the other layout). Move via
+`dg wt move <name> [--to shared|in-repo]` (default: the configured
+`worktree.location` — see §8, resolved on approval). Move via
 Step 1, then retarget the tmux window at the new path — `tmux respawn-pane` is wrong
 (it would kill a running agent); send a `cd` to an idle pane and, when a pane has a
 live foreground process, say so and leave it, since a running agent must not be
