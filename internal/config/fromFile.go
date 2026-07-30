@@ -89,13 +89,12 @@ const maxRecentRepos = 20
 // WorktreeConfig.Location accepts. They are named constants - rather than
 // bare string literals repeated across cmd/config_settings.go's Default,
 // Set's validation, and their tests - so the two spellings can't drift out of
-// sync with each other. Defined here rather than in
-// internal/tooling/worktree because that package cannot be touched by the
-// step that introduces this setting (see docs/plans/cycles's Step 2 scope
-// boundary): worktree already imports internal/config in four files, so
-// internal/config is the owner that adds no new dependency edge, whether or
-// not worktree ever needs to read these constants back through that existing
-// edge in a later step.
+// sync with each other. Defined here rather than in internal/tooling/worktree
+// because internal/config cannot import that package (it already imports
+// internal/config in four files), so internal/config is the owner that adds
+// no new dependency edge - internal/tooling/worktree does read these
+// constants back through that existing edge (worktreePath, worktreeStateReal,
+// and their callers).
 const (
 	WorktreeLocationShared = "shared"
 	WorktreeLocationInRepo = "in-repo"
