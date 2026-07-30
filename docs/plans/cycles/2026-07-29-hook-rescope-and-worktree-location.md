@@ -58,7 +58,7 @@ Read these before touching code:
 ```
 
 `GetWorktreeBasePath()` (`worktree.go:137`) returns that shared root, and
-`WorktreeManager.List()` (`worktree.go:457-532`) enumerates every repo's
+`WorktreeManager.List()` (`worktree.go:458-533`) enumerates every repo's
 worktrees by scanning **only** that root.
 
 ### Prerequisite: rebase on the guardrails cycle
@@ -395,7 +395,7 @@ user's repository litter their working tree unless their `.gitignore` covers
 switching the default would make `git status` noisy in repos that never opted in.
 Devgeta also treats Claude Code and OpenCode symmetrically, and adopting one
 agent's convention tilts that. And the shared root is what lets `dg wt list` /
-`dg ws` scan every repo at once: `List()` (`worktree.go:457-532`) reads only that
+`dg ws` scan every repo at once: `List()` (`worktree.go:458-533`) reads only that
 root, so per-repo folders require layout-aware enumeration (possible via the
 recent-repos store from ADR-0002, but not free).
 

@@ -2,7 +2,7 @@
 
 **Status: DRAFT. Not usable.** The default has not changed, and step 3's
 verification does not work yet: `WorktreeManager.List()`
-(`internal/tooling/worktree/worktree.go:457-532`) only scans the shared root, so
+(`internal/tooling/worktree/worktree.go:458-533`) only scans the shared root, so
 `dg wt list` cannot see a worktree moved inside a repository. Following this
 guide today leaves worktrees that devgeta can no longer find.
 
@@ -69,7 +69,7 @@ Anything you finish here is one less thing to move.
 
 > **Do not use `dg wt prune` for this.** Despite the name, it removes **every**
 > worktree devgeta manages after a single `Remove all? [y/N]` confirmation
-> (`internal/tooling/worktree/worktree.go:829-858`) — it does not merge, and it
+> (`internal/tooling/worktree/worktree.go:971-1004`) — it does not merge, and it
 > does not let you pick. Running it here would delete the worktrees you were
 > about to migrate.
 
