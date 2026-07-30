@@ -109,11 +109,14 @@ type WorktreeConfig struct {
 	ScanDepth     int          `yaml:"scan_depth,omitempty"`     // max dir depth for the repo scan; 0 (or unset) = use the default of 4
 	DefaultLayout string       `yaml:"default_layout,omitempty"` // default tmux window layout for `dg ws`'s create; empty = derive a single-pane layout from DefaultAI
 
-	// Location selects where new worktrees are created on disk:
-	// WorktreeLocationShared (the default) or WorktreeLocationInRepo. Empty
-	// means WorktreeLocationShared, so existing installs are unaffected -
-	// hence omitempty. Registering this setting (cmd/config_settings.go) does
-	// not yet make anything read it; that arrives in a later cycle step.
+	// Location selects where worktrees are created on disk, and where
+	// remove/repair/state checks look for one: WorktreeLocationShared (the
+	// default) or WorktreeLocationInRepo. Empty means WorktreeLocationShared,
+	// so existing installs are unaffected - hence omitempty. Read by
+	// worktree.go's worktreePath/worktreeStateIn (create) and, as a fallback
+	// only (the git-verified currentWorktreePath is tried first), by
+	// removeByRepo/Repair/RepairInRepo when no real worktree exists at
+	// either location shape - see worktree.go's realWorktreePathOrConfigured.
 	Location string `yaml:"location,omitempty"`
 
 	// AttachAfterCreate controls whether `dg ws`'s n/N create attaches into the

@@ -612,9 +612,10 @@ type anchorGroup []string
 // about - each anchor an actual worktree (main or linked) of that repo,
 // since `git worktree list --porcelain` resolves the whole repo's worktree
 // set from any single one of its worktrees (GetMainWorktree's own doc
-// comment relies on the same guarantee). Reused by List() (below) and, per
-// the cycle plan, by findRepoForWorktree/the repo picker in a later step
-// (not wired up here).
+// comment relies on the same guarantee). Reused by forEachKnownRepo, which
+// both enumerateWorktrees (List()'s tmux-aware view and the tmux-agnostic
+// findRepoForWorktree search) and cursorRepoRoot (the repo picker's cursor-
+// repo resolution) build on, instead of each walking groups/anchors itself.
 //
 // Groups are collected, in this order (order only affects which group "wins"
 // List()'s dedup, which itself doesn't matter since that dedup is by
