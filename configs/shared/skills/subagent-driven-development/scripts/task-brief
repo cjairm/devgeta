@@ -24,16 +24,25 @@ else
   out="$dir/task-${n}-brief.md"
 fi
 
+# Plans from writing-plans head their units "Task N"; cycle docs
+# (docs/plans/TEMPLATE.md) head theirs "Step N" — accept either. Stop at the
+# next heading of equal or shallower depth, because in a cycle doc the units sit
+# mid-document and the sections after them are not part of the last one.
 awk -v n="$n" '
   /^```/ { infence = !infence }
-  !infence && /^#+[ \t]+Task[ \t]+[0-9]+/ {
-    intask = ($0 ~ ("^#+[ \t]+Task[ \t]+" n "([^0-9]|$)"))
+  !infence && /^#+[ \t]/ {
+    hashes = $0; sub(/[^#].*/, "", hashes); depth = length(hashes)
+    if ($0 ~ ("^#+[ \t]+(Task|Step)[ \t]+" n "([^0-9]|$)")) {
+      intask = 1; taskdepth = depth
+    } else if (intask && depth <= taskdepth) {
+      intask = 0
+    }
   }
   intask { print }
 ' "$plan" > "$out"
 
 if [ ! -s "$out" ]; then
-  echo "task ${n} not found in ${plan} (no heading matching 'Task ${n}')" >&2
+  echo "task ${n} not found in ${plan} (no heading matching 'Task ${n}' or 'Step ${n}')" >&2
   exit 3
 fi
 
