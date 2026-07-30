@@ -606,6 +606,11 @@ func TestRepoCandidates(t *testing.T) {
 		cleanupPaths := testutil.SetupIsolatedPaths(t)
 		defer cleanupPaths()
 		okLookPath(t)
+		// cwd must NOT resolve to a repo, or cursorRepoRoot's own group walk
+		// (which tries the cwd group before the shared-root group, per
+		// knownRepoAnchorGroups' order) would short-circuit on cwd and this
+		// test would stop exercising the shared-root path it's named for.
+		t.Chdir(t.TempDir())
 
 		wm, mockGitBase, _, mockBase := newRecordingWM()
 
@@ -620,7 +625,6 @@ func TestRepoCandidates(t *testing.T) {
 		// usage already guarantees this: create() names the shared-root
 		// directory after the repo's own basename).
 		porcelain := "worktree " + shared + "\nHEAD abc123\nbranch refs/heads/main\n\n"
-		mockGitBase.SetExecCommandResult(porcelain, "", nil)
 		repoSlug := filepath.Base(shared)
 		wtDir := filepath.Join(GetWorktreeBasePath(), repoSlug, "some-worktree")
 		if err := os.MkdirAll(wtDir, 0o755); err != nil {
@@ -631,6 +635,37 @@ func TestRepoCandidates(t *testing.T) {
 				t.Logf("cleanup: %v", err)
 			}
 		})
+		// `shared` itself is never created on disk (only wtDir is), so
+		// PrunedRecentRepos() drops the shared recent-repo entry (its Path
+		// fails os.Stat) before knownRepoAnchorGroups ever sees it - the only
+		// recent-repos group cursorRepoRoot's walk actually tries is
+		// onlyRecent. Four calls total: RepoCandidates' own cwdRepoRoot()
+		// (cwd isn't a repo), cursorRepoRoot's internal cwdRepoRoot() (same),
+		// the recent-repos group's anchor (onlyRecent, not a repo, so the
+		// walk moves on), then the shared-root group's anchor (wtDir, which
+		// resolves to `shared` and matches repoSlug).
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // RepoCandidates' own cwdRepoRoot()
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cursorRepoRoot's internal cwdRepoRoot()
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // recent-repos group anchor (onlyRecent)
+			commands.ExecCommandResult(
+				porcelain,
+				"",
+				nil,
+			), // shared-root anchor (wtDir)
+		)
 
 		// Recents contain the same repo (as `shared`, unresolved of any
 		// worktree) plus one repo only recents knows about.
