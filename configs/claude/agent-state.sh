@@ -10,6 +10,13 @@
 # configs/opencode/plugin/notify.js; both write the same tmux pane option and
 # must stay behaviourally matched.
 #
+# Since docs/decisions/ADR-0009-audible-agent-notifications.md (Step 10 of
+# docs/plans/cycles/2026-07-29-ws-agent-panes-and-sound.md), this script also
+# plays a sound on idle/blocked/error, gated so it never dings for the agent
+# you're already watching. See the dedicated comment block near the bottom of
+# this file for that logic; it reuses the same three-state set as the window
+# mirror below, for the same reason.
+#
 # Unlike format.sh and task-redirect.sh, this script deliberately reads NO
 # field from the hook's JSON stdin payload — it doesn't even read stdin.
 # "Which value to write" is fully determined by which of the three
@@ -39,6 +46,57 @@ busy)
 	;;
 idle | blocked | error)
 	tmux set-option -w -t "$TMUX_PANE" @dg_window_agent_state "$1" >/dev/null 2>&1 || true
+	;;
+esac
+
+# ADR-0009: play a sound for idle/blocked/error — "wants you" states, same
+# set as the window mirror above and for the same reason; busy never dings.
+#
+# Picks the file for state $1, probes afplay then paplay (first match on
+# PATH wins), and falls back to the terminal bell if neither is present.
+# Fired detached and backgrounded so a 1-second sound never adds a second to
+# hook latency (Claude Code waits for this hook to exit). Nothing in here may
+# ever fail the hook: a missing player, missing file, or no audio device is
+# silence, not an error — the same `|| true` tolerance already used above.
+play_notify_sound() {
+	case "$1" in
+	idle)
+		afplay_file="/System/Library/Sounds/Glass.aiff"
+		paplay_file="/usr/share/sounds/freedesktop/stereo/complete.oga"
+		;;
+	blocked)
+		afplay_file="/System/Library/Sounds/Ping.aiff"
+		paplay_file="/usr/share/sounds/freedesktop/stereo/message.oga"
+		;;
+	error)
+		afplay_file="/System/Library/Sounds/Basso.aiff"
+		paplay_file="/usr/share/sounds/freedesktop/stereo/dialog-error.oga"
+		;;
+	esac
+
+	if command -v afplay >/dev/null 2>&1; then
+		play_cmd=(afplay "$afplay_file")
+	elif command -v paplay >/dev/null 2>&1; then
+		play_cmd=(paplay "$paplay_file")
+	else
+		play_cmd=(printf '\a')
+	fi
+
+	("${play_cmd[@]}" >/dev/null 2>&1 &) >/dev/null 2>&1 || true
+}
+
+case "$1" in
+idle | blocked | error)
+	# Opt-in, off by default, and checked FIRST so the common (off) case
+	# costs exactly one tmux call before exiting.
+	[ "$(tmux show-option -gqv @dg_notify_sound 2>/dev/null)" = "on" ] || exit 0
+
+	# Same predicate configs/tmux/tmux.conf:126's window-status-format
+	# already uses to flag an unattended window, so the audible and visual
+	# signals can never disagree about whether you've seen this.
+	[ "$(tmux display-message -p -t "$TMUX_PANE" '#{window_active_clients}' 2>/dev/null)" = "0" ] || exit 0
+
+	play_notify_sound "$1"
 	;;
 esac
 
