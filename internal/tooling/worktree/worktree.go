@@ -77,9 +77,12 @@ type WorktreeStatus struct {
 	// computed by aggregating over its panes' @dg_agent_state values per
 	// ADR-0005 (blocked > error > idle > busy > no agent). "" means no pane
 	// in the window ever had an agent write to it (or the window doesn't
-	// exist), not "idle" - see aggregateAgentState.
+	// exist), not "idle" - see AggregateAgentState.
 	AgentState string
 	Repo       string
+	// Panes holds every pane state PaneStates() reported for this worktree's window,
+	// for callers that need per-pane detail rather than just the aggregate.
+	Panes []tmux.PaneState
 }
 
 // SessionStatus describes a standalone tmux session for the workspace
@@ -88,6 +91,14 @@ type WorktreeStatus struct {
 type SessionStatus struct {
 	Name     string
 	Attached bool
+	// AgentState is the aggregated agent state across the session's own
+	// panes, computed the same way as WorktreeStatus.AgentState (see
+	// AggregateAgentState / ADR-0005). "" means no pane in the session ever
+	// had an agent write to it.
+	AgentState string
+	// Panes holds every pane state PaneStates() reported for this session,
+	// for callers that need per-pane detail rather than just the aggregate.
+	Panes []tmux.PaneState
 }
 
 // WorktreeState holds the current state of a worktree
@@ -437,12 +448,12 @@ var agentStateRank = map[string]int{
 	AgentStateBlocked: 4,
 }
 
-// aggregateAgentState reduces one window's pane states to the single value a
+// AggregateAgentState reduces one window's pane states to the single value a
 // worktree row should report, per ADR-0005's precedence. Pure function of
 // the pane states so it's testable without a WorktreeManager. Returns "" when
 // states is empty or nil, or every entry is "" / unrecognized - i.e. no pane
 // in the window has a real agent state to report.
-func aggregateAgentState(states []string) string {
+func AggregateAgentState(states []string) string {
 	best := ""
 	bestRank := 0
 	for _, s := range states {
@@ -472,11 +483,13 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 	// window name: a window's presence as a key is the direct equivalent of
 	// "does a window with this name exist" (PaneStates enumerates every pane
 	// on the server, and a window with zero panes cannot exist in tmux), and
-	// its slice of pane states is what aggregateAgentState reduces to
+	// its slice of pane states is what AggregateAgentState reduces to
 	// AgentState. See ADR-0005.
 	paneStatesByWindow := make(map[string][]string)
+	paneFullStatesByWindow := make(map[string][]tmux.PaneState)
 	for _, ps := range w.Tmux.PaneStates() {
 		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
+		paneFullStatesByWindow[ps.Window] = append(paneFullStatesByWindow[ps.Window], ps)
 	}
 
 	var statuses []WorktreeStatus
@@ -517,14 +530,19 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 			// window in the index always has at least one pane state
 			// appended above, so ok alone is the "window exists" signal.
 			states, windowActive := paneStatesByWindow[windowName]
+			panes := paneFullStatesByWindow[windowName]
+			if panes == nil {
+				panes = []tmux.PaneState{}
+			}
 			statuses = append(statuses, WorktreeStatus{
 				Name:         name,
 				Path:         wtPath,
 				Branch:       branch,
 				TmuxWindow:   windowName,
 				WindowActive: windowActive,
-				AgentState:   aggregateAgentState(states),
+				AgentState:   AggregateAgentState(states),
 				Repo:         repoSlug,
+				Panes:        panes,
 			})
 		}
 	}
@@ -548,8 +566,12 @@ func (w *WorktreeManager) ListNames() ([]string, error) {
 // ListSessions returns tmux sessions with no worktree-backed window - plain
 // sessions the workspace dashboard should list on their own, since a
 // worktree-backed session already appears via List(). A single
-// Tmux.SessionWindows() scan finds every wt-prefixed window across the
-// server; any session hosting at least one is excluded here.
+// Tmux.PaneStates() scan (same primitive List() uses, see its comment above)
+// serves both jobs at once: isWorktreeWindow(ps.Window) over the scan finds
+// every session hosting a wt-prefixed window (excluded here, since it
+// already appears via List()), and the same scan's panes, grouped by
+// session, are what AggregateAgentState reduces to each SessionStatus's
+// AgentState.
 //
 // Errors from Tmux.ListSessions() propagate unchanged, including its (nil,
 // nil) no-server result, which flows through as an empty list here rather
@@ -564,10 +586,14 @@ func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
 	}
 
 	worktreeSessions := make(map[string]bool, len(sessions))
-	for _, sw := range w.Tmux.SessionWindows() {
-		if isWorktreeWindow(sw.Window) {
-			worktreeSessions[sw.Session] = true
+	panesBySession := make(map[string][]tmux.PaneState)
+	statesBySession := make(map[string][]string)
+	for _, ps := range w.Tmux.PaneStates() {
+		if isWorktreeWindow(ps.Window) {
+			worktreeSessions[ps.Session] = true
 		}
+		panesBySession[ps.Session] = append(panesBySession[ps.Session], ps)
+		statesBySession[ps.Session] = append(statesBySession[ps.Session], ps.State)
 	}
 
 	var statuses []SessionStatus
@@ -575,7 +601,12 @@ func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
 		if worktreeSessions[s.Name] {
 			continue
 		}
-		statuses = append(statuses, SessionStatus{Name: s.Name, Attached: s.Attached})
+		statuses = append(statuses, SessionStatus{
+			Name:       s.Name,
+			Attached:   s.Attached,
+			AgentState: AggregateAgentState(statesBySession[s.Name]),
+			Panes:      panesBySession[s.Name],
+		})
 	}
 	return statuses, nil
 }

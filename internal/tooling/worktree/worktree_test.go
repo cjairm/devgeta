@@ -201,8 +201,8 @@ func TestList(t *testing.T) {
 		windowA := GetWindowName("repoA", "wt1")
 		windowB := GetWindowName("repoB", "wt2")
 		mockTmuxBase.SetExecCommandResult(
-			"sessA\t"+windowA+"\t%1\tbusy\n"+
-				"sessB\t"+windowB+"\t%2\tidle\n",
+			"sessA\t"+windowA+"\t%1\t0\tclaude\tbusy\n"+
+				"sessB\t"+windowB+"\t%2\t0\tclaude\tidle\n",
 			"",
 			nil,
 		)
@@ -268,10 +268,10 @@ func TestList(t *testing.T) {
 		windowMixed := GetWindowName("repoC", "mixed")
 		windowUrgent := GetWindowName("repoC", "urgent")
 		mockTmuxBase.SetExecCommandResult(
-			"sess\t"+windowMixed+"\t%1\tidle\n"+
-				"sess\t"+windowMixed+"\t%2\tbusy\n"+
-				"sess\t"+windowUrgent+"\t%3\tblocked\n"+
-				"sess\t"+windowUrgent+"\t%4\terror\n",
+			"sess\t"+windowMixed+"\t%1\t0\tclaude\tidle\n"+
+				"sess\t"+windowMixed+"\t%2\t1\tclaude\tbusy\n"+
+				"sess\t"+windowUrgent+"\t%3\t0\tclaude\tblocked\n"+
+				"sess\t"+windowUrgent+"\t%4\t1\tclaude\terror\n",
 			"",
 			nil,
 		)
@@ -321,7 +321,7 @@ func TestList(t *testing.T) {
 		windowAbsent := GetWindowName("repoD", "no-window")
 		// windowAbsent deliberately has no line in the scan output at all.
 		mockTmuxBase.SetExecCommandResult(
-			"sess\t"+windowPresent+"\t%1\t\n",
+			"sess\t"+windowPresent+"\t%1\t0\tvim\t\n",
 			"",
 			nil,
 		)
@@ -356,6 +356,87 @@ func TestList(t *testing.T) {
 				"window absent from scan: got WindowActive=%v AgentState=%q, want false/\"\"",
 				s.WindowActive,
 				s.AgentState,
+			)
+		}
+	})
+
+	// Worktree rows should carry their panes for callers that need per-pane detail.
+	// Per ADR-0008, every row kind (SessionStatus, WorktreeStatus) reports agent
+	// state on every pane it found, not just the aggregate.
+	t.Run("worktree rows carry their panes", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+
+		windowWithPanes := GetWindowName("repoE", "with-panes")
+		windowNoPanes := GetWindowName("repoE", "no-panes")
+		mockTmuxBase.SetExecCommandResult(
+			"sess\t"+windowWithPanes+"\t%1\t0\tclaude\tbusy\n"+
+				"sess\t"+windowWithPanes+"\t%2\t1\tclaude\tidle\n",
+			"",
+			nil,
+		)
+
+		wm := &WorktreeManager{
+			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+			Base: commands.NewMockBaseCommand(),
+		}
+
+		createWorktreeDir(t, "repoE", "with-panes")
+		createWorktreeDir(t, "repoE", "no-panes")
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+
+		byWindow := make(map[string]WorktreeStatus, len(statuses))
+		for _, s := range statuses {
+			byWindow[s.TmuxWindow] = s
+		}
+
+		// Worktree with panes in tmux should have them in Panes field
+		s := byWindow[windowWithPanes]
+		if len(s.Panes) != 2 {
+			t.Errorf(
+				"window %s: expected 2 panes, got %d: %+v",
+				windowWithPanes,
+				len(s.Panes),
+				s.Panes,
+			)
+		}
+		if s.Panes[0].PaneID != "%1" || s.Panes[0].State != "busy" {
+			t.Errorf(
+				"window %s pane[0]: expected {PaneID: \"%%1\", State: \"busy\"}, got {PaneID: %q, State: %q}",
+				windowWithPanes,
+				s.Panes[0].PaneID,
+				s.Panes[0].State,
+			)
+		}
+		if s.Panes[1].PaneID != "%2" || s.Panes[1].State != "idle" {
+			t.Errorf(
+				"window %s pane[1]: expected {PaneID: \"%%2\", State: \"idle\"}, got {PaneID: %q, State: %q}",
+				windowWithPanes,
+				s.Panes[1].PaneID,
+				s.Panes[1].State,
+			)
+		}
+
+		// Worktree with no window should have empty (not nil) Panes slice
+		s = byWindow[windowNoPanes]
+		if s.Panes == nil {
+			t.Errorf(
+				"window %s: Panes should be empty slice, not nil",
+				windowNoPanes,
+			)
+		}
+		if len(s.Panes) != 0 {
+			t.Errorf(
+				"window %s: expected 0 panes, got %d: %+v",
+				windowNoPanes,
+				len(s.Panes),
+				s.Panes,
 			)
 		}
 	})
@@ -417,8 +498,8 @@ func TestAggregateAgentState(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := aggregateAgentState(tt.states); got != tt.want {
-				t.Errorf("aggregateAgentState(%v) = %q, want %q", tt.states, got, tt.want)
+			if got := AggregateAgentState(tt.states); got != tt.want {
+				t.Errorf("AggregateAgentState(%v) = %q, want %q", tt.states, got, tt.want)
 			}
 		})
 	}
@@ -1033,9 +1114,13 @@ func TestListSessions(t *testing.T) {
 			mockTmuxBase.SetExecCommandResults(
 				// list-sessions
 				commands.ExecCommandResult("myrepo\t1\nmisc\t0\nnotes\t0\nmixed\t1\n", "", nil),
-				// list-windows -a
+				// list-panes -a
 				commands.ExecCommandResult(
-					"myrepo\twt-myrepo-feat\nmisc\tshell\nnotes\tnotes\nmixed\tshell\nmixed\twt-mixed-feat\n",
+					"myrepo\twt-myrepo-feat\t%1\t0\tclaude\tbusy\n"+
+						"misc\tshell\t%2\t0\tzsh\t\n"+
+						"notes\tnotes\t%3\t0\tvim\t\n"+
+						"mixed\tshell\t%4\t0\tzsh\t\n"+
+						"mixed\twt-mixed-feat\t%5\t1\tclaude\tidle\n",
 					"",
 					nil,
 				),
@@ -1050,8 +1135,34 @@ func TestListSessions(t *testing.T) {
 			}
 
 			expected := []SessionStatus{
-				{Name: "misc", Attached: false},
-				{Name: "notes", Attached: false},
+				{
+					Name:     "misc",
+					Attached: false,
+					Panes: []tmux.PaneState{
+						{
+							Session:        "misc",
+							Window:         "shell",
+							PaneID:         "%2",
+							PaneIndex:      "0",
+							CurrentCommand: "zsh",
+							State:          "",
+						},
+					},
+				},
+				{
+					Name:     "notes",
+					Attached: false,
+					Panes: []tmux.PaneState{
+						{
+							Session:        "notes",
+							Window:         "notes",
+							PaneID:         "%3",
+							PaneIndex:      "0",
+							CurrentCommand: "vim",
+							State:          "",
+						},
+					},
+				},
 			}
 			if len(statuses) != len(expected) {
 				t.Fatalf(
@@ -1062,20 +1173,64 @@ func TestListSessions(t *testing.T) {
 				)
 			}
 			for i, exp := range expected {
-				if statuses[i] != exp {
+				if statuses[i].Name != exp.Name || statuses[i].Attached != exp.Attached ||
+					statuses[i].AgentState != exp.AgentState ||
+					len(statuses[i].Panes) != len(exp.Panes) {
 					t.Errorf("status[%d] = %+v, want %+v", i, statuses[i], exp)
+					continue
+				}
+				for j, p := range exp.Panes {
+					if statuses[i].Panes[j] != p {
+						t.Errorf(
+							"status[%d].Panes[%d] = %+v, want %+v",
+							i,
+							j,
+							statuses[i].Panes[j],
+							p,
+						)
+					}
 				}
 			}
 
 			if mockTmuxBase.GetExecCommandCallCount() != 2 {
 				t.Errorf(
-					"expected a single list-sessions + a single list-windows -a scan, got %d calls: %+v",
+					"expected a single list-sessions + a single list-panes -a scan, got %d calls: %+v",
 					mockTmuxBase.GetExecCommandCallCount(),
 					mockTmuxBase.ExecCommandCalls,
 				)
 			}
 		},
 	)
+
+	// The case ADR-0008 exists for: a plain session (no worktree window at
+	// all) whose own pane has an agent in the "blocked" state must surface
+	// that on SessionStatus, not just on worktree rows.
+	t.Run("plain session with a blocked-agent pane reports AgentState blocked", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			// list-sessions
+			commands.ExecCommandResult("work\t1\n", "", nil),
+			// list-panes -a
+			commands.ExecCommandResult("work\tshell\t%1\t0\tclaude\tblocked\n", "", nil),
+		)
+		wm := &WorktreeManager{
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		}
+
+		statuses, err := wm.ListSessions()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(statuses) != 1 {
+			t.Fatalf("expected 1 session, got %d: %+v", len(statuses), statuses)
+		}
+		if got := statuses[0].AgentState; got != AgentStateBlocked {
+			t.Errorf("AgentState = %q, want %q", got, AgentStateBlocked)
+		}
+		if len(statuses[0].Panes) != 1 || statuses[0].Panes[0].State != AgentStateBlocked {
+			t.Errorf("Panes = %+v, want a single blocked pane", statuses[0].Panes)
+		}
+	})
 
 	t.Run("no-server case flows through as empty list, not an error", func(t *testing.T) {
 		mockTmuxBase := commands.NewMockBaseCommand()
@@ -1095,8 +1250,8 @@ func TestListSessions(t *testing.T) {
 		if statuses != nil {
 			t.Errorf("expected nil statuses, got %+v", statuses)
 		}
-		// No sessions means no windows to scan for either - the second
-		// (list-windows -a) call must not happen.
+		// No sessions means no panes to scan for either - the second
+		// (list-panes -a) call must not happen.
 		if mockTmuxBase.GetExecCommandCallCount() != 1 {
 			t.Errorf(
 				"expected only the list-sessions call, got %d calls: %+v",
@@ -1137,7 +1292,7 @@ func TestListSessions(t *testing.T) {
 	})
 
 	// Documents an accepted trade-off: if Tmux.ListSessions() succeeds but the
-	// follow-up Tmux.SessionWindows() scan then fails, the exclusion set ends up
+	// follow-up Tmux.PaneStates() scan then fails, the exclusion set ends up
 	// empty and a worktree-backed session is reported as standalone - the exact
 	// double-listing this method exists to prevent. This mirrors the tolerant
 	// (best-effort, non-fatal) error handling already used elsewhere in this
@@ -1145,13 +1300,13 @@ func TestListSessions(t *testing.T) {
 	// not treated as an error here either. Not a design goal, just a documented
 	// limit of the current approach.
 	t.Run(
-		"SessionWindows failure after a successful ListSessions is tolerated, not surfaced as an error",
+		"PaneStates failure after a successful ListSessions is tolerated, not surfaced as an error",
 		func(t *testing.T) {
 			mockTmuxBase := commands.NewMockBaseCommand()
 			mockTmuxBase.SetExecCommandResults(
 				// list-sessions: includes a session that (unbeknownst to us here) hosts a worktree window.
 				commands.ExecCommandResult("myrepo\t1\n", "", nil),
-				// list-windows -a fails.
+				// list-panes -a fails.
 				commands.ExecCommandResult("", "error", errors.New("no server")),
 			)
 			wm := &WorktreeManager{

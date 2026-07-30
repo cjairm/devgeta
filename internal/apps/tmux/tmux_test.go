@@ -1629,11 +1629,11 @@ func TestSelectPane(t *testing.T) {
 
 func TestPaneStates(t *testing.T) {
 	t.Run(
-		"parses tab-separated 4-field pane lines across multiple sessions/windows/panes, including empty last field",
+		"parses tab-separated 6-field pane lines across multiple sessions/windows/panes, including empty last field",
 		func(t *testing.T) {
 			mockApp := testutil.NewMockApp()
 			mockApp.Base.SetExecCommandResult(
-				"my-session\twt-feature-a\t%1\tworking\nmy-session\teditor\t%2\t\nother\tnotes\t%3\tblocked\n",
+				"my-session\twt-feature-a\t%1\t0\tclaude\tworking\nmy-session\teditor\t%2\t1\tvim\t\nother\tnotes\t%3\t2\tbash\tblocked\n",
 				"",
 				nil,
 			)
@@ -1642,9 +1642,30 @@ func TestPaneStates(t *testing.T) {
 			states := app.PaneStates()
 
 			expected := []tmux.PaneState{
-				{Session: "my-session", Window: "wt-feature-a", PaneID: "%1", State: "working"},
-				{Session: "my-session", Window: "editor", PaneID: "%2", State: ""},
-				{Session: "other", Window: "notes", PaneID: "%3", State: "blocked"},
+				{
+					Session:        "my-session",
+					Window:         "wt-feature-a",
+					PaneID:         "%1",
+					PaneIndex:      "0",
+					CurrentCommand: "claude",
+					State:          "working",
+				},
+				{
+					Session:        "my-session",
+					Window:         "editor",
+					PaneID:         "%2",
+					PaneIndex:      "1",
+					CurrentCommand: "vim",
+					State:          "",
+				},
+				{
+					Session:        "other",
+					Window:         "notes",
+					PaneID:         "%3",
+					PaneIndex:      "2",
+					CurrentCommand: "bash",
+					State:          "blocked",
+				},
 			}
 			if len(states) != len(expected) {
 				t.Fatalf("expected %d states, got %d: %+v", len(expected), len(states), states)
@@ -1656,6 +1677,35 @@ func TestPaneStates(t *testing.T) {
 			}
 		},
 	)
+
+	t.Run("populates PaneIndex and CurrentCommand explicitly", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(
+			"my-session\teditor\t%1\t0\tzsh\t\n",
+			"",
+			nil,
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		states := app.PaneStates()
+
+		expected := []tmux.PaneState{
+			{
+				Session:        "my-session",
+				Window:         "editor",
+				PaneID:         "%1",
+				PaneIndex:      "0",
+				CurrentCommand: "zsh",
+				State:          "",
+			},
+		}
+		if len(states) != len(expected) {
+			t.Fatalf("expected %d states, got %d: %+v", len(expected), len(states), states)
+		}
+		if states[0] != expected[0] {
+			t.Errorf("state = %+v, want %+v", states[0], expected[0])
+		}
+	})
 
 	t.Run("exec error returns nil", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
@@ -1682,7 +1732,7 @@ func TestClearAgentStateForWindow(t *testing.T) {
 	t.Run("clears every pane belonging to the matching window only", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResult(
-			"my-session\twt-feature-a\t%1\tworking\nmy-session\twt-feature-a\t%2\tidle\nother\tnotes\t%3\tblocked\n",
+			"my-session\twt-feature-a\t%1\t0\tclaude\tworking\nmy-session\twt-feature-a\t%2\t1\tzsh\tidle\nother\tnotes\t%3\t0\tbash\tblocked\n",
 			"",
 			nil,
 		)
@@ -1757,7 +1807,7 @@ func TestClearAgentStateForWindow(t *testing.T) {
 	t.Run("window with no matching panes issues zero set-option calls", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResult(
-			"my-session\teditor\t%1\t\nother\tnotes\t%2\tblocked\n",
+			"my-session\teditor\t%1\t0\tvim\t\nother\tnotes\t%2\t0\tbash\tblocked\n",
 			"",
 			nil,
 		)
@@ -1777,7 +1827,7 @@ func TestClearAgentStateForWindow(t *testing.T) {
 		mockApp.Base.SetExecCommandResults(
 			// scan
 			commands.ExecCommandResult(
-				"s\twt-feature-a\t%1\tworking\ns\twt-feature-a\t%2\tworking\ns\twt-feature-a\t%3\tworking\n",
+				"s\twt-feature-a\t%1\t0\tclaude\tworking\ns\twt-feature-a\t%2\t1\tclaude\tworking\ns\twt-feature-a\t%3\t2\tclaude\tworking\n",
 				"",
 				nil,
 			),

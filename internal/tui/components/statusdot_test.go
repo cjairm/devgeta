@@ -8,6 +8,72 @@ import (
 	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
+func TestSessionStateFromAgent(t *testing.T) {
+	cases := []struct {
+		name         string
+		windowActive bool
+		agentState   string
+		dirtyCount   int
+		want         tuicomponents.SessionState
+	}{
+		{
+			name:         "active window agent busy",
+			windowActive: true,
+			agentState:   worktree.AgentStateBusy,
+			want:         tuicomponents.StateRunning,
+		},
+		{
+			name:         "active window agent idle (needs review)",
+			windowActive: true,
+			agentState:   worktree.AgentStateIdle,
+			want:         tuicomponents.StateNeedsReview,
+		},
+		{
+			name:         "active window agent blocked",
+			windowActive: true,
+			agentState:   worktree.AgentStateBlocked,
+			want:         tuicomponents.StateBlocked,
+		},
+		{
+			name:         "active window agent error",
+			windowActive: true,
+			agentState:   worktree.AgentStateError,
+			want:         tuicomponents.StateError,
+		},
+		{
+			name:         "active window no agent state",
+			windowActive: true,
+			agentState:   "",
+			want:         tuicomponents.StateRunning,
+		},
+		{
+			name:         "inactive window dirty",
+			windowActive: false,
+			agentState:   worktree.AgentStateBusy,
+			dirtyCount:   3,
+			want:         tuicomponents.StateDirty,
+		},
+		{
+			name:         "inactive window no dirty",
+			windowActive: false,
+			agentState:   worktree.AgentStateIdle,
+			want:         tuicomponents.StateNoSession,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tuicomponents.SessionStateFromAgent(
+				tc.windowActive,
+				tc.agentState,
+				tc.dirtyCount,
+			)
+			if got != tc.want {
+				t.Errorf("got %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestSessionStateFromWorktree(t *testing.T) {
 	cases := []struct {
 		name       string

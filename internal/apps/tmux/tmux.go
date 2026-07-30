@@ -254,16 +254,21 @@ type PaneState struct {
 	Session string
 	Window  string
 	PaneID  string
-	State   string // "@dg_agent_state" value; "" means no agent has written to this pane
+	// PaneIndex is tmux's #{pane_index} — the pane's position within its window.
+	PaneIndex string
+	// CurrentCommand is tmux's #{pane_current_command} — the running program's
+	// name (informational only; do NOT use it to detect agents, see ADR-0008).
+	CurrentCommand string
+	State          string // "@dg_agent_state" value; "" means no agent has written to this pane
 }
 
 // SessionWindows returns every (session, window) pair on the tmux server from
 // a single list-windows -a scan. It is the shared shape callers reach for when
 // they need to correlate windows to their sessions in bulk - e.g.
-// WorktreeManager.ListSessions uses it to find every session hosting a
-// wt-prefixed window without one exec call per session. Returns nil when no
-// server is reachable or the query fails, matching WindowSession and
-// FindWindowsBySuffix's existing tolerance for this same command.
+// WindowSession uses it to find the session hosting a single named window.
+// Returns nil when no server is reachable or the query fails, matching
+// WindowSession and FindWindowsBySuffix's existing tolerance for this same
+// command.
 func (t *Tmux) SessionWindows() []SessionWindow {
 	execCommand := cmd.CommandParams{
 		Command: constants.Tmux,
@@ -285,11 +290,11 @@ func (t *Tmux) SessionWindows() []SessionWindow {
 	return pairs
 }
 
-// PaneStates returns every pane on the tmux server with its session, window, pane ID, and
-// agent state from a single list-panes -a scan. The agent state field may be an empty string
-// when the @dg_agent_state pane option has not yet been set by an agent. Returns nil when no
-// server is reachable or the query fails, matching SessionWindows's existing tolerance for
-// this same command.
+// PaneStates returns every pane on the tmux server with its session, window, pane ID, pane
+// index, current command, and agent state from a single list-panes -a scan. The agent state
+// field may be an empty string when the @dg_agent_state pane option has not yet been set by an
+// agent. Returns nil when no server is reachable or the query fails, matching SessionWindows's
+// existing tolerance for this same command.
 func (t *Tmux) PaneStates() []PaneState {
 	execCommand := cmd.CommandParams{
 		Command: constants.Tmux,
@@ -297,7 +302,7 @@ func (t *Tmux) PaneStates() []PaneState {
 			"list-panes",
 			"-a",
 			"-F",
-			"#{session_name}\t#{window_name}\t#{pane_id}\t#{@dg_agent_state}",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}",
 		},
 	}
 	stdout, _, err := t.Base.ExecCommand(execCommand)
@@ -307,17 +312,19 @@ func (t *Tmux) PaneStates() []PaneState {
 	var states []PaneState
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 4)
-		if len(parts) != 4 {
+		parts := strings.SplitN(scanner.Text(), "\t", 6)
+		if len(parts) != 6 {
 			continue
 		}
 		states = append(
 			states,
 			PaneState{
-				Session: strings.TrimSpace(parts[0]),
-				Window:  strings.TrimSpace(parts[1]),
-				PaneID:  strings.TrimSpace(parts[2]),
-				State:   strings.TrimSpace(parts[3]),
+				Session:        strings.TrimSpace(parts[0]),
+				Window:         strings.TrimSpace(parts[1]),
+				PaneID:         strings.TrimSpace(parts[2]),
+				PaneIndex:      strings.TrimSpace(parts[3]),
+				CurrentCommand: strings.TrimSpace(parts[4]),
+				State:          strings.TrimSpace(parts[5]),
 			},
 		)
 	}

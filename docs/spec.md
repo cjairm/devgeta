@@ -465,26 +465,58 @@ only. Every top-level row in the dashboard is exactly one of two kinds:
   to toggle every repo at once), shown with a `▼`/`▶` chevron and an `N trees` badge. Shown even
   when its repo-slug tmux session isn't live.
 - **Session workspace**: a standalone tmux session with no worktree-backed (`wt-`) window,
-  sourced from `tmux list-sessions`. A leaf row, labeled `session`.
+  sourced from `tmux list-sessions`. A leaf row, labeled `session`, unless it qualifies for
+  its own pane-row expansion (see below).
 
-The two kinds carry different marker shapes so they're distinguishable at a glance, not just
-by their label: worktree rows use a circle (`●` running / `○` not), session rows use a square
-(`■` attached / `□` detached) — in both, a filled glyph means active and the color matches
-(green active, dim inactive).
+The two kinds carry different marker shapes so they're distinguishable at a glance while no
+agent has ever reported on them, not just by their label: worktree rows use a circle (`●`
+running / `○` not), session rows use a square (`■` attached / `□` detached) — in both, a
+filled glyph means active and the color matches (green active, dim inactive). This shape
+distinction is the "quiet" default; once an agent has reported, the row switches to the state
+vocabulary described next, which is shared across every row kind.
 
-For a worktree row with a live window, the dot also reports what the AI coder inside is
-doing, not just that the window exists. On top of running (`●` green) / not-running (`○`
-gray, no window), three "wants you" states layer on top of a live window: finished and
-waiting on you (`◆` purple), blocked on a permission prompt (`!` red), and errored (`✕` bold
-red). See [ADR-0005](decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md) for the
-underlying signal — each coder writes its activity to a tmux pane option, and a window
-holding more than one coder pane (e.g. a split-pane review beside a working coder) is
-aggregated most-urgent-first (`blocked > error > idle > busy`), so one finished pane is
-enough to show `◆` even while its neighbor keeps working. Attaching to a row (`enter`) clears
-its state — attaching is the user acknowledging it. tmux's own status bar
-(`configs/tmux/tmux.conf`) separately flags any other window in the current session whose
-coder wants attention while you're looking elsewhere, so `dg ws` doesn't have to stay open to
-notice.
+The dot on a worktree row, a session row, and a repo header all report what the AI coder(s)
+underneath are doing, not just whether something is running. On top of running (`●` green) /
+not-running (`○`/`□` gray, no window or no agent yet), three "wants you" states layer on top
+of a live window: finished and waiting on you (`◆` purple), blocked on a permission prompt
+(`!` red), and errored (`✕` bold red). See
+[ADR-0005](decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md) for the underlying
+signal — each coder writes its activity to a tmux pane option — and
+[ADR-0008](decisions/ADR-0008-agent-state-on-every-pane-row.md) for how that signal was
+extended to every row kind, all sharing one precedence rule
+(`blocked > error > idle > busy > no agent`, most urgent wins):
+
+- **Worktree rows** aggregate every pane of their `wt-…` window, as before: a window holding
+  more than one coder pane (e.g. a split-pane review beside a working coder) shows the most
+  urgent state, so one finished pane is enough to show `◆` even while its neighbor keeps
+  working.
+- **Session rows** aggregate every pane in that tmux session and show the same state
+  vocabulary (`●`/`◆`/`!`/`✕`) once any agent has reported there, replacing the plain
+  attached/detached square with a colored dot. A session nobody has ever run an agent in —
+  the common case — keeps the plain `■`/`□` square; the shape distinction still applies to
+  that quiet case.
+- **Repo headers** aggregate across every worktree in the repo (whether or not the repo is
+  currently expanded), so collapsing a repo no longer hides an urgent child's state. A repo
+  where no worktree has ever had an agent report falls back to a dim "not running" glyph
+  rather than a false all-clear.
+- **Individual panes**, revealed by expansion (next paragraph), each show their own dot for
+  that one pane's state.
+
+A worktree row or session row with **two or more** panes reporting a non-empty agent state
+gains its own `▼`/`▶` chevron (the same convention as a repo header), and `h`/`l` reveal or
+hide its **pane rows** — one child row per pane, indented further than the parent, showing
+the pane's index, the command currently running in it, and that pane's own dot. This answers
+"which pane wants attention," not just "which window": a window with a working coder and a
+finished reviewer side by side shows exactly which one is which once expanded. A parent with
+zero or one stateful pane never gets a chevron — a single pane's state is already exactly what
+the parent's own dot says, so a chevron there would be noise. Collapsing a worktree/session's
+pane rows is independent of collapsing a repo header, even when a repo and a standalone
+session happen to share the same name.
+
+Attaching to a row (`enter`) clears its state — attaching is the user acknowledging it.
+tmux's own status bar (`configs/tmux/tmux.conf`) separately flags any other window in the
+current session whose coder wants attention while you're looking elsewhere, so `dg ws`
+doesn't have to stay open to notice.
 
 Both kinds share the existing worktree-row keys (`j`/`k` nav,
 `h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit).

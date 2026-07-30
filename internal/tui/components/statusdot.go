@@ -13,16 +13,16 @@ const (
 	StateError                    // agent encountered an error
 )
 
-// SessionStateFromWorktree derives state from WorktreeStatus, incorporating
-// the aggregated agent state from the worktree's window panes.
+// SessionStateFromAgent derives state from a boolean window-active flag and
+// aggregated agent state, incorporating the agent state from window panes.
 // agentState should be one of the AgentState* constants from the worktree package,
 // or "" if no agent has reported a state (equivalent to StateRunning for active windows).
-func SessionStateFromWorktree(
-	s worktree.WorktreeStatus,
+func SessionStateFromAgent(
+	windowActive bool,
 	agentState string,
 	dirtyCount int,
 ) SessionState {
-	if s.WindowActive {
+	if windowActive {
 		switch agentState {
 		case worktree.AgentStateBlocked:
 			return StateBlocked
@@ -38,6 +38,16 @@ func SessionStateFromWorktree(
 		return StateDirty
 	}
 	return StateNoSession
+}
+
+// SessionStateFromWorktree is a convenience wrapper over SessionStateFromAgent
+// that extracts the window-active flag from WorktreeStatus.
+func SessionStateFromWorktree(
+	s worktree.WorktreeStatus,
+	agentState string,
+	dirtyCount int,
+) SessionState {
+	return SessionStateFromAgent(s.WindowActive, agentState, dirtyCount)
 }
 
 // StatusDot returns a styled glyph string with ANSI color codes.

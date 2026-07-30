@@ -548,7 +548,7 @@ func (m *Model) placeCursorOnActive() {
 func (m *Model) navigableIndices() []int {
 	var out []int
 	for i, r := range m.rows {
-		if r.kind == rowWorktree || r.kind == rowSession ||
+		if r.kind == rowWorktree || r.kind == rowSession || r.kind == rowPane ||
 			(r.kind == rowRepo && m.collapsed[r.repo]) {
 			out = append(out, i)
 		}
@@ -558,6 +558,20 @@ func (m *Model) navigableIndices() []int {
 
 func (m *Model) moveCursor(delta int) {
 	m.cursor = tuicomponents.MoveCursor(m.navigableIndices(), m.cursor, delta)
+}
+
+// focusRow moves m.cursor to the first row matching pred, if any. Used after
+// a rebuildRows() call that may have shifted every row's index, so the
+// cursor is relocated by identity rather than assumed to still point at the
+// right thing.
+func (m *Model) focusRow(pred func(row) bool) (int, bool) {
+	for i, r := range m.rows {
+		if pred(r) {
+			m.cursor = i
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func (m Model) safeMaxLeft() int {
@@ -811,6 +825,35 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "h":
+		// Priority 1: cursor on a pane row - collapse its enclosing parent.
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowPane {
+			if parent, ok := enclosingPaneParent(m.rows, m.cursor); ok {
+				if parentKey, qualifies := paneParentKey(parent); qualifies {
+					m.collapsed[parentKey] = true
+					m.rebuildRows()
+					// The pane row the cursor was on just disappeared;
+					// relocate the parent by identity (rebuild can shift
+					// row positions) and land the cursor there.
+					m.focusRow(func(r row) bool { return sameParentRow(r, parent) })
+					return m, nil
+				}
+			}
+		}
+
+		// Priority 2: cursor on an expanded, qualifying worktree/session row -
+		// collapse its own pane children in place (cursor stays put).
+		if m.cursor >= 0 && m.cursor < len(m.rows) {
+			if parentKey, qualifies := paneParentKey(
+				m.rows[m.cursor],
+			); qualifies &&
+				!m.collapsed[parentKey] {
+				m.collapsed[parentKey] = true
+				m.rebuildRows()
+				return m, nil
+			}
+		}
+
+		// Priority 3: existing repo-collapse behavior (unchanged).
 		var collapseRepo string
 		if sel, ok := m.selectedStatus(); ok {
 			collapseRepo = sel.Repo
@@ -821,16 +864,31 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.collapsed[collapseRepo] = true
 			m.rebuildRows()
 			// Land cursor on the just-collapsed repo header so l can re-expand it.
-			for i, r := range m.rows {
-				if r.kind == rowRepo && r.repo == collapseRepo {
-					m.cursor = i
-					break
-				}
-			}
+			m.focusRow(func(r row) bool { return r.kind == rowRepo && r.repo == collapseRepo })
 		}
 		return m, nil
 
 	case "l":
+		// Priority 1: cursor on a collapsed, qualifying worktree/session row -
+		// expand its pane children and land on the first one revealed.
+		if m.cursor >= 0 && m.cursor < len(m.rows) {
+			if parentKey, qualifies := paneParentKey(
+				m.rows[m.cursor],
+			); qualifies &&
+				m.collapsed[parentKey] {
+				parent := m.rows[m.cursor]
+				m.collapsed[parentKey] = false
+				m.rebuildRows()
+				if i, ok := m.focusRow(func(r row) bool { return sameParentRow(r, parent) }); ok {
+					if i+1 < len(m.rows) && m.rows[i+1].kind == rowPane {
+						m.cursor = i + 1
+					}
+				}
+				return m, nil
+			}
+		}
+
+		// Priority 2: existing repo-expand behavior (unchanged).
 		var expandRepo string
 		wasCollapsed := false
 		if sel, ok := m.selectedStatus(); ok {
@@ -845,12 +903,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.rebuildRows()
 			if wasCollapsed {
 				// Move cursor to first worktree of the just-expanded repo.
-				for i, r := range m.rows {
-					if r.kind == rowWorktree && r.repo == expandRepo {
-						m.cursor = i
-						break
-					}
-				}
+				m.focusRow(
+					func(r row) bool { return r.kind == rowWorktree && r.repo == expandRepo },
+				)
 			}
 		}
 		return m, nil
@@ -1271,6 +1326,15 @@ func (m Model) renderLeft(width int) string {
 	for i, r := range m.rows {
 		var line string
 		if r.kind == rowRepo {
+			// A repo has no single tmux window, so there's no natural
+			// "is the window active" bool the way a worktree/session has.
+			// Use r.agentState != "" as the proxy: if any child worktree
+			// ever had an agent report a state, treat the header as active
+			// (blocked/error/idle/busy map to their real colors); if no
+			// child ever reported anything, SessionStateFromAgent(false, "",
+			// 0) falls through to StateNoSession (dim "○") — a more honest
+			// default than a false "everything's running" green dot.
+			state := tuicomponents.SessionStateFromAgent(r.agentState != "", r.agentState, 0)
 			collapse := "▼"
 			if m.collapsed[r.repo] {
 				collapse = "▶"
@@ -1280,18 +1344,21 @@ func (m Model) renderLeft(width int) string {
 			// first (leaving room for at least one separating space) so the
 			// badge is never pushed past width, then pad the remainder — the
 			// same fixed-width layout the rowWorktree branch below uses.
+			// prefix = dot(1) + space(1) = 2 display cols, on top of the
+			// collapse+" "+repo text already accounted for by `text` itself.
 			badge := fmt.Sprintf("%d trees", r.worktreeCount)
 			if r.worktreeCount == 1 {
 				badge = "1 tree"
 			}
 			badgeW := ansi.StringWidth(badge)
-			text = ansi.Truncate(text, max(0, width-badgeW-1), "")
-			pad := strings.Repeat(" ", max(0, width-ansi.StringWidth(text)-badgeW))
+			text = ansi.Truncate(text, max(0, width-2-badgeW-1), "")
+			pad := strings.Repeat(" ", max(0, width-2-ansi.StringWidth(text)-badgeW))
 			if i == m.cursor {
 				// Cursor landed here after h — show repo header with selection highlight.
-				line = m.palette.Selected.Render(text + pad + badge)
+				g := m.palette.StatusGlyph(state)
+				line = m.palette.Selected.Render(g + " " + text + pad + badge)
 			} else {
-				line = m.palette.RepoHeader.Render(
+				line = m.palette.StatusDot(state) + " " + m.palette.RepoHeader.Render(
 					text,
 				) + pad + m.palette.HintDesc.Render(
 					badge,
@@ -1300,32 +1367,96 @@ func (m Model) renderLeft(width int) string {
 		} else if r.kind == rowSession {
 			const label = "session"
 			labelW := ansi.StringWidth(label)
-			// prefix = square(1) + space(1) = 2 display cols — same width as the
-			// "▼ "/"▶ " chevron above, so session rows (flat top-level leaves,
-			// no tree connector) line up with repo headers in the left column.
-			// The square (■/□) is a different shape from the worktree ●/○ circle
-			// so the two row kinds are distinguishable at a glance, not just by
-			// the trailing "session" label.
-			name := ansi.Truncate(r.session.Name, max(0, width-2-labelW-1), "")
-			pad := strings.Repeat(" ", max(0, width-2-ansi.StringWidth(name)-labelW))
+
+			// Expand/collapse chevron for pane-row children (ADR-0008 §3):
+			// "▼" expanded, "▶" collapsed, blank when the session doesn't
+			// qualify (fewer than 2 stateful panes) — but the 2-column slot
+			// (chevron + space) is reserved unconditionally so every session
+			// row's square/name/label line up regardless of qualification.
+			chevronGlyph := chevronGlyphFor(r, m.collapsed)
+
+			// prefix = chevron(1) + space(1) + square(1) + space(1) = 4 display
+			// cols — the chevron slot above is the same width as the repo
+			// header's, and the square(1)+space(1) after it is the same width
+			// as the "▼ "/"▶ " chevron pair used there, so session rows (flat
+			// top-level leaves, no tree connector) line up with repo headers
+			// in the left column. The square (■/□) is a different shape from
+			// the worktree ●/○ circle so the two row kinds are distinguishable
+			// at a glance, not just by the trailing "session" label.
+			name := ansi.Truncate(r.session.Name, max(0, width-4-labelW-1), "")
+			pad := strings.Repeat(" ", max(0, width-4-ansi.StringWidth(name)-labelW))
+
+			// No agent has ever reported on this session's panes: keep the
+			// original attached-only square glyph. Otherwise, a pane reported
+			// state at least once, so switch to the agent-state vocabulary
+			// (●/◆/!/✕) shared with rowWorktree, via StatusGlyph/StatusDot.
+			hasAgentState := r.session.AgentState != ""
+			var state tuicomponents.SessionState
+			if hasAgentState {
+				state = tuicomponents.SessionStateFromAgent(true, r.session.AgentState, 0)
+			}
 
 			if i == m.cursor {
-				g := m.palette.SessionGlyph(r.session.Attached)
-				plainText := g + " " + name
+				var g string
+				if hasAgentState {
+					g = m.palette.StatusGlyph(state)
+				} else {
+					g = m.palette.SessionGlyph(r.session.Attached)
+				}
+				plainText := chevronGlyph + " " + g + " " + name
 				if m.pendingKillSession == r.session.Name {
 					line = m.palette.Armed.Render(plainText + pad + label)
 				} else {
 					line = m.palette.Selected.Render(plainText + pad + label)
 				}
 			} else {
-				line = m.palette.SessionDot(
-					r.session.Attached,
-				) + " " + name + pad + m.palette.HintDesc.Render(
+				var dot string
+				if hasAgentState {
+					dot = m.palette.StatusDot(state)
+				} else {
+					dot = m.palette.SessionDot(r.session.Attached)
+				}
+				line = chevronGlyph + " " + dot + " " + name + pad + m.palette.HintDesc.Render(
 					label,
 				)
 			}
+		} else if r.kind == rowPane {
+			// 4-space indent: deeper than the repo/session 2-column prefix and
+			// the worktree 5-column prefix, so pane rows read as nested one
+			// level further under either parent kind.
+			const indent = "    "
+			// windowActive is unconditionally true: a pane row only ever
+			// exists because its pane is live in an existing window/session,
+			// so an empty r.pane.State falls through to StateRunning -
+			// consistent with how worktree/session rows with no agent state
+			// are treated.
+			state := tuicomponents.SessionStateFromAgent(true, r.pane.State, 0)
+
+			if i == m.cursor {
+				g := m.palette.StatusGlyph(state)
+				plainText := indent + g + " " + r.pane.Window + ":" + r.pane.PaneIndex + " " + r.pane.CurrentCommand
+				plainText = ansi.Truncate(plainText, width, "")
+				plainText += strings.Repeat(" ", max(0, width-ansi.StringWidth(plainText)))
+				line = m.palette.Selected.Render(plainText)
+			} else {
+				dot := m.palette.StatusDot(state)
+				text := indent + dot + " " + r.pane.Window + ":" + r.pane.PaneIndex + " " + r.pane.CurrentCommand
+				text = ansi.Truncate(text, width, "")
+				text += strings.Repeat(" ", max(0, width-ansi.StringWidth(text)))
+				line = text
+			}
 		} else {
 			state := tuicomponents.SessionStateFromWorktree(r.status, r.status.AgentState, 0)
+
+			// Expand/collapse chevron for pane-row children (ADR-0008 §3):
+			// "▼" expanded, "▶" collapsed, blank when the worktree doesn't
+			// qualify (fewer than 2 stateful panes) — the 2-column slot
+			// (chevron + space) is reserved unconditionally so every
+			// worktree row's connector/dot/name lines up regardless of
+			// qualification.
+			chevronGlyph := chevronGlyphFor(r, m.collapsed)
+			chevronPrefix := chevronGlyph + " "
+
 			// Tree connector: "└ " for last child, "  " otherwise (both 2 display cols).
 			connectorRaw := "  "
 			connectorStyled := "  "
@@ -1333,21 +1464,22 @@ func (m Model) renderLeft(width int) string {
 				connectorRaw = "└ "
 				connectorStyled = m.palette.Divider.Render("└") + " "
 			}
-			// prefix = connector(2) + dot(1) + branchChar(1) + space(1) = 5 display cols
-			name := ansi.Truncate(r.status.Name, max(0, width-5), "")
+			// prefix = chevron(1) + space(1) + connector(2) + dot(1) + branchChar(1) + space(1)
+			// = 7 display cols
+			name := ansi.Truncate(r.status.Name, max(0, width-7), "")
 			pendingKey := r.status.Repo + "/" + r.status.Name
-			padding := strings.Repeat(" ", max(0, width-5-ansi.StringWidth(name)))
+			padding := strings.Repeat(" ", max(0, width-7-ansi.StringWidth(name)))
 
 			if i == m.cursor {
 				g := m.palette.StatusGlyph(state)
-				plainText := connectorRaw + g + branchChar + " " + name
+				plainText := chevronPrefix + connectorRaw + g + branchChar + " " + name
 				if m.pendingDelete == pendingKey || m.pendingSessionDelete == pendingKey {
 					line = m.palette.Armed.Render(plainText + padding)
 				} else {
 					line = m.palette.Selected.Render(plainText + padding)
 				}
 			} else {
-				line = connectorStyled + m.palette.StatusDot(
+				line = chevronPrefix + connectorStyled + m.palette.StatusDot(
 					state,
 				) + m.palette.BranchLabel() + " " + name + padding
 			}
@@ -1390,6 +1522,20 @@ func (m Model) renderRight(width int) string {
 	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowSession {
 		return m.palette.Inactive.Render(
 			ansi.Truncate("Sessions have no diff — enter switches, d d kills.", width, ""),
+		)
+	}
+
+	// Pane rows have the same problem as session rows above: selectedStatus
+	// (and so selectionChangedCmd) never fires for them either, so without
+	// this check the pane would keep showing whichever worktree's diff was
+	// selected last instead of something that reflects the current row.
+	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowPane {
+		return m.palette.Inactive.Render(
+			ansi.Truncate(
+				"Panes have no diff — select the worktree or session row to see its diff.",
+				width,
+				"",
+			),
 		)
 	}
 
@@ -1551,7 +1697,7 @@ func (m Model) renderHelpPopup() string {
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},
 		{Key: "s", Desc: "create a new tmux session (folder picker → name prompt)"},
 		{Key: "j / k  ↓ / ↑", Desc: "move cursor down / up"},
-		{Key: "h / l", Desc: "collapse / expand repo"},
+		{Key: "h / l", Desc: "collapse / expand repo, or a worktree/session's panes"},
 		{Key: "z", Desc: "toggle collapse all repos"},
 		{
 			Key:  "d d",

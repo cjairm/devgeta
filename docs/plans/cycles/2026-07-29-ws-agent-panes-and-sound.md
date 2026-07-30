@@ -105,14 +105,14 @@ pane, and it makes a distinct sound when you are not already looking at its wind
 
 ### In Scope — Part A (ADR-0008)
 
-- [ ] Export `AggregateAgentState`; one precedence rule for all row kinds
-- [ ] `SessionStatus.AgentState`, aggregated over that session's panes
-- [ ] `ListSessions` derives its `wt-` exclusion from `PaneStates()`; drops `SessionWindows()`
-- [ ] `rowSession` renders the shared state vocabulary; keeps ■/□ when no agent reported
-- [ ] `rowRepo` renders an aggregated dot so collapsing hides nothing
-- [ ] `rowPane` child rows, revealed by expanding a parent with 2+ stateful panes
-- [ ] `m.collapsed` generalized from repo-keyed to parent-keyed
-- [ ] Tests for each; `docs/spec.md` updated
+- [x] Export `AggregateAgentState`; one precedence rule for all row kinds
+- [x] `SessionStatus.AgentState`, aggregated over that session's panes
+- [x] `ListSessions` derives its `wt-` exclusion from `PaneStates()`; drops `SessionWindows()`
+- [x] `rowSession` renders the shared state vocabulary; keeps ■/□ when no agent reported
+- [x] `rowRepo` renders an aggregated dot so collapsing hides nothing
+- [x] `rowPane` child rows, revealed by expanding a parent with 2+ stateful panes
+- [x] `m.collapsed` generalized from repo-keyed to parent-keyed
+- [x] Tests for each; `docs/spec.md` updated
 
 ### In Scope — Part B (ADR-0009)
 
@@ -356,4 +356,23 @@ make lint
 - [ ] Should Part B ship first? It is independent of Part A and closes the reported gap alone.
 
 **Reviewer notes:**
-(unfilled)
+
+Part A shipped (commits through `37930d3`). The final whole-branch review confirmed ADR-0008's
+contract is met uniformly across all four row kinds, with genuine width/regression test coverage
+and a disciplined `h`/`l` fallthrough. Three integration gaps at task seams were found and fixed
+in the same pass: session pane rows were ambiguous across windows (fixed by including the window
+name in the pane row label), `renderRight` had no guard for `rowPane` cursor position (fixed,
+mirroring the existing `rowSession` guard), and the in-app help overlay's `h`/`l` description was
+stale (updated).
+
+**Deferred, not fixed in this cycle:** the dashboard's cursor is an index into `m.rows`, clamped
+by position on every `rebuildRows()`. Before this cycle, row count only changed on
+worktree/session create or delete. Now it also changes whenever a pane crosses the 2+
+stateful-panes threshold (an agent's first turn, or a second agent joining a window) — a
+qualifying parent is expanded by default, inserting rows on the next periodic refresh and
+shifting the cursor's target underneath the user without any keypress. Not a correctness bug (no
+wrong deletion — `d d`'s two-press confirm still requires re-arming after any cursor move), but a
+real UX rough edge this cycle newly introduces at the 3-second refresh cadence. Fixing it needs
+cursor-by-row-identity across rebuilds rather than by index; the `sameParentRow`-style predicate
+already in `tree.go` is most of the machinery a fix would reuse. Tracked here for a follow-up
+cycle, not for Part B (which is orthogonal — audible notifications).
