@@ -83,14 +83,23 @@ play_notify_sound() {
 	fi
 
 	if [ "${play_cmd[0]}" = "printf" ]; then
-		# The fallback IS the bell: printf's BEL byte on ITS OWN stdout is
-		# the entire point of this branch, unlike afplay/paplay below whose
-		# stdout is just chatter - redirecting it to /dev/null (as the other
-		# branch does) would silently discard the one byte this branch
-		# exists to produce, so it must stay unredirected here. Still
-		# backgrounded (a shell hiccup here must not block the hook) and
-		# still tolerant of failure - just not silenced.
-		("${play_cmd[@]}" &) 2>/dev/null || true
+		# The fallback IS the bell, but the hook's OWN stdout never reaches
+		# the pane's terminal: Claude Code captures every hook's stdout to
+		# parse for JSON (see docs/apps/claude.md), so a byte written there
+		# lands in that capture, not the tty - confirmed empirically, see
+		# task-1-report.md. Resolve the pane's REAL tty device instead (same
+		# -p -t "$TMUX_PANE" pattern the gate check above already uses) and
+		# write the byte directly there. Only reached from this branch, so
+		# the common afplay/paplay path never pays for this extra tmux call.
+		# A failed/empty resolution (dead server, no server) must be
+		# silence, same as every other tmux call in this script - hence the
+		# guard before ever attempting the write. Still backgrounded and
+		# `|| true`-tolerant, consistent with the afplay/paplay branch, even
+		# though printf is effectively instant.
+		pane_tty="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_tty}' 2>/dev/null)"
+		if [ -n "$pane_tty" ]; then
+			(printf '\a' >"$pane_tty" 2>/dev/null &) >/dev/null 2>&1 || true
+		fi
 	else
 		("${play_cmd[@]}" >/dev/null 2>&1 &) >/dev/null 2>&1 || true
 	fi

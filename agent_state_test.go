@@ -32,31 +32,41 @@ import (
 // first call" and "the second call" back out as literally the first and
 // second lines of the file, in call order.
 //
-// Step 10 (ADR-0009) adds two READ-only tmux calls to the mix
-// (`show-option -gqv @dg_notify_sound` and `display-message ...
-// window_active_clients`), and unlike the plain writes, agent-state.sh
-// actually consumes their stdout via `$(...)`. notifySound and
-// activeClients are the canned answers this fake returns for those two
-// calls — printed unconditionally based on argv[0] ("show-option" /
-// "display-message"), never parsed further, because each test configures
-// only one meaning per run and the recorded-args file is what a test reads
-// back to confirm which call was actually made and with what arguments.
+// Step 10 (ADR-0009) adds three READ-only tmux calls to the mix
+// (`show-option -gqv @dg_notify_sound`, `display-message ...
+// window_active_clients`, and — only on the no-player-found fallback path —
+// `display-message ... pane_tty`), and unlike the plain writes,
+// agent-state.sh actually consumes their stdout via `$(...)`. notifySound,
+// activeClients, and paneTTY are the canned answers this fake returns for
+// those calls. `show-option` is answered from argv[0] alone. Both
+// `display-message` calls share argv[0], so telling them apart needs looking
+// at the FORMAT STRING argument too (`$5`: `-p -t <pane> '#{...}'` is
+// positions 2-4, the format is position 5) — `#{pane_tty}` gets paneTTY,
+// anything else (i.e. `#{window_active_clients}`) gets activeClients. Each
+// test configures only the meanings it cares about; the recorded-args file
+// is what a test reads back to confirm which call was actually made and
+// with what arguments.
 func writeFakeTmux(
 	t *testing.T,
 	dir, recordPath string,
 	exitCode int,
-	notifySound, activeClients string,
+	notifySound, activeClients, paneTTY string,
 ) {
 	t.Helper()
-	// recordPath, notifySound, and activeClients are always test-controlled
-	// literals in this file, never containing a single quote, so the naive
-	// quoting below is safe for that reason, not because it is general-
-	// purpose shell quoting.
+	// recordPath, notifySound, activeClients, and paneTTY are always
+	// test-controlled literals in this file, never containing a single
+	// quote, so the naive quoting below is safe for that reason, not
+	// because it is general-purpose shell quoting.
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> '" + recordPath + "'\n" +
 		"case \"$1\" in\n" +
 		"show-option) printf '%s\\n' '" + notifySound + "' ;;\n" +
-		"display-message) printf '%s\\n' '" + activeClients + "' ;;\n" +
+		"display-message)\n" +
+		"case \"$5\" in\n" +
+		"'#{pane_tty}') printf '%s\\n' '" + paneTTY + "' ;;\n" +
+		"*) printf '%s\\n' '" + activeClients + "' ;;\n" +
+		"esac\n" +
+		";;\n" +
 		"esac\n" +
 		"exit " + strconv.Itoa(exitCode) + "\n"
 	fakeTmuxPath := filepath.Join(dir, "tmux")
@@ -108,6 +118,12 @@ type hookEnv struct {
 	// activeClients is what the fake tmux answers `display-message ...
 	// window_active_clients` with.
 	activeClients string
+	// paneTTY is what the fake tmux answers `display-message ... pane_tty`
+	// with — only consulted by the script on the no-player-found fallback
+	// path. "" reproduces a failed/empty resolution (dead server, no
+	// server), which must be silence, same as every other tmux call in this
+	// script.
+	paneTTY string
 	// players lists which sound-player binary names ("afplay", "paplay")
 	// get a fake, recording implementation on PATH. Nil/empty means NEITHER
 	// exists anywhere in the child's PATH — used to exercise the "player
@@ -141,7 +157,7 @@ type hookEnv struct {
 // note this is NOT racy for that "never invoked" case: if the sound gate
 // closed, nothing was ever forked to write it in the first place, so there
 // is nothing to wait for. Callers that expect a player WAS invoked must use
-// waitForPlayerInvocation instead, since play_notify_sound fires detached
+// waitForAsyncWrite instead, since play_notify_sound fires detached
 // and the write can land after this function already returned).
 func runAgentStateHook(
 	t *testing.T,
@@ -180,6 +196,7 @@ func runAgentStateHook(
 		env.tmuxExitCode,
 		env.notifySound,
 		env.activeClients,
+		env.paneTTY,
 	)
 
 	playerRecPath := filepath.Join(t.TempDir(), "player-args.txt")
@@ -247,30 +264,33 @@ func callLines(recorded string) []string {
 	return strings.Split(trimmed, "\n")
 }
 
-// waitForPlayerInvocation polls recordPath until it has content or a 2s
-// timeout elapses, then returns it. This is needed ONLY when a test expects
-// the player WAS invoked: play_notify_sound fires it detached and
-// backgrounded (ADR-0009's whole point — the hook returns before the sound
-// finishes), so by the time runAgentStateHook's cmd.Run() returns, the fake
-// player's own write to recordPath may not have landed yet. Tests asserting
-// SILENCE need no such wait: if the gate closed, nothing was ever forked to
-// race with, so absence is immediately and permanently true.
-func waitForPlayerInvocation(t *testing.T, recordPath string) string {
+// waitForAsyncWrite polls path until it has content or a 2s timeout elapses,
+// then returns it. This is needed ONLY when a test expects an async write
+// WILL happen: play_notify_sound fires the player (or, in the no-player
+// fallback, the pane-tty bell write) detached and backgrounded (ADR-0009's
+// whole point — the hook returns before the sound finishes), so by the time
+// runAgentStateHook's cmd.Run() returns, that write may not have landed on
+// disk yet. Used both for the fake player's recorded invocation and for the
+// fallback's write of a BEL byte to the resolved pane-tty file. Tests
+// asserting SILENCE need no such wait: if the gate closed (or pane_tty
+// failed to resolve), nothing was ever forked to race with, so absence is
+// immediately and permanently true.
+func waitForAsyncWrite(t *testing.T, path string) string {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if data, err := os.ReadFile(recordPath); err == nil && len(data) > 0 {
+		if data, err := os.ReadFile(path); err == nil && len(data) > 0 {
 			return string(data)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("timed out waiting for fake player invocation at %s", recordPath)
+	t.Fatalf("timed out waiting for async write at %s", path)
 	return ""
 }
 
 // assertPlayerNeverInvoked fails the test if the fake player recorded
 // anything at all. Safe to call immediately (no wait needed) — see
-// waitForPlayerInvocation's doc comment for why absence is never racy.
+// waitForAsyncWrite's doc comment for why absence is never racy.
 func assertPlayerNeverInvoked(t *testing.T, recordPath string) {
 	t.Helper()
 	data, err := os.ReadFile(recordPath)
@@ -559,7 +579,7 @@ func TestAgentStateHook_Sound_PlaysDistinctFileViaAfplay(t *testing.T) {
 				hookEnv{notifySound: "on", activeClients: "0", players: []string{"afplay"}},
 			)
 
-			recorded := waitForPlayerInvocation(t, playerRecPath)
+			recorded := waitForAsyncWrite(t, playerRecPath)
 			// The fake player records "$*" - its OWN positional args, not
 			// argv[0] - so the recorded line is just the sound file, not
 			// "afplay <file>". Which binary answered is what env.players
@@ -585,7 +605,7 @@ func TestAgentStateHook_Sound_PaplayFallbackWhenAfplayAbsent(t *testing.T) {
 				hookEnv{notifySound: "on", activeClients: "0", players: []string{"paplay"}},
 			)
 
-			recorded := waitForPlayerInvocation(t, playerRecPath)
+			recorded := waitForAsyncWrite(t, playerRecPath)
 			want := soundFileForState[state].paplay
 			got := strings.TrimRight(recorded, "\n")
 			if got != want {
@@ -599,9 +619,10 @@ func TestAgentStateHook_Sound_PaplayFallbackWhenAfplayAbsent(t *testing.T) {
 // last-resort fallback: with the gate open but NEITHER afplay NOR paplay
 // anywhere on PATH (env.players is nil, and runAgentStateHook's PATH
 // contains only the fake bin dir — see its doc comment for why no real
-// player can leak in), the script still exits 0. It falls back to the
-// terminal bell (a bash builtin, nothing external to record), so there is
-// no player invocation to assert on — only that nothing failed.
+// player can leak in), the script still exits 0. env.paneTTY is also left
+// at its zero value ("") here, reproducing a failed/unresolved pane_tty, so
+// no player AND no bell write happens either — the two tests below cover the
+// resolved and unresolved pane_tty cases for the bell write itself.
 func TestAgentStateHook_Sound_ExitsZeroWhenPlayerMissingEntirely(t *testing.T) {
 	for _, state := range []string{"idle", "blocked", "error"} {
 		t.Run(state, func(t *testing.T) {
@@ -614,5 +635,68 @@ func TestAgentStateHook_Sound_ExitsZeroWhenPlayerMissingEntirely(t *testing.T) {
 			}
 			assertPlayerNeverInvoked(t, playerRecPath)
 		})
+	}
+}
+
+// TestAgentStateHook_Sound_BellFallbackWritesToPaneTTY confirms the fix for
+// the reviewer finding on the fallback path: printf '\a' must reach the
+// PANE'S tty, not the hook's own stdout (Claude Code captures hook stdout to
+// parse for JSON — see docs/apps/claude.md — so a byte written there would
+// never reach the terminal). The fake tmux answers `display-message ...
+// pane_tty` with a path this test controls (ttyPath, a plain regular file —
+// no real pty is available or needed here; what's under test is that the
+// script writes the right byte to the path tmux told it to resolve, not
+// terminal rendering itself). Asserts the resolved file ends up containing
+// EXACTLY one byte, the BEL character (0x07) — not "afplay <file>", not a
+// newline-terminated line like the fake player's recorder produces, just
+// the raw byte printf '\a' emits.
+func TestAgentStateHook_Sound_BellFallbackWritesToPaneTTY(t *testing.T) {
+	for _, state := range []string{"idle", "blocked", "error"} {
+		t.Run(state, func(t *testing.T) {
+			ttyPath := filepath.Join(t.TempDir(), "pane-tty")
+			code, _, _ := runAgentStateHook(
+				t, state, paneEnv{set: true, value: "%3"},
+				hookEnv{notifySound: "on", activeClients: "0", paneTTY: ttyPath, players: nil},
+			)
+			if code != 0 {
+				t.Fatalf("expected exit 0, got %d", code)
+			}
+
+			got := waitForAsyncWrite(t, ttyPath)
+			want := "\a"
+			if got != want {
+				t.Errorf("pane tty content = %q, want %q (a single BEL byte)", got, want)
+			}
+		})
+	}
+}
+
+// TestAgentStateHook_Sound_BellFallbackSilentWhenPaneTTYUnresolved confirms
+// the same failure-tolerance discipline as every other tmux call in this
+// script: if `display-message ... pane_tty` fails or returns empty (dead
+// server, no server), the script must never attempt the write (there is no
+// path to write to) and must still exit 0. The fake tmux here answers
+// pane_tty with "" (hookEnv's zero value for paneTTY), reproducing that
+// failure; ttyPath is a path the test picks but never tells the fake tmux
+// about, so if the script incorrectly attempted a write to some fallback
+// path it invented itself, this wouldn't catch that — what this test CAN
+// and does assert is that the script never creates anything at the path a
+// SUCCESSFUL resolution would have used, i.e. nothing here races with an
+// async write because none is ever forked in the first place.
+func TestAgentStateHook_Sound_BellFallbackSilentWhenPaneTTYUnresolved(t *testing.T) {
+	ttyPath := filepath.Join(t.TempDir(), "pane-tty")
+	code, _, _ := runAgentStateHook(
+		t, "idle", paneEnv{set: true, value: "%3"},
+		hookEnv{notifySound: "on", activeClients: "0", paneTTY: "", players: nil},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0 even when pane_tty fails to resolve, got %d", code)
+	}
+	if _, err := os.Stat(ttyPath); !os.IsNotExist(err) {
+		t.Errorf(
+			"expected no file to ever be written at %s (pane_tty resolution failed, so the "+
+				"script must never attempt the write), stat err = %v",
+			ttyPath, err,
+		)
 	}
 }
