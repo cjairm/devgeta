@@ -482,7 +482,7 @@ holding more than one coder pane (e.g. a split-pane review beside a working code
 aggregated most-urgent-first (`blocked > error > idle > busy`), so one finished pane is
 enough to show `◆` even while its neighbor keeps working. Attaching to a row (`enter`) clears
 its state — attaching is the user acknowledging it. tmux's own status bar
-(`configs/tmux/tmux.conf`) separately flags any other window in the current session whose
+(`configs/tmux/tmux.conf.tmpl`) separately flags any other window in the current session whose
 coder wants attention while you're looking elsewhere, so `dg ws` doesn't have to stay open to
 notice.
 
@@ -513,7 +513,7 @@ Session rows add:
   no-op on a repo-header row, since only a worktree row has a specific worktree to
   review.
 
-Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf`) — it previously
+Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf.tmpl`) — it previously
 opened tmux's native `choose-tree -Zs` popup, which this replaces. This is the only key bound
 to the dashboard.
 

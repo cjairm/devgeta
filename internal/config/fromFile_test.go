@@ -569,6 +569,92 @@ func TestWorktreeConfig_AttachAfterCreateAbsentFromOldConfigs(t *testing.T) {
 	assert.True(t, loaded.ShouldAttachAfterCreate())
 }
 
+// TestWorktreeConfig_NotifySoundRoundTrips proves an explicit true survives
+// Save/Load - the counterpart to
+// TestWorktreeConfig_NotifySoundAbsentFromOldConfigsLoadsFalse below, which
+// covers the "never set" side of this plain bool.
+func TestWorktreeConfig_NotifySoundRoundTrips(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	gc.Worktree.NotifySound = true
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	loaded := &GlobalConfig{}
+	if err := loaded.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	assert.True(t, loaded.Worktree.NotifySound)
+}
+
+// TestWorktreeConfig_NotifySoundAbsentFromOldConfigsLoadsFalse proves the hard
+// requirement CLAUDE.md §10 and ADR-0009 both impose: an existing
+// global_config.yaml written before notify_sound existed must keep sound off
+// after this change lands, not silently start making noise on upgrade.
+func TestWorktreeConfig_NotifySoundAbsentFromOldConfigsLoadsFalse(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	legacyContent := `app_path: ""
+config_path: ""
+current_font: ""
+current_theme: ""
+shell:
+  mise: false
+worktree:
+  default_ai: claude
+`
+	configPath := getGlobalConfigFilePath()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(legacyContent), 0o644); err != nil {
+		t.Fatalf("failed to write legacy config file: %v", err)
+	}
+
+	gc := &GlobalConfig{}
+	if err := gc.Load(); err != nil {
+		t.Fatalf("Load failed on legacy config without notify_sound: %v", err)
+	}
+	assert.False(
+		t,
+		gc.Worktree.NotifySound,
+		"notify_sound must be false when absent from a pre-existing config",
+	)
+}
+
+// TestSave_NotifySoundOmittedWhenFalse proves the false (default) case never
+// appears as a visible key, matching every other omitempty'd worktree field.
+func TestSave_NotifySoundOmittedWhenFalse(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	// gc.Worktree.NotifySound left at its zero value (false) on purpose.
+
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	if err != nil {
+		t.Fatalf("failed to read config: %v", err)
+	}
+	assert.NotContains(
+		t,
+		string(raw),
+		"notify_sound",
+		"a false notify_sound must be omitted from the saved config",
+	)
+}
+
 func TestUpsertRecentRepo(t *testing.T) {
 	now := time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC)
 

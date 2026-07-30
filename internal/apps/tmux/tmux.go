@@ -68,11 +68,13 @@ func (t *Tmux) ForceConfigure() error {
 		return fmt.Errorf("failed to enable tmux feature: %w", err)
 	}
 	configDest := filepath.Join(paths.Paths.Home.Root, configFileName)
-	if err := files.CopyFile(
-		filepath.Join(paths.Paths.App.Configs.Tmux, "tmux.conf"),
-		configDest,
-	); err != nil {
-		return err
+	tmplPath := filepath.Join(paths.Paths.App.Configs.Tmux, "tmux.conf.tmpl")
+	if err := files.GenerateFromTemplate(tmplPath, configDest, struct {
+		NotifySound bool
+	}{
+		NotifySound: gc.Worktree.NotifySound,
+	}); err != nil {
+		return fmt.Errorf("failed to generate tmux configuration: %w", err)
 	}
 	// Reload the running tmux server if we're inside a session (best-effort).
 	if os.Getenv("TMUX") != "" {
@@ -457,7 +459,7 @@ func (t *Tmux) SplitWindow(window, workdir, direction string) error {
 // Pane IDs, not pane indexes, are the only reliable way to re-target a
 // specific pane once other panes may have been created around it: tmux
 // numbers a window's panes starting from the "pane-base-index" option, which
-// devgeta's own shipped tmux.conf sets to 1 (configs/tmux/tmux.conf) - so on
+// devgeta's own shipped tmux.conf sets to 1 (configs/tmux/tmux.conf.tmpl) - so on
 // a devgeta-configured server, pane index 0 does not exist, and even a
 // correctly-computed base-index is only a snapshot that stops matching once
 // panes are added/removed/reordered. Pane IDs are assigned by tmux in

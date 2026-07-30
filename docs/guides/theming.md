@@ -25,13 +25,13 @@ of the UI is translucent, etc. Treat the visual layer as a single surface.
 
 ## What's wired to what
 
-| Config        | File                                       | Theming mechanism                        |
-| ------------- | ------------------------------------------ | ---------------------------------------- |
-| **Alacritty** | `configs/alacritty/alacritty.toml.tmpl`    | Templated — `{{if eq .Theme "default"}}` |
-| **OpenCode**  | `configs/opencode/opencode.json.tmpl`      | Templated — `"theme": "{{ .Theme }}"`    |
-| **Neovim**    | `configs/neovim/init.lua` → `themes/*.lua` | Hardcoded — loads `themes/gruvbox.lua`   |
-| **tmux**      | `configs/tmux/tmux.conf`                   | Hardcoded — static color block           |
-| **Claude**    | `configs/claude/themes/default.json`       | Static theme file                        |
+| Config        | File                                       | Theming mechanism                                                                                                                                        |
+| ------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Alacritty** | `configs/alacritty/alacritty.toml.tmpl`    | Templated — `{{if eq .Theme "default"}}`                                                                                                                 |
+| **OpenCode**  | `configs/opencode/opencode.json.tmpl`      | Templated — `"theme": "{{ .Theme }}"`                                                                                                                    |
+| **Neovim**    | `configs/neovim/init.lua` → `themes/*.lua` | Hardcoded — loads `themes/gruvbox.lua`                                                                                                                   |
+| **tmux**      | `configs/tmux/tmux.conf.tmpl`              | Hardcoded — static color block (the file also renders one unrelated setting, `worktree.notify_sound`, via `text/template`; theming stays a static block) |
+| **Claude**    | `configs/claude/themes/default.json`       | Static theme file                                                                                                                                        |
 
 The templated configs receive a `.Theme` value at config-generation time (see
 `files.GenerateFromTemplate`). The hardcoded ones bake the colors directly into

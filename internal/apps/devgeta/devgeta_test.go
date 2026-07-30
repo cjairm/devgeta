@@ -66,9 +66,9 @@ func mockExtractor(destDir string) error {
 
 	// Create sample config files
 	files := map[string]string{
-		filepath.Join(destDir, "git", ".gitconfig"):  "[user]\n\tname = Test\n",
-		filepath.Join(destDir, "neovim", "init.lua"): "-- Test config\n",
-		filepath.Join(destDir, "tmux", "tmux.conf"):  "# Test config\n",
+		filepath.Join(destDir, "git", ".gitconfig"):      "[user]\n\tname = Test\n",
+		filepath.Join(destDir, "neovim", "init.lua"):     "-- Test config\n",
+		filepath.Join(destDir, "tmux", "tmux.conf.tmpl"): "# Test config\n",
 	}
 
 	for path, content := range files {

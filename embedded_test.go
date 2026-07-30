@@ -13,9 +13,9 @@ import (
 // window auto-closes). This guard keeps default-command a single simple
 // command so that class of breakage cannot be reintroduced.
 func TestTmuxDefaultCommandStaysResurrectSafe(t *testing.T) {
-	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf")
+	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf.tmpl")
 	if err != nil {
-		t.Fatalf("failed to read embedded tmux.conf: %v", err)
+		t.Fatalf("failed to read embedded tmux.conf.tmpl: %v", err)
 	}
 
 	var defaultCommandLine string
@@ -59,9 +59,9 @@ func TestTmuxDefaultCommandStaysResurrectSafe(t *testing.T) {
 // @dg_window_agent_state instead — this test asserts both the presence of the
 // correct name and the absence of the bare pane-level name on the same line.
 func TestTmuxWindowStatusFormatFlagsUnattendedAgents(t *testing.T) {
-	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf")
+	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf.tmpl")
 	if err != nil {
-		t.Fatalf("failed to read embedded tmux.conf: %v", err)
+		t.Fatalf("failed to read embedded tmux.conf.tmpl: %v", err)
 	}
 	content := string(data)
 
