@@ -995,6 +995,16 @@ func (w *WorktreeManager) resolveWorktreeRepoForMove(
 // resolved via the slug-only fallback path, no root resolved yet), only the
 // shared candidate is checked. Returns ok=false if neither candidate is a
 // real worktree.
+//
+// KNOWN GAP: if a worktree is somehow real at BOTH shapes simultaneously
+// (e.g. `git worktree add` was used by hand at the other shape, bypassing
+// devgeta entirely - a state findRepoForWorktree's own doc comment already
+// anticipates for its analogous ambiguity), this silently prefers shared,
+// since it is checked first and returned on match. `dg wt move X --to
+// shared` on such a worktree would then report "already at target" and
+// leave the in-repo twin completely untouched. Not handled here - at
+// minimum this would need surfacing to the caller as a warning, or a check
+// upstream, rather than silently picking one.
 func (w *WorktreeManager) currentWorktreePath(repoSlug, repoRoot, name string) (string, bool) {
 	if shared := sharedWorktreePath(repoSlug, name); w.isRealWorktreeAt(shared) {
 		return shared, true
@@ -1196,6 +1206,15 @@ func (w *WorktreeManager) Move(name, to string, force bool) (bool, error) {
 	}
 
 	if err := w.Git.MoveWorktree(fromPath, toPath); err != nil {
+		// Best-effort: remove the destination parent directory MkdirAll just
+		// created above, if git's refusal (e.g. a locked worktree) left it
+		// empty. os.Remove (never RemoveAll) only succeeds on an empty
+		// directory, so this is a safe no-op - never a data-loss risk - when
+		// the directory already held other worktrees, or already existed
+		// before this call. Without this, a failed --to in-repo move leaves
+		// behind the very .claude/worktrees/ directory the warning above
+		// just said isn't gitignored.
+		_ = os.Remove(filepath.Dir(toPath))
 		return false, fmt.Errorf("failed to move worktree '%s': %w", name, err)
 	}
 

@@ -1136,6 +1136,76 @@ func TestIsRealWorktreeAt(t *testing.T) {
 	)
 }
 
+// TestEffectiveMoveLocation covers effectiveMoveLocation's branches - Minor
+// finding from the final whole-branch review: this had no direct test
+// before (behavior was only verified manually), including its invalid-`--to`
+// error branch.
+func TestEffectiveMoveLocation(t *testing.T) {
+	t.Run("explicit shared is returned as-is", func(t *testing.T) {
+		gc := &config.GlobalConfig{}
+		got, err := effectiveMoveLocation(config.WorktreeLocationShared, gc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != config.WorktreeLocationShared {
+			t.Errorf("expected %q, got %q", config.WorktreeLocationShared, got)
+		}
+	})
+
+	t.Run("explicit in-repo is returned as-is, regardless of config", func(t *testing.T) {
+		gc := &config.GlobalConfig{}
+		gc.Worktree.Location = config.WorktreeLocationShared
+		got, err := effectiveMoveLocation(config.WorktreeLocationInRepo, gc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != config.WorktreeLocationInRepo {
+			t.Errorf("expected %q, got %q", config.WorktreeLocationInRepo, got)
+		}
+	})
+
+	t.Run("empty --to falls back to configured location (in-repo)", func(t *testing.T) {
+		gc := &config.GlobalConfig{}
+		gc.Worktree.Location = config.WorktreeLocationInRepo
+		got, err := effectiveMoveLocation("", gc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != config.WorktreeLocationInRepo {
+			t.Errorf("expected %q, got %q", config.WorktreeLocationInRepo, got)
+		}
+	})
+
+	t.Run("empty --to and empty config default to shared", func(t *testing.T) {
+		gc := &config.GlobalConfig{}
+		got, err := effectiveMoveLocation("", gc)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != config.WorktreeLocationShared {
+			t.Errorf("expected %q, got %q", config.WorktreeLocationShared, got)
+		}
+	})
+
+	t.Run("invalid --to value is a clear, actionable error", func(t *testing.T) {
+		gc := &config.GlobalConfig{}
+		got, err := effectiveMoveLocation("bogus", gc)
+		if err == nil {
+			t.Fatal("expected an error for an invalid --to value, got nil")
+		}
+		if got != "" {
+			t.Errorf("expected no location on error, got %q", got)
+		}
+		if !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("expected error to name the invalid value, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), config.WorktreeLocationShared) ||
+			!strings.Contains(err.Error(), config.WorktreeLocationInRepo) {
+			t.Errorf("expected error to name both valid values, got: %v", err)
+		}
+	})
+}
+
 // sendKeysToPaneCalls filters mockTmuxBase's recorded calls down to
 // send-keys invocations targeting a specific pane id (Args[1] == "-t" and
 // Args[2] starting with "%") - i.e. SendKeysToPane calls, as opposed to
