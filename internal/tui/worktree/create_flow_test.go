@@ -2,13 +2,37 @@ package tuiworktree
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
+
+// newTestWorktreeManager builds a WorktreeManager with harmless, fully mocked
+// Git/Tmux/Base fields for create-flow tests whose flow (via
+// handleCreateSuccess's loadCmd) reaches mgr.List(): List() now unconditionally
+// calls Tmux.PaneStates() and, via knownRepoAnchors, Git.GetMainWorktree - a
+// bare zero-value WorktreeManager panics on those nil fields now that List()
+// asks git instead of just scanning directories (ADR-0010, the
+// worktree-layout-support cycle's Step 4). These tests don't care about
+// List()'s actual output, only that the create-flow's status/attach/quit
+// logic runs safely afterward.
+func newTestWorktreeManager() *worktree.WorktreeManager {
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	return &worktree.WorktreeManager{
+		Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+		Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+}
 
 // --- Create flow (n) ---
 
@@ -379,7 +403,7 @@ func TestCreateSuccessAttachesAndQuits(t *testing.T) {
 
 	var gotRepo, gotName string
 	m := makeTestModel(testStatuses())
-	m.mgr = &worktree.WorktreeManager{}
+	m.mgr = newTestWorktreeManager()
 	m.createMode = createNameInput
 	m.createRepo = "/repos/alpha"
 	m.createInput.SetValue("feat")
@@ -446,7 +470,7 @@ func TestCreateSuccessStaysInDashboardWhenAttachAfterCreateFalse(t *testing.T) {
 
 	attachFalse := false
 	m := makeTestModel(testStatuses())
-	m.mgr = &worktree.WorktreeManager{}
+	m.mgr = newTestWorktreeManager()
 	m.gc = &config.GlobalConfig{
 		Worktree: config.WorktreeConfig{AttachAfterCreate: &attachFalse},
 	}
@@ -491,7 +515,7 @@ func TestCreateSuccessAttachesWhenAttachAfterCreateUnset(t *testing.T) {
 	t.Setenv("TMUX", "test-session")
 
 	m := makeTestModel(testStatuses())
-	m.mgr = &worktree.WorktreeManager{}
+	m.mgr = newTestWorktreeManager()
 	m.gc = &config.GlobalConfig{Worktree: config.WorktreeConfig{}}
 
 	attachCalled := false
@@ -580,7 +604,7 @@ func TestCreateSuccessAttachFailureTriggersRefresh(t *testing.T) {
 	t.Setenv("TMUX", "test-session")
 
 	m := makeTestModel(testStatuses())
-	m.mgr = &worktree.WorktreeManager{}
+	m.mgr = newTestWorktreeManager()
 	m.createFn = func(_, _, _ string) (string, error) { return "", nil }
 	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
 	m.repairFn = func(_, _ string, _ worktree.Layout) error {
@@ -714,7 +738,7 @@ func TestCreateSuccessWarningSurfacesAsStatus(t *testing.T) {
 	t.Setenv("TMUX", "test-session")
 
 	m := makeTestModel(testStatuses())
-	m.mgr = &worktree.WorktreeManager{}
+	m.mgr = newTestWorktreeManager()
 	m.windowSessionFn = func(_ string) (string, bool) { return "sess", true }
 	m.attachFn = func(_, _ string) error { return nil }
 

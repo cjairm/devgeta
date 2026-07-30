@@ -151,54 +151,304 @@ func TestCreate(t *testing.T) {
 	})
 }
 
+// worktreePorcelain builds a `git worktree list --porcelain`-shaped response:
+// mainRoot as the first ("main worktree") entry - always first, per git's
+// documented, stable guarantee that List()'s dedup relies on - followed by one
+// entry per (path, branch) pair in linked.
+func worktreePorcelain(mainRoot string, linked ...[2]string) string {
+	var b strings.Builder
+	b.WriteString("worktree " + mainRoot + "\n")
+	b.WriteString("HEAD 0000000000000000000000000000000000000000\n")
+	b.WriteString("branch refs/heads/main\n\n")
+	for _, l := range linked {
+		b.WriteString("worktree " + l[0] + "\n")
+		b.WriteString("HEAD 1111111111111111111111111111111111111111\n")
+		b.WriteString("branch refs/heads/" + l[1] + "\n\n")
+	}
+	return b.String()
+}
+
+// newListTestWM builds a WorktreeManager wired to fresh mocks and isolates
+// paths.Paths.Config/App roots (via testutil.SetupIsolatedPaths) so this
+// subtest's config.Load() calls (inside knownRepoAnchors) never see another
+// subtest's (or another test file's) global_config.yaml. GetWorktreeBasePath
+// (paths.Paths.Data.Root) is deliberately NOT isolated here: it already lives
+// under go test's process-wide sandbox (pkg/paths), and every subtest that
+// creates shared-root fixtures cleans up its own repo-slug directory via
+// t.Cleanup, mirroring the existing createWorktreeDir convention.
+func newListTestWM(t *testing.T) (wm *WorktreeManager, mockGitBase, mockTmuxBase *commands.MockBaseCommand) {
+	t.Helper()
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	t.Cleanup(cleanupPaths)
+
+	mockGitBase = commands.NewMockBaseCommand()
+	mockTmuxBase = commands.NewMockBaseCommand()
+	wm = &WorktreeManager{
+		Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+		Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+	return
+}
+
+// countExecCommandCallsWithDir counts how many ExecCommand calls targeted dir
+// via a `-C <dir>` argument pair - used to assert ListWorktreesAt was called
+// exactly once for a given repo, regardless of how many worktrees it has.
+func countExecCommandCallsWithDir(mockBase *commands.MockBaseCommand, dir string) int {
+	count := 0
+	for _, c := range mockBase.ExecCommandCalls {
+		for i, a := range c.Args {
+			if a == "-C" && i+1 < len(c.Args) && c.Args[i+1] == dir {
+				count++
+				break
+			}
+		}
+	}
+	return count
+}
+
 func TestList(t *testing.T) {
-	t.Run("list worktrees from centralized dir", func(t *testing.T) {
-		mockGitBase := commands.NewMockBaseCommand()
-		mockTmuxBase := commands.NewMockBaseCommand()
+	// cwdRepoRoot is exercised via w.Git.GetMainWorktree(cwd), which always
+	// costs one exec call regardless of whether cwd is a real repo. Chdir-ing
+	// to a directory the git mock reports as "not a repo" keeps that source
+	// out of a subtest's anchor set without special-casing it.
+	chdirToNonRepo := func(t *testing.T) {
+		t.Helper()
+		t.Chdir(t.TempDir())
+	}
 
-		gitApp := &git.Git{
-			Cmd:  commands.NewMockCommand(),
-			Base: mockGitBase,
+	t.Run("shared-location worktree is listed", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		chdirToNonRepo(t)
+
+		mainRoot := filepath.Join(t.TempDir(), "sharedrepo")
+		wtPath := createWorktreeDir(t, "sharedrepo", "featx")
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRoot, [2]string{wtPath, "feature-x"}), "", nil,
+			), // Step B: the one shared-root anchor
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
 		}
-		tmuxApp := &tmux.Tmux{
-			Cmd:  commands.NewMockCommand(),
-			Base: mockTmuxBase,
+		if len(statuses) != 1 {
+			t.Fatalf("expected exactly 1 status, got %d: %+v", len(statuses), statuses)
+		}
+		s := statuses[0]
+		if s.Name != "featx" || s.Path != wtPath || s.Branch != "feature-x" || s.Repo != "sharedrepo" {
+			t.Errorf(
+				"got Name=%q Path=%q Branch=%q Repo=%q, want Name=featx Path=%q Branch=feature-x Repo=sharedrepo",
+				s.Name, s.Path, s.Branch, s.Repo, wtPath,
+			)
+		}
+	})
+
+	// This is the entire point of the cycle: a worktree living at an in-repo
+	// path (<repo-root>/.claude/worktrees/<name>), reached only via
+	// cwdRepoRoot/recent-repos - never under the shared-root base path - must
+	// show up in List().
+	t.Run("in-repo worktree is listed", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+
+		repoRoot := t.TempDir()
+		t.Chdir(repoRoot)
+		actualCwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		wtPath := inRepoWorktreePath(actualCwd, "irepofeat")
+		mockGitBase.SetExecCommandResult(
+			worktreePorcelain(actualCwd, [2]string{wtPath, "irepo-branch"}), "", nil,
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(statuses) != 1 {
+			t.Fatalf("expected exactly 1 status, got %d: %+v", len(statuses), statuses)
+		}
+		s := statuses[0]
+		wantRepo := filepath.Base(actualCwd)
+		if s.Name != "irepofeat" || s.Path != wtPath || s.Branch != "irepo-branch" || s.Repo != wantRepo {
+			t.Errorf(
+				"got Name=%q Path=%q Branch=%q Repo=%q, want Name=irepofeat Path=%q Branch=irepo-branch Repo=%q",
+				s.Name, s.Path, s.Branch, s.Repo, wtPath, wantRepo,
+			)
+		}
+	})
+
+	// A husk directory (e.g. left behind by a botched move) sits under the
+	// same repo-slug as a real worktree. Trying the husk anchor first must not
+	// hide the real worktree found via a later anchor under the same slug -
+	// this is why knownRepoAnchors collects every subdirectory, not just the
+	// first.
+	t.Run("phantom husk under a shared slug is skipped without hiding a real worktree", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		chdirToNonRepo(t)
+
+		// "a-husk" sorts before "b-real" so os.ReadDir tries the husk first.
+		huskPath := createWorktreeDir(t, "huskslug", "a-husk")
+		realPath := createWorktreeDir(t, "huskslug", "b-real")
+		mainRoot := filepath.Join(t.TempDir(), "huskslug")
+
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // a-husk anchor: not a real worktree
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRoot, [2]string{realPath, "real-branch"}), "", nil,
+			), // b-real anchor
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(statuses) != 1 {
+			t.Fatalf("expected exactly 1 status (husk skipped), got %d: %+v", len(statuses), statuses)
+		}
+		s := statuses[0]
+		if s.Name != "b-real" || s.Path != realPath || s.Path == huskPath {
+			t.Errorf("got %+v, want the real worktree at %q, never the husk at %q", s, realPath, huskPath)
+		}
+	})
+
+	// The regression that matters most: a subtle bug reintroducing
+	// one-ListWorktreesAt-call-per-worktree would pass every other test here.
+	// A repo with 2 worktrees, reachable via a single anchor source
+	// (recent-repos), must cost exactly one ListWorktreesAt call for that
+	// repo - not two.
+	t.Run("ListWorktreesAt is called once per repo, not once per worktree", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		chdirToNonRepo(t)
+
+		repoRoot := t.TempDir()
+		gc := &config.GlobalConfig{}
+		if err := gc.Create(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		gc.Worktree.RecentRepos = []config.RecentRepo{{Path: repoRoot, LastUsed: time.Now()}}
+		if err := gc.Save(); err != nil {
+			t.Fatalf("setup: %v", err)
 		}
 
-		wm := &WorktreeManager{
-			Git:  gitApp,
-			Tmux: tmuxApp,
-			Base: commands.NewMockBaseCommand(),
+		alpha := filepath.Join(repoRoot, ".claude", "worktrees", "alpha")
+		beta := filepath.Join(repoRoot, ".claude", "worktrees", "beta")
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(repoRoot, [2]string{alpha, "alpha-branch"}, [2]string{beta, "beta-branch"}),
+				"", nil,
+			), // Step B: the single recent-repos anchor
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(statuses) != 2 {
+			t.Fatalf("expected 2 statuses (alpha, beta), got %d: %+v", len(statuses), statuses)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, repoRoot); got != 1 {
+			t.Errorf(
+				"expected ListWorktreesAt called exactly once for repo %q (2 worktrees), got %d calls",
+				repoRoot,
+				got,
+			)
+		}
+	})
+
+	// The same repo reachable via two anchor sources (cwd AND recent-repos)
+	// must still produce its worktrees exactly once.
+	t.Run("a repo reachable via two anchor sources is not duplicated", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+
+		cwdRoot := t.TempDir()
+		t.Chdir(cwdRoot)
+		actualCwd, err := os.Getwd()
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		gc := &config.GlobalConfig{}
+		if err := gc.Create(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		gc.Worktree.RecentRepos = []config.RecentRepo{{Path: actualCwd, LastUsed: time.Now()}}
+		if err := gc.Save(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		wtPath := inRepoWorktreePath(actualCwd, "dedupfeat")
+		// Every anchor here (cwd's own GetMainWorktree call, and both Step B
+		// queries for the cwd anchor and the recent-repos anchor - both the
+		// same repo) returns the identical porcelain, so a single fixed mock
+		// result is enough.
+		mockGitBase.SetExecCommandResult(
+			worktreePorcelain(actualCwd, [2]string{wtPath, "dedup-branch"}), "", nil,
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if len(statuses) != 1 {
+			t.Fatalf("expected exactly 1 status (deduped), got %d: %+v", len(statuses), statuses)
+		}
+		if statuses[0].Name != "dedupfeat" {
+			t.Errorf("got %+v, want Name=dedupfeat", statuses[0])
+		}
+	})
+
+	t.Run("no config and empty shared root returns an empty result, no error", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		chdirToNonRepo(t)
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("List failed: %v", err)
+		}
+		if statuses == nil {
+			t.Error("expected a non-nil empty slice, got nil")
+		}
+		if len(statuses) != 0 {
+			t.Errorf("expected no statuses, got %+v", statuses)
+		}
+	})
+
+	t.Run("GetWorktreeBasePath missing entirely still returns empty, no error", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		chdirToNonRepo(t)
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+
+		if err := os.RemoveAll(GetWorktreeBasePath()); err != nil {
+			t.Fatalf("setup: %v", err)
 		}
 
 		statuses, err := wm.List()
 		if err != nil {
 			t.Fatalf("List failed: %v", err)
 		}
-
-		// Note: This test may return non-zero results if real worktrees exist in the centralized dir.
-		// The important thing is that List() doesn't error and returns valid WorktreeStatus structs.
-		for _, s := range statuses {
-			if s.Name == "" {
-				t.Error("Worktree name should not be empty")
-			}
-			if s.Repo == "" {
-				t.Error("Repo should not be empty")
-			}
+		if statuses == nil {
+			t.Error("expected a non-nil empty slice, got nil")
+		}
+		if len(statuses) != 0 {
+			t.Errorf("expected no statuses, got %+v", statuses)
 		}
 	})
 
 	// one scan, not N: the regression this whole refactor exists to prevent.
 	// Before this task, List() called Tmux.WindowSession() once per worktree,
-	// and each of those calls ran its own fresh list-windows -a scan - N tmux
-	// execs per dashboard refresh. List() must now call Tmux.PaneStates()
+	// and each of those calls ran its own fresh list-windows -a scan (N tmux
+	// execs per dashboard refresh). List() must now call Tmux.PaneStates()
 	// exactly once regardless of how many worktrees it finds.
 	t.Run("single tmux scan regardless of worktree count", func(t *testing.T) {
-		mockGitBase := commands.NewMockBaseCommand()
-		mockTmuxBase := commands.NewMockBaseCommand()
-		// Git errors are tolerated by List() (branch just stays "") - keep the
-		// fixture focused on the tmux-scan behavior under test.
-		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+		wm, mockGitBase, mockTmuxBase := newListTestWM(t)
+		chdirToNonRepo(t)
 
 		windowA := GetWindowName("repoA", "wt1")
 		windowB := GetWindowName("repoB", "wt2")
@@ -209,14 +459,19 @@ func TestList(t *testing.T) {
 			nil,
 		)
 
-		wm := &WorktreeManager{
-			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-			Base: commands.NewMockBaseCommand(),
-		}
-
-		createWorktreeDir(t, "repoA", "wt1")
-		createWorktreeDir(t, "repoB", "wt2")
+		mainRootA := filepath.Join(t.TempDir(), "repoA")
+		mainRootB := filepath.Join(t.TempDir(), "repoB")
+		wtPathA := createWorktreeDir(t, "repoA", "wt1")
+		wtPathB := createWorktreeDir(t, "repoB", "wt2")
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRootA, [2]string{wtPathA, "feat-a"}), "", nil,
+			), // repoA anchor
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRootB, [2]string{wtPathB, "feat-b"}), "", nil,
+			), // repoB anchor
+		)
 
 		statuses, err := wm.List()
 		if err != nil {
@@ -263,9 +518,8 @@ func TestList(t *testing.T) {
 	// pairs so the ordering isn't just checked at a single point: idle-over-busy
 	// (the split-pane review case ADR-0005 exists for) and blocked-over-error.
 	t.Run("aggregates multiple panes per window by precedence", func(t *testing.T) {
-		mockGitBase := commands.NewMockBaseCommand()
-		mockTmuxBase := commands.NewMockBaseCommand()
-		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+		wm, mockGitBase, mockTmuxBase := newListTestWM(t)
+		chdirToNonRepo(t)
 
 		windowMixed := GetWindowName("repoC", "mixed")
 		windowUrgent := GetWindowName("repoC", "urgent")
@@ -278,14 +532,20 @@ func TestList(t *testing.T) {
 			nil,
 		)
 
-		wm := &WorktreeManager{
-			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-			Base: commands.NewMockBaseCommand(),
-		}
-
-		createWorktreeDir(t, "repoC", "mixed")
-		createWorktreeDir(t, "repoC", "urgent")
+		mainRootC := filepath.Join(t.TempDir(), "repoC")
+		wtMixed := createWorktreeDir(t, "repoC", "mixed")
+		wtUrgent := createWorktreeDir(t, "repoC", "urgent")
+		// Both "mixed" and "urgent" are separate anchors under the same slug
+		// and resolve to the same repo; the identical response for every git
+		// call is enough since only the fixture repo is in play here.
+		mockGitBase.SetExecCommandResult(
+			worktreePorcelain(
+				mainRootC,
+				[2]string{wtMixed, "mixed-branch"},
+				[2]string{wtUrgent, "urgent-branch"},
+			),
+			"", nil,
+		)
 
 		statuses, err := wm.List()
 		if err != nil {
@@ -315,9 +575,8 @@ func TestList(t *testing.T) {
 	// editor pane) are different situations and must be distinguished:
 	// WindowActive differs even though AgentState is "" in both cases.
 	t.Run("no agent vs no window are distinguished", func(t *testing.T) {
-		mockGitBase := commands.NewMockBaseCommand()
-		mockTmuxBase := commands.NewMockBaseCommand()
-		mockGitBase.SetExecCommandResult("", "git error", errors.New("git error"))
+		wm, mockGitBase, mockTmuxBase := newListTestWM(t)
+		chdirToNonRepo(t)
 
 		windowPresent := GetWindowName("repoD", "editor-only")
 		windowAbsent := GetWindowName("repoD", "no-window")
@@ -328,14 +587,17 @@ func TestList(t *testing.T) {
 			nil,
 		)
 
-		wm := &WorktreeManager{
-			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-			Base: commands.NewMockBaseCommand(),
-		}
-
-		createWorktreeDir(t, "repoD", "editor-only")
-		createWorktreeDir(t, "repoD", "no-window")
+		mainRootD := filepath.Join(t.TempDir(), "repoD")
+		wtEditorOnly := createWorktreeDir(t, "repoD", "editor-only")
+		wtNoWindow := createWorktreeDir(t, "repoD", "no-window")
+		mockGitBase.SetExecCommandResult(
+			worktreePorcelain(
+				mainRootD,
+				[2]string{wtEditorOnly, "editor-branch"},
+				[2]string{wtNoWindow, "no-window-branch"},
+			),
+			"", nil,
+		)
 
 		statuses, err := wm.List()
 		if err != nil {

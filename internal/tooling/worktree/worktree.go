@@ -600,18 +600,81 @@ func aggregateAgentState(states []string) string {
 	return best
 }
 
-// List returns all worktrees with their window status across all repos
-func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
-	basePath := GetWorktreeBasePath()
+// knownRepoAnchors collects one or more candidate paths per repo devgeta
+// knows about - each an actual worktree (main or linked) of that repo, since
+// `git worktree list --porcelain` resolves the whole repo's worktree set from
+// any single one of its worktrees (GetMainWorktree's own doc comment relies on
+// the same guarantee). Reused by List() (below) and, per the cycle plan, by
+// findRepoForWorktree/the repo picker in a later step (not wired up here).
+//
+// Anchors are collected, in this order (order only affects which anchor
+// "wins" List()'s dedup, which itself doesn't matter since that dedup is by
+// resolved main root, not by anchor):
+//
+//  1. the current repo (cwdRepoRoot, repo_candidates.go - reused rather than
+//     reimplemented with GetRepoRoot)
+//  2. the recent-repos store (gc.Worktree.PrunedRecentRepos(), already
+//     filters paths no longer on disk - reused rather than reimplemented). A
+//     config load failure is tolerated as "no config yet, skip this source",
+//     matching RepoCandidates' own convention.
+//  3. every subdirectory of every shared-root repo-slug directory - not just
+//     the first. A repo-slug directory can contain a husk left behind by a
+//     botched move; taking only the first subdirectory found and having it
+//     turn out to be the husk would make List() give up on the entire slug,
+//     hiding every real worktree that repo has. Collecting every subdirectory
+//     as a candidate anchor lets List()'s per-anchor failure tolerance sort
+//     out which one(s) are real, so one bad anchor never hides a good one
+//     under the same slug.
+//
+// Anchors are NOT deduplicated here: two anchors can't be known to resolve to
+// the same repo until git is asked, so dedup happens on the query result (in
+// List()), never on this list.
+func (w *WorktreeManager) knownRepoAnchors() []string {
+	var anchors []string
 
-	entries, err := os.ReadDir(basePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return []WorktreeStatus{}, nil
-		}
-		return nil, err
+	if cwdRoot := w.cwdRepoRoot(); cwdRoot != "" {
+		anchors = append(anchors, cwdRoot)
 	}
 
+	gc := &config.GlobalConfig{}
+	if err := gc.Load(); err == nil {
+		for _, r := range gc.Worktree.PrunedRecentRepos() {
+			anchors = append(anchors, r.Path)
+		}
+	}
+
+	basePath := GetWorktreeBasePath()
+	slugEntries, err := os.ReadDir(basePath)
+	if err == nil {
+		for _, slugEntry := range slugEntries {
+			if !slugEntry.IsDir() {
+				continue
+			}
+			repoDir := filepath.Join(basePath, slugEntry.Name())
+			wtEntries, err := os.ReadDir(repoDir)
+			if err != nil {
+				continue
+			}
+			for _, wtEntry := range wtEntries {
+				if !wtEntry.IsDir() {
+					continue
+				}
+				anchors = append(anchors, filepath.Join(repoDir, wtEntry.Name()))
+			}
+		}
+	}
+
+	return anchors
+}
+
+// List returns all worktrees with their window status across all repos. It
+// asks git, rather than scanning the shared-root directory: for each known
+// repo anchor (see knownRepoAnchors), one ListWorktreesAt call returns that
+// repo's whole worktree set (path and branch), so this costs one exec per
+// known repo, not one per worktree - and, unlike a directory walk, a husk
+// directory git does not report as a worktree can never appear (see ADR-0010,
+// docs/decisions/ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md).
+func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 	// One list-panes -a scan for the whole dashboard refresh, instead of a
 	// WindowSession() call per worktree - each of which ran its own fresh
 	// list-windows -a scan (N tmux execs per 3-second refresh). Indexed by
@@ -625,48 +688,51 @@ func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
 	}
 
-	var statuses []WorktreeStatus
-	for _, repoEntry := range entries {
-		if !repoEntry.IsDir() {
+	seenRoots := make(map[string]bool)
+	statuses := []WorktreeStatus{}
+	for _, anchor := range w.knownRepoAnchors() {
+		worktrees, err := w.Git.ListWorktreesAt(anchor)
+		if err != nil || len(worktrees) == 0 {
+			// Not a real worktree (husk, deleted, never existed) - skip
+			// silently. A later anchor for the same repo-slug (if any) still
+			// gets its own chance below.
 			continue
 		}
-
-		repoSlug := repoEntry.Name()
-		repoDir := filepath.Join(basePath, repoSlug)
-
-		wtEntries, err := os.ReadDir(repoDir)
-		if err != nil {
+		// git worktree list --porcelain always lists the main worktree
+		// first - a documented, stable git guarantee (GetMainWorktree relies
+		// on the same one), not an assumption to hedge.
+		mainRoot := worktrees[0].Path
+		if seenRoots[mainRoot] {
+			// This repo was already processed via an earlier anchor.
 			continue
 		}
+		seenRoots[mainRoot] = true
 
-		for _, wtEntry := range wtEntries {
-			if !wtEntry.IsDir() {
+		// Matches create()'s `repoSlug := filepath.Base(repoRoot)` - must be
+		// the identical derivation used elsewhere, or Repo/TmuxWindow won't
+		// match what create/repair/remove expect.
+		repoSlug := filepath.Base(mainRoot)
+		for _, wt := range worktrees {
+			if wt.Path == mainRoot {
+				// The repo's own checkout is not a devgeta-managed worktree row.
 				continue
 			}
-
-			name := wtEntry.Name()
-			wtPath := filepath.Join(repoDir, name)
+			// filepath.Base(wt.Path) gives the right Name regardless of
+			// location: for shared it's <basePath>/<slug>/<flat-name> ->
+			// <flat-name>; for in-repo it's
+			// <repo-root>/.claude/worktrees/<flat-name> -> <flat-name>. Both
+			// path shapes put the flattened name as the final path segment,
+			// so no location branching is needed here.
+			name := filepath.Base(wt.Path)
 			windowName := GetWindowName(repoSlug, name)
-
-			branch := ""
-			worktrees, err := w.Git.ListWorktreesAt(wtPath)
-			if err == nil {
-				for _, wt := range worktrees {
-					if wt.Path == wtPath {
-						branch = wt.Branch
-						break
-					}
-				}
-			}
-
 			// Comma-ok reports key presence, not slice non-emptiness: a
 			// window in the index always has at least one pane state
 			// appended above, so ok alone is the "window exists" signal.
 			states, windowActive := paneStatesByWindow[windowName]
 			statuses = append(statuses, WorktreeStatus{
 				Name:         name,
-				Path:         wtPath,
-				Branch:       branch,
+				Path:         wt.Path,
+				Branch:       wt.Branch,
 				TmuxWindow:   windowName,
 				WindowActive: windowActive,
 				AgentState:   aggregateAgentState(states),
