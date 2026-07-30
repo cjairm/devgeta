@@ -259,13 +259,14 @@ dg wt <subcommand> [flags]     # alias
 
 **Subcommands**:
 
-| Subcommand      | Description                                            |
-| --------------- | ------------------------------------------------------ |
-| `create <name>` | Create a new worktree + tmux window                    |
-| `list`          | List all managed worktrees                             |
-| `remove [name]` | Remove a worktree (interactive picker if name omitted) |
-| `repair <name>` | Recreate the tmux window for an existing worktree      |
-| `prune`         | Remove **all** managed worktrees after confirmation    |
+| Subcommand      | Description                                                                                         |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| `create <name>` | Create a new worktree + tmux window                                                                 |
+| `list`          | List all managed worktrees                                                                          |
+| `remove [name]` | Remove a worktree (interactive picker if name omitted)                                              |
+| `repair <name>` | Recreate the tmux window for an existing worktree                                                   |
+| `move <name>`   | Move a worktree between the shared and in-repo locations, retargeting its tmux window (alias: `mv`) |
+| `prune`         | Remove **all** managed worktrees after confirmation                                                 |
 
 **Flags for `create` and `repair`**:
 
@@ -305,6 +306,7 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 - `scan_depth` — max directory depth below each search path to descend. Unset, `0`, or negative all mean the default of `4` — there is no separate "unlimited" or "disabled via depth" mode; use an empty `search_paths` to disable scanning.
 - `default_layout` — default window layout name (see the resolution order above). Default: empty, which means rule 5 (`default_ai`-derived single-pane layout) or the built-in `opencode` fallback applies instead.
 - `attach_after_create` — whether a successful `n`/`N` create in `dg ws` attaches into the new worktree's window (quitting the dashboard) or leaves you on the new row to keep working in the dashboard. Default: **absent, which means attach** — set it to `false` to stay put, which is the useful setting when you create several worktrees in one sitting, since attaching ejects you from the dashboard after the first one. Outside tmux there is no client to move, so the create already stays put regardless of this key. Unlike every other boolean in `global_config.yaml` (all feature flags where "off" is the right default), an absent key here must mean **on**, so the field is stored as a nullable boolean: absent is distinct from an explicit `false`, and configs written before this key existed keep attaching.
+- `location` — where new worktrees are created on disk. Default: `shared` (`~/.local/share/devgeta/worktrees/<repo-slug>/<name>`, today's behavior — no existing install changes). The other value, `in-repo`, creates worktrees at `<repo-root>/.claude/worktrees/<name>` instead, the same path Claude Code's own worktree feature uses. Changing this key only affects worktrees created after the change; use `dg wt move` (below) to relocate one that already exists.
 
 **Flag for `create`**:
 
@@ -317,6 +319,21 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 **Flag for `remove`**:
 
 - `--force` / `-f` — Force removal even if the worktree has uncommitted changes.
+
+**Flag for `move`**:
+
+- `--to <shared|in-repo>` — Target location for this one move, regardless of the configured `worktree.location`. Without it, `move` targets whatever `worktree.location` currently resolves to — the common case right after changing that setting.
+- `--force` / `-f` — Move even if the worktree has uncommitted changes.
+
+If the worktree is already at the target location, `move` prints that and exits `0`
+without touching git. It refuses on a dirty worktree unless `--force` is given. If the
+worktree has a live tmux window, every pane is sent a `cd` to the new path, but only
+when every pane in the window is an idle shell — if any pane is running something else
+(an editor, a build, an AI agent), nothing is sent to any pane, a warning names the busy
+pane, and the move itself still succeeds (a busy window is a follow-up inconvenience,
+never a reason to fail the command). Moving `--to in-repo` warns, but does not refuse,
+when `.claude/worktrees/` is not gitignored in the target repo — devgeta never edits
+another repo's `.gitignore`.
 
 **Adopting an existing branch (`create`)**: if a branch named `<name>` already exists locally,
 `create` adopts it into the worktree instead of failing. If that branch is currently checked out
@@ -422,8 +439,8 @@ dg config unset <key>
 - `--plain` — Suppress the interactive hint line that follows the table (persistent flag; works on both `dg config` and `dg config list`).
 
 **Settable keys**: `worktree.default_ai`, `worktree.search_paths`, `worktree.scan_depth`,
-`worktree.default_layout`, `worktree.attach_after_create` — see "Worktree scan and layout
-config keys" above for what each one does.
+`worktree.default_layout`, `worktree.attach_after_create`, `worktree.location` — see
+"Worktree scan and layout config keys" above for what each one does.
 
 **Behavior**:
 
