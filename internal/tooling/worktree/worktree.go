@@ -124,12 +124,116 @@ func New() *WorktreeManager {
 	}
 }
 
-// worktreePath returns ~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>
-// Slashes in the name are replaced with dashes to keep the worktree directory
-// directly under the repo slug. This ensures the parent directory is always
-// the repo slug (important for tools that display the parent dir, e.g. Claude Code).
-func (w *WorktreeManager) worktreePath(repoSlug, name string) string {
+// sharedWorktreePath returns ~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name> -
+// the WorktreeLocationShared path shape (today's only shape, and still the
+// default). Slashes in name are replaced with dashes to keep the worktree
+// directory directly under the repo slug. This ensures the parent directory
+// is always the repo slug (important for tools that display the parent dir,
+// e.g. Claude Code). The single implementation of this shape - every caller
+// that needs it (worktreePath, worktreePathIn) goes through here.
+func sharedWorktreePath(repoSlug, name string) string {
 	return filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, FlattenName(name))
+}
+
+// inRepoWorktreePath returns <repo-root>/.claude/worktrees/<flat-name> - the
+// WorktreeLocationInRepo path shape. Unlike the shared shape, there is no
+// repo-slug segment: repoRoot already identifies the repo. The single
+// implementation of this shape - every caller that needs it (worktreePath,
+// worktreePathIn) goes through here.
+func inRepoWorktreePath(repoRoot, name string) string {
+	return filepath.Join(repoRoot, ".claude", "worktrees", FlattenName(name))
+}
+
+// worktreePathIn returns the on-disk worktree path for name inside the repo
+// rooted at repoRoot, honoring gc.Worktree.Location. Unlike worktreePath
+// (below), it already holds the repo root - no slug->root resolution is
+// needed, so it cannot fail. Callers that already have repoRoot in hand
+// (e.g. create, which derives repoSlug from repoRoot on the very next line
+// anyway) should use this directly instead of round-tripping
+// root->slug->root through worktreePath: that round trip is not just
+// wasteful but lossy, since two repos sharing a basename in different
+// parents would collapse to the same slug.
+//
+// Loads the global config itself (see worktreePath's doc comment for why),
+// tolerating a load failure as "no config yet, use the shared default".
+func worktreePathIn(repoRoot, name string) string {
+	gc := &config.GlobalConfig{}
+	// A load failure (e.g. no config file yet) leaves gc at its zero value,
+	// which already means "shared" (Location's zero value) - the correct
+	// default, not an actionable error.
+	_ = gc.Load()
+	if gc.Worktree.Location == config.WorktreeLocationInRepo {
+		return inRepoWorktreePath(repoRoot, name)
+	}
+	return sharedWorktreePath(filepath.Base(repoRoot), name)
+}
+
+// worktreePath resolves the on-disk worktree path for repoSlug's name,
+// honoring gc.Worktree.Location: WorktreeLocationShared (the default, and
+// today's only behavior) needs nothing beyond repoSlug and cannot fail. For
+// WorktreeLocationInRepo, repoSlug (a bare directory basename) is not enough
+// - it must first be resolved back to an absolute repo root (resolveRepoRoot)
+// so the path can be nested under that repo's own .claude/worktrees. If the
+// root cannot be resolved, this returns an actionable error rather than
+// falling back to the shared path: silently doing so would recreate exactly
+// the split-brain state (a worktree devgeta creates in one place and looks
+// for in another) that this cycle exists to eliminate.
+//
+// Loads the global config itself via gc := &config.GlobalConfig{}; gc.Load()
+// (repo_candidates.go's established pattern), tolerating a load failure as
+// "no config yet, use defaults" the same way RepoCandidates does - rather
+// than accepting a gc parameter the way ResolveLayout does. None of this
+// function's 7 call sites already holds a *config.GlobalConfig in scope, so
+// threading one through would only push a load onto every caller for no
+// benefit; ResolveLayout's callers, by contrast, already have one on hand
+// when they call it.
+func (w *WorktreeManager) worktreePath(repoSlug, name string) (string, error) {
+	gc := &config.GlobalConfig{}
+	_ = gc.Load() // no config yet, or a transient read error: default to shared
+	if gc.Worktree.Location != config.WorktreeLocationInRepo {
+		return sharedWorktreePath(repoSlug, name), nil
+	}
+
+	repoRoot, err := w.resolveRepoRoot(gc, repoSlug)
+	if err != nil {
+		return "", err
+	}
+	return worktreePathIn(repoRoot, name), nil
+}
+
+// resolveRepoRoot resolves repoSlug (a bare directory basename, e.g.
+// "devgeta") back to the absolute repo root worktreePath's in-repo location
+// needs. cursorRepoRoot (repo_candidates.go) is not reusable for this: it
+// resolves a root by reading a worktree directory already living under the
+// shared root, which is circular here - computing where a worktree should
+// live must not require one already living somewhere else first.
+//
+// Resolution order, cheapest and most certain first:
+//  1. the current repo (w.Git.GetRepoRoot()), if its basename matches repoSlug
+//  2. gc.Worktree.RecentRepos, first entry whose basename matches - already
+//     in memory from the caller's config load, so this is neither a new
+//     state nor a filesystem walk
+//
+// Returns an actionable error (naming the slug) when neither source
+// resolves it - never a fallback to the shared-root trick.
+func (w *WorktreeManager) resolveRepoRoot(
+	gc *config.GlobalConfig,
+	repoSlug string,
+) (string, error) {
+	if root, err := w.Git.GetRepoRoot(); err == nil && filepath.Base(root) == repoSlug {
+		return root, nil
+	}
+	for _, r := range gc.Worktree.RecentRepos {
+		if filepath.Base(r.Path) == repoSlug {
+			return r.Path, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"worktree location is 'in-repo' but repo %q is not known to devgeta yet "+
+			"(it isn't the current repo and isn't in the recent-repos store); "+
+			"run this from inside the repo, or create a worktree there first",
+		repoSlug,
+	)
 }
 
 // GetWorktreeBasePath returns the base path for all devgeta worktrees
@@ -191,7 +295,11 @@ func (w *WorktreeManager) create(
 	force, useRepoSession bool,
 ) error {
 	repoSlug := filepath.Base(repoRoot)
-	wtPath := w.worktreePath(repoSlug, name)
+	// repoRoot is already known here, so worktreePathIn is used directly
+	// instead of round-tripping root->slug->root through the slug-based
+	// worktreePath - see worktreePathIn's doc comment for why that round
+	// trip would be both wasteful and lossy.
+	wtPath := worktreePathIn(repoRoot, name)
 	windowName := GetWindowName(repoSlug, name)
 
 	state, err := w.worktreeState(repoSlug, name)
@@ -396,10 +504,17 @@ func (w *WorktreeManager) buildWindowPanes(
 	return nil
 }
 
-// worktreeState checks the current state of a worktree
+// worktreeState checks the current state of a worktree. Propagates
+// worktreePath's error unchanged (e.g. an unresolvable in-repo root) rather
+// than reporting a false "doesn't exist" - a caller must not treat "we
+// couldn't determine where this worktree would live" as "it doesn't exist".
 func (w *WorktreeManager) worktreeState(repoSlug, name string) (WorktreeState, error) {
+	wtPath, err := w.worktreePath(repoSlug, name)
+	if err != nil {
+		return WorktreeState{}, err
+	}
 	state := WorktreeState{
-		WtPath:     w.worktreePath(repoSlug, name),
+		WtPath:     wtPath,
 		WindowName: GetWindowName(repoSlug, name),
 	}
 
@@ -657,8 +772,16 @@ func (w *WorktreeManager) Remove(name string, force bool) error {
 func (w *WorktreeManager) repoSlugForWorktree(name string) string {
 	if repoRoot, err := w.Git.GetRepoRoot(); err == nil {
 		candidate := filepath.Base(repoRoot)
-		if _, statErr := os.Stat(w.worktreePath(candidate, name)); statErr == nil {
-			return candidate
+		// An error here just means "not this candidate" (e.g. an
+		// unresolvable in-repo root, which can't happen for candidate since
+		// it was derived from repoRoot a line above - this guards the
+		// theoretical case anyway rather than assuming it away), not a
+		// failure to propagate: falling through to findRepoForWorktree is
+		// exactly the existing fallback for "current repo doesn't have it".
+		if path, pathErr := w.worktreePath(candidate, name); pathErr == nil {
+			if _, statErr := os.Stat(path); statErr == nil {
+				return candidate
+			}
 		}
 	}
 	return w.findRepoForWorktree(name)
@@ -678,7 +801,10 @@ func (w *WorktreeManager) Repair(name string, layout Layout) error {
 		return fmt.Errorf("no worktree '%s' to repair", name)
 	}
 
-	wtPath := w.worktreePath(repoSlug, name)
+	wtPath, err := w.worktreePath(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 
 	// If directory doesn't exist on disk but git knows about it, prune and error
@@ -761,7 +887,10 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 	if err := validateLayout(layout); err != nil {
 		return err
 	}
-	wtPath := w.worktreePath(repoSlug, name)
+	wtPath, err := w.worktreePath(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
 		if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr != nil {
@@ -818,7 +947,10 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		return err
 	}
 
-	wtPath := w.worktreePath(repoSlug, name)
+	wtPath, err := w.worktreePath(repoSlug, name)
+	if err != nil {
+		return err
+	}
 	windowName := GetWindowName(repoSlug, name)
 
 	session, exists := w.Tmux.WindowSession(windowName)
@@ -1006,12 +1138,15 @@ func (w *WorktreeManager) Prune() error {
 // removeByRepo removes a worktree by repo slug and name.
 // Mirrors the same tolerant logic as Remove.
 func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error {
-	wtPath := w.worktreePath(repoSlug, name)
-	windowName := GetWindowName(repoSlug, name)
-
-	state, err := w.worktreeState(repoSlug, name)
+	wtPath, err := w.worktreePath(repoSlug, name)
 	if err != nil {
 		return err
+	}
+	windowName := GetWindowName(repoSlug, name)
+
+	state, stateErr := w.worktreeState(repoSlug, name)
+	if stateErr != nil {
+		return stateErr
 	}
 
 	if !state.WtExists && !state.WindowExists {

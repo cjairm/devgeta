@@ -376,7 +376,10 @@ func TestRepairExistingWindowOnlyResendsPaneZero(t *testing.T) {
 
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	wtPath := wm.worktreePath(repoSlug, name)
+	wtPath, err := wm.worktreePath(repoSlug, name)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
 	if err := os.MkdirAll(wtPath, 0o755); err != nil {
 		t.Fatalf("setup: %v", err)
 	}

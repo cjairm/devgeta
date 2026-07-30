@@ -6,10 +6,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -619,15 +621,374 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 	})
 }
 
-func TestWorktreePath(t *testing.T) {
-	wm := &WorktreeManager{}
-	path := wm.worktreePath("myrepo", "feature-a")
-	expectedSuffix := filepath.Join("devgeta", "worktrees", "myrepo", "feature-a")
-	if !filepath.IsAbs(path) {
-		t.Errorf("Expected absolute path, got %q", path)
+// setWorktreeLocation isolates the global config (via testutil.SetupIsolatedPaths,
+// which the caller must have already invoked) and writes worktree.location,
+// so a test can drive worktreePath's location branch without depending on
+// or polluting any other test's config state.
+func setWorktreeLocation(t *testing.T, location string) {
+	t.Helper()
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("setup: failed to create config: %v", err)
 	}
-	if !strings.HasSuffix(path, expectedSuffix) {
-		t.Errorf("Expected path to end with %q, got %q", expectedSuffix, path)
+	gc.Worktree.Location = location
+	if err := gc.Save(); err != nil {
+		t.Fatalf("setup: failed to save config: %v", err)
+	}
+}
+
+// setWorktreeLocationAndRecentRepos is setWorktreeLocation plus seeding
+// worktree.recent_repos, for tests proving in-repo root resolution falls
+// back to the recent-repos store when the current repo doesn't match.
+func setWorktreeLocationAndRecentRepos(
+	t *testing.T,
+	location string,
+	repos []config.RecentRepo,
+) {
+	t.Helper()
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("setup: failed to create config: %v", err)
+	}
+	gc.Worktree.Location = location
+	gc.Worktree.RecentRepos = repos
+	if err := gc.Save(); err != nil {
+		t.Fatalf("setup: failed to save config: %v", err)
+	}
+}
+
+// notInARepo configures mockGitBase so w.Git.GetRepoRoot() fails, simulating
+// a caller whose cwd is not inside any git repository (or not inside the
+// repo being asked about) - forcing worktreePath's in-repo resolution past
+// its first (current-repo) step.
+func notInARepo(mockGitBase *commands.MockBaseCommand) {
+	mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+}
+
+// TestWorktreePath is Step 3's core test: worktreePath must stay
+// byte-identical for the shared location (today's only behavior, and every
+// existing user's default) while correctly computing the in-repo shape and
+// resolving repoSlug back to a root via the current repo or the
+// recent-repos store - failing with an actionable error, never a silent
+// fallback, when neither resolves it.
+func TestWorktreePath(t *testing.T) {
+	t.Run("shared (unset) is byte-identical to today's path", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+
+		wm := &WorktreeManager{}
+		path, err := wm.worktreePath("myrepo", "feature-a")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", "myrepo", "feature-a")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run("shared explicitly set produces the same path as unset", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		setWorktreeLocation(t, config.WorktreeLocationShared)
+
+		wm := &WorktreeManager{}
+		path, err := wm.worktreePath("myrepo", "feature-a")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", "myrepo", "feature-a")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run("shared location flattens a name containing slashes", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+
+		wm := &WorktreeManager{}
+		path, err := wm.worktreePath("myrepo", "feat/search-specs")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(
+			paths.Paths.Data.Root, "devgeta", "worktrees", "myrepo", "feat-search-specs",
+		)
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run("in-repo resolves the root via the current repo", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+		repoRoot := t.TempDir()
+		repoSlug := filepath.Base(repoRoot)
+
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		path, err := wm.worktreePath(repoSlug, "feature-a")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(repoRoot, ".claude", "worktrees", "feature-a")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run(
+		"in-repo resolves the root via the recent-repos store when the current repo doesn't match",
+		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+
+			repoRoot := t.TempDir()
+			repoSlug := filepath.Base(repoRoot)
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+				{Path: repoRoot, LastUsed: time.Now()},
+			})
+
+			mockGitBase := commands.NewMockBaseCommand()
+			notInARepo(mockGitBase)
+			mockTmuxBase := commands.NewMockBaseCommand()
+			wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+			path, err := wm.worktreePath(repoSlug, "feature-a")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			want := filepath.Join(repoRoot, ".claude", "worktrees", "feature-a")
+			if path != want {
+				t.Errorf("expected %q, got %q", want, path)
+			}
+		},
+	)
+
+	t.Run("in-repo flattens a name containing slashes", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+		repoRoot := t.TempDir()
+		repoSlug := filepath.Base(repoRoot)
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		path, err := wm.worktreePath(repoSlug, "feat/search-specs")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(repoRoot, ".claude", "worktrees", "feat-search-specs")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run(
+		"in-repo with an unresolvable slug returns an actionable error and no path",
+		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+			setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+			mockGitBase := commands.NewMockBaseCommand()
+			notInARepo(mockGitBase)
+			mockTmuxBase := commands.NewMockBaseCommand()
+			wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+			path, err := wm.worktreePath("some-unknown-repo", "feature-a")
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if path != "" {
+				t.Errorf("expected no path on error, got %q", path)
+			}
+			if !strings.Contains(err.Error(), "some-unknown-repo") {
+				t.Errorf("expected error to name the slug, got %q", err.Error())
+			}
+		},
+	)
+}
+
+// TestWorktreePathIn proves worktreePathIn - the root-taking form used by
+// create() and any other caller that already resolved repoRoot - produces
+// the same two shapes as the slug-based worktreePath, without needing (or
+// being able to fail on) resolution.
+func TestWorktreePathIn(t *testing.T) {
+	t.Run("shared (unset)", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+
+		repoRoot := "/some/parent/myrepo"
+		path := worktreePathIn(repoRoot, "feature-a")
+		want := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", "myrepo", "feature-a")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+
+	t.Run("in-repo", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+		repoRoot := "/some/parent/myrepo"
+		path := worktreePathIn(repoRoot, "feat/search-specs")
+		want := filepath.Join(repoRoot, ".claude", "worktrees", "feat-search-specs")
+		if path != want {
+			t.Errorf("expected %q, got %q", want, path)
+		}
+	})
+}
+
+// TestWorktreeStateHonorsLocation proves worktreeState (the plan's "inherits
+// this for free" claim) correctly computes an in-repo WtPath and detects
+// WtExists against it, rather than by inspection of its call to
+// worktreePath.
+func TestWorktreeStateHonorsLocation(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	name := "feature-a"
+	wtPath := filepath.Join(repoRoot, ".claude", "worktrees", name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	mockGitBase := commands.NewMockBaseCommand()
+	// A single fixed "<repoRoot>\n" stdout satisfies both git calls this
+	// exercises: resolveRepoRoot's rev-parse (needs just the root) and
+	// ListWorktreesAt's worktree-list --porcelain (parses to an empty list,
+	// since the line lacks a "worktree " prefix - harmless here, since
+	// WtExists is already established by the os.Stat check above it).
+	mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	state, err := wm.worktreeState(repoSlug, name)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state.WtPath != wtPath {
+		t.Errorf("expected WtPath %q, got %q", wtPath, state.WtPath)
+	}
+	if !state.WtExists {
+		t.Error("expected WtExists true for an existing in-repo worktree directory")
+	}
+}
+
+// TestRepairHonorsLocation proves Repair correctly locates and repairs an
+// in-repo worktree when repoSlugForWorktree resolves the slug via the
+// current repo (cwd match).
+func TestRepairHonorsLocation(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	name := "feature-a"
+	windowName := GetWindowName(repoSlug, name)
+	wtPath := filepath.Join(repoRoot, ".claude", "worktrees", name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		// ensureWindow's WindowSession lookup: window already exists, so
+		// only pane 0's command is resent - no window/session creation.
+		commands.ExecCommandResult("some-session\t"+windowName+"\n", "", nil),
+		commands.ExecCommandResult("", "", nil), // SendKeysToWindowInSession
+	)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.Repair(name, stubLayout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestRepairInRepoHonorsLocation proves RepairInRepo correctly locates and
+// repairs an in-repo worktree when the repo is resolved via the
+// recent-repos store (not cwd) - the other resolution path worktreePath
+// supports.
+func TestRepairInRepoHonorsLocation(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	name := "feature-a"
+	setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationInRepo, []config.RecentRepo{
+		{Path: repoRoot, LastUsed: time.Now()},
+	})
+
+	windowName := GetWindowName(repoSlug, name)
+	wtPath := filepath.Join(repoRoot, ".claude", "worktrees", name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	mockGitBase := commands.NewMockBaseCommand()
+	notInARepo(mockGitBase) // forces resolution via the recent-repos store
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult("some-session\t"+windowName+"\n", "", nil),
+		commands.ExecCommandResult("", "", nil),
+	)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.RepairInRepo(repoSlug, name, stubLayout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestRemoveByRepoHonorsLocation proves removeByRepo correctly targets and
+// removes an in-repo worktree directory.
+func TestRemoveByRepoHonorsLocation(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+	setWorktreeLocation(t, config.WorktreeLocationInRepo)
+
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	name := "feature-a"
+	wtPath := filepath.Join(repoRoot, ".claude", "worktrees", name)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	mockGitBase := commands.NewMockBaseCommand()
+	// Same single fixed stdout as TestWorktreeStateHonorsLocation: resolves
+	// the root for rev-parse calls, and - lacking a "worktree " prefix -
+	// makes RemoveWorktree's internal GetMainWorktree call fail, exercising
+	// the same os.RemoveAll fallback TestRemoveByRepoUsesCorrectPath relies
+	// on above, just with an in-repo path.
+	mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
+	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+	if err := wm.removeByRepo(repoSlug, name, true); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Error("expected the in-repo worktree directory to be removed")
 	}
 }
 
