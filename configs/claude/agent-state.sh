@@ -85,9 +85,9 @@ play_notify_sound() {
 	if [ "${play_cmd[0]}" = "printf" ]; then
 		# The fallback IS the bell, but the hook's OWN stdout never reaches
 		# the pane's terminal: Claude Code captures every hook's stdout to
-		# parse for JSON (see docs/apps/claude.md), so a byte written there
-		# lands in that capture, not the tty - confirmed empirically, see
-		# task-1-report.md. Resolve the pane's REAL tty device instead (same
+		# parse for JSON on exit (docs/apps/claude.md: "The hook prints only
+		# JSON to stdout"), so a byte written there lands in that capture,
+		# not the tty. Resolve the pane's REAL tty device instead (same
 		# -p -t "$TMUX_PANE" pattern the gate check above already uses) and
 		# write the byte directly there. Only reached from this branch, so
 		# the common afplay/paplay path never pays for this extra tmux call.
@@ -111,7 +111,7 @@ idle | blocked | error)
 	# costs exactly one tmux call before exiting.
 	[ "$(tmux show-option -gqv @dg_notify_sound 2>/dev/null)" = "on" ] || exit 0
 
-	# Same predicate configs/tmux/tmux.conf:126's window-status-format
+	# Same predicate window-status-format in configs/tmux/tmux.conf.tmpl
 	# already uses to flag an unattended window, so the audible and visual
 	# signals can never disagree about whether you've seen this.
 	[ "$(tmux display-message -p -t "$TMUX_PANE" '#{window_active_clients}' 2>/dev/null)" = "0" ] || exit 0

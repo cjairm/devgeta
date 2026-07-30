@@ -497,7 +497,7 @@ for the same three "wants you" states (`idle`, `blocked`, `error`) at the moment
 them — never for `busy`, since an agent starting work isn't an event you asked to hear — gated
 on `window_active_clients == 0`, the identical predicate the status-bar flag above already
 uses, so the audible and visual signals can never disagree about whether you've seen something.
-It is off by default and opt-in (see `notify_sound` below), each state has a distinct sound so
+It is off by default and opt-in (see `notify_sound` above), each state has a distinct sound so
 the three are told apart without looking, and a missing sound player or audio device is silence
 rather than an error or a blocked hook.
 

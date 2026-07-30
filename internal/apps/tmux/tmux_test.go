@@ -294,8 +294,6 @@ func TestForceConfigure(t *testing.T) {
 // explicit false, and absent (the pre-existing-config case CLAUDE.md §10
 // requires to keep sound off).
 func TestForceConfigureRendersNotifySound(t *testing.T) {
-	t.Helper()
-
 	tests := []struct {
 		name         string
 		configYAML   string

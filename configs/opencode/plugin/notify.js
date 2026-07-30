@@ -40,7 +40,7 @@
 //
 // Step 8 (status-bar signal for unattended worktrees) adds a second,
 // display-only write alongside the pane write above: a WINDOW-level mirror,
-// `@dg_window_agent_state`, that configs/tmux/tmux.conf's
+// `@dg_window_agent_state`, that configs/tmux/tmux.conf.tmpl's
 // `window-status-format` reads to flag a window nobody is looking at. This is
 // deliberately a DIFFERENT option name than the pane-level `@dg_agent_state`
 // — see ADR-0005's Step 8 note and the cycle doc for why: tmux options
@@ -147,10 +147,19 @@ const BELL_BYTE = "\x07";
 // the terminal bell, exactly ADR-0009's player table and probe order. Unlike
 // bash's `command -v`, there is no cheap, non-spawning existence check
 // available through the one exec seam here, so "available" is determined by
-// attempting the invocation itself: a rejection (missing binary, missing
-// audio device, no PulseAudio session, or any other failure) falls through
-// to the next candidate. Every step is independently try/caught so a
-// failure anywhere in the chain can never escape as an unhandled rejection.
+// attempting the invocation itself — but the fallthrough must reproduce
+// `command -v`'s EXISTENCE-ONLY semantics, not "any failure falls through."
+// bash's agent-state.sh picks a player by `command -v` alone and then fires
+// it detached (`&`), so once a player is chosen, a runtime failure of that
+// player (missing audio device, no PulseAudio session, missing sound file)
+// is never observed and never triggers a fallback to the next candidate —
+// bash has no way to know. Matching that: only a rejection whose `.code` is
+// `"ENOENT"` (Node's execFile/child_process code for "no such file or
+// directory," i.e. the binary itself does not exist) falls through here; any
+// other rejection means the binary was found and invocation failed for some
+// other reason, so this stops right there, silently, exactly like bash's
+// backgrounded call. Every step is independently try/caught so a failure
+// anywhere in the chain can never escape as an unhandled rejection.
 //
 // Callers must NOT await this function to completion (see playNotifySound):
 // a real afplay/paplay invocation only resolves once the sound finishes
@@ -164,21 +173,36 @@ async function firePlayer(execFn, pane, files) {
   try {
     await execFn("afplay", [files.afplay]);
     return;
-  } catch {
-    // afplay missing, failed, or no audio device: fall through to paplay.
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      // afplay exists but the invocation itself failed (bad audio device,
+      // missing sound file, killed, etc.): bash would have chosen afplay via
+      // `command -v` and fired it detached, never learning this either, so
+      // no fallback to paplay/the bell here — stop exactly where bash would.
+      return;
+    }
+    // afplay is not installed (ENOENT): fall through to paplay, matching
+    // bash's `command -v afplay` returning nonzero.
   }
   try {
     await execFn("paplay", [files.paplay]);
     return;
-  } catch {
-    // paplay missing or failed too: fall through to the terminal bell.
+  } catch (err) {
+    if (err?.code !== "ENOENT") {
+      // Same reasoning as the afplay branch above: paplay exists but failed
+      // at runtime, which bash could never observe either — stop here.
+      return;
+    }
+    // paplay is not installed either: fall through to the terminal bell.
   }
 
   // The fallback IS the bell, but writing it to this process's own stdout
   // never reaches the pane's terminal: OpenCode may capture/pipe a plugin's
-  // stdout upstream of the terminal, the same problem Task 1 hit and
-  // resolved on the bash side (see agent-state.sh and task-1-report.md).
-  // Resolve the pane's REAL tty device (same -p -t <pane> pattern the gate
+  // stdout upstream of the terminal, the same problem agent-state.sh hits on
+  // the Claude Code side (Claude Code parses hook stdout for JSON on exit —
+  // see docs/apps/claude.md); empirically, writing the bell to this
+  // process's stdout does not reach the pane either. Resolve the pane's REAL
+  // tty device (same -p -t <pane> pattern the gate
   // checks below use) and write the byte directly there via fs, not through
   // the exec seam — this isn't spawning a process, so it needs no seam of
   // its own. A failed/empty resolution (dead server, no server) is silence,
@@ -274,7 +298,7 @@ export const Notify = async (ctx = {}, execFn = execTmux) => {
       return;
     }
 
-    // Same predicate configs/tmux/tmux.conf:126's window-status-format
+    // Same predicate window-status-format in configs/tmux/tmux.conf.tmpl
     // already uses to flag an unattended window, so the audible and visual
     // signals can never disagree about whether you've seen this.
     const activeClients = await readTmux(execFn, [

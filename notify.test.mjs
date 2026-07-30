@@ -172,7 +172,21 @@ const SOUND_FILES = {
 // the two gate reads (show-option, display-message) with caller-supplied
 // values, answers a pane_tty lookup with `paneTty` (or empty, meaning
 // unresolved), and applies `playerBehavior` (a map of "afplay"/"paplay" to
-// "resolve" or "reject") to decide how each player invocation responds.
+// one of three strings) to decide how each player invocation responds:
+//
+//   - "resolve" (or omitted): the call succeeds, same as the plain stub.
+//   - "missing": the binary itself does not exist — rejects with an Error
+//     whose `.code` is `"ENOENT"`, exactly what Node's execFile/child_process
+//     attaches when the executable can't be found. This is the ONLY shape
+//     that should make firePlayer fall through to the next candidate,
+//     mirroring bash's `command -v` existence check.
+//   - "fail": the binary exists but the invocation itself fails at runtime
+//     (bad audio device, missing sound file, killed, ...) — rejects with an
+//     Error that has no `.code` (or a different one), the shape a real
+//     execFile failure-to-run-cleanly would have. This must NOT trigger a
+//     fallthrough: bash could never observe this either, since by the time
+//     the player is chosen it's already fired-and-forgotten.
+//
 // Every other call (the pane write, the window mirror) resolves normally,
 // same as the plain stub, so these tests can still assert the FULL ordered
 // call sequence per the brief's "every seam call's argv is asserted"
@@ -197,13 +211,28 @@ function makeSoundStub({
       }
     }
     if (cmd === "afplay" || cmd === "paplay") {
-      if (playerBehavior[cmd] === "reject") {
-        throw new Error(`${cmd}: command not found`);
+      if (playerBehavior[cmd] === "missing") {
+        const err = new Error(`${cmd}: no such file or directory`);
+        err.code = "ENOENT";
+        throw err;
+      }
+      if (playerBehavior[cmd] === "fail") {
+        throw new Error(`${cmd}: exited with a runtime failure`);
       }
       return "";
     }
     return "";
   });
+}
+
+// neverResolves returns a promise that never settles within a test's
+// lifetime, for finding 7's regression test: it pins the property that the
+// handler resolves without waiting for the player to finish, so an
+// accidental future `await` on the player call would hang the test (and, in
+// production, would block every hook invocation on however long the sound
+// takes to play - the entire point of "detached and backgrounded").
+function neverResolves() {
+  return new Promise(() => {});
 }
 
 test("session.idle writes idle to the pane and sets the window mirror", async () => {
@@ -439,12 +468,12 @@ test("sound: distinct sound file per state (idle, blocked, error) via afplay", a
   }
 });
 
-test("sound: falls through to paplay when afplay is missing (the seam rejects for afplay)", async () => {
+test("sound: falls through to paplay when afplay is missing (ENOENT)", async () => {
   await withTmuxPane("%21", async () => {
     const exec = makeSoundStub({
       soundOn: "on",
       activeClients: "0",
-      playerBehavior: { afplay: "reject" },
+      playerBehavior: { afplay: "missing" },
     });
     const plugin = await Notify({}, exec);
     await plugin.event({
@@ -461,6 +490,63 @@ test("sound: falls through to paplay when afplay is missing (the seam rejects fo
   });
 });
 
+test("sound: does NOT fall through to paplay when afplay EXISTS but fails at runtime (non-ENOENT rejection)", async () => {
+  // This is the crux of the bash-parity fix: agent-state.sh picks a player
+  // via `command -v` (existence only) and fires it detached, so a runtime
+  // failure of the CHOSEN player (bad audio device, missing sound file,
+  // etc.) is never observed and never falls back to the next candidate.
+  // notify.js must reproduce that: only ENOENT (binary missing) may fall
+  // through; any other rejection must stop right there, silently - no
+  // paplay call, no bell.
+  await withTmuxPane("%24", async () => {
+    const exec = makeSoundStub({
+      soundOn: "on",
+      activeClients: "0",
+      playerBehavior: { afplay: "fail" },
+    });
+    const plugin = await Notify({}, exec);
+    await assert.doesNotReject(() =>
+      plugin.event({
+        event: { type: "session.idle", properties: {} },
+      }),
+    );
+    assert.deepEqual(exec.calls, [
+      paneWrite("%24", "idle"),
+      mirrorSet("%24", "idle"),
+      showOption(),
+      activeClientsCheck("%24"),
+      afplayCall(SOUND_FILES.idle.afplay),
+    ]);
+  });
+});
+
+test("sound: does NOT fall through to the bell when paplay EXISTS but fails at runtime, after afplay is missing", async () => {
+  // Same bash-parity rule one level down the chain: afplay missing (ENOENT)
+  // falls through to paplay as usual, but paplay existing-and-failing must
+  // stop there rather than falling through to the terminal bell.
+  await withTmuxPane("%25", async () => {
+    const exec = makeSoundStub({
+      soundOn: "on",
+      activeClients: "0",
+      playerBehavior: { afplay: "missing", paplay: "fail" },
+    });
+    const plugin = await Notify({}, exec);
+    await assert.doesNotReject(() =>
+      plugin.event({
+        event: { type: "session.idle", properties: {} },
+      }),
+    );
+    assert.deepEqual(exec.calls, [
+      paneWrite("%25", "idle"),
+      mirrorSet("%25", "idle"),
+      showOption(),
+      activeClientsCheck("%25"),
+      afplayCall(SOUND_FILES.idle.afplay),
+      paplayCall(SOUND_FILES.idle.paplay),
+    ]);
+  });
+});
+
 test("sound: still resolves without throwing when the player is missing entirely, and falls back to the terminal bell written to pane_tty", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "notify-test-"));
   const fakePaneTty = path.join(dir, "fake-pane-tty");
@@ -470,7 +556,7 @@ test("sound: still resolves without throwing when the player is missing entirely
         soundOn: "on",
         activeClients: "0",
         paneTty: fakePaneTty,
-        playerBehavior: { afplay: "reject", paplay: "reject" },
+        playerBehavior: { afplay: "missing", paplay: "missing" },
       });
       const plugin = await Notify({}, exec);
 
@@ -519,13 +605,58 @@ test("sound: still resolves without throwing when pane_tty cannot be resolved (e
       soundOn: "on",
       activeClients: "0",
       paneTty: "",
-      playerBehavior: { afplay: "reject", paplay: "reject" },
+      playerBehavior: { afplay: "missing", paplay: "missing" },
     });
     const plugin = await Notify({}, exec);
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.error", properties: {} },
       }),
+    );
+  });
+});
+
+test("sound: the event handler resolves promptly even when the player promise never settles", async () => {
+  // Regression guard for the "detached and backgrounded" contract
+  // (firePlayer's header comment / ADR-0009): playNotifySound deliberately
+  // does not await firePlayer's promise. Every other test's player stub
+  // resolves or rejects immediately, so none of them would catch a future
+  // edit that accidentally added an `await` in front of the `firePlayer(...)`
+  // call in playNotifySound - that would silently make every hook
+  // invocation block for however long the sound takes to play. This stub's
+  // afplay call returns a promise that never settles, so if the handler
+  // were ever changed to await it, this test would hang until its own
+  // timeout instead of resolving promptly.
+  await withTmuxPane("%26", async () => {
+    const exec = makeExecStub(async (cmd, args) => {
+      if (cmd === "tmux" && args[0] === "show-option") {
+        return "on";
+      }
+      if (cmd === "tmux" && args[0] === "display-message") {
+        return "0";
+      }
+      if (cmd === "afplay") {
+        return neverResolves();
+      }
+      return "";
+    });
+    const plugin = await Notify({}, exec);
+
+    const start = Date.now();
+    await Promise.race([
+      plugin.event({ event: { type: "session.idle", properties: {} } }),
+      delay(1000).then(() => {
+        throw new Error(
+          "event handler did not resolve within 1000ms - it must not await " +
+            "the player (see firePlayer's fire-and-forget contract)",
+        );
+      }),
+    ]);
+    const elapsed = Date.now() - start;
+    assert.ok(
+      elapsed < 500,
+      `expected the handler to resolve promptly without waiting for the ` +
+        `player; took ${elapsed}ms`,
     );
   });
 });
