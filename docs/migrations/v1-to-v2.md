@@ -97,3 +97,6 @@ hand; the worktree itself already moved correctly.
 **You want to go back.** Run `dg config set worktree.location shared` and
 `dg wt move <name>` again for each worktree — `move` works in both
 directions.
+
+`dg wt move` shells out to `git worktree move`, so it needs git 2.17 or newer.
+Check with `git --version`.

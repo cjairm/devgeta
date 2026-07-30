@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-29
 **Estimated Duration:** ~5 hours
-**Status:** Approved — in progress
+**Status:** Done
 
 ---
 
@@ -86,15 +86,15 @@ becomes a real, listed guide instead of a draft.
 
 ### In Scope
 
-- [ ] `Git.MoveWorktree` in `internal/apps/git/git.go` (wrapper, per CLAUDE.md)
-- [ ] `worktree.location` registered in `cmd/config_settings.go` (`shared` | `in-repo`)
-- [ ] `worktreePath()` becomes layout-aware; all mutation paths inherit it
-- [ ] `List()` reasks git per repo instead of scanning the shared root
-- [ ] `findRepoForWorktree` and `repo_candidates.go:111` become layout-agnostic
-- [ ] `dg wt move <name> [--to <layout>]` — relocate + retarget the tmux window
-- [ ] Tests: both layouts, phantom-husk case, in-repo enumeration, move + window
-- [ ] Rewrite `docs/migrations/v1-to-v2.md` as a real guide; list it in the index
-- [ ] `docs/spec.md` + `README.md` for the new setting and command
+- [x] `Git.MoveWorktree` in `internal/apps/git/git.go` (wrapper, per CLAUDE.md)
+- [x] `worktree.location` registered in `cmd/config_settings.go` (`shared` | `in-repo`)
+- [x] `worktreePath()` becomes layout-aware; all mutation paths inherit it
+- [x] `List()` reasks git per repo instead of scanning the shared root
+- [x] `findRepoForWorktree` and `repo_candidates.go:111` become layout-agnostic
+- [x] `dg wt move <name> [--to <layout>]` — relocate + retarget the tmux window
+- [x] Tests: both layouts, phantom-husk case, in-repo enumeration, move + window
+- [x] Rewrite `docs/migrations/v1-to-v2.md` as a real guide; list it in the index
+- [x] `docs/spec.md` + `README.md` for the new setting and command
 
 ### Explicitly Out of Scope
 
