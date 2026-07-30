@@ -1002,6 +1002,47 @@ func (w *WorktreeManager) isRealWorktreeAt(path string) bool {
 	return statErr == nil && info.IsDir()
 }
 
+// realWorktreePathOrConfigured resolves name's REAL on-disk path by checking
+// both location shapes against git (currentWorktreePath, which uses
+// isRealWorktreeAt), the same git-verified resolution Move already relies
+// on - falling back to the config-derived worktreePath ONLY when no real
+// worktree exists at either shape, so "genuinely doesn't exist" still
+// resolves to a deterministic path for prune/error-reporting purposes,
+// matching today's behavior for that case.
+//
+// This exists because worktreePath (and worktreeState, which calls it)
+// resolves purely from the CONFIGURED worktree.location - which can
+// silently disagree with where a worktree really lives, e.g. after `dg wt
+// move --to <x>` without also changing the global default (a flow this
+// cycle's own migration guide recommends). A mutation acting on the
+// config-derived guess instead of reality can report success on a worktree
+// it never touched. cursorRepoRoot resolves repoRoot (needed to check the
+// in-repo candidate) the same way Move does; an unresolvable repoRoot just
+// means the in-repo candidate can't be checked, not a failure.
+func (w *WorktreeManager) realWorktreePathOrConfigured(repoSlug, name string) (string, error) {
+	repoRoot := w.cursorRepoRoot(repoSlug)
+	if wtPath, ok := w.currentWorktreePath(repoSlug, repoRoot, name); ok {
+		return wtPath, nil
+	}
+	return w.worktreePath(repoSlug, name)
+}
+
+// worktreeStateReal is worktreeState's git-verified counterpart: it resolves
+// a worktree's state AND the actual path it was computed against via
+// realWorktreePathOrConfigured, instead of trusting the configured
+// worktree.location the way worktreeState does. Callers that mutate a
+// worktree (removeByRepo, Repair, RepairInRepo) must use this, not
+// worktreeState, and must use the returned path for both the state check
+// AND the actual git/filesystem operation - never one path for "does it
+// exist" and a different, possibly-wrong one for "act on it here".
+func (w *WorktreeManager) worktreeStateReal(repoSlug, name string) (WorktreeState, string, error) {
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
+	if err != nil {
+		return WorktreeState{}, "", err
+	}
+	return w.worktreeStateFor(wtPath, GetWindowName(repoSlug, name)), wtPath, nil
+}
+
 // effectiveMoveLocation resolves --to into a concrete target location: the
 // flag value when given, otherwise the configured worktree.location
 // (defaulting to shared when empty, per config.WorktreeConfig.Location's own
@@ -1251,19 +1292,20 @@ func cdCommand(newPath string) string {
 // repoSlugForWorktree resolves the repo slug that owns a worktree, first trying
 // the current repo (if cwd is inside one) and falling back to a search of the
 // centralized base path so it works from any directory or session.
+//
+// The current-repo check goes through currentWorktreePath (git-verified,
+// checking both location shapes), not worktreePath+os.Stat: the
+// config-derived worktreePath can disagree with where the worktree actually
+// lives (e.g. after `dg wt move` without also changing the global default),
+// which would make this candidate wrongly report "not here" for a worktree
+// that is, falling through to findRepoForWorktree's slower search for no
+// reason - or, worse, for an ambiguous name across repos, resolving to the
+// wrong owner.
 func (w *WorktreeManager) repoSlugForWorktree(name string) string {
 	if repoRoot, err := w.Git.GetRepoRoot(); err == nil {
 		candidate := filepath.Base(repoRoot)
-		// An error here just means "not this candidate" (e.g. an
-		// unresolvable in-repo root, which can't happen for candidate since
-		// it was derived from repoRoot a line above - this guards the
-		// theoretical case anyway rather than assuming it away), not a
-		// failure to propagate: falling through to findRepoForWorktree is
-		// exactly the existing fallback for "current repo doesn't have it".
-		if path, pathErr := w.worktreePath(candidate, name); pathErr == nil {
-			if _, statErr := os.Stat(path); statErr == nil {
-				return candidate
-			}
+		if _, ok := w.currentWorktreePath(candidate, repoRoot, name); ok {
+			return candidate
 		}
 	}
 	return w.findRepoForWorktree(name)
@@ -1283,7 +1325,14 @@ func (w *WorktreeManager) Repair(name string, layout Layout) error {
 		return fmt.Errorf("no worktree '%s' to repair", name)
 	}
 
-	wtPath, err := w.worktreePath(repoSlug, name)
+	// realWorktreePathOrConfigured, not worktreePath: the worktree may
+	// actually live at the location shape git reports, not the one
+	// currently configured (e.g. after `dg wt move` without also changing
+	// the global default) - see its doc comment. Only when no real
+	// worktree exists at either shape does this fall back to the
+	// config-derived path, matching the pre-existing "directory missing,
+	// prune and tell the user to recreate" behavior below.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
 	if err != nil {
 		return err
 	}
@@ -1369,7 +1418,9 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 	if err := validateLayout(layout); err != nil {
 		return err
 	}
-	wtPath, err := w.worktreePath(repoSlug, name)
+	// realWorktreePathOrConfigured, not worktreePath - see Repair's identical
+	// comment on why the git-verified real path must be used here.
+	wtPath, err := w.realWorktreePathOrConfigured(repoSlug, name)
 	if err != nil {
 		return err
 	}
@@ -1619,18 +1670,29 @@ func (w *WorktreeManager) Prune() error {
 
 // removeByRepo removes a worktree by repo slug and name.
 // Mirrors the same tolerant logic as Remove.
+//
+// Resolves state and path via worktreeStateReal, NOT worktreeState +
+// worktreePath: the worktree's real location can disagree with what the
+// CONFIGURED worktree.location computes (e.g. after `dg wt move` without
+// also changing the global default - a flow this cycle's own migration
+// guide recommends). Before this fix, a worktree moved that way was
+// invisible to this function: WtExists came back false for the real
+// worktree, so a still-live tmux window got killed while the worktree
+// itself was left completely untouched, and the function returned nil
+// (success) either way. state and wtPath below are the SAME git-verified
+// path throughout - used for the dirty check, the window kill, and the
+// actual git/filesystem removal - never a separately-recomputed
+// config-derived guess for any of them.
 func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error {
-	wtPath, err := w.worktreePath(repoSlug, name)
+	state, wtPath, err := w.worktreeStateReal(repoSlug, name)
 	if err != nil {
 		return err
 	}
-	windowName := GetWindowName(repoSlug, name)
 
-	state, stateErr := w.worktreeState(repoSlug, name)
-	if stateErr != nil {
-		return stateErr
-	}
-
+	// Belt-and-suspenders: state is now resolved against reality (via
+	// currentWorktreePath's git check), so "neither exists" here is a
+	// legitimate no-op, not a false negative caused by a config/reality
+	// mismatch - the case this function used to get wrong.
 	if !state.WtExists && !state.WindowExists {
 		return nil
 	}
@@ -1647,7 +1709,7 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 
 	// Always try to kill the window, even if state check didn't find it
 	// (state check may fail if not in tmux or window detection is unreliable)
-	_ = w.Tmux.KillWindow(windowName)
+	_ = w.Tmux.KillWindow(state.WindowName)
 
 	if state.WtExists {
 		if err := w.Git.RemoveWorktree(wtPath, true, name); err != nil {

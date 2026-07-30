@@ -1555,7 +1555,20 @@ func TestRepairHonorsLocation(t *testing.T) {
 	}
 
 	mockGitBase := commands.NewMockBaseCommand()
-	mockGitBase.SetExecCommandResult(repoRoot+"\n", "", nil)
+	mockGitBase.SetExecCommandResults(
+		commands.ExecCommandResult(repoRoot+"\n", "", nil), // 1: repoSlugForWorktree's GetRepoRoot
+		commands.ExecCommandResult(
+			"", "fatal: not a git repository", os.ErrNotExist,
+		), // 2: currentWorktreePath's shared candidate - not real
+		// 3: currentWorktreePath's in-repo candidate - real, and repeats for
+		// every subsequent call (cursorRepoRoot's cwd/anchor resolution, the
+		// second currentWorktreePath pass inside realWorktreePathOrConfigured)
+		// - all of which resolve correctly off this same porcelain, since it
+		// truthfully lists repoRoot as main and wtPath as a linked worktree.
+		commands.ExecCommandResult(
+			worktreePorcelain(repoRoot, [2]string{wtPath, "feature-a-branch"}), "", nil,
+		),
+	)
 	mockTmuxBase := commands.NewMockBaseCommand()
 	mockTmuxBase.SetExecCommandResults(
 		// ensureWindow's WindowSession lookup: window already exists, so
@@ -1637,6 +1650,201 @@ func TestRemoveByRepoHonorsLocation(t *testing.T) {
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Error("expected the in-repo worktree directory to be removed")
 	}
+}
+
+// TestMutationsUseRealLocationNotConfigured is the Critical regression test
+// from the final whole-branch review: worktree.location is left at "shared"
+// (the default) while the worktree is PHYSICALLY REAL at the in-repo shape
+// instead - exactly what `dg wt move --to in-repo` produces if the global
+// default isn't also changed, a flow this cycle's own migration guide
+// (docs/migrations/v1-to-v2.md) recommends. Every other location-aware test
+// in this file sets worktree.location to MATCH where the fixture actually
+// lives, which is exactly why six prior review gates missed this bug:
+// removeByRepo/Repair/RepairInRepo used to resolve a worktree's path purely
+// from the CONFIGURED location (worktreePath), so a worktree sitting at the
+// "wrong" (relative to config) shape was invisible to them:
+//   - removeByRepo reported success (nil) while never touching the real
+//     worktree - and, if a tmux window happened to exist for it, killed the
+//     window while leaving the worktree completely orphaned.
+//   - Repair/RepairInRepo treated it as "directory missing", pruned an
+//     unrelated (config-derived, never-existed) path, and told the user to
+//     recreate a worktree that was there all along.
+//
+// The shared-shape path is deliberately never created on disk here, so any
+// code path that still resolves via config (rather than git-verified
+// reality) would either find nothing (removeByRepo silently no-ops, or
+// Repair reports "directory missing") - the pre-fix symptom this test
+// exists to catch.
+func TestMutationsUseRealLocationNotConfigured(t *testing.T) {
+	// notInRepo is queued as the FIRST result for every subtest below,
+	// forcing each function's initial "is cwd the owning repo" check to
+	// miss, so resolution falls through to the recent-repos store the way a
+	// worktree found by name from an arbitrary directory actually would.
+	notInRepo := commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+
+	t.Run(
+		"removeByRepo removes the real in-repo worktree and kills its window",
+		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			defer cleanupPaths()
+			t.Chdir(t.TempDir())
+			// worktree.location is "shared" (the default - left unset), yet the
+			// worktree below is only ever created at the in-repo path. The
+			// shared path is never created on disk.
+			repoRoot := t.TempDir()
+			repoSlug := filepath.Base(repoRoot)
+			name := "feature-a"
+			setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationShared, []config.RecentRepo{
+				{Path: repoRoot, LastUsed: time.Now()},
+			})
+
+			wtPath := inRepoWorktreePath(repoRoot, name)
+			if err := os.MkdirAll(wtPath, 0o755); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			sharedPath := sharedWorktreePath(repoSlug, name)
+
+			truthfulList := commands.ExecCommandResult(
+				worktreePorcelain(repoRoot, [2]string{wtPath, "feature-a-branch"}), "", nil,
+			)
+			mockGitBase := commands.NewMockBaseCommand()
+			mockGitBase.SetExecCommandResults(
+				notInRepo,    // 1: cursorRepoRoot's cwdRepoRoot (via knownRepoAnchorGroups)
+				truthfulList, // 2: cursorRepoRoot's ListWorktreesAt(repoRoot) recent-repos anchor
+				truthfulList, // 3: currentWorktreePath's shared candidate check (not listed -> false)
+				truthfulList, // 4: currentWorktreePath's in-repo candidate check (listed -> true)
+				truthfulList, // 5: worktreeStateFor's own ListWorktreesAt(wtPath)
+				// 6: RemoveWorktree's internal GetMainWorktree(wtPath) - deliberately
+				// fails, exercising the same os.RemoveAll fallback every other
+				// removeByRepo test in this file relies on to observe a REAL
+				// filesystem deletion (MockBaseCommand has no filesystem side
+				// effects of its own). Repeated for the final PruneWorktreesAt
+				// call too - its error is ignored either way.
+				notInRepo,
+			)
+			windowName := GetWindowName(repoSlug, name)
+			mockTmuxBase := commands.NewMockBaseCommand()
+			// A live tmux window exists for this worktree - the "worse" half of
+			// the bug: pre-fix, this got killed while the (invisible-to-config)
+			// worktree was left orphaned on disk.
+			mockTmuxBase.SetExecCommandResult("some-session\t"+windowName+"\n", "", nil)
+			wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+			if err := wm.removeByRepo(repoSlug, name, true); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+				t.Error(
+					"the real in-repo worktree directory was NOT removed - " +
+						"removeByRepo reported success without touching it",
+				)
+			}
+			if _, err := os.Stat(sharedPath); !os.IsNotExist(err) {
+				t.Error("the never-created shared path should not exist")
+			}
+			killedWindow := false
+			for _, call := range mockTmuxBase.ExecCommandCalls {
+				if len(call.Args) > 0 && call.Args[0] == "kill-window" {
+					killedWindow = true
+				}
+			}
+			if !killedWindow {
+				t.Error("expected the worktree's tmux window to be killed")
+			}
+		},
+	)
+
+	t.Run("Repair finds and repairs the real in-repo worktree", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		t.Chdir(t.TempDir())
+		repoRoot := t.TempDir()
+		repoSlug := filepath.Base(repoRoot)
+		name := "feature-b"
+		setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationShared, []config.RecentRepo{
+			{Path: repoRoot, LastUsed: time.Now()},
+		})
+
+		wtPath := inRepoWorktreePath(repoRoot, name)
+		if err := os.MkdirAll(wtPath, 0o755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		windowName := GetWindowName(repoSlug, name)
+
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResults(
+			notInRepo, // 1: repoSlugForWorktree's own GetRepoRoot
+			notInRepo, // 2: findRepoForWorktree -> enumerateWorktrees's cwdRepoRoot
+			// 3: the recent-repos anchor - truthful listing, repeated for
+			// every later call (Repair's own cursorRepoRoot/currentWorktreePath).
+			commands.ExecCommandResult(
+				worktreePorcelain(repoRoot, [2]string{wtPath, "feature-b-branch"}), "", nil,
+			),
+		)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"some-session\t"+windowName+"\n",
+				"",
+				nil,
+			), // WindowSession: already live
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // SendKeysToWindowInSession
+		)
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		if err := wm.Repair(name, stubLayout); err != nil {
+			t.Fatalf(
+				"Repair failed to find the real in-repo worktree "+
+					"(would have reported 'directory missing' pre-fix): %v",
+				err,
+			)
+		}
+	})
+
+	t.Run("RepairInRepo finds and repairs the real in-repo worktree", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		t.Chdir(t.TempDir())
+		repoRoot := t.TempDir()
+		repoSlug := filepath.Base(repoRoot)
+		name := "feature-c"
+		setWorktreeLocationAndRecentRepos(t, config.WorktreeLocationShared, []config.RecentRepo{
+			{Path: repoRoot, LastUsed: time.Now()},
+		})
+
+		wtPath := inRepoWorktreePath(repoRoot, name)
+		if err := os.MkdirAll(wtPath, 0o755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		windowName := GetWindowName(repoSlug, name)
+
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResults(
+			notInRepo, // 1: cursorRepoRoot's cwdRepoRoot
+			// 2: the recent-repos anchor - truthful listing, repeated after.
+			commands.ExecCommandResult(
+				worktreePorcelain(repoRoot, [2]string{wtPath, "feature-c-branch"}), "", nil,
+			),
+		)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult("some-session\t"+windowName+"\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		if err := wm.RepairInRepo(repoSlug, name, stubLayout); err != nil {
+			t.Fatalf(
+				"RepairInRepo failed to find the real in-repo worktree "+
+					"(would have reported 'directory missing' pre-fix): %v",
+				err,
+			)
+		}
+	})
 }
 
 // TestRemoveFindsInRepoWorktreeViaFallback proves Remove's search fallback
