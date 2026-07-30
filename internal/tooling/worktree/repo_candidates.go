@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/cjairm/devgeta/internal/apps/git"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -108,40 +109,24 @@ func (w *WorktreeManager) cwdRepoRoot() string {
 // that repo currently has *any* linked worktrees. A repo whose only worktree
 // is its own main checkout (zero linked worktrees) produces zero rows from
 // enumerateWorktrees() — correctly, per List()'s contract — but
-// cursorRepoRoot must still be able to resolve its root. So this walks
-// knownRepoAnchorGroups() itself, checking each group's first
-// successfully-resolved main root against the target slug, rather than
-// reusing enumerateWorktrees()'s row output. It mirrors List()'s own
-// group/anchor/early-exit shape (same reasons: don't let a husk hide a real
-// sibling, don't requery a group once its repo is known), just applied to
-// "does this group's repo match the slug I want" instead of "collect every
-// worktree row".
+// cursorRepoRoot must still be able to resolve its root. So this builds on
+// forEachKnownRepo (worktree.go) — the same group/anchor/dedup/early-exit
+// walk enumerateWorktrees uses — stopping the moment a group's resolved main
+// root matches the target slug, rather than collecting every worktree row
+// the way enumerateWorktrees does.
 func (w *WorktreeManager) cursorRepoRoot(cursorRepoSlug string) string {
 	if cursorRepoSlug == "" {
 		return ""
 	}
-	for _, group := range w.knownRepoAnchorGroups() {
-		for _, anchor := range group {
-			worktrees, err := w.Git.ListWorktreesAt(anchor)
-			if err != nil || len(worktrees) == 0 {
-				// Not a real worktree (husk, deleted, never existed) - try
-				// the next anchor in this same group, if any.
-				continue
-			}
-			// git worktree list --porcelain always lists the main worktree
-			// first - the same stable git guarantee enumerateWorktrees and
-			// GetMainWorktree rely on.
-			mainRoot := worktrees[0].Path
-			if filepath.Base(mainRoot) == cursorRepoSlug {
-				return mainRoot
-			}
-			// This group's repo resolved but isn't the one we want - move to
-			// the next group, no need to try its remaining anchors (they'd
-			// only resolve to the same repo).
-			break
+	var found string
+	w.forEachKnownRepo(func(mainRoot string, _ []git.WorktreeInfo) bool {
+		if filepath.Base(mainRoot) == cursorRepoSlug {
+			found = mainRoot
+			return false
 		}
-	}
-	return ""
+		return true
+	})
+	return found
 }
 
 // zoxideCandidates runs `zoxide query -l` to list zoxide's tracked

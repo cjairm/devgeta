@@ -684,27 +684,31 @@ func (w *WorktreeManager) knownRepoAnchorGroups() []anchorGroup {
 	return groups
 }
 
-// enumerateWorktrees resolves every worktree across every known repo -
-// group->anchor->ListWorktreesAt->dedup-by-main-root chain, exactly as
-// documented on knownRepoAnchorGroups: for each known repo anchor group,
-// anchors in the group are tried in order and the first successful
-// ListWorktreesAt call returns that repo's whole worktree set (path and
-// branch) - sibling anchors in the same group are only tried as a fallback
-// when an earlier one fails (e.g. a husk). So this costs one exec per known
-// repo in the common case, not one per worktree - and, unlike a directory
-// walk, a husk directory git does not report as a worktree can never appear
-// (see ADR-0010,
-// docs/decisions/ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md).
+// forEachKnownRepo calls fn once per known repo - once per
+// knownRepoAnchorGroups group that successfully resolves to a repo not
+// already seen via an earlier group in this same call - passing the
+// resolved main worktree root and its full worktree list. fn returns false
+// to stop iterating early (e.g. cursorRepoRoot, once it finds the slug it's
+// looking for) or true to continue to the next group.
 //
-// Only Name/Path/Branch/Repo are populated on the returned WorktreeStatus
-// values; TmuxWindow/WindowActive/AgentState are left at their zero values -
-// no tmux exec happens in this function at all. This is the single
-// enumeration implementation List() (the tmux-aware view) and
-// findRepoForWorktree (a tmux-agnostic search) both build on, instead of each
-// walking git separately.
-func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
+// This is the one place group/anchor resolution, dedup-by-main-root, and
+// the early-exit-within-a-group logic (try anchors in a group in order,
+// stop at the first one that resolves - a husk sibling never hides a good
+// one) live: enumerateWorktrees and cursorRepoRoot both build on it instead
+// of each maintaining its own copy of the same scaffolding that could
+// silently drift. Both also get the dedup-by-main-root guarantee for free -
+// previously only enumerateWorktrees had it; cursorRepoRoot could exec once
+// per source even when two sources (e.g. the cwd group and a recent-repos
+// entry) resolved to the same repo.
+//
+// So this costs one exec per known repo in the common case, not one per
+// worktree - and, unlike a directory walk, a husk directory git does not
+// report as a worktree can never appear (see ADR-0010,
+// docs/decisions/ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md).
+func (w *WorktreeManager) forEachKnownRepo(
+	fn func(mainRoot string, worktrees []git.WorktreeInfo) bool,
+) {
 	seenRoots := make(map[string]bool)
-	statuses := []WorktreeStatus{}
 	for _, group := range w.knownRepoAnchorGroups() {
 		for _, anchor := range group {
 			worktrees, err := w.Git.ListWorktreesAt(anchor)
@@ -726,36 +730,58 @@ func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
 			}
 			seenRoots[mainRoot] = true
 
-			// Matches create()'s `repoSlug := filepath.Base(repoRoot)` -
-			// must be the identical derivation used elsewhere, or
-			// Repo/TmuxWindow won't match what create/repair/remove expect.
-			repoSlug := filepath.Base(mainRoot)
-			for _, wt := range worktrees {
-				if wt.Path == mainRoot {
-					// The repo's own checkout is not a devgeta-managed worktree row.
-					continue
-				}
-				// filepath.Base(wt.Path) gives the right Name regardless of
-				// location: for shared it's <basePath>/<slug>/<flat-name> ->
-				// <flat-name>; for in-repo it's
-				// <repo-root>/.claude/worktrees/<flat-name> -> <flat-name>. Both
-				// path shapes put the flattened name as the final path segment,
-				// so no location branching is needed here.
-				name := filepath.Base(wt.Path)
-				statuses = append(statuses, WorktreeStatus{
-					Name:   name,
-					Path:   wt.Path,
-					Branch: wt.Branch,
-					Repo:   repoSlug,
-				})
+			if !fn(mainRoot, worktrees) {
+				// fn asked to stop entirely (e.g. cursorRepoRoot found its match).
+				return
 			}
 
 			// This group resolved successfully - the successful anchor's
 			// result already has the repo's complete worktree list, so
 			// there's no reason to query sibling anchors in the same group.
+			// Breaking the inner (anchor) loop here falls straight through
+			// to the outer loop's next group, exactly like the pre-extraction
+			// code this replaces.
 			break
 		}
 	}
+}
+
+// enumerateWorktrees resolves every worktree across every known repo, via
+// forEachKnownRepo (see its doc comment for the group->anchor->dedup
+// mechanics). Only Name/Path/Branch/Repo are populated on the returned
+// WorktreeStatus values; TmuxWindow/WindowActive/AgentState are left at
+// their zero values - no tmux exec happens in this function at all. This is
+// the single enumeration implementation List() (the tmux-aware view) and
+// findRepoForWorktree (a tmux-agnostic search) both build on, instead of
+// each walking git separately.
+func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
+	statuses := []WorktreeStatus{}
+	w.forEachKnownRepo(func(mainRoot string, worktrees []git.WorktreeInfo) bool {
+		// Matches create()'s `repoSlug := filepath.Base(repoRoot)` -
+		// must be the identical derivation used elsewhere, or
+		// Repo/TmuxWindow won't match what create/repair/remove expect.
+		repoSlug := filepath.Base(mainRoot)
+		for _, wt := range worktrees {
+			if wt.Path == mainRoot {
+				// The repo's own checkout is not a devgeta-managed worktree row.
+				continue
+			}
+			// filepath.Base(wt.Path) gives the right Name regardless of
+			// location: for shared it's <basePath>/<slug>/<flat-name> ->
+			// <flat-name>; for in-repo it's
+			// <repo-root>/.claude/worktrees/<flat-name> -> <flat-name>. Both
+			// path shapes put the flattened name as the final path segment,
+			// so no location branching is needed here.
+			name := filepath.Base(wt.Path)
+			statuses = append(statuses, WorktreeStatus{
+				Name:   name,
+				Path:   wt.Path,
+				Branch: wt.Branch,
+				Repo:   repoSlug,
+			})
+		}
+		return true
+	})
 
 	return statuses
 }
