@@ -170,13 +170,15 @@ func worktreePorcelain(mainRoot string, linked ...[2]string) string {
 
 // newListTestWM builds a WorktreeManager wired to fresh mocks and isolates
 // paths.Paths.Config/App roots (via testutil.SetupIsolatedPaths) so this
-// subtest's config.Load() calls (inside knownRepoAnchors) never see another
+// subtest's config.Load() calls (inside knownRepoAnchorGroups) never see another
 // subtest's (or another test file's) global_config.yaml. GetWorktreeBasePath
 // (paths.Paths.Data.Root) is deliberately NOT isolated here: it already lives
 // under go test's process-wide sandbox (pkg/paths), and every subtest that
 // creates shared-root fixtures cleans up its own repo-slug directory via
 // t.Cleanup, mirroring the existing createWorktreeDir convention.
-func newListTestWM(t *testing.T) (wm *WorktreeManager, mockGitBase, mockTmuxBase *commands.MockBaseCommand) {
+func newListTestWM(
+	t *testing.T,
+) (wm *WorktreeManager, mockGitBase, mockTmuxBase *commands.MockBaseCommand) {
 	t.Helper()
 	cleanupPaths := testutil.SetupIsolatedPaths(t)
 	t.Cleanup(cleanupPaths)
@@ -224,7 +226,11 @@ func TestList(t *testing.T) {
 		mainRoot := filepath.Join(t.TempDir(), "sharedrepo")
 		wtPath := createWorktreeDir(t, "sharedrepo", "featx")
 		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
 			commands.ExecCommandResult(
 				worktreePorcelain(mainRoot, [2]string{wtPath, "feature-x"}), "", nil,
 			), // Step B: the one shared-root anchor
@@ -238,10 +244,15 @@ func TestList(t *testing.T) {
 			t.Fatalf("expected exactly 1 status, got %d: %+v", len(statuses), statuses)
 		}
 		s := statuses[0]
-		if s.Name != "featx" || s.Path != wtPath || s.Branch != "feature-x" || s.Repo != "sharedrepo" {
+		if s.Name != "featx" || s.Path != wtPath || s.Branch != "feature-x" ||
+			s.Repo != "sharedrepo" {
 			t.Errorf(
 				"got Name=%q Path=%q Branch=%q Repo=%q, want Name=featx Path=%q Branch=feature-x Repo=sharedrepo",
-				s.Name, s.Path, s.Branch, s.Repo, wtPath,
+				s.Name,
+				s.Path,
+				s.Branch,
+				s.Repo,
+				wtPath,
 			)
 		}
 	})
@@ -273,10 +284,16 @@ func TestList(t *testing.T) {
 		}
 		s := statuses[0]
 		wantRepo := filepath.Base(actualCwd)
-		if s.Name != "irepofeat" || s.Path != wtPath || s.Branch != "irepo-branch" || s.Repo != wantRepo {
+		if s.Name != "irepofeat" || s.Path != wtPath || s.Branch != "irepo-branch" ||
+			s.Repo != wantRepo {
 			t.Errorf(
 				"got Name=%q Path=%q Branch=%q Repo=%q, want Name=irepofeat Path=%q Branch=irepo-branch Repo=%q",
-				s.Name, s.Path, s.Branch, s.Repo, wtPath, wantRepo,
+				s.Name,
+				s.Path,
+				s.Branch,
+				s.Repo,
+				wtPath,
+				wantRepo,
 			)
 		}
 	})
@@ -284,37 +301,188 @@ func TestList(t *testing.T) {
 	// A husk directory (e.g. left behind by a botched move) sits under the
 	// same repo-slug as a real worktree. Trying the husk anchor first must not
 	// hide the real worktree found via a later anchor under the same slug -
-	// this is why knownRepoAnchors collects every subdirectory, not just the
+	// this is why knownRepoAnchorGroups collects every subdirectory, not just the
 	// first.
-	t.Run("phantom husk under a shared slug is skipped without hiding a real worktree", func(t *testing.T) {
-		wm, mockGitBase, _ := newListTestWM(t)
-		chdirToNonRepo(t)
+	t.Run(
+		"phantom husk under a shared slug is skipped without hiding a real worktree",
+		func(t *testing.T) {
+			wm, mockGitBase, _ := newListTestWM(t)
+			chdirToNonRepo(t)
 
-		// "a-husk" sorts before "b-real" so os.ReadDir tries the husk first.
-		huskPath := createWorktreeDir(t, "huskslug", "a-husk")
-		realPath := createWorktreeDir(t, "huskslug", "b-real")
-		mainRoot := filepath.Join(t.TempDir(), "huskslug")
+			// "a-husk" sorts before "b-real" so os.ReadDir tries the husk first.
+			huskPath := createWorktreeDir(t, "huskslug", "a-husk")
+			realPath := createWorktreeDir(t, "huskslug", "b-real")
+			mainRoot := filepath.Join(t.TempDir(), "huskslug")
 
-		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
-			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // a-husk anchor: not a real worktree
-			commands.ExecCommandResult(
-				worktreePorcelain(mainRoot, [2]string{realPath, "real-branch"}), "", nil,
-			), // b-real anchor
-		)
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // a-husk anchor: not a real worktree
+				commands.ExecCommandResult(
+					worktreePorcelain(mainRoot, [2]string{realPath, "real-branch"}), "", nil,
+				), // b-real anchor
+			)
 
-		statuses, err := wm.List()
-		if err != nil {
-			t.Fatalf("List failed: %v", err)
-		}
-		if len(statuses) != 1 {
-			t.Fatalf("expected exactly 1 status (husk skipped), got %d: %+v", len(statuses), statuses)
-		}
-		s := statuses[0]
-		if s.Name != "b-real" || s.Path != realPath || s.Path == huskPath {
-			t.Errorf("got %+v, want the real worktree at %q, never the husk at %q", s, realPath, huskPath)
-		}
-	})
+			statuses, err := wm.List()
+			if err != nil {
+				t.Fatalf("List failed: %v", err)
+			}
+			if len(statuses) != 1 {
+				t.Fatalf(
+					"expected exactly 1 status (husk skipped), got %d: %+v",
+					len(statuses),
+					statuses,
+				)
+			}
+			s := statuses[0]
+			if s.Name != "b-real" || s.Path != realPath || s.Path == huskPath {
+				t.Errorf(
+					"got %+v, want the real worktree at %q, never the husk at %q",
+					s,
+					realPath,
+					huskPath,
+				)
+			}
+		},
+	)
+
+	// The regression this fix targets: knownRepoAnchorGroups puts every
+	// subdirectory of a shared-root repo-slug directory into ONE group (not
+	// one anchor apiece flattened into List()'s loop), so List() must stop at
+	// the first anchor in the group that resolves and never query the
+	// sibling subdirectory. Before the fix, this exact scenario - 2
+	// worktrees under one shared-root slug, both real, none reachable via
+	// cwd/recent-repos - cost 2 ListWorktreesAt execs (one per worktree
+	// subdirectory found by os.ReadDir); after the fix it costs exactly 1.
+	t.Run(
+		"shared-root slug with 2 worktrees costs exactly one ListWorktreesAt call",
+		func(t *testing.T) {
+			wm, mockGitBase, _ := newListTestWM(t)
+			chdirToNonRepo(t)
+
+			// "aa-first" sorts before "bb-second" so os.ReadDir tries it
+			// first; both are real worktrees under the same slug.
+			mainRoot := filepath.Join(t.TempDir(), "sharedslug")
+			firstPath := createWorktreeDir(t, "sharedslug", "aa-first")
+			secondPath := createWorktreeDir(t, "sharedslug", "bb-second")
+
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					worktreePorcelain(
+						mainRoot,
+						[2]string{firstPath, "first-branch"},
+						[2]string{secondPath, "second-branch"},
+					),
+					"", nil,
+				), // aa-first anchor: succeeds and already has both worktrees
+			)
+
+			statuses, err := wm.List()
+			if err != nil {
+				t.Fatalf("List failed: %v", err)
+			}
+			if len(statuses) != 2 {
+				t.Fatalf(
+					"expected 2 statuses (aa-first, bb-second), got %d: %+v",
+					len(statuses),
+					statuses,
+				)
+			}
+			if got := countExecCommandCallsWithDir(mockGitBase, firstPath); got != 1 {
+				t.Errorf(
+					"expected ListWorktreesAt called exactly once for anchor %q, got %d calls",
+					firstPath,
+					got,
+				)
+			}
+			if got := countExecCommandCallsWithDir(mockGitBase, secondPath); got != 0 {
+				t.Errorf(
+					"expected ListWorktreesAt never called for sibling anchor %q once the first anchor in the group succeeded, got %d calls",
+					secondPath,
+					got,
+				)
+			}
+			// Total execs: 1 for cwdRepoRoot (not a repo) + 1 for the
+			// shared-root group's single successful anchor. Not 3 (which is
+			// what the pre-fix flattened-anchor bug would have cost: 1 +
+			// one per worktree subdirectory).
+			if got := mockGitBase.GetExecCommandCallCount(); got != 2 {
+				t.Errorf("expected exactly 2 total git exec calls, got %d", got)
+			}
+		},
+	)
+
+	// Husk-safety within a group: the first subdirectory tried under a
+	// shared-root slug can still be a husk even after the fix - the fallback
+	// to the next anchor in the same group must still work. This is the
+	// grouped-and-early-exit equivalent of the "phantom husk" test above,
+	// asserting the call count explicitly rather than just the resulting
+	// rows.
+	t.Run(
+		"husk as first anchor in a group falls back to the next anchor in the group",
+		func(t *testing.T) {
+			wm, mockGitBase, _ := newListTestWM(t)
+			chdirToNonRepo(t)
+
+			// "a-husk" sorts before "b-real" so os.ReadDir tries the husk first.
+			huskPath := createWorktreeDir(t, "huskslug2", "a-husk")
+			realPath := createWorktreeDir(t, "huskslug2", "b-real")
+			mainRoot := filepath.Join(t.TempDir(), "huskslug2")
+
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // cwdRepoRoot
+				commands.ExecCommandResult(
+					"",
+					"fatal: not a git repository",
+					os.ErrNotExist,
+				), // a-husk anchor: fails
+				commands.ExecCommandResult(
+					worktreePorcelain(mainRoot, [2]string{realPath, "real-branch"}), "", nil,
+				), // b-real anchor: fallback within the same group succeeds
+			)
+
+			statuses, err := wm.List()
+			if err != nil {
+				t.Fatalf("List failed: %v", err)
+			}
+			if len(statuses) != 1 {
+				t.Fatalf(
+					"expected exactly 1 status (husk skipped, real kept), got %d: %+v",
+					len(statuses),
+					statuses,
+				)
+			}
+			if statuses[0].Path != realPath {
+				t.Errorf("got Path=%q, want the real worktree at %q", statuses[0].Path, realPath)
+			}
+			if got := countExecCommandCallsWithDir(mockGitBase, huskPath); got != 1 {
+				t.Errorf("expected exactly 1 call for the husk anchor %q, got %d", huskPath, got)
+			}
+			if got := countExecCommandCallsWithDir(mockGitBase, realPath); got != 1 {
+				t.Errorf(
+					"expected exactly 1 fallback call for the real anchor %q, got %d",
+					realPath,
+					got,
+				)
+			}
+		},
+	)
 
 	// The regression that matters most: a subtle bug reintroducing
 	// one-ListWorktreesAt-call-per-worktree would pass every other test here.
@@ -338,10 +506,19 @@ func TestList(t *testing.T) {
 		alpha := filepath.Join(repoRoot, ".claude", "worktrees", "alpha")
 		beta := filepath.Join(repoRoot, ".claude", "worktrees", "beta")
 		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
 			commands.ExecCommandResult(
-				worktreePorcelain(repoRoot, [2]string{alpha, "alpha-branch"}, [2]string{beta, "beta-branch"}),
-				"", nil,
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
+			commands.ExecCommandResult(
+				worktreePorcelain(
+					repoRoot,
+					[2]string{alpha, "alpha-branch"},
+					[2]string{beta, "beta-branch"},
+				),
+				"",
+				nil,
 			), // Step B: the single recent-repos anchor
 		)
 
@@ -464,7 +641,11 @@ func TestList(t *testing.T) {
 		wtPathA := createWorktreeDir(t, "repoA", "wt1")
 		wtPathB := createWorktreeDir(t, "repoB", "wt2")
 		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist), // cwdRepoRoot
+			commands.ExecCommandResult(
+				"",
+				"fatal: not a git repository",
+				os.ErrNotExist,
+			), // cwdRepoRoot
 			commands.ExecCommandResult(
 				worktreePorcelain(mainRootA, [2]string{wtPathA, "feat-a"}), "", nil,
 			), // repoA anchor
