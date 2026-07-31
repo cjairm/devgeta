@@ -74,12 +74,34 @@ Window layout selection precedence (--layout and --ai are mutually exclusive):
 Valid AI coders: opencode (oc), claude (cc, claudecode)
 Valid layouts: opencode, claude, claude-nvim, nvim
 
+Starting the coder on a task, and adding panes:
+
+  --prompt '<text>'  launches the AI coder with <text> as its opening prompt,
+                     so the session is already working when you attach. The
+                     prompt is passed as a launch argument, never typed in
+                     afterwards, so it cannot be dropped. This needs a layout
+                     that HAS an AI pane: --prompt with --layout nvim is an
+                     error, not a silent no-op.
+
+  --pane '<command>' adds a shell pane beside the layout running <command>.
+                     Repeatable — pass it once per pane. The value is a shell
+                     command line used as written, so compound commands work
+                     ('cd api && make dev'). An empty value is rejected.
+
+Examples:
+  dg wt create fix-1082 --ai claude --prompt 'fix issue 1082'
+  dg wt create api --pane 'make finit' --pane 'npm run dev'
+
 After creation, switch to the window with:
   <prefix> + [window number] or <prefix> + w to see all windows`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		layout, err := resolveWorktreeLayout(createLayoutFlag, createAIFlag)
+		if err != nil {
+			return err
+		}
+		layout, err = applyCreateLayoutOptions(layout, createPromptFlag, createPaneFlags)
 		if err != nil {
 			return err
 		}
@@ -344,12 +366,40 @@ Example:
 var (
 	createAIFlag     string
 	createLayoutFlag string
+	createPromptFlag string
+	createPaneFlags  []string
 	repairAIFlag     string
 	repairLayoutFlag string
 	forceFlag        bool
 	repoFlag         string
 	moveToFlag       string
 )
+
+// applyCreateLayoutOptions folds create's --prompt and --pane flags into the
+// resolved layout, in that order, returning on the first error.
+//
+// It exists as a pure function, separate from create's RunE, because RunE
+// builds its WorktreeManager inline (worktree.New()) and this package's tests
+// deliberately never call RunE - they pin the command's shape, while behavior
+// is proven in the package that can inject mocked Git/Tmux. Keeping the whole
+// of RunE's logic between "resolve the layout" and "touch git" in one pure
+// function is what makes the fail-before-any-side-effects guarantee testable
+// here: if this returns an error, RunE returns it before worktree.New() is
+// ever reached, so no worktree and no tmux window can exist.
+//
+// Both transformations no-op on empty input, so this is safe to call
+// unconditionally without first checking whether either flag was passed.
+func applyCreateLayoutOptions(
+	layout worktree.Layout,
+	prompt string,
+	panes []string,
+) (worktree.Layout, error) {
+	layout, err := layout.WithPrompt(prompt)
+	if err != nil {
+		return worktree.Layout{}, err
+	}
+	return layout.WithExtraPanes(panes)
+}
 
 func init() {
 	rootCmd.AddCommand(worktreeCmd)
@@ -365,6 +415,16 @@ func init() {
 	worktreeCreateCmd.Flags().
 		StringVarP(&createLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim)")
 	worktreeCreateCmd.MarkFlagsMutuallyExclusive("ai", "layout")
+	// No shorthands for --prompt or --pane: -p is ambiguous between them, and
+	// picking one would read as a typo for the other.
+	worktreeCreateCmd.Flags().
+		StringVar(&createPromptFlag, "prompt", "",
+			"Opening prompt for the AI coder, delivered as a launch argument (needs a layout with an AI pane)")
+	// StringArrayVar, not StringSliceVar: a pane command may legitimately
+	// contain a comma, and StringSliceVar would split it into two panes.
+	worktreeCreateCmd.Flags().
+		StringArrayVar(&createPaneFlags, "pane", nil,
+			"Extra shell pane running this command, added beside the layout (repeatable)")
 	worktreeCreateCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Skip hook compatibility check")
 	worktreeCreateCmd.Flags().

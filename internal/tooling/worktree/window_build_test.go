@@ -335,9 +335,10 @@ func TestCreateAtMultiPaneFailureKillsWindowNotSession(t *testing.T) {
 // exists.
 func TestCreateValidateLayoutFailsBeforeAnyTmuxCall(t *testing.T) {
 	failingLayout := Layout{
-		Name:         "broken",
-		Panes:        []Pane{{Command: "x"}},
-		paneCheckers: []func() error{func() error { return errors.New("tool missing") }},
+		Name: "broken",
+		Panes: []Pane{
+			{Command: "x", check: func() error { return errors.New("tool missing") }},
+		},
 	}
 
 	mockGitBase := commands.NewMockBaseCommand()

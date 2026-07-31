@@ -11,9 +11,11 @@ import (
 
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func init() { testutil.InitLogger() }
@@ -26,12 +28,16 @@ func resetWorktreeFlags(t *testing.T) {
 	t.Helper()
 	origCreateAI := createAIFlag
 	origCreateLayout := createLayoutFlag
+	origCreatePrompt := createPromptFlag
+	origCreatePanes := createPaneFlags
 	origRepairAI := repairAIFlag
 	origRepairLayout := repairLayoutFlag
 	origGlobalConfig := globalConfig
 	t.Cleanup(func() {
 		createAIFlag = origCreateAI
 		createLayoutFlag = origCreateLayout
+		createPromptFlag = origCreatePrompt
+		createPaneFlags = origCreatePanes
 		repairAIFlag = origRepairAI
 		repairLayoutFlag = origRepairLayout
 		globalConfig = origGlobalConfig
@@ -40,9 +46,38 @@ func resetWorktreeFlags(t *testing.T) {
 		// sets so a later test starts from a clean, unparsed state.
 		_ = worktreeCreateCmd.Flags().Set("ai", "")
 		_ = worktreeCreateCmd.Flags().Set("layout", "")
+		_ = worktreeCreateCmd.Flags().Set("prompt", "")
+		resetRepeatableFlag(t, worktreeCreateCmd, "pane")
 		_ = worktreeRepairCmd.Flags().Set("ai", "")
 		_ = worktreeRepairCmd.Flags().Set("layout", "")
 	})
+}
+
+// resetRepeatableFlag clears a repeatable (StringArray) flag on cmd.
+//
+// Flags().Set(name, "") is WRONG for a repeatable flag and would introduce the
+// very leak this reset exists to prevent: pflag's stringArrayValue.Set appends
+// once the flag's `changed` is true (pflag/string_array.go), so setting it to ""
+// leaves a stray empty string in the slice - which --pane rejects, so the next
+// test would fail on a value it never passed.
+//
+// Clearing `changed` matters independently: pflag keys its append-vs-replace
+// behavior off it, so a stale true makes the NEXT parse's first --pane append to
+// the previous test's values instead of starting fresh.
+func resetRepeatableFlag(t *testing.T, cmd *cobra.Command, name string) {
+	t.Helper()
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil {
+		t.Fatalf("flag %q is not registered on %q", name, cmd.Name())
+	}
+	sv, ok := flag.Value.(pflag.SliceValue)
+	if !ok {
+		t.Fatalf("flag %q is not a slice value, cannot reset it as repeatable", name)
+	}
+	if err := sv.Replace(nil); err != nil {
+		t.Fatalf("failed to clear flag %q: %v", name, err)
+	}
+	flag.Changed = false
 }
 
 // TestWorktreeCreateCmd_AIAndLayoutMutuallyExclusive verifies cobra rejects
@@ -284,6 +319,215 @@ func TestWorktreeMove(t *testing.T) {
 		)
 		if directive != cobra.ShellCompDirectiveNoFileComp {
 			t.Errorf("expected ShellCompDirectiveNoFileComp, got %v", directive)
+		}
+	})
+}
+
+// --- create's --prompt / --pane flags ---
+
+// TestWorktreeCreateCmd_PromptAndPaneFlagShape pins the command's surface, per
+// CLAUDE.md's change-discipline rule that command signatures don't drift
+// silently. Neither flag takes a shorthand: -p would be ambiguous between them.
+func TestWorktreeCreateCmd_PromptAndPaneFlagShape(t *testing.T) {
+	resetWorktreeFlags(t)
+
+	tests := []struct {
+		name      string
+		wantType  string
+		wantUsage string
+	}{
+		{"prompt", "string", "prompt"},
+		{"pane", "stringArray", "pane"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			flag := worktreeCreateCmd.Flags().Lookup(tt.name)
+			if flag == nil {
+				t.Fatalf("expected --%s to be registered on create", tt.name)
+			}
+			if flag.Value.Type() != tt.wantType {
+				t.Errorf("--%s: expected type %q, got %q", tt.name, tt.wantType, flag.Value.Type())
+			}
+			if flag.Shorthand != "" {
+				t.Errorf(
+					"--%s: expected no shorthand (-p is ambiguous between --prompt and --pane), got %q",
+					tt.name,
+					flag.Shorthand,
+				)
+			}
+			if flag.Usage == "" {
+				t.Errorf("--%s: expected a non-empty usage string", tt.name)
+			}
+		})
+	}
+
+	// Neither flag exists on repair: re-sending an opening prompt to a repaired
+	// window would start a new conversation, not restore the old one.
+	for _, name := range []string{"prompt", "pane"} {
+		if worktreeRepairCmd.Flags().Lookup(name) != nil {
+			t.Errorf("expected --%s NOT to be registered on repair", name)
+		}
+	}
+}
+
+// --pane must accumulate across repeats rather than overwrite, which is the
+// whole point of StringArrayVar.
+func TestWorktreeCreateCmd_PaneFlagAccumulates(t *testing.T) {
+	resetWorktreeFlags(t)
+
+	if err := worktreeCreateCmd.ParseFlags(
+		[]string{"--pane", "make finit", "--pane", "npm run dev"},
+	); err != nil {
+		t.Fatalf("unexpected flag parse error: %v", err)
+	}
+
+	want := []string{"make finit", "npm run dev"}
+	if len(createPaneFlags) != len(want) {
+		t.Fatalf("expected %v, got %v", want, createPaneFlags)
+	}
+	for i := range want {
+		if createPaneFlags[i] != want[i] {
+			t.Errorf("index %d: got %q, want %q", i, createPaneFlags[i], want[i])
+		}
+	}
+}
+
+// A pane command containing a comma must stay ONE pane. This is why the flag is
+// StringArrayVar and not StringSliceVar, which would split on the comma.
+func TestWorktreeCreateCmd_PaneFlagDoesNotSplitOnCommas(t *testing.T) {
+	resetWorktreeFlags(t)
+
+	if err := worktreeCreateCmd.ParseFlags(
+		[]string{"--pane", "go test ./a,./b"},
+	); err != nil {
+		t.Fatalf("unexpected flag parse error: %v", err)
+	}
+
+	if len(createPaneFlags) != 1 || createPaneFlags[0] != "go test ./a,./b" {
+		t.Errorf("expected one unsplit pane command, got %v", createPaneFlags)
+	}
+}
+
+// TestWorktreeCreateCmd_PaneFlagDoesNotLeakBetweenParses is the regression test
+// for the reset trap: pflag APPENDS to a stringArray once the flag's `changed`
+// is true, so a naive reset (or none) makes a second parse inherit the first's
+// values. Two parses in sequence, with the reset between them, must leave the
+// second seeing only its own value.
+func TestWorktreeCreateCmd_PaneFlagDoesNotLeakBetweenParses(t *testing.T) {
+	resetWorktreeFlags(t)
+
+	if err := worktreeCreateCmd.ParseFlags([]string{"--pane", "first"}); err != nil {
+		t.Fatalf("unexpected flag parse error on the first parse: %v", err)
+	}
+	if len(createPaneFlags) != 1 {
+		t.Fatalf("first parse: expected 1 pane, got %v", createPaneFlags)
+	}
+
+	resetRepeatableFlag(t, worktreeCreateCmd, "pane")
+
+	if err := worktreeCreateCmd.ParseFlags([]string{"--pane", "second"}); err != nil {
+		t.Fatalf("unexpected flag parse error on the second parse: %v", err)
+	}
+	if len(createPaneFlags) != 1 || createPaneFlags[0] != "second" {
+		t.Errorf("second parse leaked the first's values: got %v, want [second]", createPaneFlags)
+	}
+}
+
+// --- applyCreateLayoutOptions ---
+
+// resolveTestLayout resolves a built-in layout by name for the helper tests
+// below. This touches no git and no tmux: ResolveLayout only reads the
+// package's own registry (a nil config skips config loading entirely).
+func resolveTestLayout(t *testing.T, name string) worktree.Layout {
+	t.Helper()
+	layout, err := worktree.ResolveLayout(name, "", nil)
+	if err != nil {
+		t.Fatalf("failed to resolve layout %q: %v", name, err)
+	}
+	return layout
+}
+
+func paneCommands(layout worktree.Layout) []string {
+	commands := make([]string, 0, len(layout.Panes))
+	for _, pane := range layout.Panes {
+		commands = append(commands, pane.Command)
+	}
+	return commands
+}
+
+// TestApplyCreateLayoutOptions covers the helper create's RunE calls between
+// resolving the layout and constructing a WorktreeManager. Every error case here
+// is one where RunE returns BEFORE worktree.New(), so no worktree and no tmux
+// window can exist - that is the fail-before-side-effects guarantee, tested
+// where it actually lives rather than by driving RunE (which would build a real
+// manager; see this file's other comments on the cmd-vs-package test split).
+func TestApplyCreateLayoutOptions(t *testing.T) {
+	t.Run("no flags leaves the layout untouched", func(t *testing.T) {
+		got, err := applyCreateLayoutOptions(resolveTestLayout(t, "claude"), "", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if commands := paneCommands(got); len(commands) != 1 || commands[0] != "cc" {
+			t.Errorf("expected the unmodified claude layout, got %v", commands)
+		}
+	})
+
+	t.Run("both flags compose, prompt first then extra panes", func(t *testing.T) {
+		got, err := applyCreateLayoutOptions(
+			resolveTestLayout(t, "claude"),
+			"fix the bug",
+			[]string{"make finit"},
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := []string{"cc 'fix the bug'", "make finit"}
+		commands := paneCommands(got)
+		if len(commands) != len(want) {
+			t.Fatalf("expected %v, got %v", want, commands)
+		}
+		for i := range want {
+			if commands[i] != want[i] {
+				t.Errorf("pane %d: got %q, want %q", i, commands[i], want[i])
+			}
+		}
+	})
+
+	t.Run("a prompt on a layout with no AI pane is an error", func(t *testing.T) {
+		_, err := applyCreateLayoutOptions(resolveTestLayout(t, "nvim"), "fix the bug", nil)
+		if err == nil {
+			t.Fatal("expected an error prompting the nvim layout, got nil")
+		}
+		if got := err.Error(); !strings.Contains(got, "nvim") {
+			t.Errorf("expected the error to name the layout, got %q", got)
+		}
+	})
+
+	t.Run("an empty pane command is an error", func(t *testing.T) {
+		_, err := applyCreateLayoutOptions(resolveTestLayout(t, "claude"), "", []string{""})
+		if err == nil {
+			t.Fatal("expected an error for an empty --pane, got nil")
+		}
+		if got := err.Error(); !strings.Contains(got, "--pane") {
+			t.Errorf("expected the error to name --pane, got %q", got)
+		}
+	})
+
+	// Apply order is observable: with both a bad prompt and a bad pane, the
+	// prompt error must win, because WithPrompt runs first.
+	t.Run("the prompt error wins over a later bad pane", func(t *testing.T) {
+		_, err := applyCreateLayoutOptions(
+			resolveTestLayout(t, "nvim"),
+			"fix the bug",
+			[]string{""},
+		)
+		if err == nil {
+			t.Fatal("expected an error, got nil")
+		}
+		if strings.Contains(err.Error(), "--pane") {
+			t.Errorf("expected the --prompt error to win, got the --pane one: %q", err.Error())
 		}
 	})
 }

@@ -534,7 +534,25 @@ Quick reference to where things live:
 
 ## Recent Changes & Active Work
 
-**Last updated:** 2026-07-20
+**Last updated:** 2026-07-31
+
+**Recent changes:**
+
+- `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
+  (2026-07-31). `--prompt` starts the layout's AI coder already working on a
+  task; it is delivered as a **launch argument** (`cc '<text>'`,
+  `oc --prompt '<text>'`), never as keystrokes after the TUI boots — see
+  [ADR-0011](docs/decisions/ADR-0011-agent-prompt-as-launch-argument.md). It
+  errors on a layout with no AI pane rather than silently dropping the prompt.
+  `--pane` adds a shell pane beside the layout and its value is used **unquoted**
+  (it is a shell command line, so `'cd api && make dev'` works); an empty value
+  is rejected. Both are create-only — repair takes neither.
+  Implemented as transformations on a resolved `worktree.Layout`
+  (`WithPrompt`/`WithExtraPanes`), so no `Create`/`CreateAt`/TUI signature
+  changed. In the same change, `Layout`'s parallel `paneCheckers` slice was
+  folded into unexported `Pane.check`/`Pane.prompt` fields — a pane's command,
+  install check, and prompt form now come from one `AICoder` via `coderPane`,
+  which is why `Pane` is no longer comparable with `==`.
 
 **Recent specs completed:**
 

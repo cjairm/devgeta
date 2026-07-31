@@ -284,6 +284,32 @@ dg wt <subcommand> [flags]     # alias
 
   `repair` uses the exact same resolution order as `create` — it does **not** remember the layout a worktree was originally created with. If the window is missing, it is rebuilt from scratch using whatever `--layout`/`--ai`/env/config resolves to at that moment. If the window already exists (e.g. only one pane in it was closed), `repair` only relaunches the AI coder in the existing window — it does not add or recreate missing panes, since there's no way to tell whether the surviving panes already match the requested layout.
 
+**Flags for `create` only**:
+
+- `--prompt <text>` — Launch the layout's AI coder with `<text>` as its opening prompt, so the session is already working on the task when you attach instead of sitting at an empty prompt. No shorthand (`-p` would be ambiguous with `--pane`).
+
+  The prompt is passed to the coder **as a launch argument** — `cc '<text>'` for Claude Code (positional), `oc --prompt '<text>'` for OpenCode — and never typed into a booted TUI, so there is no wait-for-startup race in which the prompt can be dropped. See [ADR-0011](decisions/ADR-0011-agent-prompt-as-launch-argument.md). The text is shell-single-quoted, so apostrophes and shell metacharacters survive intact.
+
+  It requires a layout that **has** an AI pane. `--prompt` with `--layout nvim` is an **error**, not a silent no-op, and fails before the worktree or window is created — silently dropping the prompt would leave a session that looks correctly created but was never given its task. A layout with two AI panes (none ships today) is rejected as ambiguous.
+
+  `repair` deliberately does **not** accept `--prompt`: re-sending an opening prompt to a repaired window would start a _new_ conversation rather than restore the old one.
+
+- `--pane <command>` — Add a shell pane beside the layout's panes, running `<command>` in the worktree directory. **Repeatable** — pass it once per pane. No shorthand.
+
+  The value is a **shell command line, used exactly as written and not quoted**, so compound commands work: `--pane 'cd api && make dev'`. (This is the deliberate asymmetry with `--prompt`, which _is_ quoted because it is one literal argument to a coder — quoting a `--pane` value would break the compound commands that justify the flag.) The user is handing devgeta a command to run in their own shell, the same trust level as a shell alias.
+
+  An empty or whitespace-only value is an **error**: `--pane "$VAR"` with an unset variable is a far likelier cause than a deliberate request for an idle shell, and a silent empty pane looks like the feature half-worked. There is deliberately no way to ask for a bare idle shell pane.
+
+  Extra panes carry **no install check**, unlike a built-in layout's panes: the command may be a shell builtin, a compound, or a Makefile target, so probing its first token would reject legitimate commands. Any failure shows in the pane itself, and the worktree is still good. Each appended pane splits `vertical` (side by side); with two or more they get progressively narrower, so the clean 50/50 case is coder plus one shell.
+
+  Example — a worktree already running its task and its bootstrap:
+
+  ```bash
+  dg wt create fix-1082 --ai claude --prompt 'fix issue 1082' --pane 'make finit'
+  ```
+
+  `repair` does not accept `--pane` either; it never rebuilds panes in an existing window.
+
 **Window layouts**:
 
 A layout is a named, ordered set of tmux panes built when a worktree's window is created or repaired. Built-in layouts (no config required):

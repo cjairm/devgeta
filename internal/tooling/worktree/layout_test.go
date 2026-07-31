@@ -1,6 +1,7 @@
 package worktree
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -61,17 +62,21 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 			if len(layout.Panes) != len(tt.wantPanes) {
 				t.Fatalf("expected %d panes, got %d", len(tt.wantPanes), len(layout.Panes))
 			}
+			// Compared field-wise, not with ==: Pane carries its check and
+			// prompt funcs, and funcs are not comparable in Go. Only the
+			// exported tmux-facing fields are what this test is pinning
+			// anyway; the funcs are asserted by behavior below.
 			for i, wantPane := range tt.wantPanes {
-				if layout.Panes[i] != wantPane {
-					t.Errorf("pane %d: expected %+v, got %+v", i, wantPane, layout.Panes[i])
+				got := layout.Panes[i]
+				if got.Command != wantPane.Command || got.Split != wantPane.Split {
+					t.Errorf(
+						"pane %d: expected command %q split %q, got command %q split %q",
+						i, wantPane.Command, wantPane.Split, got.Command, got.Split,
+					)
 				}
 			}
-			if len(layout.paneCheckers) != tt.wantChecks {
-				t.Errorf(
-					"expected %d pane checkers, got %d",
-					tt.wantChecks,
-					len(layout.paneCheckers),
-				)
+			if got := countPaneChecks(layout); got != tt.wantChecks {
+				t.Errorf("expected %d pane install checks, got %d", tt.wantChecks, got)
 			}
 		})
 	}
@@ -334,22 +339,391 @@ func TestLayoutEnsureInstalledFailsForClaudeBuiltin(t *testing.T) {
 	}
 }
 
-// --- newLayout invariants ---
+// --- pane transformations: WithPrompt / WithExtraPanes ---
 
-// newLayout requires panes and checkers to line up 1:1. A mismatch can only
-// come from a bug in this file's own built-in registry construction, so it
-// panics rather than silently producing a Layout whose EnsureInstalled
-// would misreport which pane failed.
-func TestNewLayoutPanicsOnPaneCheckerMismatch(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected newLayout to panic on panes/checkers length mismatch, got no panic")
+// countPaneChecks reports how many of layout's panes carry an install check.
+// It replaces the old len(layout.paneCheckers) assertion: the checkers used to
+// live in a slice parallel to Panes, and now live on the Pane they describe,
+// so "how many checks does this layout have" is a property of the panes.
+//
+// There is deliberately no test that a checkers slice lines up with Panes
+// anymore - that mismatch is what the deleted newLayout panicked on, and it is
+// now unrepresentable rather than merely guarded.
+func countPaneChecks(layout Layout) int {
+	n := 0
+	for _, pane := range layout.Panes {
+		if pane.check != nil {
+			n++
 		}
-	}()
+	}
+	return n
+}
 
-	newLayout("broken", []Pane{{Command: "a"}, {Command: "b"}}, []func() error{
-		func() error { return nil },
+// commandsOf returns each pane's command, for asserting the shape of a
+// transformed layout.
+func commandsOf(layout Layout) []string {
+	commands := make([]string, 0, len(layout.Panes))
+	for _, pane := range layout.Panes {
+		commands = append(commands, pane.Command)
+	}
+	return commands
+}
+
+// TestWithPromptRetargetsCoderPane covers every built-in layout that has an AI
+// pane, including the multi-pane claude-nvim (where the prompt must land on
+// pane 1 and leave the nvim pane alone - `nvim 'do the thing'` would open a
+// file by that name).
+func TestWithPromptRetargetsCoderPane(t *testing.T) {
+	tests := []struct {
+		layout       string
+		wantCommands []string
+	}{
+		{"opencode", []string{"oc --prompt 'fix the bug'"}},
+		{"claude", []string{"cc 'fix the bug'"}},
+		{"claude-nvim", []string{"cc 'fix the bug'", "nvim"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.layout, func(t *testing.T) {
+			layout, err := ResolveLayout(tt.layout, "", nil)
+			if err != nil {
+				t.Fatalf("unexpected error resolving %q: %v", tt.layout, err)
+			}
+
+			got, err := layout.WithPrompt("fix the bug")
+			if err != nil {
+				t.Fatalf("WithPrompt returned error: %v", err)
+			}
+
+			gotCommands := commandsOf(got)
+			if len(gotCommands) != len(tt.wantCommands) {
+				t.Fatalf("expected %d panes, got %v", len(tt.wantCommands), gotCommands)
+			}
+			for i, want := range tt.wantCommands {
+				if gotCommands[i] != want {
+					t.Errorf("pane %d: got command %q, want %q", i, gotCommands[i], want)
+				}
+			}
+		})
+	}
+}
+
+// A layout with no AI pane must fail loudly rather than drop the prompt or
+// hand it to a non-coder command. The error names the layout and lists the
+// layouts that do accept a prompt.
+func TestWithPromptErrorsOnLayoutWithoutCoderPane(t *testing.T) {
+	layout, err := ResolveLayout("nvim", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving nvim layout: %v", err)
+	}
+
+	_, err = layout.WithPrompt("fix the bug")
+	if err == nil {
+		t.Fatal("expected an error prompting a layout with no AI pane, got nil")
+	}
+	if got := err.Error(); !strings.Contains(got, "nvim") {
+		t.Errorf("expected the error to name the nvim layout, got %q", got)
+	}
+	// The suggestion list is derived from the registry, so it must actually
+	// name promptable layouts.
+	if got := err.Error(); !strings.Contains(got, "opencode") ||
+		!strings.Contains(got, "claude") {
+		t.Errorf("expected the error to list layouts that accept a prompt, got %q", got)
+	}
+}
+
+// promptableLayoutNames feeds the error message above, so it must list exactly
+// the built-ins with an AI pane, in registry order - hardcoding that list is
+// what this guards against.
+func TestPromptableLayoutNames(t *testing.T) {
+	want := []string{"opencode", "claude", "claude-nvim"}
+
+	got := promptableLayoutNames()
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %v, got %v", want, got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("index %d: got %q, want %q", i, got[i], name)
+		}
+	}
+}
+
+// A layout with two prompt-taking panes is ambiguous. None ships today, so
+// this builds one directly to prove the guard fires for the first one added.
+func TestWithPromptErrorsOnAmbiguousMultiCoderLayout(t *testing.T) {
+	layout := Layout{
+		Name: "two-coders",
+		Panes: []Pane{
+			coderPane(&ClaudeCoder{}, ""),
+			coderPane(&OpenCodeCoder{}, splitVertical),
+		},
+	}
+
+	_, err := layout.WithPrompt("fix the bug")
+	if err == nil {
+		t.Fatal("expected an error for a layout with two AI panes, got nil")
+	}
+	if got := err.Error(); !strings.Contains(got, "more than one") {
+		t.Errorf("expected an ambiguity error, got %q", got)
+	}
+}
+
+// An empty prompt is a no-op so the CLI can apply WithPrompt unconditionally,
+// without first testing whether --prompt was passed. Crucially it must NOT
+// error on the nvim layout, which is the bare `dg wt create --layout nvim`
+// case.
+func TestWithPromptEmptyIsNoOp(t *testing.T) {
+	for _, name := range []string{"claude", "nvim"} {
+		t.Run(name, func(t *testing.T) {
+			layout, err := ResolveLayout(name, "", nil)
+			if err != nil {
+				t.Fatalf("unexpected error resolving %q: %v", name, err)
+			}
+
+			got, err := layout.WithPrompt("")
+			if err != nil {
+				t.Fatalf("expected no error for an empty prompt, got %v", err)
+			}
+
+			before, after := commandsOf(layout), commandsOf(got)
+			for i := range before {
+				if before[i] != after[i] {
+					t.Errorf("pane %d: command changed from %q to %q", i, before[i], after[i])
+				}
+			}
+		})
+	}
+}
+
+// A prompt containing a single quote must survive into the launch command
+// intact - shellSingleQuote's escape path, exercised through the real
+// transformation rather than only on the helper.
+func TestWithPromptQuotesEmbeddedSingleQuote(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	got, err := layout.WithPrompt("it's broken")
+	if err != nil {
+		t.Fatalf("WithPrompt returned error: %v", err)
+	}
+
+	want := `cc 'it'\''s broken'`
+	if got.Panes[0].Command != want {
+		t.Errorf("got command %q, want %q", got.Panes[0].Command, want)
+	}
+}
+
+// TestWithExtraPanesAppendsInOrder pins that extra panes land after the
+// layout's own panes, in flag order, each splitting "vertical" (side by side).
+func TestWithExtraPanesAppendsInOrder(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	got, err := layout.WithExtraPanes([]string{"make finit", "npm run dev"})
+	if err != nil {
+		t.Fatalf("WithExtraPanes returned error: %v", err)
+	}
+
+	wantCommands := []string{"cc", "make finit", "npm run dev"}
+	gotCommands := commandsOf(got)
+	if len(gotCommands) != len(wantCommands) {
+		t.Fatalf("expected %d panes, got %v", len(wantCommands), gotCommands)
+	}
+	for i, want := range wantCommands {
+		if gotCommands[i] != want {
+			t.Errorf("pane %d: got command %q, want %q", i, gotCommands[i], want)
+		}
+	}
+	for i, pane := range got.Panes[1:] {
+		if pane.Split != splitVertical {
+			t.Errorf("extra pane %d: got split %q, want %q", i, pane.Split, splitVertical)
+		}
+	}
+}
+
+// A --pane command is a shell command line, so it must reach the pane exactly
+// as written - quoting it would break the compound commands that justify the
+// flag. See ADR-0011 on the asymmetry with a prompt.
+func TestWithExtraPanesDoesNotQuoteCommand(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	command := "cd api && make dev"
+	got, err := layout.WithExtraPanes([]string{command})
+	if err != nil {
+		t.Fatalf("WithExtraPanes returned error: %v", err)
+	}
+
+	if got.Panes[1].Command != command {
+		t.Errorf("got command %q, want it unquoted as %q", got.Panes[1].Command, command)
+	}
+}
+
+// An extra pane carries no install check: its command can be a shell builtin,
+// a compound, or a Makefile target, so probing its first token would reject
+// legitimate commands. EnsureInstalled must therefore still pass for a layout
+// whose extra pane names a command that does not exist as a binary.
+func TestWithExtraPanesAddsNoInstallCheck(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "cc" })
+
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	got, err := layout.WithExtraPanes([]string{"definitely-not-a-real-binary --x"})
+	if err != nil {
+		t.Fatalf("WithExtraPanes returned error: %v", err)
+	}
+
+	if n := countPaneChecks(got); n != 1 {
+		t.Errorf("expected only the coder pane to carry a check, got %d checks", n)
+	}
+	if err := got.EnsureInstalled(); err != nil {
+		t.Errorf("expected EnsureInstalled to ignore the extra pane, got %v", err)
+	}
+}
+
+// An empty or whitespace-only --pane is rejected: `--pane "$VAR"` with an unset
+// variable is a likelier cause than a deliberate request for an idle shell, and
+// a silent empty pane looks like the feature half-worked.
+func TestWithExtraPanesRejectsEmptyCommand(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	for _, command := range []string{"", " ", "\t", "  \n "} {
+		t.Run(fmt.Sprintf("%q", command), func(t *testing.T) {
+			if _, err := layout.WithExtraPanes([]string{command}); err == nil {
+				t.Fatalf("expected an error for --pane %q, got nil", command)
+			}
+		})
+	}
+}
+
+// A bad command anywhere in the list fails the whole call, so a caller never
+// gets a layout with only some of its requested panes.
+func TestWithExtraPanesRejectsEmptyCommandAmongValidOnes(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	if _, err := layout.WithExtraPanes([]string{"make finit", ""}); err == nil {
+		t.Fatal("expected an error when a later --pane is empty, got nil")
+	}
+}
+
+// No extra panes is a no-op, mirroring WithPrompt's empty-prompt case so the
+// CLI can apply both unconditionally.
+func TestWithExtraPanesEmptySliceIsNoOp(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	got, err := layout.WithExtraPanes(nil)
+	if err != nil {
+		t.Fatalf("expected no error for no extra panes, got %v", err)
+	}
+	if len(got.Panes) != 1 {
+		t.Errorf("expected the layout unchanged, got %v", commandsOf(got))
+	}
+}
+
+// Both transformations must leave the RECEIVER untouched. Callers hold and
+// reuse resolved layouts (the TUI resolves once and creates repeatedly), so an
+// in-place edit would leak one worktree's prompt or extra panes into the next.
+func TestTransformationsDoNotMutateSourceLayout(t *testing.T) {
+	t.Run("WithPrompt", func(t *testing.T) {
+		layout, err := ResolveLayout("claude", "", nil)
+		if err != nil {
+			t.Fatalf("unexpected error resolving claude layout: %v", err)
+		}
+
+		if _, err := layout.WithPrompt("fix the bug"); err != nil {
+			t.Fatalf("WithPrompt returned error: %v", err)
+		}
+
+		if layout.Panes[0].Command != "cc" {
+			t.Errorf("source layout was mutated: pane 0 command is now %q", layout.Panes[0].Command)
+		}
 	})
+
+	t.Run("WithExtraPanes", func(t *testing.T) {
+		layout, err := ResolveLayout("claude", "", nil)
+		if err != nil {
+			t.Fatalf("unexpected error resolving claude layout: %v", err)
+		}
+
+		if _, err := layout.WithExtraPanes([]string{"make finit"}); err != nil {
+			t.Fatalf("WithExtraPanes returned error: %v", err)
+		}
+
+		if len(layout.Panes) != 1 {
+			t.Errorf("source layout was mutated: now has %d panes", len(layout.Panes))
+		}
+	})
+
+	// The claude-nvim case is the one where a shared backing array would
+	// actually bite: WithPrompt writes to index 0 of a two-element slice, so a
+	// shallow copy that aliased the array would corrupt the original.
+	t.Run("WithPrompt on a multi-pane layout", func(t *testing.T) {
+		layout, err := ResolveLayout("claude-nvim", "", nil)
+		if err != nil {
+			t.Fatalf("unexpected error resolving claude-nvim layout: %v", err)
+		}
+
+		got, err := layout.WithPrompt("fix the bug")
+		if err != nil {
+			t.Fatalf("WithPrompt returned error: %v", err)
+		}
+
+		if layout.Panes[0].Command != "cc" {
+			t.Errorf("source layout was mutated: pane 0 command is now %q", layout.Panes[0].Command)
+		}
+		if got.Panes[0].Command == layout.Panes[0].Command {
+			t.Error("expected the copy's coder pane command to differ from the source's")
+		}
+	})
+}
+
+// Chaining both transformations is what the CLI does; the prompt must land on
+// the coder pane and the extra pane must still append after it.
+func TestWithPromptThenWithExtraPanesCompose(t *testing.T) {
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+
+	prompted, err := layout.WithPrompt("fix the bug")
+	if err != nil {
+		t.Fatalf("WithPrompt returned error: %v", err)
+	}
+	got, err := prompted.WithExtraPanes([]string{"make finit"})
+	if err != nil {
+		t.Fatalf("WithExtraPanes returned error: %v", err)
+	}
+
+	want := []string{"cc 'fix the bug'", "make finit"}
+	gotCommands := commandsOf(got)
+	if len(gotCommands) != len(want) {
+		t.Fatalf("expected %v, got %v", want, gotCommands)
+	}
+	for i := range want {
+		if gotCommands[i] != want[i] {
+			t.Errorf("pane %d: got %q, want %q", i, gotCommands[i], want[i])
+		}
+	}
 }
 
 // --- reviewer registry ---

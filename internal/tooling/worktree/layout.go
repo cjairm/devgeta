@@ -20,46 +20,214 @@ import (
 // each hardcoding the string "nvim".
 const nvimCommand = "nvim"
 
+// splitVertical is tmux-pane-split direction "vertical" in this codebase's
+// vocabulary: panes SIDE BY SIDE (tmux's own -h flag - see tmux.SplitWindow for
+// why the naming is inverted from tmux's). It's a constant because two places
+// need the same value (the claude-nvim built-in and WithExtraPanes), and a typo
+// in either would only surface as a runtime "unknown split direction" error
+// from tmux.
+const splitVertical = "vertical"
+
 // Pane describes a single tmux pane within a Layout: the command to run in
 // it, and how it should be split off from the previous pane. Split is empty
 // for the first pane in a layout (there is nothing to split from yet) and
 // "vertical" or "horizontal" for every subsequent pane.
+//
+// check and prompt are the pane's two behaviors, and they are unexported for
+// the same reason: the exported shape of a Pane is just what tmux needs to
+// build it. They live ON the pane rather than in slices parallel to
+// Layout.Panes so they cannot fall out of step with the pane they describe -
+// a mismatch used to be possible and was caught by a length check in a
+// constructor; now it cannot be written at all (CLAUDE.md §4: prefer
+// structurally impossible over guarded).
+//
+//   - check verifies the pane's underlying tool is installed. nil means this
+//     pane has nothing to check (see WithExtraPanes for the one such case).
+//   - prompt renders the pane's command with an opening prompt, for
+//     `dg wt create --prompt`. nil means this pane does not take a prompt -
+//     true for every non-AI pane, and load-bearing: WithPrompt uses nil to
+//     tell a coder pane apart from an editor pane, so it never turns `nvim`
+//     into `nvim 'explain issue 1082'` (which opens a file by that name).
+//
+// Carrying them as constructor-time state also avoids having to
+// reverse-engineer "what checks this pane" from a bare Command string later
+// (e.g. distinguishing the literal command "CLAUDE_CODE_NO_FLICKER=1 claude"
+// from "nvim" by string matching, which would break the moment either command
+// string changes).
 type Pane struct {
 	Command string
 	Split   string
+
+	check  func() error
+	prompt func(prompt string) string
 }
 
 // Layout is a named collection of panes describing a tmux window shape for
-// `dg ws` create/repair.
-//
-// paneCheckers mirrors Panes 1:1 and holds the install-check for each pane's
-// underlying tool. It's unexported: the plan mandates the exported shape be
-// just {Name, Panes}, and carrying the checkers as constructor-time state
-// avoids having to reverse-engineer "what checks this pane" from a bare
-// Command string later (e.g. distinguishing the literal command
-// "CLAUDE_CODE_NO_FLICKER=1 claude" from "nvim" by string matching, which
-// would break the moment either command string changes).
+// `dg ws` create/repair. The exported shape is just {Name, Panes}; everything
+// a pane knows how to do lives on the Pane itself.
 type Layout struct {
 	Name  string
 	Panes []Pane
+}
 
-	paneCheckers []func() error
+// coderPane builds the pane that launches an AI coder. All three of the pane's
+// facets - the launch command, the install check, and the prompt form - are
+// read off the one AICoder, so they cannot describe different tools.
+func coderPane(coder AICoder, split string) Pane {
+	return Pane{
+		Command: coder.Command(),
+		Split:   split,
+		check:   coder.EnsureInstalled,
+		prompt:  coder.PromptCommand,
+	}
+}
+
+// nvimPane builds the editor pane. prompt is deliberately left nil: nvim is not
+// an AI coder and has no notion of an opening prompt, so a layout containing
+// only this pane must reject --prompt rather than pass the text to nvim as a
+// filename.
+func nvimPane(split string) Pane {
+	return Pane{Command: nvimCommand, Split: split, check: ensureNvimInstalled}
 }
 
 // EnsureInstalled verifies every pane's underlying tool is present, so a
 // layout referencing a missing tool fails with one actionable message
 // before the caller touches tmux (building the window is a later step's
-// job, not this file's).
+// job, not this file's). A pane with no check (check == nil) is skipped.
 func (l Layout) EnsureInstalled() error {
-	for i, check := range l.paneCheckers {
-		if check == nil {
+	for i, pane := range l.Panes {
+		if pane.check == nil {
 			continue
 		}
-		if err := check(); err != nil {
+		if err := pane.check(); err != nil {
 			return fmt.Errorf("layout %q, pane %d: %w", l.Name, i+1, err)
 		}
 	}
 	return nil
+}
+
+// clone returns a copy of l whose Panes sit in a fresh backing array, so a
+// transformation below can never write through to the receiver's slice.
+// Callers hold resolved layouts and reuse them (the TUI resolves once and
+// creates repeatedly), so an in-place edit would leak one worktree's prompt or
+// extra panes into the next.
+func (l Layout) clone() Layout {
+	out := l
+	out.Panes = append([]Pane(nil), l.Panes...)
+	return out
+}
+
+// promptableLayoutNames lists the built-in layouts that have a pane able to
+// take an opening prompt, in the registry's stable order. It's derived from the
+// registry rather than hardcoded so WithPrompt's error message cannot drift
+// from what the layouts actually support.
+func promptableLayoutNames() []string {
+	layouts := builtinLayouts()
+	names := make([]string, 0, len(builtinLayoutNames))
+	for _, name := range builtinLayoutNames {
+		for _, pane := range layouts[name].Panes {
+			if pane.prompt != nil {
+				names = append(names, name)
+				break
+			}
+		}
+	}
+	return names
+}
+
+// WithPrompt returns a copy of l whose AI-coder pane launches with prompt as
+// its opening message, so the coder is already working when the user attaches
+// instead of sitting at an empty session. The prompt is delivered as a launch
+// argument, never as keystrokes typed into a booted TUI - see ADR-0011.
+//
+// An empty prompt returns l unchanged with no error, so a caller can apply this
+// unconditionally without first testing whether the user passed --prompt.
+//
+// It errors rather than doing something approximate in both awkward cases:
+//
+//   - No pane takes a prompt (e.g. the nvim-only layout): fail loudly. Silently
+//     dropping the prompt would leave a session that looks correctly created
+//     but was never given its task.
+//   - More than one pane takes a prompt: ambiguous. No such layout exists
+//     today; this guard means the first one added fails visibly instead of
+//     prompting whichever pane happens to come first.
+func (l Layout) WithPrompt(prompt string) (Layout, error) {
+	if prompt == "" {
+		return l, nil
+	}
+
+	target := -1
+	for i, pane := range l.Panes {
+		if pane.prompt == nil {
+			continue
+		}
+		if target != -1 {
+			return Layout{}, fmt.Errorf(
+				"layout %q has more than one AI coder pane (panes %d and %d), "+
+					"so it is ambiguous which one --prompt should start",
+				l.Name, target+1, i+1,
+			)
+		}
+		target = i
+	}
+
+	if target == -1 {
+		return Layout{}, fmt.Errorf(
+			"layout %q has no AI coder pane, so there is nothing for --prompt to start. "+
+				"Layouts that accept a prompt: %s",
+			l.Name, strings.Join(promptableLayoutNames(), ", "),
+		)
+	}
+
+	out := l.clone()
+	out.Panes[target].Command = out.Panes[target].prompt(prompt)
+	return out, nil
+}
+
+// WithExtraPanes returns a copy of l with one additional shell pane per
+// command, for `dg wt create --pane` - the bootstrap command a worktree usually
+// needs running next to the coder (`make finit`, a dev server).
+//
+// Each command is used AS WRITTEN, not shell-quoted. Unlike a prompt (one
+// literal argument handed to a coder), a --pane value IS a shell command line:
+// quoting it would break the compound commands that make the flag worth having,
+// e.g. `cd api && make dev`. The user is handing devgeta a command to run in
+// their own shell - the same trust level as a shell alias. See ADR-0011 for the
+// full reasoning on the asymmetry.
+//
+// An empty or whitespace-only command is an error. `--pane "$BOOTSTRAP"` with an
+// unset variable is a far likelier cause than a deliberate request for an idle
+// shell, and send-keys with an empty string would quietly produce a bare shell
+// pane that looks like the feature half-worked. Validation lives here rather
+// than in the CLI so every present and future caller inherits it.
+//
+// These panes get no install check (check stays nil, which EnsureInstalled
+// skips) on purpose: the command can be a shell builtin, a compound, or a
+// Makefile target, so probing its first token would reject legitimate commands.
+// A built-in layout's pane is checked because devgeta chose that command; this
+// one is the user's, and its own pane shows any error.
+//
+// Every appended pane splits "vertical" (side by side), matching the
+// claude-nvim built-in. With two or more extra panes each splits the previous
+// one, so they get progressively narrower - existing buildWindowPanes behavior.
+// The common case (coder plus one shell) is a clean 50/50.
+func (l Layout) WithExtraPanes(commands []string) (Layout, error) {
+	if len(commands) == 0 {
+		return l, nil
+	}
+
+	out := l.clone()
+	for _, command := range commands {
+		if strings.TrimSpace(command) == "" {
+			return Layout{}, fmt.Errorf(
+				"--pane needs a command to run, got an empty one " +
+					"(a --pane value that came from a shell variable is the usual cause; " +
+					"check that it is set)",
+			)
+		}
+		out.Panes = append(out.Panes, Pane{Command: command, Split: splitVertical})
+	}
+	return out, nil
 }
 
 // ensureNvimInstalled checks that nvim resolves in the user's interactive
@@ -76,22 +244,6 @@ func ensureNvimInstalled() error {
 	return ensureToolInstalled(nvimCommand, nvimCommand)
 }
 
-// newLayout pairs panes with their install checkers at construction time.
-// It panics if the two slices don't line up 1:1: that can only happen from
-// a bug in this file's own registry construction (a built-in layout with
-// mismatched Panes/checkers), never from bad user input, so failing fast
-// here is preferable to EnsureInstalled silently misreporting which pane
-// failed later because the indices had drifted.
-func newLayout(name string, panes []Pane, checkers []func() error) Layout {
-	if len(panes) != len(checkers) {
-		panic(fmt.Sprintf(
-			"layout %q: %d panes but %d install checkers - built-in layout registry bug",
-			name, len(panes), len(checkers),
-		))
-	}
-	return Layout{Name: name, Panes: panes, paneCheckers: checkers}
-}
-
 // builtinLayoutNames lists the valid layout names in a stable order, used
 // both to build the registry and to render "valid layouts" in error
 // messages.
@@ -101,34 +253,34 @@ var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "nvim"}
 // name. It's rebuilt on every call (cheap: four small structs) rather than
 // cached as a package var, so each caller gets its own AICoder instances -
 // there is no shared mutable state to worry about.
+//
+// Each pane is built by coderPane/nvimPane rather than as a bare struct
+// literal, so a pane's command, install check, and prompt form always come
+// from one source and cannot describe different tools.
 func builtinLayouts() map[string]Layout {
 	opencode := &OpenCodeCoder{}
 	claude := &ClaudeCoder{}
 
 	return map[string]Layout{
-		"opencode": newLayout(
-			"opencode",
-			[]Pane{{Command: opencode.Command()}},
-			[]func() error{opencode.EnsureInstalled},
-		),
-		"claude": newLayout(
-			"claude",
-			[]Pane{{Command: claude.Command()}},
-			[]func() error{claude.EnsureInstalled},
-		),
-		"claude-nvim": newLayout(
-			"claude-nvim",
-			[]Pane{
-				{Command: claude.Command()},
-				{Command: nvimCommand, Split: "vertical"},
+		"opencode": {
+			Name:  "opencode",
+			Panes: []Pane{coderPane(opencode, "")},
+		},
+		"claude": {
+			Name:  "claude",
+			Panes: []Pane{coderPane(claude, "")},
+		},
+		"claude-nvim": {
+			Name: "claude-nvim",
+			Panes: []Pane{
+				coderPane(claude, ""),
+				nvimPane(splitVertical),
 			},
-			[]func() error{claude.EnsureInstalled, ensureNvimInstalled},
-		),
-		"nvim": newLayout(
-			"nvim",
-			[]Pane{{Command: nvimCommand}},
-			[]func() error{ensureNvimInstalled},
-		),
+		},
+		"nvim": {
+			Name:  "nvim",
+			Panes: []Pane{nvimPane("")},
+		},
 	}
 }
 
@@ -241,9 +393,11 @@ func BuiltinReviewerChoices() []ReviewerChoice {
 // OpenCode and ignored by Claude Code), so unlike deriveLayoutFromAlias this
 // does not accept an aiAlias.
 //
-// reviewPrompt is single-quoted via shellSingleQuote because this string is
-// typed literally into an interactive shell by send-keys - an unquoted
-// prompt would let shell metacharacters in it corrupt or hijack the command.
+// The command is built by OpenCodeCoder.promptCommandWithAgent, which is also
+// what PromptCommand (the --prompt flag's path) delegates to - so the
+// `--prompt '<quoted>'` fragment, including the single-quoting a send-keys
+// command line requires, has exactly one author. The emitted string is
+// unchanged from when this function assembled it itself.
 func ReviewCommand(key string) (string, error) {
 	reviewer, ok := builtinReviewers()[key]
 	if !ok {
@@ -254,10 +408,7 @@ func ReviewCommand(key string) (string, error) {
 	}
 
 	opencode := &OpenCodeCoder{}
-	return fmt.Sprintf(
-		"%s --agent %s --prompt %s",
-		opencode.Command(), reviewer.Agent, shellSingleQuote(reviewPrompt),
-	), nil
+	return opencode.promptCommandWithAgent(reviewer.Agent, reviewPrompt), nil
 }
 
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable
@@ -291,11 +442,10 @@ func deriveLayoutFromAlias(alias string) (Layout, error) {
 	if err != nil {
 		return Layout{}, err
 	}
-	return newLayout(
-		coder.Name(),
-		[]Pane{{Command: coder.Command()}},
-		[]func() error{coder.EnsureInstalled},
-	), nil
+	return Layout{
+		Name:  coder.Name(),
+		Panes: []Pane{coderPane(coder, "")},
+	}, nil
 }
 
 // ResolveLayout implements the layout resolution contract shared by create,

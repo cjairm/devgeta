@@ -11,6 +11,18 @@ import (
 type AICoder interface {
 	Name() string
 	Command() string
+
+	// PromptCommand returns the shell command that launches this coder with
+	// prompt as its opening message, for `dg wt create --prompt`. It is a
+	// method rather than a package-level switch on coder type so a coder added
+	// later cannot be registered without deciding its own prompt form - see
+	// ADR-0011.
+	//
+	// The two current forms differ because the two CLIs differ (verified
+	// against the installed binaries, 2026-07-31): claude takes the prompt
+	// positionally, opencode takes --prompt. Do not "unify" them.
+	PromptCommand(prompt string) string
+
 	EnsureInstalled() error
 }
 
@@ -58,6 +70,29 @@ func (o *OpenCodeCoder) Name() string { return "opencode" }
 // pane where that alias is defined.
 func (o *OpenCodeCoder) Command() string { return "oc" }
 
+// PromptCommand launches opencode with prompt as its opening message, using
+// opencode's --prompt flag ("prompt to use" in its --help).
+func (o *OpenCodeCoder) PromptCommand(prompt string) string {
+	return o.promptCommandWithAgent("", prompt)
+}
+
+// promptCommandWithAgent is the single author of opencode's
+// launch-with-a-prompt form, shared by PromptCommand (no agent) and
+// layout.go's ReviewCommand (which pins a reviewer agent). Before this existed
+// the `--prompt '<quoted>'` fragment had two authors; CLAUDE.md's DRY rule
+// requires the extraction happen in the change that introduces the second use.
+//
+// prompt is single-quoted because the returned string is typed into an
+// interactive shell verbatim by tmux send-keys - there is no Go-side shell
+// parser to lean on. See ADR-0011.
+func (o *OpenCodeCoder) promptCommandWithAgent(agent, prompt string) string {
+	command := o.Command()
+	if agent != "" {
+		command += " --agent " + agent
+	}
+	return command + " --prompt " + shellSingleQuote(prompt)
+}
+
 // EnsureInstalled checks the exact launch token (the oc alias), not the raw
 // "opencode" binary, so a pass guarantees the pane launch will resolve too; the
 // error still names "opencode" as the thing to install.
@@ -76,6 +111,17 @@ func (c *ClaudeCoder) Name() string { return "claude" }
 // place instead of being duplicated here. The command is sent to an interactive
 // tmux pane where the alias is defined.
 func (c *ClaudeCoder) Command() string { return "cc" }
+
+// PromptCommand launches Claude Code with prompt as its opening message.
+// Claude takes the prompt POSITIONALLY (`claude [options] [command] [prompt]`,
+// which "starts an interactive session by default") - it has no --prompt flag,
+// unlike opencode. Verified against the installed binary, 2026-07-31.
+//
+// prompt is single-quoted because the returned string is typed into an
+// interactive shell verbatim by tmux send-keys. See ADR-0011.
+func (c *ClaudeCoder) PromptCommand(prompt string) string {
+	return c.Command() + " " + shellSingleQuote(prompt)
+}
 
 // EnsureInstalled checks the exact launch token (the cc alias), not the raw
 // "claude" binary, so a pass guarantees the pane launch will resolve too; the
