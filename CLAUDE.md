@@ -294,6 +294,40 @@ Devgeta follows [Semantic Versioning](https://semver.org/) strictly: **`vMAJOR.M
 - A release mixing features and fixes = MINOR bump (the higher bump wins)
 - When in doubt, ask before tagging
 
+### What "release" means
+
+**"Release" is a request for the whole chain, not one step.** When the maintainer
+says "release" — or "commit, push and tag", or any subset of those words — run all
+six steps below. Do not stop after committing, and do not ask which steps were
+meant; that question has been answered and asking again is friction:
+
+1. **Verify** — `go build ./...`, `make lint`, `go test ./...`. If any fail, stop
+   and report. Never tag over a red test.
+2. **Notes** — write the message file from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md).
+3. **Commit** — `git add` and `git commit` as **two separate commands**. A
+   pre-commit hook rejects them combined, because it can only scan for secrets
+   that are already staged.
+4. **Tag** — `devgeta task release <version> --message-file <file>`.
+5. **Push** — `git push origin main --tags` (or pass `--push` in step 4).
+6. **Confirm** — the Release workflow ran, and the release page shows the tag's
+   notes with all four binaries attached.
+
+Only two things are still worth raising instead of deciding alone: a version bump
+the table above leaves genuinely ambiguous, and anything that failed step 1.
+
+Two ordering rules are load-bearing and have each already caused a bad release:
+
+- **Tag before pushing.** `devgeta task release` decides what to squash by counting
+  commits ahead of `origin/<default>`. Push first and that count is 0, so it
+  reports "no unpushed commits", skips the squash, and tags whatever HEAD is — no
+  error, no warning. This is how v1.9.0 landed on a bare merge commit with 22 loose
+  commits in `main`.
+- **Never run a bare `git tag`.** That creates a _lightweight_ tag with no message,
+  and the release workflow reads the release body out of the annotation — so the
+  release page publishes empty. Deleting a tag to retry does not delete its
+  release either; GitHub demotes that release to a permanent draft. See
+  [docs/guides/releasing.md](docs/guides/releasing.md) for the correct retry order.
+
 ### Push & tag workflow
 
 When pushing commits and creating a tag, **always squash multiple unpushed commits into one before tagging.** This keeps the git history clean and makes it easy for developers to understand what each tag/release includes. `devgeta task release` automates this flow — do not run the raw `git reset --soft` / `git tag` / `git push` sequence by hand.
@@ -525,7 +559,7 @@ Quick reference to where things live:
 | **Theming**            | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule |
 | **Claude Code app**    | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                           |
 | **Releasing**          | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                        |
-| **Release notes**      | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body           |
+| **Release notes**      | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body          |
 | **Migrations**         | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                             |
 | **Roadmap**            | `ROADMAP.md`                                 | Planned commands, future features, open questions                                           |
 | **Decisions**          | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                      |
