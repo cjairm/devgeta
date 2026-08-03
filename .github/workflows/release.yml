@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
 
 permissions:
   contents: write
@@ -12,20 +12,51 @@ jobs:
   build:
     name: Build and Release
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+        with:
+          # Full history + tag objects: the release body below is read from the
+          # annotated tag's own message, and a shallow checkout fetches the tag
+          # ref without the annotation object that carries it.
+          fetch-depth: 0
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
-      
+          go-version: "1.23"
+
       - name: Get version from tag
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-      
+
+      # The release notes ARE the annotated tag's message. CLAUDE.md §9 already
+      # requires every release to be tagged through
+      # `devgeta task release <version> --message-file <file>`, which refuses an
+      # empty message — so that text is written, reviewed, and guaranteed to
+      # exist. Without this step it was then discarded: generate_release_notes
+      # builds its bullet list from merged pull requests, and this repo tags
+      # straight from main, so every release page showed nothing but a compare
+      # link while the real summary sat unread in the tag.
+      - name: Read release notes from the annotated tag
+        id: tag_notes
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+        run: |
+          # %(contents) is the annotation's subject + body, without any
+          # signature block. A lightweight tag yields an empty string, which
+          # simply falls back to the auto-generated notes alone.
+          NOTES="$(git tag -l --format='%(contents)' "$VERSION" \
+            | sed '/^Co-Authored-By:/d' \
+            | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba')"
+          # Heredoc delimiter, so a multi-line body survives into the output.
+          {
+            echo 'NOTES<<DEVGETA_RELEASE_NOTES_EOF'
+            echo "$NOTES"
+            echo 'DEVGETA_RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build binaries
         env:
           VERSION: ${{ steps.get_version.outputs.VERSION }}
@@ -44,7 +75,7 @@ jobs:
           GOOS=linux   GOARCH=arm64 go build -o devgeta-linux-arm64   -ldflags="$LDFLAGS" .
 
           chmod +x devgeta-*
-      
+
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
@@ -53,6 +84,10 @@ jobs:
             devgeta-darwin-arm64
             devgeta-linux-amd64
             devgeta-linux-arm64
+          # body is PREPENDED to the auto-generated notes, so the release page
+          # leads with the tag's own summary and still ends with GitHub's
+          # "Full Changelog" compare link.
+          body: ${{ steps.tag_notes.outputs.NOTES }}
           generate_release_notes: true
           draft: false
           prerelease: false

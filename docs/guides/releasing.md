@@ -25,23 +25,49 @@ Before creating a release, ensure:
 
 See [CLAUDE.md section 9](../../CLAUDE.md#9-versioning--tagging) for which bump to use (PATCH, MINOR, or MAJOR).
 
-### 3. Create and Push Release Tag
+### 3. Write the Release Notes
+
+Every release is tagged through `devgeta task release`, which requires a
+message file and refuses an empty one. Start from the template:
 
 ```bash
-# Ensure you're on main branch with latest changes
+cp docs/guides/RELEASE-NOTES-TEMPLATE.md /tmp/release-notes.txt
+$EDITOR /tmp/release-notes.txt
+```
+
+That one file becomes the squashed commit message, the annotated tag's
+message, **and the GitHub release page body** — the workflow reads the notes
+back out of the tag (see [Release Workflow Details](#release-workflow-details)).
+
+This is the only thing that puts content on a release page. GitHub's
+auto-generated bullet list is built from **merged pull requests**, and devgeta
+tags straight from `main`, so a release whose tag carries no message shows
+nothing but a compare link.
+
+### 4. Create and Push Release Tag
+
+```bash
+# Ensure you're on main branch with a clean tree and latest changes
 git checkout main
 git pull origin main
 
-# Create a new tag (replace with your version)
-git tag v0.2.0
-
-# Push the tag to GitHub
-git push origin v0.2.0
+# Squash, tag, and push in one step (replace with your version)
+devgeta task release v0.2.0 --message-file /tmp/release-notes.txt --push
 ```
 
-**Important**: Tags must start with `v` to trigger the release workflow.
+Without `--push`, nothing is pushed and the command prints the exact
+`git push` to run once you've reviewed the result.
 
-### 4. Monitor the Release Workflow
+**Important**: Tags must start with `v` to trigger the release workflow, and
+the version must match `vMAJOR.MINOR.PATCH` exactly — `devgeta task release`
+enforces both.
+
+**Do not** run `git tag` / `git push --tags` by hand. That skips the squash
+CLAUDE.md §9 requires, and a bare `git tag <version>` creates a _lightweight_
+tag with no message at all — which is exactly how a release page ends up
+empty.
+
+### 5. Monitor the Release Workflow
 
 Once you push the tag, GitHub Actions automatically:
 
@@ -52,7 +78,8 @@ Once you push the tag, GitHub Actions automatically:
    - `devgeta-linux-arm64` (Linux ARM)
 
 2. **Creates a GitHub Release** with:
-   - Auto-generated release notes
+   - The annotated tag's message as the release body, followed by GitHub's
+     "Full Changelog" compare link
    - All four binaries attached
    - Tag reference
 
@@ -62,7 +89,7 @@ Once you push the tag, GitHub Actions automatically:
 - Look for the "Release" workflow
 - Typical build time: 2-3 minutes
 
-### 5. Verify the Release
+### 6. Verify the Release
 
 After the workflow completes:
 
@@ -82,7 +109,7 @@ After the workflow completes:
    devgeta --version
    ```
 
-### 6. Update Documentation (Optional)
+### 7. Update Documentation (Optional)
 
 Consider updating:
 
@@ -111,10 +138,11 @@ The workflow triggers automatically when you push any tag starting with `v`.
 
 The workflow:
 
-1. Checks out the code
-2. Sets up Go 1.21
+1. Checks out the code (full history, so the annotated tag's message is available)
+2. Sets up Go 1.23
 3. Builds binaries for all platforms using cross-compilation
-4. Creates a GitHub release with all binaries attached
+4. Reads the release notes out of the annotated tag
+5. Creates a GitHub release with those notes and all binaries attached
 
 ### Binary Naming Convention
 
@@ -147,14 +175,30 @@ If the GitHub Actions workflow fails:
 
 3. **Re-trigger workflow**:
 
+   Deleting a tag does **not** delete the release that points at it — GitHub
+   demotes that release to a **draft** instead, and it stays in the releases
+   list forever. Delete the release first, then the tag:
+
    ```bash
-   # Delete the tag locally and remotely
+   # Delete the release GitHub already created (leaves the tag alone)
+   gh release delete v0.2.0 --yes
+
+   # Now delete the tag locally and remotely
    git tag -d v0.2.0
    git push origin :refs/tags/v0.2.0
 
-   # Fix the issue and recreate the tag
-   git tag v0.2.0
-   git push origin v0.2.0
+   # Fix the issue, then re-run the normal release flow so the new tag is
+   # annotated with its notes again (a bare `git tag` would strand the
+   # release page empty)
+   devgeta task release v0.2.0 --message-file /tmp/release-notes.txt --push
+   ```
+
+   Leftover drafts from a re-tag are harmless but confusing. List and remove
+   them with:
+
+   ```bash
+   gh api repos/cjairm/devgeta/releases --jq '.[] | select(.draft) | .tag_name'
+   gh release delete <tag> --yes
    ```
 
 ### Release Not Appearing

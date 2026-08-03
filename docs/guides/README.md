@@ -138,6 +138,10 @@ Complete release workflow:
 
 ## Quick Start by Task
 
+### [Release Notes Template](RELEASE-NOTES-TEMPLATE.md) — Structure for release notes
+
+The `--message-file` passed to `devgeta task release` becomes the squashed commit, the annotated tag, **and** the GitHub release page body. Start here so every release page reads the same way.
+
 ### I'm adding a new command
 
 1. Read [CLI Patterns](cli-patterns.md) — overall structure

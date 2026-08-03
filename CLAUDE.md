@@ -300,7 +300,7 @@ When pushing commits and creating a tag, **always squash multiple unpushed commi
 
 **Steps:**
 
-1. Write the release message to a file, preserving context from each original commit as bullet points (summarize only if the combined list is too long to be readable).
+1. Write the release message to a file, starting from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md) and preserving context from each original commit as bullet points (summarize only if the combined list is too long to be readable). This file is not just a commit message: the release workflow reads it back out of the annotated tag and publishes it as the GitHub release body, and it is the **only** thing that puts content there — GitHub's auto-generated notes are built from merged pull requests, and devgeta tags straight from `main`.
 2. From a clean working tree on the default branch, run:
 
    ```bash
@@ -525,6 +525,7 @@ Quick reference to where things live:
 | **Theming**            | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule |
 | **Claude Code app**    | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                           |
 | **Releasing**          | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                        |
+| **Release notes**      | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body           |
 | **Migrations**         | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                             |
 | **Roadmap**            | `ROADMAP.md`                                 | Planned commands, future features, open questions                                           |
 | **Decisions**          | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                      |
