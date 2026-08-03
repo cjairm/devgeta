@@ -81,3 +81,36 @@ func TestMockBaseCommand_IsFontPresent_Error(t *testing.T) {
 		t.Errorf("got (%v, %v), want (false, %v)", ok, err, wantErr)
 	}
 }
+
+// TestResetExecCommandClearsExecCommandFn pins ResetExecCommand's contract:
+// after a reset the mock must answer from whatever the NEXT test configures,
+// never from the previous one.
+//
+// ExecCommandFn takes precedence over execResults and the fixed
+// stdout/stderr/error fields, so a reset that clears those but leaves the
+// callback in place is worse than no reset at all — the next subtest's setup
+// is accepted silently and then ignored, and its assertions fail for reasons
+// that have nothing to do with the code under test.
+func TestResetExecCommandClearsExecCommandFn(t *testing.T) {
+	mock := NewMockBaseCommand()
+	mock.ExecCommandFn = func(CommandParams) (string, string, error) {
+		return "from the stale callback", "", nil
+	}
+
+	mock.ResetExecCommand()
+
+	if mock.ExecCommandFn != nil {
+		t.Fatal("ResetExecCommand left ExecCommandFn set; a reused mock would keep " +
+			"answering from the previous subtest's callback")
+	}
+
+	// The reset mock must now honor a freshly configured result.
+	mock.SetExecCommandResult("fresh", "", nil)
+	stdout, _, err := mock.ExecCommand(CommandParams{Command: "git"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stdout != "fresh" {
+		t.Errorf("ExecCommand returned %q; the stale callback is still winning", stdout)
+	}
+}

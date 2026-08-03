@@ -330,7 +330,7 @@ not gitignored in the target repo - devgeta never edits another repo's
 
 var worktreePruneCmd = &cobra.Command{
 	Use:   "prune",
-	Short: "Remove all worktrees",
+	Short: "Remove all worktrees, or just git's stale entries with --stale",
 	Long: `Remove all worktrees managed by devgeta.
 
 This command prompts for confirmation before removing all worktrees
@@ -341,11 +341,37 @@ Each worktree is removed using the same logic as 'dg wt remove':
   - Removes the git worktree
   - Deletes the branch
 
-Example:
-  dg wt prune    # Prompts for confirmation, then removes all worktrees`,
+With --stale, nothing of yours is removed at all. It only clears git's
+leftover bookkeeping for worktrees whose directory no longer exists — the
+entries git itself calls "prunable". These are what made deleted worktrees
+keep reappearing in older versions. Because no worktree, directory, or
+branch can be affected, --stale needs no confirmation.
+
+Examples:
+  dg wt prune            # Prompts for confirmation, then removes all worktrees
+  dg wt prune --stale    # Only clears leftover entries for already-deleted worktrees`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		wm := worktree.New()
+
+		if pruneStaleFlag {
+			stale, err := wm.PruneStale()
+			if err != nil {
+				return err
+			}
+			if len(stale) == 0 {
+				utils.PrintInfo("No stale worktree entries found")
+				return nil
+			}
+			for _, s := range stale {
+				utils.PrintInfo(fmt.Sprintf("  cleared %s/%s (%s)", s.Repo, s.Name, s.Path))
+			}
+			utils.PrintSuccess(
+				fmt.Sprintf("Cleared %d stale worktree %s",
+					len(stale), pluralize(len(stale), "entry", "entries")),
+			)
+			return nil
+		}
 
 		if err := wm.Prune(); err != nil {
 			return err
@@ -354,6 +380,15 @@ Example:
 		utils.PrintSuccess("All worktrees removed")
 		return nil
 	},
+}
+
+// pluralize picks the singular or plural form for n. Kept local and tiny
+// rather than pulled in as a dependency - this is its only caller.
+func pluralize(n int, singular, plural string) string {
+	if n == 1 {
+		return singular
+	}
+	return plural
 }
 
 // createAIFlag/createLayoutFlag and repairAIFlag/repairLayoutFlag are
@@ -373,6 +408,7 @@ var (
 	forceFlag        bool
 	repoFlag         string
 	moveToFlag       string
+	pruneStaleFlag   bool
 )
 
 // applyCreateLayoutOptions folds create's --prompt and --pane flags into the
@@ -443,6 +479,9 @@ func init() {
 	worktreeRepairCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	worktreeRemoveCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Force removal even if worktree has uncommitted changes")
+	worktreePruneCmd.Flags().
+		BoolVar(&pruneStaleFlag, "stale", false,
+			"Only clear git's leftover entries for already-deleted worktrees; removes nothing of yours")
 	worktreeMoveCmd.Flags().
 		StringVar(&moveToFlag, "to", "",
 			"Target location: shared or in-repo (defaults to the configured worktree.location)")

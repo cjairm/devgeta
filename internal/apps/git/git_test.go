@@ -2053,3 +2053,271 @@ func TestRunCapture(t *testing.T) {
 		}
 	})
 }
+
+// TestParseWorktreeOutputPrunable covers the field this parser used to drop
+// entirely. `git worktree list --porcelain` marks a registration whose
+// working directory is gone with a "prunable" line; ignoring it made every
+// caller treat administrative debris as a live worktree, so deleted
+// worktrees kept appearing in `dg wt list` and the `dg ws` dashboard and
+// every command run against their path failed with "cannot change to
+// '<path>': No such file or directory".
+func TestParseWorktreeOutputPrunable(t *testing.T) {
+	t.Run("marks a prunable entry and captures git's reason", func(t *testing.T) {
+		out := "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\n" +
+			"worktree /gone/wt\nHEAD def456\nbranch refs/heads/feature\n" +
+			"prunable gitdir file points to non-existent location\n\n"
+
+		worktrees := parseWorktreeOutput(out)
+		if len(worktrees) != 2 {
+			t.Fatalf("expected 2 worktrees, got %d: %+v", len(worktrees), worktrees)
+		}
+		if worktrees[0].Prunable {
+			t.Error("main checkout must not be marked prunable")
+		}
+		if !worktrees[1].Prunable {
+			t.Fatal("stale entry was not marked prunable — the marker is being dropped again")
+		}
+		const wantReason = "gitdir file points to non-existent location"
+		if worktrees[1].PrunableReason != wantReason {
+			t.Errorf("PrunableReason = %q, want %q", worktrees[1].PrunableReason, wantReason)
+		}
+		// The rest of the entry must still parse: callers need the path to
+		// prune it and the name to report which worktree went missing.
+		if worktrees[1].Path != "/gone/wt" {
+			t.Errorf("Path = %q, want /gone/wt", worktrees[1].Path)
+		}
+		if worktrees[1].Branch != "feature" {
+			t.Errorf("Branch = %q, want feature", worktrees[1].Branch)
+		}
+	})
+
+	t.Run("marks a bare prunable line with no reason", func(t *testing.T) {
+		out := "worktree /gone/wt\nHEAD def456\nbranch refs/heads/feature\nprunable\n\n"
+
+		worktrees := parseWorktreeOutput(out)
+		if len(worktrees) != 1 {
+			t.Fatalf("expected 1 worktree, got %d", len(worktrees))
+		}
+		if !worktrees[0].Prunable {
+			t.Fatal("bare 'prunable' line was not recognized")
+		}
+		if worktrees[0].PrunableReason != "" {
+			t.Errorf("PrunableReason = %q, want empty for a bare marker",
+				worktrees[0].PrunableReason)
+		}
+	})
+
+	t.Run("a healthy worktree is never marked prunable", func(t *testing.T) {
+		out := "worktree /repo\nHEAD abc123\nbranch refs/heads/main\n\n" +
+			"worktree /repo/.claude/worktrees/feat\nHEAD def456\nbranch refs/heads/feat\n\n"
+
+		for _, wt := range parseWorktreeOutput(out) {
+			if wt.Prunable {
+				t.Errorf("healthy worktree %q was marked prunable", wt.Path)
+			}
+		}
+	})
+
+	// "prunable" must not be confused with any other porcelain line that
+	// happens to start with the same letters, and a branch literally named
+	// "prunable-something" must not trip the marker.
+	t.Run("a branch whose name starts with 'prunable' does not set the flag", func(t *testing.T) {
+		out := "worktree /repo/wt\nHEAD abc\nbranch refs/heads/prunable-cleanup\n\n"
+
+		worktrees := parseWorktreeOutput(out)
+		if len(worktrees) != 1 {
+			t.Fatalf("expected 1 worktree, got %d", len(worktrees))
+		}
+		if worktrees[0].Prunable {
+			t.Error("branch named 'prunable-cleanup' wrongly set the prunable flag")
+		}
+		if worktrees[0].Branch != "prunable-cleanup" {
+			t.Errorf("Branch = %q, want prunable-cleanup", worktrees[0].Branch)
+		}
+	})
+}
+
+// TestGitWarnFn locks in that git's non-fatal advisories go through WarnFn
+// rather than a raw fmt.Printf. A raw print from inside a create scribbles
+// straight into a running Bubble Tea alt-screen (the `dg ws` dashboard),
+// scrolling the frame and leaving two frames' worth of rows interleaved on
+// screen — which is what made the dashboard look like it had duplicated and
+// nested worktrees that did not exist.
+func TestGitWarnFn(t *testing.T) {
+	t.Run("New wires a non-nil default so warn never panics", func(t *testing.T) {
+		if New().WarnFn == nil {
+			t.Fatal("New() left WarnFn nil; git advisories would panic or fall back silently")
+		}
+	})
+
+	t.Run("syncExistingBranch reports a diverged branch via WarnFn", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		var warnings []string
+		app := &Git{
+			Cmd:    mockApp.Cmd,
+			Base:   mockApp.Base,
+			WarnFn: func(msg string) { warnings = append(warnings, msg) },
+		}
+
+		mockApp.Base.SetExecCommandResults(
+			// RemoteBranchExistsIn -> the remote branch exists
+			commands.ExecCommandResult("origin/feature\n", "", nil),
+			// merge --ff-only fails: histories diverged
+			commands.ExecCommandResult("", "fatal: not possible to fast-forward",
+				fmt.Errorf("merge failed")),
+		)
+
+		if err := app.syncExistingBranch("/wt", "feature"); err != nil {
+			t.Fatalf("syncExistingBranch must not fail on a diverged branch: %v", err)
+		}
+		if len(warnings) != 1 {
+			t.Fatalf("expected exactly 1 warning via WarnFn, got %d: %v", len(warnings), warnings)
+		}
+		if !strings.Contains(warnings[0], "diverged") {
+			t.Errorf("warning should explain the divergence, got: %q", warnings[0])
+		}
+		// Every git call this drove went through mockApp.Base, so nothing
+		// real ran. VerifyNoRealCommands is deliberately NOT used here: it
+		// asserts zero exec calls, and this test exists precisely to drive
+		// two of them.
+	})
+
+	t.Run("warn falls back to a print when WarnFn is nil, without panicking", func(t *testing.T) {
+		// A zero-value Git (struct literal, as tests and some callers build)
+		// must not panic the moment an advisory fires.
+		app := &Git{}
+		app.warn("advisory from a zero-value Git")
+	})
+}
+
+// TestNoRawPrintsInGitPackage makes the display-corruption bug structurally
+// impossible to reintroduce rather than merely fixed once. A single
+// fmt.Print/Println/Printf anywhere in this package writes straight to stdout
+// — and when the caller is the `dg ws` dashboard, that means writing into a
+// running Bubble Tea alt-screen, which scrolls the frame and leaves stale
+// rows interleaved with live ones. Advisories must go through Git.WarnFn
+// (see the warn helper), which a TUI caller can redirect.
+//
+// A convention in a comment would not have survived; this fails the build.
+func TestNoRawPrintsInGitPackage(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("failed to read package directory: %v", err)
+	}
+
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, readErr := os.ReadFile(name)
+		if readErr != nil {
+			t.Fatalf("failed to read %s: %v", name, readErr)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				continue // a comment mentioning fmt.Print is not a call
+			}
+			for _, banned := range []string{"fmt.Print(", "fmt.Printf(", "fmt.Println("} {
+				if strings.Contains(line, banned) {
+					t.Errorf(
+						"%s:%d uses %s — route the message through g.warn() instead, "+
+							"or it will corrupt a TUI caller's alt-screen display:\n\t%s",
+						name, i+1, banned, trimmed,
+					)
+				}
+			}
+		}
+	}
+}
+
+// TestFreeBranchIfHeldElsewhereSkipsPrunable covers the last way a stale
+// registration could block a user: it still holds the BRANCH, so recreating
+// the worktree hits this pre-flight check first. Treating the dead entry as a
+// live holder ran IsWorktreeDirty against a path that no longer exists, and
+// that failure's message is not one create() recognizes as a stale-entry
+// problem — so creation dead-ended before prune-and-retry could rescue it,
+// leaving the branch name permanently unusable.
+func TestFreeBranchIfHeldElsewhereSkipsPrunable(t *testing.T) {
+	t.Run("a prunable holder is ignored, leaving nothing to free", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base, WarnFn: func(string) {}}
+
+		// The only entry holding "feature" is stale: its directory is gone.
+		porcelain := "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\n" +
+			"worktree /gone/wt\nHEAD def\nbranch refs/heads/feature\n" +
+			"prunable gitdir file points to non-existent location\n\n"
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(porcelain, "", nil), // ListWorktreesAt
+		)
+
+		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+			t.Fatalf("a stale holder must be a no-op, not an error: %v", err)
+		}
+
+		// Exactly one call: the listing. Anything more means it tried to
+		// inspect or check out a directory that does not exist.
+		if n := mockApp.Base.GetExecCommandCallCount(); n != 1 {
+			t.Errorf(
+				"expected only the worktree listing (1 call), got %d — "+
+					"a git command was run against the missing directory",
+				n,
+			)
+		}
+	})
+
+	t.Run("a live holder is still freed", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		var warnings []string
+		app := &Git{
+			Cmd:    mockApp.Cmd,
+			Base:   mockApp.Base,
+			WarnFn: func(msg string) { warnings = append(warnings, msg) },
+		}
+
+		porcelain := "worktree /repo\nHEAD abc\nbranch refs/heads/feature\n\n"
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(porcelain, "", nil), // ListWorktreesAt
+			commands.ExecCommandResult("main\n", "", nil),  // DefaultBranchIn
+			commands.ExecCommandResult("", "", nil),        // IsWorktreeDirty - clean
+			commands.ExecCommandResult("", "", nil),        // checkout main
+		)
+
+		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+			t.Fatalf("freeBranchIfHeldElsewhere failed on a live holder: %v", err)
+		}
+		if len(warnings) != 1 || !strings.Contains(warnings[0], "was moved to") {
+			t.Errorf("expected the source-checkout-moved notice, got %v", warnings)
+		}
+	})
+
+	// Both a live and a stale holder can claim the same branch after a
+	// worktree was recreated by hand. The live one must win.
+	t.Run("a live holder is chosen over a stale one for the same branch", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base, WarnFn: func(string) {}}
+
+		porcelain := "worktree /gone/wt\nHEAD def\nbranch refs/heads/feature\n" +
+			"prunable gitdir file points to non-existent location\n\n" +
+			"worktree /repo\nHEAD abc\nbranch refs/heads/feature\n\n"
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(porcelain, "", nil), // ListWorktreesAt
+			commands.ExecCommandResult("main\n", "", nil),  // DefaultBranchIn
+			commands.ExecCommandResult("", "", nil),        // IsWorktreeDirty
+			commands.ExecCommandResult("", "", nil),        // checkout
+		)
+
+		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+			t.Fatalf("expected the live holder to be freed: %v", err)
+		}
+		// The checkout must target the live path, never the missing one.
+		for _, call := range mockApp.Base.ExecCommandCalls {
+			for i, a := range call.Args {
+				if a == "-C" && i+1 < len(call.Args) && call.Args[i+1] == "/gone/wt" {
+					t.Errorf("a git command was run against the stale path: %v", call.Args)
+				}
+			}
+		}
+	})
+}

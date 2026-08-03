@@ -1,22 +1,16 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
-
-// branchDeleteFailedPrefix must match the wording RemoveWorktree
-// (internal/apps/git/git.go) wraps its error in when `worktree remove`
-// succeeded but the following `branch -D` failed. RemoveWorktree doesn't
-// return a typed/sentinel error for this sub-case, so worktreeFinishMerge
-// distinguishes it from `worktree remove` itself failing via this stable
-// substring.
-const branchDeleteFailedPrefix = "removed worktree but failed to delete branch"
 
 // taskWorktreePath returns worktree.GetWorktreeBasePath()/<repoSlug>/<flat-name>
 // — the exact same location `dg wt` uses (internal/tooling/worktree's
@@ -244,9 +238,14 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		// message: `worktree remove` itself failing (the worktree is genuinely
 		// still there) vs. `worktree remove` succeeding and only the following
 		// `branch -D` failing (the worktree is already gone). Only the latter
-		// wraps this stable prefix (see git.go's RemoveWorktree) — anything
-		// else means removal itself never completed.
-		if strings.Contains(err.Error(), branchDeleteFailedPrefix) {
+		// carries git.ErrBranchDeleteFailed — anything else means removal
+		// itself never completed.
+		//
+		// This used to match on a substring of RemoveWorktree's message, which
+		// silently stopped working the moment that wording was reworded: the
+		// merge path then reported "worktree still at <path>" for a worktree
+		// git had already deleted. errors.Is cannot rot that way.
+		if errors.Is(err, git.ErrBranchDeleteFailed) {
 			return "", fmt.Errorf(
 				"merged %s into %s and removed the worktree, but failed to delete branch %s: %w",
 				branch, defaultBranch, branch, err,

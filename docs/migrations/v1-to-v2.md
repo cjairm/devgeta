@@ -85,6 +85,42 @@ enumeration only scanned the shared root, so a worktree moved elsewhere by
 hand would drop out of `dg wt list` and `dg ws` entirely, or show as a
 phantom row with an empty branch column.
 
+## Leftover worktrees from an older devgeta install
+
+If devgeta ever wrote worktrees under a **different data directory name** than
+the one it uses today (for example an install that predates the current
+`~/.local/share/devgeta/` path), git may still hold registrations pointing at
+those old paths. The directories are long gone, but git does not forget them
+on its own.
+
+Devgeta no longer shows these. A registration whose directory is missing is
+what git calls **prunable**, and `dg wt list` and `dg ws` now skip them, so
+they cannot appear as rows you can't get rid of. Removing one through
+`dg wt remove` (or `d` in the dashboard) also cleans up the leftover git entry
+instead of silently doing nothing.
+
+To clear the old entries in one go, across every repo devgeta knows about:
+
+```bash
+dg wt prune --stale
+```
+
+It prints each entry it cleared, and says so when there is nothing to clean.
+Unlike a bare `dg wt prune` (which removes **all** your worktrees and asks for
+confirmation first), `--stale` cannot remove a worktree, a directory, or a
+branch — it only drops bookkeeping for directories that are already gone — so
+it does not prompt.
+
+`dg wt remove <name>` also clears a leftover entry now, if you happen to know
+the name of a worktree you deleted by hand. Previously that reported
+`nothing to remove` and left the entry in place.
+
+To see what git thinks, the underlying check is:
+
+```bash
+git -C <your-repo> worktree list    # look for the word "prunable"
+```
+
 ## If something goes wrong
 
 **`move` refuses with a message about uncommitted changes.** Commit or stash

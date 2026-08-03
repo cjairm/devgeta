@@ -12,6 +12,7 @@
 package worktree
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -132,6 +133,21 @@ func New() *WorktreeManager {
 		Fzf:    fzf.New(),
 		Base:   cmd.NewBaseCommand(),
 		WarnFn: utils.PrintWarning,
+	}
+}
+
+// SetWarnFn installs fn as the warning sink for this manager AND for the git
+// app it drives, so a TUI caller cannot silence one layer while the other
+// keeps printing to stdout underneath its alt-screen. This exists because
+// overriding only w.WarnFn used to leave git's own advisories (a diverged
+// branch, an adopted source checkout) writing raw text into the running
+// `dg ws` dashboard, scrolling the frame and leaving two frames' rows
+// interleaved on screen. Callers rendering a TUI must use this rather than
+// assigning w.WarnFn directly.
+func (w *WorktreeManager) SetWarnFn(fn func(msg string)) {
+	w.WarnFn = fn
+	if w.Git != nil {
+		w.Git.WarnFn = fn
 	}
 }
 
@@ -333,8 +349,11 @@ func (w *WorktreeManager) create(
 	if state.WtExists && !state.WindowExists {
 		// Check if directory actually exists on disk
 		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-			// Directory missing but git still tracks it - auto-prune and continue
-			if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr != nil {
+			// Directory missing but git still tracks it - auto-prune and
+			// continue. Anchored at repoRoot, not filepath.Dir(wtPath): see
+			// pruneStaleWorktrees for why the parent directory was the wrong
+			// anchor and made this prune silently do nothing.
+			if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr != nil {
 				return fmt.Errorf("stale worktree entry detected but failed to prune: %w", pruneErr)
 			}
 			// After pruning, continue with creation
@@ -374,8 +393,8 @@ func (w *WorktreeManager) create(
 	}
 
 	if err := w.Git.CreateWorktreeIn(repoRoot, wtPath, name); err != nil {
-		if strings.Contains(err.Error(), "is a missing but already registered") {
-			if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr == nil {
+		if isStaleRegistrationError(err) {
+			if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr == nil {
 				if retryErr := w.Git.CreateWorktreeIn(repoRoot, wtPath, name); retryErr == nil {
 					return w.launchWindowAndRecord(
 						repoRoot,
@@ -392,6 +411,34 @@ func (w *WorktreeManager) create(
 	}
 
 	return w.launchWindowAndRecord(repoRoot, repoSlug, windowName, wtPath, layout, useRepoSession)
+}
+
+// isStaleRegistrationError reports whether a failed `git worktree add` looks
+// like it was blocked by a registration whose directory is already gone -
+// the case create() recovers from by pruning and retrying once.
+//
+// Git phrases this several ways depending on version and on whether the
+// collision is with the worktree path or with the branch it holds, so all of
+// them are matched. Matching too broadly is safe: prune only ever removes
+// entries whose directory is missing, so when the conflicting worktree is
+// genuinely still on disk the prune changes nothing and the retry fails with
+// the same error the user would have seen anyway. Matching too NARROWLY is
+// what hurts - it leaves a name permanently unusable, because the only thing
+// standing between the user and a working `dg wt new <name>` is a dead entry
+// nothing ever cleans up.
+func isStaleRegistrationError(err error) bool {
+	msg := err.Error()
+	for _, marker := range []string{
+		"is a missing but already registered",
+		"already used by worktree at",
+		"is already checked out at",
+		"already exists and is not an empty directory",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // launchWindowAndRecord wraps launchWindow so both create() call sites (the
@@ -778,6 +825,22 @@ func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
 				// The repo's own checkout is not a devgeta-managed worktree row.
 				continue
 			}
+			if wt.Prunable {
+				// Git still holds an administrative entry, but the directory
+				// is gone - this is debris, not a worktree. Emitting it as a
+				// row is what put deleted worktrees back on the `dg ws`
+				// dashboard after every refresh, each one failing its diff
+				// with "cannot change to '<path>': No such file or
+				// directory" because no git command can run there. Dropping
+				// it here is a pure read - the entry is cleaned up by the
+				// mutation paths that call pruneStaleWorktrees.
+				logger.L().Debugw(
+					"worktree: skipping stale registration",
+					"path", wt.Path,
+					"reason", wt.PrunableReason,
+				)
+				continue
+			}
 			// filepath.Base(wt.Path) gives the right Name regardless of
 			// location: for shared it's <basePath>/<slug>/<flat-name> ->
 			// <flat-name>; for in-repo it's
@@ -958,6 +1021,23 @@ func (w *WorktreeManager) Remove(name string, force bool) error {
 		return w.removeByRepo(slug, name, force)
 	}
 
+	// The name matched no live worktree. Before giving up, check whether git
+	// is still holding a registration for it whose directory is already gone,
+	// and clean that up: "remove the worktree called X" is satisfied by
+	// removing the last trace of X, and the user has no other way to reach it.
+	//
+	// This check has to live here, AFTER the live-worktree lookups, precisely
+	// because the enumeration those lookups use hides stale entries (a dead
+	// path can only produce failing commands). Hiding them without this made
+	// them unreachable rather than fixed: invisible in `dg wt list` and the
+	// dashboard, and unresolvable by name, so nothing devgeta shipped could
+	// ever clean one up.
+	if pruned, err := w.pruneStaleWorktreeNamed(name); err != nil {
+		return err
+	} else if pruned {
+		return nil
+	}
+
 	// Last resort: the repo could not be determined, so we don't know the full
 	// window name (wt-<repo>-<flat-name>). Match orphan windows by their trailing
 	// "-<flat-name>" segment, keeping only those with the wt- prefix.
@@ -1037,6 +1117,27 @@ func (w *WorktreeManager) resolveWorktreeRepoForMove(
 // minimum this would need surfacing to the caller as a warning, or a check
 // upstream, rather than silently picking one.
 func (w *WorktreeManager) currentWorktreePath(repoSlug, repoRoot, name string) (string, bool) {
+	// Ask git first, and take whatever path it reports verbatim (ADR-0010,
+	// "git is the index"). The two shape probes below can only ever find a
+	// worktree that sits at one of the exact locations devgeta knows how to
+	// construct today - so a worktree living anywhere else was invisible to
+	// every mutation, while List() (which reads git) kept showing it. That
+	// split is what made `d` in the dashboard a silent no-op on any worktree
+	// created under an older data-directory name, adopted by hand, or moved
+	// with plain `git worktree move`: remove looked at the configured shape,
+	// found nothing, and returned success without touching anything, so the
+	// row came back on the next refresh. Resolving from git closes the split
+	// at its source - there is no location a worktree can be at that git
+	// reports and this cannot resolve.
+	if wtPath, ok := w.gitWorktreePath(repoRoot, name); ok {
+		return wtPath, true
+	}
+
+	// Shape probes remain as a fallback for the one case git cannot be asked
+	// from repoRoot: an unresolved repoRoot (""). sharedWorktreePath needs no
+	// root, so probing it can still find a worktree - and isRealWorktreeAt
+	// asks git from the worktree itself, which answers even when the repo's
+	// own root was never resolved.
 	if shared := sharedWorktreePath(repoSlug, name); w.isRealWorktreeAt(shared) {
 		return shared, true
 	}
@@ -1046,6 +1147,229 @@ func (w *WorktreeManager) currentWorktreePath(repoSlug, repoRoot, name string) (
 		}
 	}
 	return "", false
+}
+
+// gitWorktreePath returns the path git itself reports for the worktree named
+// name in the repo rooted at repoRoot, matching on the worktree directory's
+// final path segment (the flattened name) exactly as enumerateWorktrees
+// derives WorktreeStatus.Name - so a name that resolves to a row in
+// `dg wt list` resolves to the same path here, whatever shape that path has.
+//
+// Prunable registrations are skipped: their directory is gone, so they are
+// debris to prune (see pruneStaleWorktrees), never a worktree to act on.
+// Returning one here would hand a mutation a path that cannot be operated on.
+//
+// Returns false when repoRoot is empty or git cannot answer there - both mean
+// "no answer from git", never "no such worktree", so the caller falls through
+// to its own fallbacks rather than concluding the worktree is absent.
+func (w *WorktreeManager) gitWorktreePath(repoRoot, name string) (string, bool) {
+	if repoRoot == "" {
+		return "", false
+	}
+	worktrees, err := w.Git.ListWorktreesAt(repoRoot)
+	if err != nil {
+		return "", false
+	}
+	// Both sides go through CanonicalRepoPath for the main-checkout
+	// comparison for the same reason isRealWorktreeAt does: git reports
+	// symlink-resolved paths while repoRoot may not be resolved, and on macOS
+	// (/tmp -> /private/tmp) a raw == would fail to recognize the main
+	// checkout and let it match as if it were a linked worktree.
+	canonicalRoot := config.CanonicalRepoPath(repoRoot)
+	flat := FlattenName(name)
+	for _, wt := range worktrees {
+		if wt.Prunable {
+			continue
+		}
+		if config.CanonicalRepoPath(wt.Path) == canonicalRoot {
+			// The repo's own checkout is not a devgeta-managed worktree,
+			// matching enumerateWorktrees' identical exclusion.
+			continue
+		}
+		if filepath.Base(wt.Path) == flat {
+			return wt.Path, true
+		}
+	}
+	return "", false
+}
+
+// StaleWorktree describes one registration git reports as prunable: the
+// directory is gone, so the entry is administrative debris that no command
+// can act on. Carries RepoRoot because pruning must run from a repo root
+// (see pruneStaleWorktrees) and the dead path itself is not one.
+type StaleWorktree struct {
+	Repo     string
+	RepoRoot string
+	Name     string
+	Path     string
+	Reason   string
+}
+
+// enumerateStaleWorktrees is enumerateWorktrees' mirror image: it returns
+// exactly the registrations that one drops.
+//
+// Both are needed and neither can be folded into the other. Dashboard rows
+// must never include debris (a diff against a missing directory can only
+// fail), but the debris still has to be reachable by SOMETHING or it can
+// never be cleaned up - which was the hole left by simply hiding it: the
+// ghost stopped being visible and, in the same stroke, stopped being
+// removable, because every lookup path went through the filtered
+// enumeration.
+func (w *WorktreeManager) enumerateStaleWorktrees() []StaleWorktree {
+	var stale []StaleWorktree
+	w.forEachKnownRepo(func(mainRoot string, worktrees []git.WorktreeInfo) bool {
+		repoSlug := filepath.Base(mainRoot)
+		for _, wt := range worktrees {
+			if !wt.Prunable {
+				continue
+			}
+			stale = append(stale, StaleWorktree{
+				Repo:     repoSlug,
+				RepoRoot: mainRoot,
+				Name:     filepath.Base(wt.Path),
+				Path:     wt.Path,
+				Reason:   wt.PrunableReason,
+			})
+		}
+		return true
+	})
+	return stale
+}
+
+// pruneStaleWorktreeNamed prunes the stale registrations whose flattened name
+// matches name, across every repo devgeta knows about. Reports whether it
+// found (and pruned) any.
+//
+// This is what makes `dg wt remove <name>` work on a worktree whose directory
+// is already gone. Without it, hiding stale rows from the enumeration also
+// hid them from every lookup, so the name resolved to nothing and the entry
+// survived forever with no devgeta command able to touch it.
+func (w *WorktreeManager) pruneStaleWorktreeNamed(name string) (bool, error) {
+	flat := FlattenName(name)
+	roots := make(map[string]bool)
+	for _, s := range w.enumerateStaleWorktrees() {
+		if s.Name == flat {
+			roots[s.RepoRoot] = true
+		}
+	}
+	if len(roots) == 0 {
+		return false, nil
+	}
+	for root := range roots {
+		if err := w.pruneStaleWorktrees(root); err != nil {
+			return false, fmt.Errorf(
+				"worktree '%s' is already gone but its stale git entry in %s could not be pruned: %w",
+				name,
+				root,
+				err,
+			)
+		}
+	}
+	return true, nil
+}
+
+// PruneStale removes git's leftover bookkeeping for worktrees whose directory
+// no longer exists, across every repo devgeta knows about, and returns what it
+// cleaned. It never deletes a worktree, a directory, or a branch - git's own
+// prune only drops entries whose directory is already missing - so unlike
+// Prune (which removes every worktree it can find) this needs no
+// confirmation.
+func (w *WorktreeManager) PruneStale() ([]StaleWorktree, error) {
+	stale := w.enumerateStaleWorktrees()
+	if len(stale) == 0 {
+		return nil, nil
+	}
+
+	roots := make(map[string]bool, len(stale))
+	for _, s := range stale {
+		roots[s.RepoRoot] = true
+	}
+
+	var failures []string
+	for root := range roots {
+		if err := w.pruneStaleWorktrees(root); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", root, err))
+		}
+	}
+	if len(failures) > 0 {
+		return stale, fmt.Errorf(
+			"failed to prune stale entries in some repos:\n  %s",
+			strings.Join(failures, "\n  "),
+		)
+	}
+	return stale, nil
+}
+
+// staleWorktreePaths returns the paths of every registration git reports as
+// prunable in the repo rooted at repoRoot whose flattened name matches name.
+// These are the ghost rows: git still holds an administrative entry, but the
+// directory is gone, so nothing can be run against the path.
+//
+// Used by removeByRepo to tell "this worktree is already gone, prune the
+// leftover entry and report success" apart from "no such worktree at all",
+// which must be an error rather than the silent no-op it used to be.
+func (w *WorktreeManager) staleWorktreePaths(repoRoot, name string) []string {
+	if repoRoot == "" {
+		return nil
+	}
+	worktrees, err := w.Git.ListWorktreesAt(repoRoot)
+	if err != nil {
+		return nil
+	}
+	flat := FlattenName(name)
+	var stale []string
+	for _, wt := range worktrees {
+		if wt.Prunable && filepath.Base(wt.Path) == flat {
+			stale = append(stale, wt.Path)
+		}
+	}
+	return stale
+}
+
+// repoRootForPrune resolves a repo root suitable for pruning, trying the
+// slug-based lookup first and then asking git to resolve one directly from
+// wtPath.
+//
+// The second step matters because cursorRepoRoot answers only for repos
+// devgeta already knows as anchors (the current directory, the recent-repos
+// store, a shared-root slug directory) and legitimately returns "" otherwise
+// - at which point pruneStaleWorktrees reports "repo root is unknown" and a
+// caller that escalates prune failures would fail a removal that actually
+// worked. wtPath is a real worktree, so git can name its main worktree, and
+// that answer is authoritative regardless of what devgeta has recorded.
+//
+// Must be called while wtPath still exists: git cannot resolve anything from
+// a directory that has already been deleted.
+func (w *WorktreeManager) repoRootForPrune(repoSlug, wtPath string) string {
+	if root := w.cursorRepoRoot(repoSlug); root != "" {
+		return root
+	}
+	if wtPath == "" {
+		return ""
+	}
+	if root, err := w.Git.GetMainWorktree(wtPath); err == nil {
+		return root
+	}
+	return ""
+}
+
+// pruneStaleWorktrees drops git's administrative entries for worktrees whose
+// directory no longer exists, running from repoRoot.
+//
+// The anchor matters and was the bug: every caller here used to pass
+// filepath.Dir(wtPath), the worktree's PARENT directory. For the in-repo
+// shape that happens to sit inside the repo and worked by luck; for the
+// shared shape it is ~/.local/share/devgeta/worktrees/<slug>, which is not a
+// git repository at all, so `git -C <that> worktree prune` failed with "not a
+// git repository" - and every call site discarded the error. Pruning was
+// therefore a silent no-op for exactly the worktrees that most needed it, and
+// the stale entries survived forever. A repo root is the only anchor guaranteed
+// to be a git repository, so it is the only one this accepts.
+func (w *WorktreeManager) pruneStaleWorktrees(repoRoot string) error {
+	if repoRoot == "" {
+		return fmt.Errorf("cannot prune stale worktree entries: repo root is unknown")
+	}
+	return w.Git.PruneWorktreesAt(repoRoot)
 }
 
 // isRealWorktreeAt reports whether path is a real, git-tracked worktree -
@@ -1432,8 +1756,10 @@ func (w *WorktreeManager) Repair(name string, layout Layout) error {
 
 	// If directory doesn't exist on disk but git knows about it, prune and error
 	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-		// Prune stale worktree entries
-		if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr != nil {
+		// Prune stale worktree entries from the repo root - see
+		// pruneStaleWorktrees for why filepath.Dir(wtPath) was the wrong
+		// anchor and left the entry in place.
+		if pruneErr := w.pruneStaleWorktrees(w.cursorRepoRoot(repoSlug)); pruneErr != nil {
 			return fmt.Errorf(
 				"worktree '%s' directory missing and failed to prune: %w",
 				name,
@@ -1518,7 +1844,8 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 	}
 	windowName := GetWindowName(repoSlug, name)
 	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
-		if pruneErr := w.Git.PruneWorktreesAt(filepath.Dir(wtPath)); pruneErr != nil {
+		// Repo root, not filepath.Dir(wtPath) - see pruneStaleWorktrees.
+		if pruneErr := w.pruneStaleWorktrees(w.cursorRepoRoot(repoSlug)); pruneErr != nil {
 			return fmt.Errorf(
 				"worktree '%s' directory missing and failed to prune: %w",
 				name,
@@ -1787,13 +2114,33 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 	if err != nil {
 		return err
 	}
+	// Resolved BEFORE anything is removed, while wtPath still exists: the
+	// prune at the end needs a repo root, and asking git to resolve one from
+	// a directory this function is about to delete only works beforehand.
+	repoRoot := w.repoRootForPrune(repoSlug, wtPath)
 
-	// Belt-and-suspenders: state is now resolved against reality (via
-	// currentWorktreePath's git check), so "neither exists" here is a
-	// legitimate no-op, not a false negative caused by a config/reality
-	// mismatch - the case this function used to get wrong.
+	// Nothing real to remove: either git is holding a stale registration
+	// whose directory is already gone (prune it and report success), or
+	// there is genuinely no such worktree (an error the caller must see).
+	//
+	// Returning a bare nil for BOTH cases, as this used to, is what made a
+	// ghost row unkillable: `d` in the dashboard reported success, pruned
+	// nothing, and the next 3-second refresh read the same stale entry back
+	// out of git and re-drew the row. A no-op that claims success is not a
+	// no-op - it is a silent failure, and it must never be the answer when
+	// the caller explicitly asked for a removal.
 	if !state.WtExists && !state.WindowExists {
-		return nil
+		if stale := w.staleWorktreePaths(repoRoot, name); len(stale) > 0 {
+			if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr != nil {
+				return fmt.Errorf(
+					"worktree '%s' is already gone but its stale git entry could not be pruned: %w",
+					name,
+					pruneErr,
+				)
+			}
+			return nil
+		}
+		return fmt.Errorf("no worktree '%s' in repo '%s' to remove", name, repoSlug)
 	}
 
 	if state.WtExists && !force {
@@ -1810,16 +2157,60 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 	// (state check may fail if not in tmux or window detection is unreliable)
 	_ = w.Tmux.KillWindow(state.WindowName)
 
+	// removedByFallback records that git refused to remove the worktree and we
+	// deleted the directory ourselves. That is the one path here that LEAVES
+	// git holding a registration pointing at a directory that no longer
+	// exists - in other words, it manufactures exactly the ghost this whole
+	// change exists to eliminate - so the prune below stops being defensive
+	// and becomes the step that must succeed.
+	removedByFallback := false
 	if state.WtExists {
 		if err := w.Git.RemoveWorktree(wtPath, true, name); err != nil {
+			// The worktree came out cleanly and only `branch -D` failed: the
+			// directory and its registration are already gone, so there is
+			// nothing to fall back to and nothing to prune. This must be
+			// reported, not swallowed - os.RemoveAll below would "succeed"
+			// on the already-deleted path and turn a real failure into a
+			// silent success, leaving the user with a branch they asked to
+			// have deleted and no indication it survived.
+			if errors.Is(err, git.ErrBranchDeleteFailed) {
+				return fmt.Errorf("worktree '%s' removed, but: %w", name, err)
+			}
 			if rmErr := os.RemoveAll(wtPath); rmErr != nil {
 				return fmt.Errorf("failed to remove worktree: %w", err)
 			}
+			removedByFallback = true
 		}
-		// Prune from repo base dir (parent of worktree dirs)
-		_ = w.Git.PruneWorktreesAt(filepath.Dir(wtPath))
-	} else {
-		_ = w.Git.PruneWorktreesAt(filepath.Dir(wtPath))
+	}
+
+	// Prune from the repo root - the only anchor guaranteed to be a git
+	// repository. This ran from filepath.Dir(wtPath) before, which for the
+	// shared shape is ~/.local/share/devgeta/worktrees/<slug>, not a repo at
+	// all, so the prune failed and the error was discarded: the entry this
+	// call exists to clean up survived every single removal.
+	//
+	// The failure is only escalated on the fallback path. After a clean
+	// `git worktree remove`, git has already dropped its own registration and
+	// this prune has nothing left to do, so failing the whole removal over it
+	// would report an error for an operation that fully succeeded - and it
+	// would fire routinely, since pruneStaleWorktrees treats an unresolvable
+	// repo root as an error and cursorRepoRoot legitimately returns "" for a
+	// repo that is neither the current directory nor a known anchor.
+	if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr != nil {
+		if removedByFallback {
+			return fmt.Errorf(
+				"worktree '%s' directory was removed, but git's stale entry for it could not be "+
+					"pruned (it will keep reappearing until it is): %w",
+				name,
+				pruneErr,
+			)
+		}
+		logger.L().Debugw(
+			"worktree: defensive prune after a clean remove failed",
+			"repo", repoSlug,
+			"name", name,
+			"error", pruneErr,
+		)
 	}
 
 	return nil

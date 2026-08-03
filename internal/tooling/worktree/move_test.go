@@ -36,6 +36,23 @@ func newMoveWM(
 	}
 }
 
+// worktreeListPorcelain builds `git worktree list --porcelain` output for a
+// repo whose main checkout is at repoRoot, plus one entry per linked worktree
+// in wtPaths. gitWorktreePath reads exactly this to resolve a worktree's REAL
+// location (ADR-0010, "git is the index"), so every test that needs a
+// worktree to resolve feeds git's answer through here instead of hand-writing
+// the porcelain format at each call site.
+func worktreeListPorcelain(repoRoot string, wtPaths ...string) string {
+	var sb strings.Builder
+	sb.WriteString("worktree " + repoRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n")
+	for _, p := range wtPaths {
+		sb.WriteString(
+			"worktree " + p + "\nHEAD def456\nbranch refs/heads/" + filepath.Base(p) + "\n\n",
+		)
+	}
+	return sb.String()
+}
+
 // exitError builds a real *exec.ExitError by actually running a trivial
 // subprocess (sh -c "exit N") - the standard way to construct one in Go,
 // since exec.ExitError's fields are unexported. This never touches git or
@@ -142,10 +159,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn) - WtExists via real dir
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate) -> falls back to os.Stat
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"",
@@ -221,25 +238,20 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn) - WtExists via real dir (in-repo, matches config)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate) -> falls back, doesn't exist
-				commands.ExecCommandResult(
-					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 4 ListWorktreesAt(in-repo candidate) -> falls back, exists
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real in-repo path
 				commands.ExecCommandResult(
 					"",
 					"",
 					nil,
-				), // 5 IsWorktreeDirty - clean
+				), // 4 IsWorktreeDirty - clean
 				commands.ExecCommandResult(
 					"worktree "+repoRoot+"\n",
 					"",
 					nil,
-				), // 6 GetMainWorktree
+				), // 5 GetMainWorktree
 				commands.ExecCommandResult(
 					"",
 					"",
@@ -306,10 +318,11 @@ func TestWorktreeMove(t *testing.T) {
 			// stale window left over from before the config change).
 			commands.ExecCommandResult("", "not a git repository", exitError(t, 128)),
 			commands.ExecCommandResult(
+				worktreeListPorcelain(repoRoot, fromPath),
 				"",
-				"not a git repository",
-				exitError(t, 128),
-			), // 3 ListWorktreesAt(shared candidate) -> falls back, exists
+				nil,
+			), // 3 ListWorktreesAt(repoRoot) - git reports the real (shared) path,
+			// which is exactly what the config-derived guess would have gotten wrong
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -389,10 +402,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 			)
 			mockTmuxBase.SetExecCommandResults(
 				commands.ExecCommandResult("", "", nil), // 1 WindowSession - no window
@@ -447,10 +460,10 @@ func TestWorktreeMove(t *testing.T) {
 				nil,
 			), // 2 ListWorktreesAt (worktreeStateIn)
 			commands.ExecCommandResult(
+				worktreeListPorcelain(repoRoot, fromPath),
 				"",
-				"not a git repository",
-				exitError(t, 128),
-			), // 3 ListWorktreesAt(shared candidate)
+				nil,
+			), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 			commands.ExecCommandResult(
 				"M file.go\n",
 				"",
@@ -505,10 +518,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"fatal: unable to read current working directory",
@@ -563,10 +576,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"",
@@ -633,10 +646,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"",
@@ -710,10 +723,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"",
@@ -781,10 +794,10 @@ func TestWorktreeMove(t *testing.T) {
 				nil,
 			), // 2 ListWorktreesAt (worktreeStateIn)
 			commands.ExecCommandResult(
+				worktreeListPorcelain(repoRoot, fromPath),
 				"",
-				"not a git repository",
-				exitError(t, 128),
-			), // 3 ListWorktreesAt(shared candidate)
+				nil,
+			), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -880,10 +893,10 @@ func TestWorktreeMove(t *testing.T) {
 				nil,
 			), // 2 ListWorktreesAt (worktreeStateIn)
 			commands.ExecCommandResult(
+				worktreeListPorcelain(repoRoot, fromPath),
 				"",
-				"not a git repository",
-				exitError(t, 128),
-			), // 3 ListWorktreesAt(shared candidate)
+				nil,
+			), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -969,10 +982,10 @@ func TestWorktreeMove(t *testing.T) {
 					nil,
 				), // 2 ListWorktreesAt (worktreeStateIn)
 				commands.ExecCommandResult(
+					worktreeListPorcelain(repoRoot, fromPath),
 					"",
-					"not a git repository",
-					exitError(t, 128),
-				), // 3 ListWorktreesAt(shared candidate)
+					nil,
+				), // 3 ListWorktreesAt(repoRoot) - git resolves the real path
 				commands.ExecCommandResult(
 					"",
 					"",

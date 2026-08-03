@@ -1204,10 +1204,14 @@ func TestRemove(t *testing.T) {
 			}
 		})
 
-		err := wm.Remove("feature-test", true)
-		if err != nil {
-			t.Fatalf("Remove failed: %v", err)
-		}
+		// The git mock answers every command with a non-porcelain string, so
+		// `git worktree remove` never completes and removal falls back to
+		// deleting the directory itself — which leaves git holding a
+		// registration that only a prune can clear, and the prune cannot run
+		// either. Reporting that is the contract: the directory is gone, but
+		// the cleanup is knowingly incomplete, and staying silent about it is
+		// what let stale entries accumulate unnoticed.
+		assertRemovedButUnprunable(t, wm.Remove("feature-test", true))
 
 		if mockGitBase.GetExecCommandCallCount() < 1 {
 			t.Error("Expected git commands to be called")
@@ -1258,10 +1262,10 @@ func TestRemove(t *testing.T) {
 			}
 		})
 
-		err := wm.Remove("feature-test", true)
-		if err != nil {
-			t.Fatalf("Remove failed: %v", err)
-		}
+		// Same non-functional git mock as above: the fallback removes the
+		// directory and the resulting stale entry cannot be pruned, which
+		// must be reported rather than swallowed.
+		assertRemovedButUnprunable(t, wm.Remove("feature-test", true))
 	})
 
 	t.Run("not in git repo", func(t *testing.T) {
@@ -1328,10 +1332,19 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 
 		// "repo/name" was the broken slug Jump() used to pass.
 		wrongSlug := repoSlug + "/" + wtName
-		if err := wm.removeByRepo(wrongSlug, wtName, true); err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		// A slug that resolves to nothing must REPORT that, not return a bare
+		// nil. Reporting success for "I found nothing to remove" is what let a
+		// stale dashboard row survive `d` and reappear on the next refresh:
+		// the caller was told the removal worked, so it had no reason to
+		// surface anything to the user.
+		err := wm.removeByRepo(wrongSlug, wtName, true)
+		if err == nil {
+			t.Fatal("expected an error for a slug that resolves to no worktree, got nil")
 		}
-		if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		if !strings.Contains(err.Error(), wtName) {
+			t.Errorf("error should name the worktree it could not find, got: %v", err)
+		}
+		if _, statErr := os.Stat(wtPath); os.IsNotExist(statErr) {
 			t.Error("directory was removed despite wrong repoSlug — fix broke the invariant")
 		}
 	})
@@ -1348,9 +1361,7 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 			}
 		})
 
-		if err := wm.removeByRepo(repoSlug, wtName, true); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		assertRemovedButUnprunable(t, wm.removeByRepo(repoSlug, wtName, true))
 		if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 			t.Error("expected directory to be removed with correct repoSlug")
 		}
@@ -1733,9 +1744,7 @@ func TestRemoveByRepoHonorsLocation(t *testing.T) {
 	mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	if err := wm.removeByRepo(repoSlug, name, true); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
+	assertRemovedButUnprunable(t, wm.removeByRepo(repoSlug, name, true))
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Error("expected the in-repo worktree directory to be removed")
 	}
@@ -1819,9 +1828,7 @@ func TestMutationsUseRealLocationNotConfigured(t *testing.T) {
 			mockTmuxBase.SetExecCommandResult("some-session\t"+windowName+"\n", "", nil)
 			wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-			if err := wm.removeByRepo(repoSlug, name, true); err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			assertRemovedButUnprunable(t, wm.removeByRepo(repoSlug, name, true))
 			if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 				t.Error(
 					"the real in-repo worktree directory was NOT removed - " +
@@ -1977,9 +1984,7 @@ func TestRemoveFindsInRepoWorktreeViaFallback(t *testing.T) {
 	mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	if err := wm.Remove(name, true); err != nil {
-		t.Fatalf("Remove failed: %v", err)
-	}
+	assertRemovedButUnprunable(t, wm.Remove(name, true))
 	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
 		t.Error("expected the in-repo worktree directory to be removed")
 	}

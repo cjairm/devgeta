@@ -379,6 +379,7 @@ dg wt create feature-login --layout nvim    # Create with the nvim-only layout
 dg wt new fix-auth --repo ~/code/api        # Create for another repo; window opens in its session
 dg wt repair feature-login                  # Recreate missing tmux window (rebuilds current layout resolution, not the original)
 dg wt prune                                 # Remove all worktrees (prompts for confirmation)
+dg wt prune --stale                         # Clear git's leftover entries for deleted worktrees (no confirmation; removes nothing of yours)
 ```
 
 **Creating from the dashboard (`n` / `N`)**:

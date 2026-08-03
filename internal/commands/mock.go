@@ -201,6 +201,18 @@ type MockBaseCommand struct {
 	ExecCommandStderr string
 	ExecCommandError  error
 
+	// ExecCommandFn, when set, answers every ExecCommand call and takes
+	// precedence over execResults and the fixed fields. Use it when a test
+	// needs to key its answer off WHAT was run rather than the position of
+	// the call — e.g. "succeed at everything except `worktree prune`".
+	//
+	// Positional sequences are unavoidably coupled to the exact number and
+	// order of the commands under test, so an implementation change that adds
+	// one lookup silently shifts every later answer and the test fails for a
+	// reason unrelated to what it asserts. Prefer this hook whenever the
+	// assertion is about a specific command.
+	ExecCommandFn func(cmd CommandParams) (string, string, error)
+
 	// Per-call results: when non-empty, each call pops the next entry.
 	// After all entries are consumed the last one is repeated.
 	execResults []execResult
@@ -264,6 +276,9 @@ func ExecCommandResult(stdout, stderr string, err error) execResult {
 // It records the call and returns the next canned result (or the fixed result).
 func (m *MockBaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	m.ExecCommandCalls = append(m.ExecCommandCalls, cmd)
+	if m.ExecCommandFn != nil {
+		return m.ExecCommandFn(cmd)
+	}
 	if len(m.execResults) > 0 {
 		idx := m.execCallIdx
 		if idx >= len(m.execResults) {
@@ -331,6 +346,11 @@ func (m *MockBaseCommand) ResetExecCommand() {
 	m.ExecCommandError = nil
 	m.execResults = nil
 	m.execCallIdx = 0
+	// Cleared with the rest: ExecCommandFn outranks every other field in
+	// ExecCommand, so leaving it set would make a "reset" mock keep answering
+	// from the previous subtest's callback and silently ignore whatever the
+	// next one configures.
+	m.ExecCommandFn = nil
 }
 
 // SetExecCommandResult configures the return values for ExecCommand

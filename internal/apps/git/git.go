@@ -38,15 +38,45 @@ import (
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 var _ apps.App = (*Git)(nil)
 
+// ErrBranchDeleteFailed marks a RemoveWorktree failure in which the WORKTREE
+// was removed successfully and only the follow-up branch deletion failed.
+//
+// The distinction is load-bearing for callers with a filesystem fallback:
+// "git refused to remove the worktree" means the directory is still there and
+// removing it by hand leaves git holding a stale registration to prune, while
+// this error means the directory and its registration are already gone and
+// there is nothing to clean up - only a branch left behind. Callers that
+// cannot tell the two apart end up either pruning for no reason or, worse,
+// swallowing this error as success because their fallback os.RemoveAll
+// trivially "succeeds" on a path git already deleted.
+var ErrBranchDeleteFailed = errors.New("worktree removed but branch deletion failed")
+
 // WorktreeInfo contains information about a git worktree.
+//
+// Prunable mirrors the "prunable" line `git worktree list --porcelain` emits
+// for a registration whose working directory git can no longer find (it was
+// deleted or moved out from under git). Such an entry is administrative
+// debris, not a worktree: every command run against its Path fails with
+// "cannot change to '<path>': No such file or directory". Callers that
+// enumerate worktrees for display or for a mutation MUST honor this field —
+// dropping it (as this parser once did) is what let deleted worktrees keep
+// appearing in `dg wt list` and the `dg ws` dashboard forever.
 type WorktreeInfo struct {
 	Path   string
 	Branch string
 	Commit string
+	// Prunable reports that git flagged this registration as stale — its
+	// directory is gone and `git worktree prune` would remove it.
+	Prunable bool
+	// PrunableReason is git's own explanation (e.g. "gitdir file points to
+	// non-existent location"), empty when Prunable is false or when git
+	// emitted the marker with no reason.
+	PrunableReason string
 }
 
 type Git struct {
@@ -57,6 +87,15 @@ type Git struct {
 	// agents see progress as it happens. Commands whose output is parsed
 	// (e.g. ListBranches) intentionally stay non-streaming.
 	Stream bool
+	// WarnFn reports a non-fatal advisory that the user should see but that
+	// must not fail the operation (e.g. "your local branch diverged from
+	// origin and was not fast-forwarded"). It defaults to a CLI-safe print in
+	// New(); a caller rendering a TUI must override it, since printing
+	// directly to stdout underneath a running Bubble Tea alt-screen program
+	// corrupts the display. Use WorktreeManager.SetWarnFn to override this
+	// together with the manager's own WarnFn — overriding only one of the two
+	// is what let raw git advisories scribble over the `dg ws` dashboard.
+	WarnFn func(msg string)
 }
 
 func (g *Git) Name() string       { return constants.Git }
@@ -65,7 +104,20 @@ func (g *Git) Kind() apps.AppKind { return apps.KindTerminal }
 func New() *Git {
 	osCmd := cmd.NewCommand()
 	baseCmd := cmd.NewBaseCommand()
-	return &Git{Cmd: osCmd, Base: baseCmd}
+	return &Git{Cmd: osCmd, Base: baseCmd, WarnFn: utils.PrintWarning}
+}
+
+// warn reports a non-fatal advisory via WarnFn, falling back to a plain
+// stdout print when unset (a zero-value Git built by a test or a struct
+// literal). Every advisory in this package goes through here rather than
+// fmt.Print* directly, so a TUI caller that overrides WarnFn cannot be
+// bypassed by one straggler call site.
+func (g *Git) warn(msg string) {
+	if g.WarnFn != nil {
+		g.WarnFn(msg)
+		return
+	}
+	utils.PrintWarning(msg)
 }
 
 func (g *Git) Install() error {
@@ -467,6 +519,18 @@ func (g *Git) freeBranchIfHeldElsewhere(repoDir, path, branch string) error {
 
 	var holderPath string
 	for _, wt := range worktrees {
+		// A prunable registration holds nothing: its directory is already
+		// gone, so there is no checkout to switch off the branch and no
+		// working tree to inspect. Treating one as a live holder sends
+		// IsWorktreeDirty below at a path that does not exist, which fails
+		// with a message no caller recognizes as a stale-entry problem — so
+		// create() dead-ends here instead of reaching its prune-and-retry.
+		// Skipping it lets `git worktree add` produce its own "already used
+		// by worktree at" error, which create() DOES recognize, prunes, and
+		// retries successfully.
+		if wt.Prunable {
+			continue
+		}
 		if wt.Branch == branch {
 			holderPath = wt.Path
 			break
@@ -497,12 +561,12 @@ func (g *Git) freeBranchIfHeldElsewhere(repoDir, path, branch string) error {
 	if err := g.ExecuteCommandAt(holderPath, "checkout", defaultBranch); err != nil {
 		return fmt.Errorf("failed to switch %s off %q: %w", holderPath, branch, err)
 	}
-	fmt.Printf(
-		"Note: source checkout at %s was moved to %s so %q could be adopted into the new worktree.\n",
+	g.warn(fmt.Sprintf(
+		"Note: source checkout at %s was moved to %s so %q could be adopted into the new worktree.",
 		holderPath,
 		defaultBranch,
 		branch,
-	)
+	))
 	return nil
 }
 
@@ -511,7 +575,8 @@ func (g *Git) freeBranchIfHeldElsewhere(repoDir, path, branch string) error {
 // commits are never discarded. When there is no remote counterpart there is
 // nothing to sync. When histories have diverged the fast-forward fails; we
 // leave the branch untouched and warn the user how to reconcile manually
-// (logger is suppressed below ERROR in normal runs, so we print directly).
+// (logger is suppressed below ERROR in normal runs, so this goes through
+// WarnFn — never a raw print, which would corrupt a TUI caller's display).
 func (g *Git) syncExistingBranch(path, branch string) error {
 	// Check refs through the worktree itself so this works no matter which
 	// repository (if any) the process's working directory is in.
@@ -525,14 +590,14 @@ func (g *Git) syncExistingBranch(path, branch string) error {
 
 	base := fmt.Sprintf("origin/%s", branch)
 	if ffErr := g.ExecuteCommandAt(path, "merge", "--ff-only", base); ffErr != nil {
-		fmt.Printf(
+		g.warn(fmt.Sprintf(
 			"Warning: local branch %q diverged from %s and was not updated.\n"+
 				"  The worktree was created at the branch's current local state.\n"+
 				"  If the local branch has no unique work, sync it with:\n"+
 				"    git -C %s fetch origin %s\n"+
-				"    git -C %s reset --hard %s\n",
+				"    git -C %s reset --hard %s",
 			branch, base, path, branch, path, base,
-		)
+		))
 	}
 	return nil
 }
@@ -567,6 +632,13 @@ func (g *Git) ListWorktreesAt(dir string) ([]WorktreeInfo, error) {
 // RemoveWorktree removes a worktree and optionally its associated branch.
 // Resolves the main worktree first so the remove command doesn't run from
 // within the worktree being deleted.
+//
+// A failure to delete the branch is wrapped with ErrBranchDeleteFailed, so a
+// caller can tell it apart from "the worktree itself could not be removed" -
+// by that point the worktree and its git registration are already gone, and
+// treating the two the same makes a filesystem-fallback caller swallow this
+// error as success (os.RemoveAll trivially succeeds on an already-deleted
+// path).
 func (g *Git) RemoveWorktree(path string, deleteBranch bool, branchName string) error {
 	// Find the main worktree by resolving git-common-dir from the target path
 	mainWorktree, err := g.GetMainWorktree(path)
@@ -583,7 +655,8 @@ func (g *Git) RemoveWorktree(path string, deleteBranch bool, branchName string) 
 	if deleteBranch && branchName != "" {
 		if err := g.ExecuteCommandAt(mainWorktree, "branch", "-D", branchName); err != nil {
 			return fmt.Errorf(
-				"removed worktree but failed to delete branch '%s': %w",
+				"%w: branch '%s': %w",
+				ErrBranchDeleteFailed,
 				branchName,
 				err,
 			)
@@ -801,6 +874,14 @@ func parseWorktreeOutput(output string) []WorktreeInfo {
 		case strings.HasPrefix(line, "branch "):
 			branchRef, _ := strings.CutPrefix(line, "branch ")
 			current.Branch = strings.TrimPrefix(branchRef, "refs/heads/")
+		// git emits the marker bare ("prunable") or with a reason
+		// ("prunable gitdir file points to non-existent location"), so both
+		// spellings are matched here rather than only the reason-bearing one.
+		case line == "prunable":
+			current.Prunable = true
+		case strings.HasPrefix(line, "prunable "):
+			current.Prunable = true
+			current.PrunableReason, _ = strings.CutPrefix(line, "prunable ")
 		}
 	}
 

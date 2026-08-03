@@ -267,19 +267,38 @@ func newModel(
 		if err != nil {
 			return "", err
 		}
-		// mgr.WarnFn fires synchronously from inside CreateAt below (e.g. the
-		// recent-repos store failed to record this create). Swapping it to a
-		// local closure and restoring it via defer right after CreateAt
-		// returns is safe only because this TUI never runs two creates
-		// concurrently — and that's actually true, not just assumed: this
-		// tea.Cmd closure only ever runs while m.creating is true, and
-		// handleNewWorktree (the only way to start another create) refuses
-		// to open the picker while m.creating is true, so a second createFn
-		// call can never be in flight to race this swap/restore.
-		var warning string
+		// The warn sink fires synchronously from inside CreateAt below — from
+		// the manager (e.g. the recent-repos store failed to record this
+		// create) and from the git app underneath it (e.g. the branch
+		// diverged from origin and was not fast-forwarded). SetWarnFn swaps
+		// both in one call, so neither can fall through to a raw stdout print
+		// that would scribble over this alt-screen. Swapping to a local
+		// closure and restoring it via defer right after CreateAt returns is
+		// safe only because this TUI never runs two creates concurrently —
+		// and that's actually true, not just assumed: this tea.Cmd closure
+		// only ever runs while m.creating is true, and handleNewWorktree (the
+		// only way to start another create) refuses to open the picker while
+		// m.creating is true, so a second createFn call can never be in
+		// flight to race this swap/restore.
+		// Accumulate, never overwrite: one CreateAt can raise several
+		// independent advisories in sequence — git frees a branch held by
+		// the source checkout AND then finds that branch diverged from
+		// origin, and the manager can separately fail to record the repo as
+		// recently used. Keeping only the last one silently dropped the
+		// others, including the "your source checkout was moved to <default
+		// branch>" notice, which changes state the user needs to know about.
+		//
+		// Joined with " · " rather than "\n" on purpose: this string becomes
+		// m.status, and the dashboard budgets exactly m.height lines. Every
+		// embedded newline is an extra terminal row, which scrolls the frame
+		// and leaves the previous frame's rows interleaved with the new ones
+		// — the same corruption this cycle set out to fix. renderStatus
+		// enforces that invariant for every status source; this just avoids
+		// creating work for it.
+		var warnings []string
 		original := mgr.WarnFn
-		mgr.WarnFn = func(msg string) { warning = msg }
-		defer func() { mgr.WarnFn = original }()
+		mgr.SetWarnFn(func(msg string) { warnings = append(warnings, msg) })
+		defer func() { mgr.SetWarnFn(original) }()
 		// force=true is safe here specifically because the model already ran
 		// its own equivalent hook-compatibility check (checkHookCompatibilityFn)
 		// and, when it found warnings, its own equivalent TUI-safe confirm
@@ -291,7 +310,7 @@ func newModel(
 		if err := mgr.CreateAt(repoPath, name, layout, true); err != nil {
 			return "", err
 		}
-		return warning, nil
+		return strings.Join(warnings, " · "), nil
 	}
 	// Reuse the shared gh wrapper rather than shelling out to gh here, so the
 	// diff pane's PR-title lookup goes through the same executor as every other
@@ -1678,11 +1697,48 @@ func (m Model) renderHint(width int) string {
 	return m.palette.HintBar(hints, width)
 }
 
+// renderStatus renders the one-line status message at the bottom of the
+// dashboard.
+//
+// flattenToOneLine is applied before truncation, and is load-bearing rather
+// than cosmetic: renderDashboard budgets exactly m.height lines
+// (body + hint + status), so a status containing a newline emits an extra
+// terminal row, the terminal scrolls to make room, and the previous frame's
+// rows stay on screen interleaved with the new ones — the "duplicated and
+// nested worktrees" corruption this cycle exists to fix. Status text arrives
+// from many sources (git advisories, wrapped errors, tool output), several of
+// which are legitimately multi-line, so the invariant is enforced here at the
+// single point every one of them passes through rather than trusted to each
+// caller.
 func (m Model) renderStatus(width int) string {
 	if m.status == "" {
 		return ""
 	}
-	return m.palette.StatusMsg.Render(ansi.Truncate(m.status, width, ""))
+	return m.palette.StatusMsg.Render(ansi.Truncate(flattenToOneLine(m.status), width, ""))
+}
+
+// flattenToOneLine collapses every newline, carriage return, and tab in s
+// into single spaces, so the result occupies exactly one terminal row.
+// Runs of resulting whitespace are squeezed so an indented multi-line message
+// (git's advisories are written that way) reads as prose rather than as a
+// line with a gap in the middle.
+func flattenToOneLine(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	lastWasSpace := false
+	for _, r := range s {
+		isSpace := r == '\n' || r == '\r' || r == '\t' || r == ' '
+		if isSpace {
+			if !lastWasSpace && b.Len() > 0 {
+				b.WriteByte(' ')
+			}
+			lastWasSpace = true
+			continue
+		}
+		b.WriteRune(r)
+		lastWasSpace = false
+	}
+	return strings.TrimRight(b.String(), " ")
 }
 
 // renderHelpPopup builds the raw (uncentered) help popup content; the
