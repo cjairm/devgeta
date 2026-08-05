@@ -150,8 +150,12 @@ func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir string) erro
 }
 
 // CreateWindowInSession creates a window inside a specific session.
+//
+// -d for the same reason CreateWindow passes it: building a window must never
+// move the attached client. Without it, a client attached to `session` gets
+// dragged to the new window, overriding a caller that decided to stay put.
 func (t *Tmux) CreateWindowInSession(session, name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-t", session+":", "-n", name, "-c", workdir)
+	return t.ExecuteCommand("new-window", "-d", "-t", session+":", "-n", name, "-c", workdir)
 }
 
 // SessionInfo describes one tmux session for listing purposes.
@@ -482,9 +486,17 @@ func (t *Tmux) SendKeys(session, keys string) error {
 	return t.ExecuteCommand("send-keys", "-t", session, keys, "Enter")
 }
 
-// CreateWindow creates a new window in the current session
+// CreateWindow creates a new window in the current session, without moving
+// the attached client to it.
+//
+// -d is load-bearing, not a preference: `new-window` makes the new window
+// current by default, so creating one silently relocated the user. That made
+// "create the window but leave me where I am" impossible to express — the
+// dashboard's worktree.attach_after_create: false was overridden by this call
+// before it was ever read. Moving the client is now always a separate,
+// explicit step (SwitchToWindow), so only a caller that asks for it gets it.
 func (t *Tmux) CreateWindow(name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-n", name, "-c", workdir)
+	return t.ExecuteCommand("new-window", "-d", "-n", name, "-c", workdir)
 }
 
 // SplitWindow splits an existing window, rooting the new pane at workdir.

@@ -92,8 +92,9 @@ Examples:
   dg wt create fix-1082 --ai claude --prompt 'fix issue 1082'
   dg wt create api --pane 'make finit' --pane 'npm run dev'
 
-After creation, switch to the window with:
-  <prefix> + [window number] or <prefix> + w to see all windows`,
+Inside tmux this moves you to the new window. To get back, use <prefix> + w to
+see all windows. The dg ws dashboard has its own setting for this,
+worktree.attach_after_create, and stays put when it is false.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -123,11 +124,19 @@ After creation, switch to the window with:
 		if repoRoot != "" {
 			repoSlug = repoRoot[findLastSlash(repoRoot)+1:]
 		}
+		windowName := worktree.GetWindowName(repoSlug, name)
 		utils.PrintSuccess(fmt.Sprintf("Created worktree: %s/%s", repoSlug, name))
-		utils.PrintSuccess(
-			fmt.Sprintf("Created tmux window: %s", worktree.GetWindowName(repoSlug, name)),
-		)
-		utils.PrintInfo("Switch to window with: <prefix> + w")
+		utils.PrintSuccess(fmt.Sprintf("Created tmux window: %s", windowName))
+		// You asked for this worktree from a shell, so go to it. The manager
+		// deliberately no longer moves anyone (see FollowWindow), which makes
+		// this the one place the CLI's "land me in the new window" intent
+		// lives. A failure here is not a failed create: report it and keep the
+		// success above, with the window name to jump to by hand.
+		if err := wm.FollowWindow(windowName); err != nil {
+			utils.PrintWarning(
+				fmt.Sprintf("Could not switch to the window (%v). Use: <prefix> + w", err),
+			)
+		}
 		return nil
 	},
 }
@@ -262,10 +271,17 @@ surviving panes already match the requested layout.`,
 			return err
 		}
 
+		windowName := wm.WindowNameFor(name)
 		utils.PrintSuccess(fmt.Sprintf("Repaired worktree: %s", name))
-		utils.PrintSuccess(
-			fmt.Sprintf("Launched AI coder in window: %s", wm.WindowNameFor(name)),
-		)
+		utils.PrintSuccess(fmt.Sprintf("Launched AI coder in window: %s", windowName))
+		// Same reasoning as create: you repaired this window from a shell in
+		// order to work in it, so go there. The dashboard's own repair says
+		// "repaired:" and keeps you on the list instead.
+		if err := wm.FollowWindow(windowName); err != nil {
+			utils.PrintWarning(
+				fmt.Sprintf("Could not switch to the window (%v). Use: <prefix> + w", err),
+			)
+		}
 		return nil
 	},
 }

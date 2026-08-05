@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1464,6 +1465,50 @@ func TestCreateWindowInSession(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected session target 'my-session:' in args %v", last.Args)
+	}
+}
+
+// TestCreateWindowsAreDetached locks in the one property that makes "create
+// the window but leave me where I am" expressible at all: neither window
+// creator may move the attached client. tmux's new-window makes the new
+// window current unless -d is passed, and that default silently overrode the
+// dashboard's worktree.attach_after_create: false — the client had already
+// been relocated before the setting was read. Moving the client is
+// SwitchToWindow's job alone.
+func TestCreateWindowsAreDetached(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(*tmux.Tmux) error
+	}{
+		{
+			name: "CreateWindow",
+			call: func(a *tmux.Tmux) error { return a.CreateWindow("wt-feature", "/tmp/repo") },
+		},
+		{
+			name: "CreateWindowInSession",
+			call: func(a *tmux.Tmux) error {
+				return a.CreateWindowInSession("my-session", "wt-feature", "/tmp/repo")
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult("", "", nil)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			if err := tc.call(app); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			last := mockApp.Base.GetLastExecCommandCall()
+			if last == nil {
+				t.Fatal("no ExecCommand call recorded")
+			}
+			if !slices.Contains(last.Args, "-d") {
+				t.Errorf("%s must pass -d so it cannot move the client, args: %v",
+					tc.name, last.Args)
+			}
+		})
 	}
 }
 

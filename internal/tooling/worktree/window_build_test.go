@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
@@ -327,6 +328,183 @@ func TestCreateAtMultiPaneFailureKillsWindowNotSession(t *testing.T) {
 			mockGitBase.ExecCommandCalls,
 		)
 	}
+}
+
+// TestCreateNeverMovesTheClient is the regression test for the bug that made
+// worktree.attach_after_create: false impossible to honor. create() used to
+// end with an unconditional WindowSession + SwitchToWindow, so the attached
+// client was already sitting in the new window by the time the `dg ws`
+// dashboard read the setting and decided to stay put. From the user's side
+// the dashboard "closed itself" on every create.
+//
+// Going to the new window is now the caller's call (FollowWindow), so no
+// create path may issue a switch-client or select-window of its own. Both
+// entry points are covered: Create (current session) and CreateAt (the
+// repo-slug session, which is the path the dashboard takes).
+//
+// The `dg ws` test for the setting (TestCreateSuccessStaysInDashboardWhen
+// AttachAfterCreateFalse) could never have caught this — it mocks createFn,
+// so the manager's switch never ran in it. This is the layer that has to
+// hold the line.
+func TestCreateNeverMovesTheClient(t *testing.T) {
+	// A real TMUX value is what the old code required to switch at all, so
+	// leaving it unset would let this test pass against the very bug it
+	// exists to catch.
+	t.Setenv("TMUX", "/private/tmp/tmux-501/default,2221,9")
+
+	// Each case queues its own tmux results because the two paths differ by
+	// one call (CreateAt consults has-session for the repo-slug session).
+	//
+	// The queues matter: the mock repeats its LAST result forever, and the old
+	// switch only fired when a WindowSession lookup FOUND the window. So each
+	// queue ends on a "<session>\t<window>" line — the format SessionWindows
+	// parses — leaving a found window waiting for any lookup the create path
+	// still makes after building the window. With the bug present that lookup
+	// happens and the switch follows; with it gone the line is never consumed.
+	// An empty trailing result would make this test pass against the very bug
+	// it exists to catch (it did, before this comment existed).
+	cases := []struct {
+		name   string
+		tmux   func(mock *commands.MockBaseCommand, found string)
+		create func(wm *WorktreeManager, repoRoot string) error
+	}{
+		{
+			name: "Create",
+			tmux: func(mock *commands.MockBaseCommand, found string) {
+				mock.SetExecCommandResults(
+					commands.ExecCommandResult("", "", nil),     // list-windows (state)
+					commands.ExecCommandResult("", "", nil),     // new-window
+					commands.ExecCommandResult("%3\n", "", nil), // display-message (pane 0 id)
+					commands.ExecCommandResult("", "", nil),     // send-keys (pane 0)
+					commands.ExecCommandResult("", "", nil),     // split-window
+					commands.ExecCommandResult("", "", nil),     // send-keys (pane 1)
+					commands.ExecCommandResult("", "", nil),     // select-pane
+					commands.ExecCommandResult(found, "", nil),  // any further lookup: found
+				)
+			},
+			create: func(wm *WorktreeManager, _ string) error {
+				return wm.Create("feature-test", twoPaneLayout, true)
+			},
+		},
+		{
+			name: "CreateAt",
+			tmux: func(mock *commands.MockBaseCommand, found string) {
+				mock.SetExecCommandResults(
+					commands.ExecCommandResult("", "", nil),     // list-windows (state)
+					commands.ExecCommandResult("", "", nil),     // list-windows (ensureWindow)
+					commands.ExecCommandResult("", "", nil),     // has-session
+					commands.ExecCommandResult("", "", nil),     // new-window
+					commands.ExecCommandResult("%3\n", "", nil), // display-message (pane 0 id)
+					commands.ExecCommandResult("", "", nil),     // send-keys (pane 0)
+					commands.ExecCommandResult("", "", nil),     // split-window
+					commands.ExecCommandResult("", "", nil),     // send-keys (pane 1)
+					commands.ExecCommandResult("", "", nil),     // select-pane
+					commands.ExecCommandResult(found, "", nil),  // any further lookup: found
+				)
+			},
+			create: func(wm *WorktreeManager, repoRoot string) error {
+				return wm.CreateAt(repoRoot, "feature-test", twoPaneLayout, true)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			repoRoot := t.TempDir()
+
+			mockGitBase := commands.NewMockBaseCommand()
+			mockGitBase.SetExecCommandResults(
+				commands.ExecCommandResult(repoRoot+"\n", "", nil), // rev-parse --show-toplevel
+				commands.ExecCommandResult("", "", nil),            // everything else
+			)
+			mockTmuxBase := commands.NewMockBaseCommand()
+			windowName := GetWindowName(filepath.Base(repoRoot), "feature-test")
+			tc.tmux(mockTmuxBase, TmuxSessionName(filepath.Base(repoRoot))+"\t"+windowName+"\n")
+
+			wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+			repoSlug := filepath.Base(repoRoot)
+			wtPath := filepath.Join(
+				paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, "feature-test",
+			)
+			t.Cleanup(func() {
+				if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+					t.Logf("cleanup: %v", err)
+				}
+			})
+
+			if err := tc.create(wm, repoRoot); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			for _, verb := range tmuxCommandOrder(mockTmuxBase) {
+				if verb == "switch-client" || verb == "select-window" {
+					t.Errorf(
+						"%s issued %q: creating a worktree must not move the client, calls: %v",
+						tc.name, verb, tmuxCommandOrder(mockTmuxBase),
+					)
+				}
+			}
+		})
+	}
+}
+
+// TestFollowWindowSwitchesToTheWindowsSession covers the explicit counterpart:
+// the step a caller that DOES want to land in the new window opts into, and
+// the two cases where it cannot and says so rather than failing silently.
+func TestFollowWindowSwitchesToTheWindowsSession(t *testing.T) {
+	t.Run("switches to the session the window lives in", func(t *testing.T) {
+		t.Setenv("TMUX", "/private/tmp/tmux-501/default,2221,9")
+
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			// SessionWindows' format is "<session>\t<window>" per line.
+			commands.ExecCommandResult("wt-myrepo\twt-myrepo-feat\n", "", nil), // WindowSession
+			commands.ExecCommandResult("", "", nil),                            // switch-client
+			commands.ExecCommandResult("", "", nil),                            // select-window
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.FollowWindow("wt-myrepo-feat"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		order := tmuxCommandOrder(mockTmuxBase)
+		if !slices.Contains(order, "switch-client") {
+			t.Errorf("expected a switch-client, calls: %v", order)
+		}
+	})
+
+	t.Run("errors outside tmux without touching tmux", func(t *testing.T) {
+		t.Setenv("TMUX", "")
+
+		mockTmuxBase := commands.NewMockBaseCommand()
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.FollowWindow("wt-myrepo-feat"); err == nil {
+			t.Error("expected an error when there is no tmux client to move")
+		}
+		if len(mockTmuxBase.ExecCommandCalls) != 0 {
+			t.Errorf("expected no tmux calls, got: %v", tmuxCommandOrder(mockTmuxBase))
+		}
+	})
+
+	t.Run("errors when the window is not there", func(t *testing.T) {
+		t.Setenv("TMUX", "/private/tmp/tmux-501/default,2221,9")
+
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil), // WindowSession: no match
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.FollowWindow("wt-myrepo-gone"); err == nil {
+			t.Error("expected an error when the window does not exist")
+		}
+		if slices.Contains(tmuxCommandOrder(mockTmuxBase), "switch-client") {
+			t.Errorf("must not switch to a window that isn't there, calls: %v",
+				tmuxCommandOrder(mockTmuxBase))
+		}
+	})
 }
 
 // TestCreateValidateLayoutFailsBeforeAnyTmuxCall proves the per-pane install

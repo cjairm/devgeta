@@ -286,9 +286,11 @@ func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
 }
 
 // CreateAt is Create for a repository the caller is not inside: repoPath ("~"
-// expanded) locates the repo, the window opens in the repo-slug tmux session
-// (created when missing, reused otherwise), and the attached client follows
-// it when running inside tmux.
+// expanded) locates the repo and the window opens in the repo-slug tmux session
+// (created when missing, reused otherwise).
+//
+// Like Create, it does not move the attached client — call FollowWindow if the
+// user should end up in the new window.
 func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force bool) error {
 	if err := validateLayout(layout); err != nil {
 		return err
@@ -459,8 +461,15 @@ func (w *WorktreeManager) launchWindowAndRecord(
 // launchWindow creates the worktree's tmux window and builds layout's panes in
 // it, rolling the worktree back if the window cannot be created or built. The
 // window goes to the current session or the repo-slug session (created when
-// missing, reused otherwise); in the latter case the attached client follows
-// it.
+// missing, reused otherwise).
+//
+// It never moves the attached client. Creating a worktree and going to it are
+// two decisions, and only the caller knows the second one: `dg wt create` in a
+// shell wants to land you there, while the `dg ws` dashboard has a setting for
+// it (worktree.attach_after_create) and its own attach path. This used to
+// switch unconditionally, which made that setting impossible to honor — the
+// client had already left before the dashboard read it. Callers that want to
+// follow call FollowWindow.
 func (w *WorktreeManager) launchWindow(
 	repoSlug, windowName, wtPath string,
 	layout Layout,
@@ -474,13 +483,28 @@ func (w *WorktreeManager) launchWindow(
 		_ = w.Git.RemoveWorktree(wtPath, true, "")
 		return err
 	}
-	// Follow the new window when running inside tmux (best-effort).
-	if os.Getenv("TMUX") != "" {
-		if session, ok := w.Tmux.WindowSession(windowName); ok {
-			_ = w.Tmux.SwitchToWindow(session, windowName)
-		}
-	}
 	return nil
+}
+
+// FollowWindow moves the attached client to windowName, whichever session it
+// lives in. It is the explicit counterpart to launchWindow's deliberate
+// refusal to move anyone: a caller that wants the user to land in the window
+// it just built says so by calling this.
+//
+// Outside tmux there is no client to move, and a window that isn't there
+// cannot be followed; both are reported as errors rather than swallowed, so a
+// caller can tell the user why they didn't end up where they expected. The
+// caller decides how loud that is — `dg wt create` warns and still reports the
+// create as the success it was.
+func (w *WorktreeManager) FollowWindow(windowName string) error {
+	if os.Getenv("TMUX") == "" {
+		return fmt.Errorf("not inside tmux")
+	}
+	session, ok := w.Tmux.WindowSession(windowName)
+	if !ok {
+		return fmt.Errorf("tmux window %q not found", windowName)
+	}
+	return w.Tmux.SwitchToWindow(session, windowName)
 }
 
 // buildWindowFromLayout creates windowName (pane 0 only) and then builds the

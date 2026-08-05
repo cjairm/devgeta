@@ -339,9 +339,16 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 
 - `--repo <path>` / `-r <path>` — Path to the repository (`~` is expanded), so the command works
   from any directory. The window opens in a tmux session named after the repo — created when
-  missing, reused otherwise — and the attached client switches to it when run inside tmux.
-  Without the flag, the repo is the one containing the current directory and the window opens
-  in the current session.
+  missing, reused otherwise. Without the flag, the repo is the one containing the current
+  directory and the window opens in the current session.
+
+Either way, `dg wt create` moves you to the new window when run inside tmux, and says so if it
+can't (the create still succeeded; it prints the window name to jump to by hand). `dg wt repair`
+does the same for the window it rebuilt. **Building a window never moves anyone by itself** — both
+tmux window creators pass `-d`, and going to the window is always a separate, explicit step. That
+is what makes `attach_after_create: false` possible: before it, `new-window`'s default plus an
+unconditional switch inside create had already relocated the client by the time `dg ws` read the
+setting, so the dashboard appeared to eject you on every create no matter what you configured.
 
 **Flag for `remove`**:
 
@@ -423,6 +430,10 @@ dg wt prune --stale                         # Clear git's leftover entries for d
 - If the worktree's window isn't live, a new window is created with the review as its only pane.
   If the window already has a coder running, a new pane is split beside it and the review
   launches there instead — it never types into the existing coder's pane.
+- Either way you stay in the dashboard: `R` reports `review started: <name>` and leaves you on the
+  list, so you can kick a review per worktree without being thrown into each one. (The
+  window-was-missing case used to yank you into the new window; window creation no longer moves
+  the client at all.)
 - `R` only applies to worktree rows (see the `D`/`r`/`R` note below for the exact no-ops), and
   it's a no-op on every row while any review launch is already in flight (a single global guard,
   not per-row), so repeated presses can't start a second launch.
