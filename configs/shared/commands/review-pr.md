@@ -54,6 +54,7 @@ This returns three surfaces: inline review threads (resolved and unresolved), a 
 Drop a finding when ANY of these hold:
 
 - An existing thread or prior review already makes substantially the same point AND is **resolved** — resolved means handled; re-raising it is noise.
+- An existing **OPEN** thread already makes substantially the same point AND the code now does what that thread asked — a thread staying open means nobody clicked "Resolve", not that the concern is live. Check the current file (locate the code by the thread's diff hunk, not its line number) and drop the finding if it's already fixed.
 - An existing **OPEN** thread already makes substantially the same point AND the author **replied rejecting it or explaining why it doesn't apply** — treat that as settled and drop it, UNLESS the code has changed since that reply in a way that makes their reasoning no longer hold (only then re-raise it, and say why in the finding). Judge "changed since" primarily from the thread header's `(outdated)` marker (GitHub's own signal that the anchored code has since changed); `review-scope`'s commit lines already carry each commit's date, so for the branch's own commits you can compare the reply timestamp against those directly — no need for a separate git call. Its dates cover the whole branch, not one path, though, so when a thread isn't marked outdated but you suspect only the surrounding code (not the branch as a whole) moved, fall back to `git log <path>` for a path-scoped timestamp.
 - The same point already appears in a review summary body or a conversation comment.
 
@@ -166,10 +167,10 @@ devgeta task submit-review \
 
 Add `--pr PR_NUMBER` when you resolved a number in step 1. The review posts atomically — one notification, all inline comments grouped under it.
 
-**Re-review with nothing new to add** — split by whether prior feedback is actually settled:
+**Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies, **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
 
-- **Every prior thread was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
-- **Unresolved threads remain unaddressed and that's the main issue → don't approve.** Flag it in one brief `comment-pr` rather than re-listing each thread.
+- **Every prior thread's concern was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Don't ask the author to resolve threads either. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
+- **A prior concern is still live in the code and that's the main issue → don't approve.** Flag the concern itself in one brief `comment-pr` rather than re-listing each thread or asking for resolutions.
 
 ## Output
 
@@ -188,7 +189,7 @@ Return a terse summary to the user:
 
 - This command never edits code. It reads, then posts exactly one review.
 - Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the installed binary is available in this environment.
-- **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern.
+- **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the code does what it asked, or the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern. A thread being open only means nobody clicked "Resolve".
 - A line that isn't part of the diff can't take an inline comment — move that finding to the body's "General notes" instead.
 
 ## References

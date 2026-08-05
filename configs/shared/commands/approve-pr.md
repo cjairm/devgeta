@@ -43,13 +43,22 @@ Confirm the state is open. The `review:` line shows whether it already carries r
 
 ### 3. Check the gates
 
-Read the unresolved threads — these are the blockers:
+Read the open threads first:
 
 ```bash
 devgeta task review-threads --state unresolved
 ```
 
-"No unresolved review threads." means everything raised was at least marked resolved.
+"No unresolved review threads." means there is nothing to check here.
+
+**An open thread is not automatically a blocker.** Authors routinely fix a comment and never click "Resolve", so the thread stays open even though the concern is gone. For each open thread, check whether the point was actually handled:
+
+- Read the cited file and see whether the code now does what the comment asked. Locate the code with the thread's diff hunk, not its line number — lines shift when new commits land.
+- An author reply that rejects the comment or explains why it doesn't apply also counts as handled.
+
+If either holds, treat the thread as satisfied and note it in the report ("addressed, thread left open"). **Never withhold approval over the resolve button, and never ask the author to go resolve a thread whose concern is already handled.**
+
+Only a thread whose concern is still live in the code, with no reply explaining it away, blocks approval.
 
 Then confirm the resolved ones were actually fixed, not just replied to and forgotten:
 
@@ -71,7 +80,7 @@ A failing or errored check is often flaky, an unrelated job, or otherwise still 
 
 **Write plainly.** Anything posted to the PR — the approval body or a comment — must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler.
 
-**Approve when both gates hold:** the PR is open and there are no unresolved threads (and any resolved one you spot-checked holds up). Failing checks are noted, not blocking.
+**Approve when both gates hold:** the PR is open, and every thread's concern is handled — whether or not the thread is marked resolved (and any resolved one you spot-checked holds up). Failing checks are noted, not blocking.
 
 ```bash
 devgeta task approve-pr --body "<body picked below>"
@@ -87,7 +96,7 @@ devgeta task approve-pr --body "<body picked below>"
 
 Don't paste the gate summary or per-thread detail into the PR — that belongs in the report to the user, not the review. If checks are red, mention it in one short clause (e.g. "LGTM — CI has a failing job worth a look") rather than withholding approval.
 
-**If a real gate blocks** (an unresolved thread, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment — not a per-thread recap:
+**If a real gate blocks** (a thread whose concern is still unhandled in the code, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment naming the concern itself — never "please resolve the threads":
 
 ```bash
 devgeta task comment-pr --body "<one short line naming what's left>"
@@ -100,7 +109,7 @@ Return only this terse summary to the user — keep it out of the PR itself:
 ```
 ## PR #<num> — <approved | not approved>
 
-- threads: <all resolved | N unresolved>
+- threads: <all handled | N open but addressed | N unaddressed>
 - checks: <passing | N failing (flagged, non-blocking)>
 - reviews: <present | none>
 
@@ -110,5 +119,6 @@ Return only this terse summary to the user — keep it out of the PR itself:
 ## Notes
 
 - This command never edits code and never runs a full review — that's `/review-pr`.
-- Never approve with unresolved threads. Failing CI is flagged, not a blocker — the user decides what to do about it.
+- Never approve while a thread's concern is genuinely unhandled. But an open thread whose concern was fixed is **not** a blocker — verify the code and approve; resolving threads is the author's bookkeeping, not an approval gate.
+- Failing CI is flagged, not a blocker — the user decides what to do about it.
 - Both the approval and any comment stay terse; the detail goes to the user, not the PR.
