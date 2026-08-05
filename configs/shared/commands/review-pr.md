@@ -61,6 +61,14 @@ Match on the finding's **identity, not its location**: the file plus the specifi
 
 Keep a count of what you skipped for the summary.
 
+A finding produced by a reviewer agent carries a journal id — `(n4)` next to its location — because the reviewer opens one for every blocking finding. When you drop such a finding here, settle its entry with the reason you dropped it:
+
+```bash
+devgeta task review-note --settle --id n4 --as answered --note "already handled in a resolved thread on PR #123"
+```
+
+Otherwise the journal keeps an entry the PR has already closed, and the next review raises it again — the exact loop the journal exists to break. Findings you do post stay open; `/address-feedback` settles them when the author responds.
+
 ### 4. The review lens (high-leverage first — order matters)
 
 Governing principle: **approve when the PR leaves the codebase healthier than without it**, not when it's "perfect". The question is "is the codebase better merged than not?", not "would I have written it this way?". If the PR is huge, the first finding is to split it — small PRs get genuinely reviewed; large ones get rubber-stamped.

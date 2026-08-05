@@ -276,6 +276,11 @@ func TestSharedAgentsInheritGlobalBashPolicy(t *testing.T) {
 //     document-reviewer's output contract used to stop at a risk rating and a
 //     questions section — there was no APPROVE anywhere in it, so "never
 //     approves" was encoded in the template rather than being drift.
+//  3. Every reviewer writes its blocking findings back, bound to severity, and
+//     shows the settle command that closes them (ADR-0012's amendment). The
+//     first version gated the write on "what you could not answer yourself",
+//     which a competent reviewer never hits: three consecutive reviews of one
+//     branch left the journal empty and re-raised the same findings.
 //
 // Asserted across all three rather than left to each prompt's own review: this
 // asymmetry is invisible in any single file, since each agent reads fine alone
@@ -303,6 +308,19 @@ func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
 			substr: "devgeta task review-note --open",
 			why: "the agent has no way to record an unanswered question, so nothing " +
 				"the next run reads will contain it",
+		},
+		{
+			substr: "devgeta task review-note --settle --id",
+			why: "the agent never shows how its findings get closed, so they stay " +
+				"open forever and every re-review raises them again (ADR-0012 " +
+				"amendment: the settle line ends every report, because in a chat " +
+				"review with no PR nothing downstream will print it)",
+		},
+		{
+			substr: "[CRITICAL]` and `[IMPORTANT]",
+			why: "the journal write is not bound to severity, so what gets recorded " +
+				"is left to the agent's judgment — which produced empty journals " +
+				"across three consecutive reviews (ADR-0012 amendment)",
 		},
 		{
 			substr: "[STALE]",

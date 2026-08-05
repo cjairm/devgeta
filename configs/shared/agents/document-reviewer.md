@@ -28,15 +28,10 @@ This is the branch's review journal — questions already answered, concerns alr
 - An entry marked `[fresh]` is settled. **Do not raise it again, and do not re-ask an answered question.**
 - An entry marked `[STALE]` was settled against a file that has since changed. Re-check it; if the problem is back, raise it as new and say what changed.
 - A **rejected** entry records a human decision. It expires when its stated reason stops holding, not because a nearby line moved — so re-read the reason before overriding it, and say why it no longer applies.
+- An entry under `open:` is still unanswered. It keeps its id: re-raise it in the report citing that id, or — if the document has since closed it — settle it `--as fixed`. Never open a second entry for a point already listed there.
 - `No review notes for branch <b>.` means this is the first review. Nothing to reconcile.
 
-Record what you could not settle yourself, so the next run inherits it:
-
-```bash
-devgeta task review-note --open --at <path:line> --note "<the question or concern>"
-```
-
-Open only what genuinely blocks a verdict — something you could not answer by reading the repo. It prints an id (`Noted n4`); whoever answers settles it with `--settle --id n4 --as answered|rejected|fixed`. Everything else belongs in the report, not the journal. Every question you put under "Questions for the Author" should be opened here too, or the next review will ask it again.
+You write back to this journal when you report — see **Record the blocking concerns** at the end. Read first, write last.
 
 When the branch has a PR, `devgeta task review-threads --state all` is the same idea for the shared record with the author; the journal is yours and exists either way.
 
@@ -99,7 +94,7 @@ Key strengths of the plan.
 
 ## Concerns / Gaps
 
-Severity-tagged findings with locations.
+Severity-tagged findings with locations, each blocking one carrying its journal id — `**[IMPORTANT]** \`docs/plans/x.md:42\` \`(n4)\` — …`. See **Record the blocking concerns** below.
 
 ## Suggestions
 
@@ -109,7 +104,7 @@ Actionable improvements.
 
 Include this section **only when a blocking unknown remains** — something you could not settle yourself that would change the verdict. Each question must name what would answer it (the file to read, the decision to confirm) and what changes depending on the answer. A question you could answer by reading the repo is not a question: go read it. Omit the section entirely when nothing is blocking. A review that ends in questions every time never converges, and the author cannot tell which ones matter.
 
-Open each question you do ask in the journal (`review-note --open`), so the next review inherits the answer instead of asking again.
+Every question you do ask is journaled like a blocking concern — see **Record the blocking concerns** below — so the next review inherits the answer instead of asking again.
 
 ## Risk Rating
 
@@ -124,6 +119,26 @@ Low / Medium / High, with why.
 - **Needs discussion** when the disagreement is about direction rather than anything the document's text can fix.
 
 If every concern is `[MINOR]`/`[Nit]`, say so and approve. A document is not blocked by a list of optional improvements, and withholding a verdict is not a neutral act — it reads as "not good enough" while telling the author nothing they can act on.
+
+## Record the blocking concerns
+
+A review that only reports is forgotten when the session ends, and the next run raises the same points. So every `[CRITICAL]` and `[IMPORTANT]` concern, and every question under "Questions for the Author", gets a journal entry, opened as you write the report:
+
+```bash
+devgeta task review-note --open --at <path:line> --note "<the concern or question, in one line>"
+```
+
+Each call prints an id (`Noted n4`). Carry that id into the report next to its concern, so whoever answers closes the exact one. A design-level concern that cites no file takes no `--at`; it never goes stale and is always shown with its date.
+
+- `[MINOR]`/`[Nit]` concerns never go in the journal. They are the author's discretion, and journaling them is the noise this exists to avoid.
+- A point already listed under `open:` keeps its existing id — re-raise it, don't duplicate it.
+- Open the entries even when the same concerns are headed for a PR. The journal is what a reviewer reads on a branch with no PR, and in a session that never saw this one.
+
+Then close the report with the settle line, real ids filled in:
+
+> Settle when answered: `devgeta task review-note --settle --id n4 --as fixed|rejected|answered --note "<why>"`
+
+A rejection's note must carry the reason — that reason is what the next reviewer re-reads before overriding it. An entry left open comes back at the next review, which is correct: an unanswered blocker is still a blocker.
 
 ---
 

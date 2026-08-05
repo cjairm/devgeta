@@ -742,6 +742,13 @@ linked worktree. Nothing there is ever committed or appears in a diff (which is 
 journal in the same teardown that deletes the branch, so memory does not accumulate for work
 that no longer exists.
 
+What gets written is bound to severity, not to agent judgment: each reviewer opens an entry
+for every `[CRITICAL]` and `[IMPORTANT]` finding as it writes its report, prints the returned
+id inline beside that finding, and ends the report with the `--settle` line that closes them.
+`[MINOR]`/`[Nit]` findings never enter the journal, and a finding already listed as open
+keeps its id rather than gaining a duplicate. The earlier rule — open only what the reviewer
+could not answer itself — recorded nothing in practice; see ADR-0012's amendment.
+
 **Worktree lifecycle subcommands** (start/finish a git worktree in one call each —
 same base path `dg wt` uses, `~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>`,
 so `dg wt list` and worktrees created here are the same population, never two parallel

@@ -1,7 +1,7 @@
 # ADR-0012 — Review knowledge lives in a local journal devgeta owns
 
 **Date:** 2026-08-05
-**Status:** ACCEPTED
+**Status:** ACCEPTED — amended 2026-08-05, see [Amendment](#amendment--2026-08-05-journal-every-blocking-finding-not-only-the-unanswerable-ones)
 
 ## Context
 
@@ -200,6 +200,10 @@ settle unambiguous: the answer names the exact question it closes.
 If that write-back is skipped, this ADR buys nothing. It is the step to verify first when
 circling continues after implementation.
 
+> **Amended.** As written above, the reviewers opened an entry only for what they could not
+> settle themselves — which in practice was nothing, so there was nothing to write back to.
+> Every blocking finding is now journaled; see the [Amendment](#amendment--2026-08-05-journal-every-blocking-finding-not-only-the-unanswerable-ones).
+
 ### 5. The journal lives in the repo's common git directory, keyed by branch
 
 ```
@@ -295,6 +299,54 @@ off the row name both left the real journal (`feat%2Flogin.md`) behind and could
 `feat-login.md`, which may belong to a genuinely different branch. `Git.BranchForWorktree`
 is the one resolver both teardown paths use; when it cannot resolve, the journal is left for
 `review-notes --prune` rather than guessed at.
+
+## Amendment — 2026-08-05: journal every blocking finding, not only the unanswerable ones
+
+**What changed:** the reviewers' write gate moved from "something you could not answer by
+reading the repo" to "every `[CRITICAL]` and `[IMPORTANT]` finding".
+
+**Why:** as first written, section 4's write-back had nothing to write back to. Each
+reviewer was told to open an entry only for what it could not settle itself, and
+"Everything else belongs in the report, not the journal." A competent reviewer settles
+almost everything itself by reading code, so it opened nothing. Three consecutive reviews of
+the same branch produced an empty journal and re-raised the same findings each time —
+observed, not predicted.
+
+The gate was also the wrong shape. The findings that make a review repeat are not the ones
+the reviewer got stuck on; they are the ones it reported and a human then fixed or pushed
+back on in a chat session that no longer exists. Those never entered the journal at all
+unless `/address-feedback` ran, which is a PR-thread flow — absent in the pre-PR case this
+ADR names as its primary one.
+
+It also asked the wrong actor. "Record what genuinely blocks a verdict" is a judgment call
+inside agent prose, and CLAUDE.md §4 says to prefer making a mistake structurally impossible
+over a convention someone must remember. Severity is already a decision the reviewer must
+make and state for every finding, so binding the journal to it removes the second judgment.
+
+**The shape now**, which is the PR review thread applied locally — every blocking finding is
+an addressable item, the author closes each with an outcome, closure is invalidated by
+content change, and the whole record dies with the branch:
+
+- Each reviewer opens an entry per blocking finding as it composes the report, and prints
+  the returned id inline next to that finding (`` `path.go:42` `(n4)` ``). The report becomes
+  the thread list.
+- Each reviewer ends its report with the settle command, ids filled in, so the closing step
+  is visible in every flow — including a chat review with no PR and no slash command.
+- `[MINOR]`/`[Nit]` never enters the journal. Severity is the noise gate; the branch-scoped
+  lifetime is the second one.
+- An entry already `open:` keeps its id and is re-raised, never duplicated. Without this
+  rule, N reviews of an unanswered finding produce N entries.
+- `/review-pr` settles the entry behind any finding it drops during PR dedup, so the journal
+  and the PR cannot diverge into a finding that is closed on GitHub and open locally.
+
+**What did not change:** none of decisions 1, 2, 3, or 5. Staleness is still content-based,
+writes still go through the task commands, storage is still the common git directory keyed
+by branch, and cleanup still rides on branch teardown rather than approval. The volume the
+journal now carries is bounded by the same teardown.
+
+**Enforced by** `TestReviewerAgentsReadTheJournalAndCanApprove`, extended to require the
+settle command in every reviewer, for the same reason the read side is asserted there: one
+reviewer silently losing the write-back is invisible in that file alone.
 
 ## Consequences
 

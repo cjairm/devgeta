@@ -28,15 +28,10 @@ This is the branch's review journal — questions already answered, findings alr
 - An entry marked `[fresh]` is settled. **Do not raise it again, and do not re-ask an answered question.**
 - An entry marked `[STALE]` was settled against code that has since changed. Re-check it; if the problem is back, raise it as new and say what changed.
 - A **rejected** entry records a human decision. It expires when its stated reason stops holding, not because a nearby line moved — so re-read the reason before overriding it, and say why it no longer applies.
+- An entry under `open:` is still unanswered. It keeps its id: re-raise it in the report citing that id, or — if the code has since fixed it — settle it `--as fixed`. Never open a second entry for a point already listed there.
 - `No review notes for branch <b>.` means this is the first review. Nothing to reconcile.
 
-Record what you could not settle yourself, so the next run inherits it:
-
-```bash
-devgeta task review-note --open --at <path:line> --note "<the question or finding>"
-```
-
-Open only what genuinely blocks a verdict — something you could not answer by reading the repo. It prints an id (`Noted n4`); whoever answers settles it with `--settle --id n4 --as answered|rejected|fixed`. Everything else belongs in the report, not the journal.
+You write back to this journal when you report — see **Record the blocking findings** at the end. Read first, write last.
 
 When the branch has a PR, `devgeta task review-threads --state all` is the same idea for the shared record with the author; the journal is yours and exists either way.
 
@@ -128,13 +123,15 @@ Every finding must cite an exact location — `path/to/file.go:42` or `path/to/f
 
 Per finding:
 
-**[SEVERITY]** [Category] `path/to/file.go:42` — one-line problem statement
+**[SEVERITY]** [Category] `path/to/file.go:42` `(n4)` — one-line problem statement
 
 - Impact: how it breaks
 - Fix:
   ```go
   // corrected code
   ```
+
+`(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`.
 
 ### Strengths
 
@@ -147,6 +144,26 @@ Note good practices, clever solutions, solid coverage.
 - Approve with minors: "LGTM — address [items] at discretion"
 - Request changes: state the blocking issues plainly
 - Needs discussion: suggest a sync conversation
+
+## Record the blocking findings
+
+A review that only reports is forgotten when the session ends, and the next run raises the same points. So every `[CRITICAL]` and `[IMPORTANT]` finding gets a journal entry, opened as you write the report:
+
+```bash
+devgeta task review-note --open --at <path:line> --note "<the finding, in one line>"
+```
+
+Each call prints an id (`Noted n4`). Carry that id into the report next to its finding, so whoever answers closes the exact one.
+
+- `[MINOR]`/`[Nit]` findings never go in the journal. They are the author's discretion, and journaling them is the noise this exists to avoid.
+- A point already listed under `open:` keeps its existing id — re-raise it, don't duplicate it.
+- Open the entries even when the same findings are headed for a PR. The journal is what a reviewer reads on a branch with no PR, and in a session that never saw this one.
+
+Then close the report with the settle line, real ids filled in:
+
+> Settle when answered: `devgeta task review-note --settle --id n4 --as fixed|rejected|answered --note "<why>"`
+
+A rejection's note must carry the reason — that reason is what the next reviewer re-reads before overriding it. An entry left open comes back at the next review, which is correct: an unanswered blocker is still a blocker.
 
 ## Principles
 
