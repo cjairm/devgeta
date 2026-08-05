@@ -572,6 +572,13 @@ func (w *WorktreeManager) buildWindowPanes(
 				)
 			}
 		}
+		// A pane with no command (the "shell" layout's pane - see shellPane)
+		// wants the shell tmux already started for it, nothing typed. Sending
+		// an empty command would still press Enter at that shell, printing a
+		// stray prompt line for no reason.
+		if pane.Command == "" {
+			continue
+		}
 		if err := sendKeys(pane.Command); err != nil {
 			return fmt.Errorf("layout %q, pane %d: failed to launch: %w", layout.Name, i+1, err)
 		}
@@ -1670,6 +1677,26 @@ func isIdleShellPane(currentCommand string) bool {
 	return false
 }
 
+// idleShellPaneIn returns the id of the first pane of windowName that is
+// sitting at a shell prompt, and whether there was one. "First" is tmux's own
+// pane order, so it prefers the pane devgeta built the window with over any
+// the user split off later.
+//
+// It shares isIdleShellPane with retargetWindowAfterMove rather than judging
+// panes its own way, so "this pane is free" means one thing across the whole
+// package: change the allowlist and every caller changes with it. The two
+// callers do differ in what they need, and deliberately so - a move must
+// retarget every pane or none (a half-updated window is worse than an
+// untouched one), while a review only needs somewhere to run.
+func (w *WorktreeManager) idleShellPaneIn(windowName string) (string, bool) {
+	for _, p := range w.Tmux.PanesInWindow(windowName) {
+		if isIdleShellPane(p.CurrentCommand) {
+			return p.PaneID, true
+		}
+	}
+	return "", false
+}
+
 // retargetWindowAfterMove sends `cd <newPath>` to every pane of the
 // worktree's tmux window - but only if a window exists AND every pane in it
 // is an idle shell. tmux respawn-pane is deliberately never used here: it
@@ -1959,27 +1986,59 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 	return w.launchReviewInLiveWindow(session, windowName, wtPath, reviewCmd)
 }
 
-// launchReviewInLiveWindow splits a new pane off an existing (live) window
-// and launches reviewCmd there, restoring focus to the window's original
-// (coder) pane afterward on both success and failure - see
-// LaunchReviewInRepo's doc comment for why the review command is never sent
-// to the window's existing pane directly. The command is sent with
-// SendKeysToPane(newPaneID, ...), not a window/session-targeted send-keys:
-// the latter resolves to whatever pane is active in the window at send time,
-// which could have changed in the gap between the split and the send (e.g. a
-// user keystroke, a tmux hook), landing the review command in the coder's
-// pane instead - the exact outcome this function exists to prevent.
+// launchReviewInLiveWindow gets reviewCmd running in an existing (live)
+// window: in a pane that is sitting at a shell prompt if the window has one,
+// otherwise in a new pane split off for it. Focus is restored to whichever
+// pane was active beforehand, on both success and failure.
+//
+// The rule this function enforces is "never type into a pane that is running
+// something" - not "always split". An idle shell is not running anything, so
+// reusing it is both safe and what a user who picked the shell layout (an
+// empty window, on purpose) expects: a review in the pane they already have,
+// not a second pane beside it. Which panes are idle is decided by
+// isIdleShellPane, the same allowlist `dg wt move` already uses to pick panes
+// it may `cd` - see its doc comment for why an allowlist of shells, rather
+// than any attempt to recognize an agent, is the only reliable direction (a
+// Claude Code pane reports its versioned binary directory, e.g. "2.1.222",
+// never "claude"). Anything unrecognized therefore counts as busy and gets
+// the split, so the fallback is always the safe one.
+//
+// The residual risk is a shell pane where the user has a half-typed command
+// waiting: the review command lands after it. That is the same trade
+// retargetWindowAfterMove already accepts for `cd`, and pressing R from the
+// dashboard means the user is not typing in that pane at that moment.
+//
+// The command is sent with SendKeysToPane(paneID, ...), never a
+// window/session-targeted send-keys: the latter resolves to whatever pane is
+// active in the window at send time, which could have changed in the gap
+// since it was chosen (a user keystroke, a tmux hook), landing the review
+// command in the coder's pane - the exact outcome this function prevents.
 func (w *WorktreeManager) launchReviewInLiveWindow(
 	session, windowName, wtPath, reviewCmd string,
 ) error {
 	target := session + ":" + windowName
 
-	// Capture the coder's pane before touching anything, so focus can be
+	// Capture the active pane before touching anything, so focus can be
 	// restored to it afterward. If this fails, nothing has been created yet,
 	// so there is nothing to roll back.
 	coderPaneID, err := w.Tmux.ActivePaneID(target)
 	if err != nil {
 		return fmt.Errorf("failed to identify active pane in %s: %w", windowName, err)
+	}
+
+	// Reuse before creating. No rollback branch here on purpose: this pane
+	// already existed, so a failed send-keys leaves it exactly as it was -
+	// killing it would destroy a pane devgeta did not create, and the user's
+	// shell with it.
+	if idlePaneID, ok := w.idleShellPaneIn(windowName); ok {
+		if err := w.Tmux.SendKeysToPane(idlePaneID, reviewCmd); err != nil {
+			return fmt.Errorf("failed to launch review in %s: %w", windowName, err)
+		}
+		if idlePaneID != coderPaneID {
+			// Best-effort, same reasoning as the split path below.
+			_ = w.Tmux.SelectPane(coderPaneID)
+		}
+		return nil
 	}
 
 	if err := w.Tmux.SplitWindow(target, wtPath, "vertical"); err != nil {
@@ -2024,6 +2083,14 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 func (w *WorktreeManager) ensureWindow(repoSlug, windowName, wtPath string, layout Layout) error {
 	session, exists := w.Tmux.WindowSession(windowName)
 	if exists {
+		// The "shell" layout's pane has no command (see shellPane), and a
+		// window that already exists already has its shell. Repairing it is a
+		// no-op rather than an Enter pressed into whatever pane is active -
+		// which, in a window the user has since split, is not necessarily the
+		// pane devgeta made.
+		if layout.Panes[0].Command == "" {
+			return nil
+		}
 		if err := w.Tmux.SendKeysToWindowInSession(
 			session,
 			windowName,

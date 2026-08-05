@@ -507,6 +507,86 @@ func TestFollowWindowSwitchesToTheWindowsSession(t *testing.T) {
 	})
 }
 
+// TestShellLayoutTypesNothingIntoThePane covers the "shell" layout end to end
+// at the tmux level: you get a window and the shell tmux already started in
+// the worktree directory, and devgeta types NOTHING into it. An empty command
+// still sent through send-keys would press Enter, printing a stray prompt line
+// - harmless but wrong, and the pane it lands in isn't even guaranteed to be
+// devgeta's once the user has split the window.
+func TestShellLayoutTypesNothingIntoThePane(t *testing.T) {
+	shell, err := ResolveLayout("shell", "", nil)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	t.Run("create builds the window and sends no keys", func(t *testing.T) {
+		repoRoot := t.TempDir()
+
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(repoRoot+"\n", "", nil), // rev-parse --show-toplevel
+			commands.ExecCommandResult("", "", nil),            // everything else
+		)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(commands.ExecCommandResult("", "", nil))
+
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		wtPath := filepath.Join(
+			paths.Paths.Data.Root, "devgeta", "worktrees",
+			filepath.Base(repoRoot), "plain-test",
+		)
+		t.Cleanup(func() {
+			if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		})
+
+		if err := wm.Create("plain-test", shell, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		order := tmuxCommandOrder(mockTmuxBase)
+		if !slices.Contains(order, "new-window") {
+			t.Errorf("expected the window to be created, calls: %v", order)
+		}
+		if slices.Contains(order, "send-keys") {
+			t.Errorf("the shell layout must type nothing into the pane, calls: %v", order)
+		}
+		// One pane means no split and no reselect either - there is nothing to
+		// split off and nothing to come back to.
+		if slices.Contains(order, "split-window") {
+			t.Errorf("a one-pane layout must not split, calls: %v", order)
+		}
+	})
+
+	t.Run("repairing a live window is a no-op", func(t *testing.T) {
+		repoSlug := "myrepo"
+		windowName := GetWindowName(repoSlug, "plain-test")
+
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			// WindowSession: the window is already live.
+			commands.ExecCommandResult(
+				TmuxSessionName(repoSlug)+"\t"+windowName+"\n", "", nil,
+			),
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.ensureWindow(repoSlug, windowName, "/tmp/wt", shell); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		order := tmuxCommandOrder(mockTmuxBase)
+		if slices.Contains(order, "send-keys") {
+			t.Errorf(
+				"repairing a live shell window must send nothing (the shell is already there), calls: %v",
+				order,
+			)
+		}
+	})
+}
+
 // TestCreateValidateLayoutFailsBeforeAnyTmuxCall proves the per-pane install
 // check runs (and can fail) before any git or tmux state is touched - the
 // common "tool missing" case must fail before the window (or worktree)
@@ -694,10 +774,143 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 	}
 }
 
+// TestLaunchReviewReusesAnIdleShellPane covers the other half of the rule the
+// split enforces: "never type into a pane that is running something" is not
+// "always split". A pane sitting at a shell prompt is running nothing, so the
+// review goes there and no second pane appears - which is the whole point of
+// creating a worktree with the shell layout (an empty window, on purpose) and
+// then pressing R.
+func TestLaunchReviewReusesAnIdleShellPane(t *testing.T) {
+	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+
+	repoSlug := "myrepo"
+	name := "feat"
+	windowName := GetWindowName(repoSlug, name)
+	session := "some-session"
+
+	reviewCmd, err := ReviewCommand("code")
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	t.Run("single idle pane is reused, nothing is split", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult(session+"\t"+windowName+"\n", "", nil), // WindowSession
+			commands.ExecCommandResult("%7\n", "", nil),                       // ActivePaneID
+			commands.ExecCommandResult(
+				windowName+"\t%7\tzsh\n",
+				"",
+				nil,
+			), // PanesInWindow: idle
+			commands.ExecCommandResult("", "", nil), // SendKeysToPane
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		order := tmuxCommandOrder(mockTmuxBase)
+		if slices.Contains(order, "split-window") {
+			t.Errorf("an idle shell pane must be reused, not split beside, calls: %v", order)
+		}
+		// Reusing the pane that was already active means there is no focus to
+		// put back - a select-pane here would be a call with nothing to do.
+		if slices.Contains(order, "select-pane") {
+			t.Errorf(
+				"no focus restore is needed when the reused pane was already active, calls: %v",
+				order,
+			)
+		}
+		target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+		if !found {
+			t.Fatalf("expected the review command to be sent, calls: %+v",
+				mockTmuxBase.ExecCommandCalls)
+		}
+		if target != "%7" {
+			t.Errorf("expected the review sent to pane %%7 by id, got target %q", target)
+		}
+	})
+
+	t.Run("idle pane is preferred over the active busy one, focus restored", func(t *testing.T) {
+		// A shell-layout worktree the user added a pane to: pane 0 is the
+		// original idle shell, pane 1 is running a dev server and is active.
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult(session+"\t"+windowName+"\n", "", nil), // WindowSession
+			commands.ExecCommandResult(
+				"%9\n",
+				"",
+				nil,
+			), // ActivePaneID: the busy one
+			commands.ExecCommandResult(
+				windowName+"\t%8\tzsh\n"+windowName+"\t%9\tnpm\n", "", nil,
+			), // PanesInWindow: %8 idle, %9 busy
+			commands.ExecCommandResult("", "", nil), // SendKeysToPane
+			commands.ExecCommandResult("", "", nil), // SelectPane (restore focus to %9)
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		order := tmuxCommandOrder(mockTmuxBase)
+		if slices.Contains(order, "split-window") {
+			t.Errorf("expected the idle pane to be reused, calls: %v", order)
+		}
+		target, found := sendKeysTarget(mockTmuxBase.ExecCommandCalls, reviewCmd)
+		if !found || target != "%8" {
+			t.Errorf("expected the review sent to the idle pane %%8, got %q (found=%v)",
+				target, found)
+		}
+		if !slices.Contains(order, "select-pane") {
+			t.Errorf("expected focus restored to the previously active pane, calls: %v", order)
+		}
+	})
+
+	t.Run("a failed send never kills the pane it did not create", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult(session+"\t"+windowName+"\n", "", nil), // WindowSession
+			commands.ExecCommandResult("%7\n", "", nil),                       // ActivePaneID
+			commands.ExecCommandResult(
+				windowName+"\t%7\tzsh\n",
+				"",
+				nil,
+			), // PanesInWindow: idle
+			commands.ExecCommandResult(
+				"",
+				"",
+				errors.New("boom"),
+			), // SendKeysToPane fails
+		)
+		wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+		if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err == nil {
+			t.Fatal("expected an error when the send fails")
+		}
+
+		order := tmuxCommandOrder(mockTmuxBase)
+		if slices.Contains(order, "kill-pane") {
+			t.Errorf(
+				"killing a reused pane would destroy the user's own shell, calls: %v",
+				order,
+			)
+		}
+	})
+}
+
 // TestLaunchReviewLiveWindowSplitsNewPane proves that, when the worktree's
-// window already exists, LaunchReviewInRepo never sends the review command
-// into the window's existing (coder) pane - it splits a new pane and sends
-// the command there instead, then restores focus to the original pane.
+// window already exists and its pane is BUSY, LaunchReviewInRepo never sends
+// the review command into that pane - it splits a new pane and sends the
+// command there instead, then restores focus to the original pane.
+//
+// The pane is reported as "2.1.222" (a real Claude Code pane_current_command -
+// tmux's automatic-rename picking up the versioned binary directory, see
+// ADR-0008), which is exactly the case an allowlist of idle shells must treat
+// as busy without recognizing the agent at all.
 func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
 
@@ -715,6 +928,11 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 			"",
 			nil,
 		), // ActivePaneID (coder pane, pre-split)
+		commands.ExecCommandResult(
+			windowName+"\t%1\t2.1.222\n",
+			"",
+			nil,
+		), // PanesInWindow: the one pane is running an agent, not a shell
 		commands.ExecCommandResult("", "", nil), // SplitWindow
 		commands.ExecCommandResult(
 			"%2\n",
@@ -742,6 +960,7 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 	wantOrder := []string{
 		"list-windows",
 		"display-message",
+		"list-panes", // the idle-pane check that decides reuse vs split
 		"split-window",
 		"display-message",
 		"send-keys",
@@ -813,6 +1032,11 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 			"",
 			nil,
 		), // ActivePaneID (coder pane, pre-split)
+		commands.ExecCommandResult(
+			windowName+"\t%1\tnvim\n",
+			"",
+			nil,
+		), // PanesInWindow: busy pane, so this is the split path
 		commands.ExecCommandResult("", "", nil), // SplitWindow succeeds
 		commands.ExecCommandResult(
 			"%2\n",

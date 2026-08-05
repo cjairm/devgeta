@@ -48,6 +48,15 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 			},
 			wantChecks: 1,
 		},
+		{
+			// The plain layout: one pane, no command to type, and nothing to
+			// check for — a shell is what tmux starts a pane with anyway.
+			name: "shell",
+			wantPanes: []Pane{
+				{Command: "", Split: ""},
+			},
+			wantChecks: 0,
+		},
 	}
 
 	for _, tt := range tests {
@@ -410,25 +419,31 @@ func TestWithPromptRetargetsCoderPane(t *testing.T) {
 
 // A layout with no AI pane must fail loudly rather than drop the prompt or
 // hand it to a non-coder command. The error names the layout and lists the
-// layouts that do accept a prompt.
+// layouts that do accept a prompt. Both AI-free built-ins are covered: nvim
+// (where the prompt would become a filename) and shell (where it would be
+// typed at a bash prompt).
 func TestWithPromptErrorsOnLayoutWithoutCoderPane(t *testing.T) {
-	layout, err := ResolveLayout("nvim", "", nil)
-	if err != nil {
-		t.Fatalf("unexpected error resolving nvim layout: %v", err)
-	}
+	for _, name := range []string{"nvim", "shell"} {
+		t.Run(name, func(t *testing.T) {
+			layout, err := ResolveLayout(name, "", nil)
+			if err != nil {
+				t.Fatalf("unexpected error resolving %s layout: %v", name, err)
+			}
 
-	_, err = layout.WithPrompt("fix the bug")
-	if err == nil {
-		t.Fatal("expected an error prompting a layout with no AI pane, got nil")
-	}
-	if got := err.Error(); !strings.Contains(got, "nvim") {
-		t.Errorf("expected the error to name the nvim layout, got %q", got)
-	}
-	// The suggestion list is derived from the registry, so it must actually
-	// name promptable layouts.
-	if got := err.Error(); !strings.Contains(got, "opencode") ||
-		!strings.Contains(got, "claude") {
-		t.Errorf("expected the error to list layouts that accept a prompt, got %q", got)
+			_, err = layout.WithPrompt("fix the bug")
+			if err == nil {
+				t.Fatal("expected an error prompting a layout with no AI pane, got nil")
+			}
+			if got := err.Error(); !strings.Contains(got, name) {
+				t.Errorf("expected the error to name the %s layout, got %q", name, got)
+			}
+			// The suggestion list is derived from the registry, so it must
+			// actually name promptable layouts.
+			if got := err.Error(); !strings.Contains(got, "opencode") ||
+				!strings.Contains(got, "claude") {
+				t.Errorf("expected the error to list layouts that accept a prompt, got %q", got)
+			}
+		})
 	}
 }
 

@@ -271,7 +271,7 @@ dg wt <subcommand> [flags]     # alias
 **Flags for `create` and `repair`**:
 
 - `--ai <alias>` / `-a <alias>` — AI coder to launch in the window. Accepted aliases: `opencode`, `oc`, `claude`, `cc`, `claudecode`.
-- `--layout <name>` / `-l <name>` — Window layout to build. Valid names: `opencode`, `claude`, `claude-nvim`, `nvim` (see "Window layouts" below). Mutually exclusive with `--ai` — passing both is a cobra error before either command runs.
+- `--layout <name>` / `-l <name>` — Window layout to build. Valid names: `opencode`, `claude`, `claude-nvim`, `nvim`, `shell` (see "Window layouts" below). Mutually exclusive with `--ai` — passing both is a cobra error before either command runs.
 
   **Resolution order** (highest wins; each rule below only applies when none of the rules above it fired):
 
@@ -314,12 +314,15 @@ dg wt <subcommand> [flags]     # alias
 
 A layout is a named, ordered set of tmux panes built when a worktree's window is created or repaired. Built-in layouts (no config required):
 
-| Layout        | Panes                                                |
-| ------------- | ---------------------------------------------------- |
-| `opencode`    | Single pane running OpenCode                         |
-| `claude`      | Single pane running Claude Code                      |
-| `claude-nvim` | Claude Code and Neovim side by side (vertical split) |
-| `nvim`        | Single pane running Neovim only                      |
+| Layout        | Panes                                                      |
+| ------------- | ---------------------------------------------------------- |
+| `opencode`    | Single pane running OpenCode                               |
+| `claude`      | Single pane running Claude Code                            |
+| `claude-nvim` | Claude Code and Neovim side by side (vertical split)       |
+| `nvim`        | Single pane running Neovim only                            |
+| `shell`       | Single pane running nothing — just a shell in the worktree |
+
+`shell` is the plain option: a window and a shell already sitting in the worktree directory, with no AI coder and no editor started. Nothing is typed into the pane at all (not even an empty line), it has no tool to check for, and it takes no `--prompt` — a prompt needs an AI pane to launch, so `--prompt` with `--layout shell` is the same error `--layout nvim` gives. Repairing a `shell` worktree whose window still exists is a no-op, since the window already has its shell.
 
 Before any tmux window is touched, every pane's underlying tool is checked for installation; a layout referencing a missing tool fails with an actionable error and the worktree is not created. If a multi-pane window fails to build partway through (e.g. a later pane's split fails), the partially built window is killed and the worktree is rolled back — never left half-created.
 
@@ -405,7 +408,7 @@ dg wt prune --stale                         # Clear git's leftover entries for d
   existing row.
 - `N` follows the same repo-pick → name-prompt flow as `n`, but after the name is entered it
   opens one more floating picker: a layout picker listing the built-in layout names
-  (`opencode`, `claude`, `claude-nvim`, `nvim`), cursor pre-positioned on the resolved default so
+  (`opencode`, `claude`, `claude-nvim`, `nvim`, `shell`), cursor pre-positioned on the resolved default so
   accepting it is a single Enter. Picking a layout (or free-typing an unlisted name — `ResolveLayout`
   validates it and reports an unknown name the same way the CLI does) creates the worktree with
   that layout and attaches, same as `n`.
@@ -427,9 +430,18 @@ dg wt prune --stale                         # Clear git's leftover entries for d
   `skill-reviewer`) via OpenCode, in that worktree, with the fixed prompt "Review this branch
   against the default branch." — the agent scopes itself from there (each reviewer agent already
   runs `devgeta task review-scope` on its own).
-- If the worktree's window isn't live, a new window is created with the review as its only pane.
-  If the window already has a coder running, a new pane is split beside it and the review
-  launches there instead — it never types into the existing coder's pane.
+- Where the review lands, in order: no live window → a new window with the review as its only
+  pane; a pane sitting at a shell prompt → the review runs **in that pane**, no new pane (this is
+  what makes `R` on a `shell`-layout worktree reuse the empty pane you already have, and it prefers
+  the lowest-numbered idle pane, i.e. the one devgeta built the window with); otherwise → a new
+  pane split beside the running one.
+- The rule is "never type into a pane that is running something", not "always split". Idle is
+  decided by the same shell allowlist `dg wt move` uses to pick panes it may `cd`
+  (`isIdleShellPane`) — anything unrecognized counts as busy, because a running agent cannot be
+  identified by process name (a Claude Code pane reports its versioned binary directory, e.g.
+  `2.1.222` — see [ADR-0008](decisions/ADR-0008-agent-state-on-every-pane-row.md)). So the
+  fallback is always the safe one: at worst you get today's extra pane. A reused pane is never
+  killed on failure — it is the user's own shell, not something `R` created.
 - Either way you stay in the dashboard: `R` reports `review started: <name>` and leaves you on the
   list, so you can kick a review per worktree without being thrown into each one. (The
   window-was-missing case used to yank you into the new window; window creation no longer moves

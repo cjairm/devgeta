@@ -72,7 +72,7 @@ Window layout selection precedence (--layout and --ai are mutually exclusive):
   6. Default: opencode, single-pane
 
 Valid AI coders: opencode (oc), claude (cc, claudecode)
-Valid layouts: opencode, claude, claude-nvim, nvim
+Valid layouts: opencode, claude, claude-nvim, nvim, shell
 
 Starting the coder on a task, and adding panes:
 
@@ -250,7 +250,7 @@ Window layout selection follows the same precedence as create (--layout and
   6. Default: opencode, single-pane
 
 Valid AI coders: opencode (oc), claude (cc, claudecode)
-Valid layouts: opencode, claude, claude-nvim, nvim
+Valid layouts: opencode, claude, claude-nvim, nvim, shell
 
 Note: repair does not remember the layout a worktree was created with. If the
 window is missing, it is rebuilt from scratch using the precedence above,
@@ -465,7 +465,7 @@ func init() {
 	worktreeCreateCmd.Flags().
 		StringVarP(&createAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode)")
 	worktreeCreateCmd.Flags().
-		StringVarP(&createLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim)")
+		StringVarP(&createLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim, shell)")
 	worktreeCreateCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	// No shorthands for --prompt or --pane: -p is ambiguous between them, and
 	// picking one would read as a typo for the other.
@@ -491,7 +491,7 @@ func init() {
 	worktreeRepairCmd.Flags().
 		StringVarP(&repairAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode)")
 	worktreeRepairCmd.Flags().
-		StringVarP(&repairLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim)")
+		StringVarP(&repairLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim, shell)")
 	worktreeRepairCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	worktreeRemoveCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Force removal even if worktree has uncommitted changes")

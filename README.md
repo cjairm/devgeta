@@ -186,7 +186,7 @@ dg install --skip databases,desktop
 - `dg worktree` (alias: `dg wt`) - Manage git worktrees with tmux windows and AI coders
   - `dg wt create <name>` - Create a worktree + tmux window + launch AI
     - `--ai <opencode|claude>` - AI coder to launch (mutually exclusive with `--layout`)
-    - `--layout <opencode|claude|claude-nvim|nvim>` - Window layout to build (mutually exclusive with `--ai`)
+    - `--layout <opencode|claude|claude-nvim|nvim|shell>` - Window layout to build (mutually exclusive with `--ai`)
     - `--prompt <text>` - Launch the AI coder with `<text>` as its opening prompt, so the session starts already working on it. Passed as a launch argument, so it can't be dropped. Needs a layout that has an AI pane (`--prompt` with `--layout nvim` is an error)
     - `--pane <command>` - Add a shell pane beside the layout running `<command>` (e.g. `make finit`). Repeatable; the value is a shell command line used as written, so `'cd api && make dev'` works
   - `dg wt list` - List all managed worktrees

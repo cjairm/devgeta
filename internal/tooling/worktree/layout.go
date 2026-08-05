@@ -90,6 +90,21 @@ func nvimPane(split string) Pane {
 	return Pane{Command: nvimCommand, Split: split, check: ensureNvimInstalled}
 }
 
+// shellPane builds a pane that launches nothing: you get the shell tmux
+// already started in the worktree directory. All three of Pane's behaviors are
+// zero on purpose, and each says something:
+//
+//   - Command is empty, so no command is ever typed into the pane. The window
+//     builder skips send-keys entirely for a pane like this (see
+//     buildWindowPanes) rather than sending a bare Enter.
+//   - check is nil because there is nothing to install. A shell is the one
+//     "tool" every layout already depends on to run the others.
+//   - prompt is nil, so `--prompt` correctly rejects a shell-only layout
+//     instead of typing the prompt text at a bash prompt.
+func shellPane(split string) Pane {
+	return Pane{Split: split}
+}
+
 // EnsureInstalled verifies every pane's underlying tool is present, so a
 // layout referencing a missing tool fails with one actionable message
 // before the caller touches tmux (building the window is a later step's
@@ -247,7 +262,7 @@ func ensureNvimInstalled() error {
 // builtinLayoutNames lists the valid layout names in a stable order, used
 // both to build the registry and to render "valid layouts" in error
 // messages.
-var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "nvim"}
+var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "nvim", "shell"}
 
 // builtinLayouts returns the registry of layouts ResolveLayout can return by
 // name. It's rebuilt on every call (cheap: four small structs) rather than
@@ -280,6 +295,10 @@ func builtinLayouts() map[string]Layout {
 		"nvim": {
 			Name:  "nvim",
 			Panes: []Pane{nvimPane("")},
+		},
+		"shell": {
+			Name:  "shell",
+			Panes: []Pane{shellPane("")},
 		},
 	}
 }
