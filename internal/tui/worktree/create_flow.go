@@ -72,7 +72,7 @@ func (m Model) handleNewWorktreeWithLayoutPick() (tea.Model, tea.Cmd) {
 }
 
 // startNewWorktree is the shared n/N entry point: it offers the cursor row's
-// repo first. RepoCandidates already ranks candidates (cwd repo, then cursor
+// repo first. RepoCandidates already ranks candidates (cursor repo, then cwd
 // repo, then recents, then zoxide) with the top-ranked one first, matching
 // FuzzyPicker's initial cursor at index 0, so no extra pre-selection logic is
 // needed here. wantsLayoutPick records which keybinding started the flow so
@@ -90,14 +90,7 @@ func (m Model) startNewWorktree(wantsLayoutPick bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	var cursorRepoSlug string
-	if sel, ok := m.selectedStatus(); ok {
-		cursorRepoSlug = sel.Repo
-	} else if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowRepo {
-		cursorRepoSlug = m.rows[m.cursor].repo
-	}
-
-	candidates, err := m.repoCandidatesFn(cursorRepoSlug)
+	candidates, err := m.repoCandidatesFn(m.cursorRepoHint())
 	if err != nil {
 		m.status = "failed to list repos: " + err.Error()
 		return m, nil
@@ -112,6 +105,61 @@ func (m Model) startNewWorktree(wantsLayoutPick bool) (tea.Model, tea.Cmd) {
 	m.createMode = createRepoPick
 	m.wantsLayoutPick = wantsLayoutPick
 	return m, nil
+}
+
+// cursorRepoHint returns what the cursor row says about which repo the user
+// means, for RepoCandidates to rank first. It is a hint, not an identifier:
+// RepoCandidates resolves it against the repos it knows and ignores it when
+// nothing matches, so a row that points at no repo costs nothing.
+//
+// Every row kind answers, because every row kind is something the user can be
+// sitting on when they press n/N:
+//
+//   - a worktree row and a repo header already carry their repo slug.
+//   - a session row carries a tmux session name. For a session devgeta made,
+//     that is TmuxSessionName(repoSlug) - not always the slug itself, since it
+//     rewrites ".", ":" and whitespace to "_" - so resolution matches through
+//     that function rather than comparing strings. A session the user made by
+//     hand still resolves whenever its name matches a known repo, which is
+//     the common case for one opened in a project directory.
+//   - a pane row has no repo of its own, so it defers to the worktree or
+//     session row that owns it (enclosingPaneParent, the same backward scan
+//     the chevron and fold logic use) and answers as that row would.
+//
+// Only session rows and pane rows are new here. Before them, hovering a
+// session left the hint empty, so the picker offered the same top candidate
+// regardless of where the cursor was - the reason this looked broken.
+func (m Model) cursorRepoHint() string {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return ""
+	}
+	return repoHintForRow(m.rows, m.cursor)
+}
+
+// repoHintForRow is cursorRepoHint's per-row half, split out so the pane case
+// can recurse into its parent row by index without re-entering the model's
+// cursor bounds check.
+func repoHintForRow(rows []row, i int) string {
+	r := rows[i]
+	switch r.kind {
+	case rowWorktree:
+		return r.status.Repo
+	case rowRepo:
+		return r.repo
+	case rowSession:
+		return r.session.Name
+	case rowPane:
+		// A pane row sits directly under its parent, so this resolves in one
+		// step; ok=false only if emission order ever changes, and then the
+		// hint is simply absent rather than wrong.
+		if parent, ok := enclosingPaneParent(rows, i); ok {
+			if parent.kind == rowWorktree {
+				return parent.status.Repo
+			}
+			return parent.session.Name
+		}
+	}
+	return ""
 }
 
 // resolveAndValidateRepoPath runs candidate through validateRepoPathFn and,

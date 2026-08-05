@@ -62,6 +62,83 @@ func TestNewWorktreePicksCursorRepoFirst(t *testing.T) {
 	}
 }
 
+// TestNewWorktreeHintsTheCursorRowsRepo covers every row kind the cursor can
+// be on when n is pressed. Session and pane rows are the ones that used to
+// hint nothing: hovering a session offered no repo at all, so the picker's top
+// candidate came from whatever else RepoCandidates found (in practice the
+// directory `dg ws` was launched from) and moving the cursor appeared to have
+// no effect at all.
+func TestNewWorktreeHintsTheCursorRowsRepo(t *testing.T) {
+	// Rows, in the order buildRows emits them: repo-a header, its two
+	// worktrees, repo-b header, its worktree, then the standalone sessions.
+	m := makeTestModel(testStatuses())
+	m.sessions = testSessions()
+	m.rebuildRows()
+
+	for i, r := range m.rows {
+		var want string
+		switch r.kind {
+		case rowRepo:
+			want = r.repo
+		case rowWorktree:
+			want = r.status.Repo
+		case rowSession:
+			want = r.session.Name
+		case rowPane:
+			t.Fatalf("row %d: this fixture has no multi-pane parents, so no pane rows", i)
+		}
+
+		mm := m
+		mm.cursor = i
+		var got string
+		mm.repoCandidatesFn = func(cursorRepoSlug string) ([]string, error) {
+			got = cursorRepoSlug
+			return []string{"/repos/whatever"}, nil
+		}
+
+		if _, _ = mm.Update(tea.KeyPressMsg{Code: 'n'}); got != want {
+			t.Errorf("row %d (kind=%d): expected hint %q, got %q", i, r.kind, want, got)
+		}
+	}
+}
+
+// A pane row has no repo of its own and must answer as its parent row would,
+// so a cursor parked on one of a worktree's panes still hints that worktree's
+// repo rather than nothing.
+func TestNewWorktreePaneRowHintsItsParent(t *testing.T) {
+	m := makeTestModel(testStatuses())
+
+	// Hand-build the row list rather than driving buildRows through a
+	// multi-pane fixture: the assertion is about which row a pane defers to,
+	// not about how pane rows come to exist.
+	m.rows = []row{
+		{kind: rowRepo, repo: "repo-a"},
+		{kind: rowWorktree, repo: "repo-a", status: worktree.WorktreeStatus{
+			Repo: "repo-a", Name: "feature-a", TmuxWindow: "wt-repo-a-feature-a",
+		}},
+		{kind: rowPane, pane: tmux.PaneState{PaneID: "%1", Window: "wt-repo-a-feature-a"}},
+		{kind: rowSession, session: worktree.SessionStatus{Name: "collections"}},
+		{kind: rowPane, pane: tmux.PaneState{PaneID: "%2", Session: "collections"}},
+	}
+
+	cases := map[int]string{
+		2: "repo-a",      // pane under the worktree row
+		4: "collections", // pane under the session row
+	}
+	for cursor, want := range cases {
+		mm := m
+		mm.cursor = cursor
+		var got string
+		mm.repoCandidatesFn = func(cursorRepoSlug string) ([]string, error) {
+			got = cursorRepoSlug
+			return []string{"/repos/whatever"}, nil
+		}
+		if _, _ = mm.Update(tea.KeyPressMsg{Code: 'n'}); got != want {
+			t.Errorf("cursor on pane row %d: expected hint %q, got %q", cursor, want, got)
+		}
+	}
+}
+
 func TestNewWorktreeIgnoredWhileCreating(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.creating = true

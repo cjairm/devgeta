@@ -18,10 +18,9 @@ import (
 )
 
 // RepoCandidates returns a ranked, deduped list of candidate repo paths for a
-// repo picker: the repo containing the process's current working directory
-// first (so `n` suggests the repo you're already sitting in), then the
-// cursor repo (the repo owning cursorRepoSlug's worktrees), then stored
-// recent repos in most-recently-used order, then repos found by scanning
+// repo picker: the cursor repo first (the repo the caller's cursor is pointing
+// at), then the repo containing the process's current working directory, then
+// stored recent repos in most-recently-used order, then repos found by scanning
 // Worktree.SearchPaths (opt-in — empty by default, so scanning contributes
 // nothing until a user configures it), then zoxide's tracked directories when
 // zoxide is installed. Every candidate is canonicalized before deduping
@@ -35,12 +34,18 @@ import (
 func (w *WorktreeManager) RepoCandidates(cursorRepoSlug string) ([]string, error) {
 	var raw []string
 
-	if cwdRoot := w.cwdRepoRoot(); cwdRoot != "" {
-		raw = append(raw, cwdRoot)
-	}
-
+	// Cursor before cwd, deliberately. The cursor is where the user just put
+	// it; the cwd is wherever the dashboard happened to be launched from. When
+	// both resolve - the common case, since `dg ws` is usually run from inside
+	// a repo - ranking cwd first meant the top candidate never changed no
+	// matter which row the cursor was on, which read as the cursor being
+	// ignored entirely.
 	if cursorRoot := w.cursorRepoRoot(cursorRepoSlug); cursorRoot != "" {
 		raw = append(raw, cursorRoot)
+	}
+
+	if cwdRoot := w.cwdRepoRoot(); cwdRoot != "" {
+		raw = append(raw, cwdRoot)
 	}
 
 	gc := &config.GlobalConfig{}
@@ -114,19 +119,38 @@ func (w *WorktreeManager) cwdRepoRoot() string {
 // walk enumerateWorktrees uses — stopping the moment a group's resolved main
 // root matches the target slug, rather than collecting every worktree row
 // the way enumerateWorktrees does.
+// A tmux session name is accepted as well as a repo slug, because the caller's
+// cursor can be sitting on a session row and a session is the only thing such
+// a row knows about itself. The two are not interchangeable strings:
+// TmuxSessionName rewrites ".", ":" and whitespace to "_", so the repo
+// "my.tools" owns the session "my_tools" and a direct comparison would miss
+// it. Matching each known repo's own session name against the target is the
+// only direction that works, since the rewrite cannot be undone (several
+// slugs can map to one session name, and "_" is a legal character in a repo
+// name to begin with).
+//
+// An exact slug match is preferred over a session match, so a repo literally
+// named like the target always wins over one that merely maps to it.
 func (w *WorktreeManager) cursorRepoRoot(cursorRepoSlug string) string {
 	if cursorRepoSlug == "" {
 		return ""
 	}
-	var found string
+	var found, viaSession string
 	w.forEachKnownRepo(func(mainRoot string, _ []git.WorktreeInfo) bool {
-		if filepath.Base(mainRoot) == cursorRepoSlug {
+		slug := filepath.Base(mainRoot)
+		if slug == cursorRepoSlug {
 			found = mainRoot
 			return false
 		}
+		if viaSession == "" && TmuxSessionName(slug) == cursorRepoSlug {
+			viaSession = mainRoot
+		}
 		return true
 	})
-	return found
+	if found != "" {
+		return found
+	}
+	return viaSession
 }
 
 // zoxideCandidates runs `zoxide query -l` to list zoxide's tracked

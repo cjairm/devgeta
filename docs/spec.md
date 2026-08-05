@@ -395,13 +395,22 @@ dg wt prune --stale                         # Clear git's leftover entries for d
 **Creating from the dashboard (`n` / `N`)**:
 
 - `n` opens a floating repo picker over the dashboard — the background stays visible, matching
-  the `?` help overlay. Candidates are ranked: the repo containing the directory `dg ws` was
-  launched from first (when that directory is inside a git repo — otherwise this source is
-  skipped), then the repo under the cursor, then repos from the recent-repos store
-  (most-recently-used first), then repos found by scanning `worktree.search_paths` (see above —
-  contributes nothing until configured), then `zoxide query -l` results when zoxide is
-  installed. Typing filters the list; if the query matches nothing, Enter validates it directly
-  as a free-typed repo path instead.
+  the `?` help overlay. Candidates are ranked: **the repo the cursor is on first**, then the repo
+  containing the directory `dg ws` was launched from (when that directory is inside a git repo —
+  otherwise this source is skipped), then repos from the recent-repos store (most-recently-used
+  first), then repos found by scanning `worktree.search_paths` (see above — contributes nothing
+  until configured), then `zoxide query -l` results when zoxide is installed. Typing filters the
+  list; if the query matches nothing, Enter validates it directly as a free-typed repo path
+  instead.
+- The cursor row is what puts a repo at the top, so the common case is: move to the row you mean,
+  press `n`, press Enter — no typing, no arrow keys. Every row kind answers: a worktree row and a
+  repo header give their repo, a **session row** gives its session (resolved back to the repo
+  whose own `TmuxSessionName` matches it, since that rewrite turns `.`, `:` and whitespace into
+  `_` and cannot be reversed), and a **pane row** answers as the worktree or session row above it
+  would. A row that matches no known repo simply contributes nothing, and the next source leads.
+  Ranking the launch directory ahead of the cursor is what previously made this look broken:
+  `dg ws` is normally started inside a repo, so that repo won every time and moving the cursor
+  changed nothing.
 - Enter on a repo opens a floating name prompt. For `n`, Enter on the name creates the worktree
   immediately using the resolved default layout (same as `create --repo` with no `--layout`/
   `--ai`) and attaches into the new window — the TUI exits, identical to pressing Enter on an

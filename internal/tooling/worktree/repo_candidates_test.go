@@ -1,8 +1,10 @@
 package worktree
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -302,7 +304,14 @@ func TestRepoCandidates(t *testing.T) {
 		}
 	})
 
-	t.Run("cwd repo is suggested first when cwd is inside a git repo", func(t *testing.T) {
+	// The cursor repo outranks the cwd repo, and this is the case that proves
+	// it: both resolve, to different repos. It is also the everyday case -
+	// `dg ws` is normally launched from inside some repo - and ranking cwd
+	// first there made the picker's top candidate identical no matter which row
+	// the cursor sat on, which is indistinguishable from the cursor being
+	// ignored. The cursor is a choice the user just made; the cwd is only where
+	// the dashboard happened to start.
+	t.Run("cursor repo is suggested before the cwd repo", func(t *testing.T) {
 		cleanupPaths := testutil.SetupIsolatedPaths(t)
 		defer cleanupPaths()
 		failingLookPath(t)
@@ -317,24 +326,10 @@ func TestRepoCandidates(t *testing.T) {
 		}
 
 		cursorRoot := filepath.Join(t.TempDir(), "cursor-repo")
-		cwdPorcelain := "worktree " + actualCwd + "\nHEAD abc123\nbranch refs/heads/main\n\n"
-		cursorPorcelain := "worktree " + cursorRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n"
-		// cursorRepoRoot's own group walk now verifies the resolved main
-		// root's basename against the target slug, so repoSlug must equal
-		// cursorRoot's actual basename (real usage already guarantees this:
-		// create() names the shared-root directory after the repo's own
-		// basename). Four calls total: RepoCandidates' own cwdRepoRoot()
-		// (resolves to actualCwd), cursorRepoRoot's internal cwdRepoRoot()
-		// (resolves to actualCwd again but doesn't match repoSlug, so the
-		// walk moves to the next group), then the shared-root group's
-		// anchor (resolves to cursorRoot, which does match).
-		mockGitBase.SetExecCommandResults(
-			commands.ExecCommandResult(cwdPorcelain, "", nil),
-			commands.ExecCommandResult(cwdPorcelain, "", nil),
-			commands.ExecCommandResult(cwdPorcelain, "", nil),
-			commands.ExecCommandResult(cursorPorcelain, "", nil),
-		)
-
+		// cursorRepoRoot's group walk verifies each resolved main root's
+		// basename against the target slug, so repoSlug must equal cursorRoot's
+		// actual basename (real usage guarantees this: create() names the
+		// shared-root directory after the repo's own basename).
 		repoSlug := filepath.Base(cursorRoot)
 		wtDir := filepath.Join(GetWorktreeBasePath(), repoSlug, "some-worktree")
 		if err := os.MkdirAll(wtDir, 0o755); err != nil {
@@ -346,26 +341,86 @@ func TestRepoCandidates(t *testing.T) {
 			}
 		})
 
+		// Answer by which directory the call targets rather than by call
+		// order: both sources resolve a root via `git -C <dir> worktree list`,
+		// and how many times each is consulted is an internal detail of the
+		// group walk - not something this test should pin, since it is
+		// asserting precedence, not call counts.
+		cwdPorcelain := "worktree " + actualCwd + "\nHEAD abc123\nbranch refs/heads/main\n\n"
+		cursorPorcelain := "worktree " + cursorRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n"
+		mockGitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+			for _, arg := range c.Args {
+				if strings.HasPrefix(arg, wtDir) || strings.HasPrefix(arg, cursorRoot) {
+					return cursorPorcelain, "", nil
+				}
+			}
+			return cwdPorcelain, "", nil
+		}
+
 		candidates, err := wm.RepoCandidates(repoSlug)
 		if err != nil {
 			t.Fatalf("RepoCandidates failed: %v", err)
 		}
-		wantCwd := config.CanonicalRepoPath(actualCwd)
 		wantCursor := config.CanonicalRepoPath(cursorRoot)
-		if len(candidates) != 2 || candidates[0] != wantCwd || candidates[1] != wantCursor {
-			t.Fatalf("expected [%q, %q], got %+v", wantCwd, wantCursor, candidates)
+		wantCwd := config.CanonicalRepoPath(actualCwd)
+		if len(candidates) != 2 || candidates[0] != wantCursor || candidates[1] != wantCwd {
+			t.Fatalf("expected [%q, %q], got %+v", wantCursor, wantCwd, candidates)
+		}
+	})
+
+	// A session row is the only row kind whose name is not a repo slug, and
+	// TmuxSessionName's rewrite is not reversible ("." -> "_"), so resolution
+	// has to compare each known repo's own session name against the target.
+	// Without this, hovering a session offered nothing and the picker fell back
+	// to the cwd repo.
+	t.Run("a tmux session name resolves to the repo that owns it", func(t *testing.T) {
+		cleanupPaths := testutil.SetupIsolatedPaths(t)
+		defer cleanupPaths()
+		failingLookPath(t)
+
+		wm, mockGitBase, _, _ := newRecordingWM()
+
+		// A repo whose slug contains a character TmuxSessionName rewrites, so
+		// the session name genuinely differs from the slug: "my.tools" owns
+		// the session "my_tools".
+		repoRoot := filepath.Join(t.TempDir(), "my.tools")
+		sessionName := TmuxSessionName(filepath.Base(repoRoot))
+		if sessionName == filepath.Base(repoRoot) {
+			t.Fatalf("setup: session name %q must differ from the slug to test the rewrite",
+				sessionName)
 		}
 
-		if len(mockGitBase.ExecCommandCalls) == 0 {
-			t.Fatal("expected at least one git call")
+		t.Chdir(t.TempDir()) // cwd is not a repo, so the cursor is the only source
+
+		wtDir := filepath.Join(GetWorktreeBasePath(), filepath.Base(repoRoot), "some-worktree")
+		if err := os.MkdirAll(wtDir, 0o755); err != nil {
+			t.Fatalf("setup: %v", err)
 		}
-		firstArgs := mockGitBase.ExecCommandCalls[0].Args
-		if len(firstArgs) < 2 || firstArgs[0] != "-C" || firstArgs[1] != actualCwd {
-			t.Errorf(
-				"expected first git call to target cwd %q via -C, got args %+v",
-				actualCwd,
-				firstArgs,
-			)
+		t.Cleanup(func() {
+			if err := os.RemoveAll(
+				filepath.Join(GetWorktreeBasePath(), filepath.Base(repoRoot)),
+			); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		})
+
+		porcelain := "worktree " + repoRoot + "\nHEAD abc123\nbranch refs/heads/main\n\n"
+		mockGitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+			for _, arg := range c.Args {
+				if strings.HasPrefix(arg, wtDir) {
+					return porcelain, "", nil
+				}
+			}
+			return "", "", errors.New("not a git repository")
+		}
+
+		candidates, err := wm.RepoCandidates(sessionName)
+		if err != nil {
+			t.Fatalf("RepoCandidates failed: %v", err)
+		}
+		want := config.CanonicalRepoPath(repoRoot)
+		if len(candidates) != 1 || candidates[0] != want {
+			t.Fatalf("expected the session's repo [%q] first, got %+v", want, candidates)
 		}
 	})
 
