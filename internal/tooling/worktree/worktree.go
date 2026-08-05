@@ -1824,6 +1824,17 @@ func (w *WorktreeManager) Repair(name string, layout Layout) error {
 		)
 	}
 
+	// Re-apply the gitfile normalization creation established. This is what
+	// keeps that fix from regressing silently: `git worktree repair` and `git
+	// worktree move` rewrite .git and restore git's trailing newline, which
+	// reintroduces the strict-parser breakage (commits failing inside the
+	// worktree) with nothing to announce it. Repair is the command a user runs
+	// when a worktree misbehaves, so it is the right place to heal it.
+	// See ADR-0013.
+	if err := w.Git.NormalizeWorktreeGitfile(wtPath); err != nil {
+		return err
+	}
+
 	return w.ensureWindow(repoSlug, windowName, wtPath, layout)
 }
 
@@ -1909,6 +1920,12 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 			name,
 		)
 	}
+	// Heal the gitfile before handing the worktree back - see Repair's
+	// identical call for why the repair paths own this.
+	if err := w.Git.NormalizeWorktreeGitfile(wtPath); err != nil {
+		return err
+	}
+
 	return w.ensureWindow(repoSlug, windowName, wtPath, layout)
 }
 

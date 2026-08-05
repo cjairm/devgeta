@@ -31,3 +31,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0009](ADR-0009-audible-agent-notifications.md) — An agent that wants you makes a sound, from the hook that already knows
 - [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md) — Worktree layout is a setting, and git is the worktree index
 - [ADR-0011](ADR-0011-agent-prompt-as-launch-argument.md) — An opening prompt is a launch argument, not keystrokes
+- [ADR-0013](ADR-0013-normalize-the-worktree-gitfile.md) — Normalize the worktree gitfile instead of warning about it

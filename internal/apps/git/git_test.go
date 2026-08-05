@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -1769,7 +1770,11 @@ func TestCheckHookCompatibility(t *testing.T) {
 		}
 	})
 
-	t.Run("affiance hooks trigger warning and skip other checks", func(t *testing.T) {
+	// Affiance's own worktree failure is fixed at the source by
+	// NormalizeWorktreeGitfile, so it must NOT be reported here - warning about
+	// a problem devgeta already prevents is a nag the user cannot act on. See
+	// ADR-0013.
+	t.Run("affiance hooks alone produce no warning", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
 		mockApp.Base.SetExecCommandResult("", "exit status 1", fmt.Errorf("exit status 1"))
@@ -1780,21 +1785,49 @@ func TestCheckHookCompatibility(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// Create affiance-hook file (indicates Affiance is installed)
+		// The real affiance stub: every hook is symlinked to it, and none of
+		// them test for a .git DIRECTORY, so there is nothing to warn about.
 		affianceContent := "#!/bin/bash\nhook=`basename \"$0\"`\nnode $DIR/affiance-hook.js \"$hook\" \"$@\"\n"
+		for _, name := range []string{"affiance-hook", "pre-commit", "commit-msg"} {
+			if err := os.WriteFile(
+				filepath.Join(hooksDir, name),
+				[]byte(affianceContent),
+				0o755,
+			); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		if warnings := app.CheckHookCompatibility(tmpDir); len(warnings) != 0 {
+			t.Errorf("Expected no warnings for affiance-only hooks, got %v", warnings)
+		}
+	})
+
+	// Dropping the old affiance early-return also unmasked a real bug: while
+	// that branch returned early, a hook genuinely requiring .git to be a
+	// directory - which normalization can NOT fix - was skipped entirely
+	// whenever affiance happened to be installed.
+	t.Run("affiance presence no longer masks a directory-requiring hook", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		mockApp.Base.SetExecCommandResult("", "exit status 1", fmt.Errorf("exit status 1"))
+
+		tmpDir := t.TempDir()
+		hooksDir := filepath.Join(tmpDir, ".git", "hooks")
+		if err := os.MkdirAll(hooksDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
 		if err := os.WriteFile(
 			filepath.Join(hooksDir, "affiance-hook"),
-			[]byte(affianceContent),
+			[]byte("#!/bin/bash\nnode $DIR/affiance-hook.js \"$@\"\n"),
 			0o755,
 		); err != nil {
 			t.Fatal(err)
 		}
-
-		// Also create a pre-commit with bad pattern - should be ignored when Affiance is present
-		badHook := "#!/bin/bash\n[ -d .git ] || exit 1\n"
 		if err := os.WriteFile(
 			filepath.Join(hooksDir, "pre-commit"),
-			[]byte(badHook),
+			[]byte("#!/bin/bash\n[ -d .git ] || exit 1\n"),
 			0o755,
 		); err != nil {
 			t.Fatal(err)
@@ -1802,13 +1835,17 @@ func TestCheckHookCompatibility(t *testing.T) {
 
 		warnings := app.CheckHookCompatibility(tmpDir)
 		if len(warnings) != 1 {
-			t.Fatalf("Expected 1 warning for Affiance, got %d: %v", len(warnings), warnings)
+			t.Fatalf(
+				"Expected 1 warning for the pre-commit hook, got %d: %v",
+				len(warnings),
+				warnings,
+			)
 		}
-		if !strings.Contains(warnings[0], "affiance") {
-			t.Errorf("Expected warning to mention affiance, got %q", warnings[0])
+		if !strings.Contains(warnings[0], "pre-commit") {
+			t.Errorf("Expected the warning to name pre-commit, got %q", warnings[0])
 		}
-		if !strings.Contains(warnings[0], "--no-verify") {
-			t.Errorf("Expected warning to suggest --no-verify, got %q", warnings[0])
+		if strings.Contains(strings.ToLower(warnings[0]), "affiance") {
+			t.Errorf("Expected no affiance warning, got %q", warnings[0])
 		}
 	})
 }
@@ -2318,6 +2355,188 @@ func TestFreeBranchIfHeldElsewhereSkipsPrunable(t *testing.T) {
 					t.Errorf("a git command was run against the stale path: %v", call.Args)
 				}
 			}
+		}
+	})
+}
+
+// NormalizeWorktreeGitfile is the structural fix for strict third-party parsers
+// of the .git file (ADR-0013). These tests are pure filesystem work - no git is
+// executed - so the mock executor stays untouched throughout.
+func TestNormalizeWorktreeGitfile(t *testing.T) {
+	newApp := func() (*Git, *testutil.MockApp) {
+		mockApp := testutil.NewMockApp()
+		return &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}, mockApp
+	}
+
+	t.Run("strips the trailing newline git writes", func(t *testing.T) {
+		app, mockApp := newApp()
+		wtPath := t.TempDir()
+		gitfile := filepath.Join(wtPath, ".git")
+		// Byte-for-byte what `git worktree add` produces.
+		if err := os.WriteFile(
+			gitfile,
+			[]byte("gitdir: /repo/.git/worktrees/foo\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+			t.Fatalf("NormalizeWorktreeGitfile returned error: %v", err)
+		}
+
+		got, err := os.ReadFile(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "gitdir: /repo/.git/worktrees/foo"; string(got) != want {
+			t.Errorf("gitfile = %q, want %q", got, want)
+		}
+		testutil.VerifyNoRealCommands(t, mockApp.Base)
+	})
+
+	t.Run("result matches the strict end-of-line regex that broke", func(t *testing.T) {
+		app, _ := newApp()
+		wtPath := t.TempDir()
+		gitfile := filepath.Join(wtPath, ".git")
+		if err := os.WriteFile(
+			gitfile,
+			[]byte("gitdir: /repo/.git/worktrees/foo\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		// Go equivalent of affiance's /^gitdir: (.*)$/ WITHOUT multiline: `$`
+		// binds to end of text and `.` excludes newlines, exactly as in JS. This
+		// is the assertion that actually protects the user-visible behavior - if
+		// a future edit stops trimming, commits break again in worktrees.
+		strict := regexp.MustCompile(`\Agitdir: ([^\n]*)\z`)
+
+		before, err := os.ReadFile(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strict.Match(before) {
+			t.Fatal("precondition failed: git's own output should NOT match the strict regex")
+		}
+
+		if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+			t.Fatalf("NormalizeWorktreeGitfile returned error: %v", err)
+		}
+
+		after, err := os.ReadFile(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := strict.FindSubmatch(after)
+		if m == nil {
+			t.Fatalf("normalized gitfile %q still does not match the strict regex", after)
+		}
+		if got := string(m[1]); got != "/repo/.git/worktrees/foo" {
+			t.Errorf("captured gitdir = %q, want %q", got, "/repo/.git/worktrees/foo")
+		}
+	})
+
+	t.Run("is idempotent on already-trimmed content", func(t *testing.T) {
+		app, _ := newApp()
+		wtPath := t.TempDir()
+		gitfile := filepath.Join(wtPath, ".git")
+		want := "gitdir: /repo/.git/worktrees/foo"
+		if err := os.WriteFile(gitfile, []byte(want), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		for i := 0; i < 3; i++ {
+			if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+				t.Fatalf("call %d returned error: %v", i, err)
+			}
+		}
+
+		got, err := os.ReadFile(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Errorf("gitfile = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("strips trailing CRLF and blank lines too", func(t *testing.T) {
+		app, _ := newApp()
+		wtPath := t.TempDir()
+		gitfile := filepath.Join(wtPath, ".git")
+		if err := os.WriteFile(
+			gitfile,
+			[]byte("gitdir: /repo/.git/worktrees/foo\r\n\n"),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+			t.Fatalf("NormalizeWorktreeGitfile returned error: %v", err)
+		}
+
+		got, err := os.ReadFile(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := "gitdir: /repo/.git/worktrees/foo"; string(got) != want {
+			t.Errorf("gitfile = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("preserves the file mode", func(t *testing.T) {
+		app, _ := newApp()
+		wtPath := t.TempDir()
+		gitfile := filepath.Join(wtPath, ".git")
+		if err := os.WriteFile(
+			gitfile,
+			[]byte("gitdir: /repo/.git/worktrees/foo\n"),
+			0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+			t.Fatalf("NormalizeWorktreeGitfile returned error: %v", err)
+		}
+
+		info, err := os.Stat(gitfile)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := info.Mode().Perm(); got != 0o600 {
+			t.Errorf("mode = %o, want %o", got, 0o600)
+		}
+	})
+
+	t.Run("no-ops on a main checkout where .git is a directory", func(t *testing.T) {
+		app, _ := newApp()
+		wtPath := t.TempDir()
+		gitDir := filepath.Join(wtPath, ".git")
+		if err := os.MkdirAll(gitDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := app.NormalizeWorktreeGitfile(wtPath); err != nil {
+			t.Fatalf("expected no error for a main checkout, got %v", err)
+		}
+
+		info, err := os.Stat(gitDir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !info.IsDir() {
+			t.Error(".git should still be a directory")
+		}
+	})
+
+	t.Run("no-ops when there is no .git entry at all", func(t *testing.T) {
+		app, _ := newApp()
+		if err := app.NormalizeWorktreeGitfile(t.TempDir()); err != nil {
+			t.Errorf("expected no error for a path with no .git, got %v", err)
 		}
 	})
 }

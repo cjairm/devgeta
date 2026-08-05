@@ -78,9 +78,7 @@ func (tm *TaskManager) WorktreeStart(name, base string) (string, error) {
 			return "", fmt.Errorf("worktree-start: %w", err)
 		}
 	} else {
-		if err := tm.Git.ExecuteCommandAt(
-			repoRoot, "worktree", "add", "-b", name, wtPath, base,
-		); err != nil {
+		if err := tm.Git.CreateWorktreeAtBaseIn(repoRoot, wtPath, name, base); err != nil {
 			return "", fmt.Errorf("worktree-start: %w", err)
 		}
 	}

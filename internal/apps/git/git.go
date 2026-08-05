@@ -445,7 +445,88 @@ func (g *Git) CreateWorktree(path, branch string) error {
 // CreateWorktreeIn is CreateWorktree evaluated against the repository at
 // repoDir ("" = current directory), so worktrees can be created for a repo
 // the caller is not inside.
+//
+// Every successful creation is followed by NormalizeWorktreeGitfile. That is
+// deliberately here, at the single choke point, rather than at each of the
+// `worktree add` calls below: the inner function has five separate success
+// paths, and normalizing per-path is how one of them silently ends up missing
+// the invariant later. See ADR-0013.
 func (g *Git) CreateWorktreeIn(repoDir, path, branch string) error {
+	if err := g.createWorktreeIn(repoDir, path, branch); err != nil {
+		return err
+	}
+	return g.NormalizeWorktreeGitfile(path)
+}
+
+// CreateWorktreeAtBaseIn creates a worktree holding a NEW branch rooted at an
+// explicit base ref, rather than letting createWorktreeIn pick the base (which
+// prefers reusing an existing local/remote branch of the same name).
+//
+// It exists so callers that need an explicit base go through the git wrapper and
+// pick up the same post-creation invariants as CreateWorktreeIn — before this,
+// `devgeta task worktree-start --base` assembled its own `worktree add` and so
+// was the one creation path that produced an un-normalized gitfile.
+func (g *Git) CreateWorktreeAtBaseIn(repoDir, path, branch, base string) error {
+	if err := g.ExecuteCommandAt(repoDir, "worktree", "add", "-b", branch, path, base); err != nil {
+		return err
+	}
+	return g.NormalizeWorktreeGitfile(path)
+}
+
+// NormalizeWorktreeGitfile rewrites a linked worktree's .git file to carry no
+// trailing newline — "gitdir: <path>" rather than the "gitdir: <path>\n" that
+// `git worktree add` writes.
+//
+// Both forms are valid and git treats them identically: its own parser
+// (read_gitfile_gently) trims trailing whitespace, and `rev-parse
+// --absolute-git-dir`, `status`, and `commit` were all verified against a
+// stripped gitfile before this was adopted. The no-newline form is simply the
+// one that strict third-party parsers can read too, so writing it costs nothing
+// and buys compatibility.
+//
+// The class of breakage it prevents is a hook framework that parses the gitfile
+// with a regex anchored at end-of-line. Affiance (github.com/l8on/affiance,
+// still broken in 1.8.0, the latest published version) matches it with
+// /^gitdir: (.*)$/g in lib/gitRepo.js. JavaScript's `$` without the `m` flag
+// matches only at end-of-input — NOT before a trailing newline, the way Perl and
+// Python do — and `.` never matches a newline, so that pattern cannot match what
+// git writes and gitDir() throws InvalidGitRepo("no .git directory found").
+// It was not confined to merges: the pre-commit context's setupEnvironment()
+// calls storeMergeState() -> mergeState() -> gitDir() unconditionally, so EVERY
+// commit inside such a worktree failed while creating it appeared to succeed.
+//
+// Safe to call on any checkout and idempotent: it no-ops when path has no .git
+// entry, when .git is a directory (a main checkout has nothing to normalize),
+// and when the content is already trimmed.
+func (g *Git) NormalizeWorktreeGitfile(path string) error {
+	gitfile := filepath.Join(path, ".git")
+	// Stat, not Lstat: a .git symlinked to a directory is still a main-checkout
+	// shape with nothing to normalize, and should be skipped rather than read.
+	info, err := os.Stat(gitfile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to inspect %s: %w", gitfile, err)
+	}
+	if info.IsDir() {
+		return nil
+	}
+	content, err := os.ReadFile(gitfile)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", gitfile, err)
+	}
+	trimmed := strings.TrimRight(string(content), " \t\r\n")
+	if trimmed == string(content) {
+		return nil
+	}
+	if err := files.WriteFileAtomic(gitfile, []byte(trimmed), info.Mode().Perm()); err != nil {
+		return fmt.Errorf("failed to normalize %s: %w", gitfile, err)
+	}
+	return nil
+}
+
+func (g *Git) createWorktreeIn(repoDir, path, branch string) error {
 	// Fetch latest remote refs to ensure we see recent branches.
 	// Best-effort: ignore errors (user may be offline or have no remote).
 	_ = g.ExecuteCommand(dirArgs(repoDir, "fetch", "origin")...)
@@ -786,9 +867,13 @@ func (g *Git) PruneWorktreesAt(dir string) error {
 // that use `[ -d .git ]` or `test -d .git`. In a git worktree the .git entry is
 // a FILE, not a directory, so those checks always fail and block git commit.
 //
-// Also detects Affiance hooks which have a known bug where the .git file regex
-// fails to match due to trailing newlines, causing "no .git directory found".
-// See: https://github.com/mariusbutuc/affiance/issues/XXX
+// It deliberately does NOT warn about hook frameworks that fail only because
+// they parse the .git FILE with a too-strict regex (Affiance being the case that
+// prompted this). Those are fixed at the source instead, by
+// NormalizeWorktreeGitfile, so warning about them here would nag about a problem
+// devgeta has already prevented. Only patterns devgeta cannot fix — a hook
+// genuinely requiring .git to be a directory — belong in this list. See
+// ADR-0013.
 //
 // Returns one warning string per offending hook file, or nil if all clear.
 func (g *Git) CheckHookCompatibility(repoRoot string) []string {
@@ -804,17 +889,6 @@ func (g *Git) CheckHookCompatibility(repoRoot string) []string {
 	incompatiblePatterns := []string{"[ -d .git", "test -d .git"}
 
 	var warnings []string
-
-	// Check for Affiance hooks (known worktree incompatibility)
-	affianceHook := filepath.Join(hooksDir, "affiance-hook")
-	if _, err := os.Stat(affianceHook); err == nil {
-		warnings = append(
-			warnings,
-			"affiance-hook (Affiance has a bug parsing .git files in worktrees; use --no-verify to bypass)",
-		)
-		// If Affiance is present, all hooks delegate to it, so skip individual checks
-		return warnings
-	}
 
 	for _, hookFile := range hookFiles {
 		content, err := os.ReadFile(filepath.Join(hooksDir, hookFile))
