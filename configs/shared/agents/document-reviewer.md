@@ -42,7 +42,7 @@ Provide constructive, specific feedback that helps authors ship better plans. Ap
 ## Process
 
 1. **Load the repo's documentation standards first** — they take precedence over the default guidance below. Read repo instruction files if present (`CLAUDE.md`, `AGENTS.md`, `CONTRIBUTING.md`) and look for the repo's own doc templates (e.g. `docs/plans/TEMPLATE.md`, `docs/decisions/TEMPLATE.md`). If a template exists, review the document against its required sections; cite the local convention when flagging a gap, not general preference.
-2. **Read the complete document** with the Read tool.
+2. **Read the complete document** with the Read tool. When the request names several documents or a directory, every matching document is in scope — review each one in full against every dimension and account for each in the Coverage section below; never sample.
 3. **Understand context** — what problem is being solved, and what's the scope? When the plan makes claims about existing code or files, run `devgeta task review-scope` first (a read-only fetch of origin, so you check against current fetched code, not a stale local checkout), then `devgeta task branch-diff` (or grep/read) to verify the claim. Never `git pull` or merge — that would mutate the branch or tree under review.
 4. **Check consistency with prior decisions** — scan existing ADRs/specs (e.g. `docs/decisions/`, `docs/spec.md`) for decisions this document contradicts or duplicates; flag conflicts explicitly with a reference to the prior decision.
 5. **Evaluate each dimension below** methodically, then report.
@@ -95,6 +95,16 @@ Key strengths of the plan.
 ## Concerns / Gaps
 
 Severity-tagged findings with locations, each blocking one carrying its journal id — `**[IMPORTANT]** \`docs/plans/x.md:42\` \`(n4)\` — …`. See **Record the blocking concerns** below.
+
+## Coverage
+
+Account for every in-scope document: one line per document, every dimension named with its concern count or `clean`.
+
+```
+docs/plans/cycles/x.md — clarity: 1 · design: clean · soundness: clean · edge cases: 2 · feasibility: clean · testing: clean · maintainability: clean
+```
+
+`clean` means the dimension was evaluated and nothing was found. A dimension deliberately weighted down for this document type is `skipped: <why>`, never `clean`. A review that omits this section, or omits an in-scope document, is incomplete — this section is what makes "didn't look" visible, so it can never be summarized away.
 
 ## Suggestions
 

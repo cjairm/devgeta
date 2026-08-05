@@ -39,7 +39,7 @@ When the branch has a PR, `devgeta task review-threads --state all` is the same 
 
 Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its supporting files — wherever the repo keeps them (`.claude/`, a configs tree, a vendored skills library). Locate them by pattern, never by an assumed path. Determine what to review, in priority order:
 
-1. User-specified files → read exactly those
+1. User-specified files or a directory → audit scope: every named file (and every prompt file in a named directory) is in scope, and the unit of review is the **whole file** — run every pass against the full contents, no diff filtering. Journal reconciliation still applies.
 2. "Uncommitted" → `git diff HEAD` filtered to prompt files
 3. Feature branch → `devgeta task review-scope` first, then `devgeta task branch-diff` filtered to prompt files; fall back to raw `git diff` against the default branch only if these commands are unavailable
 
@@ -91,6 +91,16 @@ Per finding:
 Severity tags: `[CRITICAL]` (the prompt will do the wrong thing — untruthful state, unsafe permission, broken trigger), `[IMPORTANT]` (should fix before merge), `[MINOR]`/`[Nit]` (author's discretion).
 
 `(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`.
+
+### Coverage
+
+Account for every in-scope file: one line per file, every pass named with its findings count or `clean`.
+
+```
+agents/code-reviewer.md — triggering: clean · structure: clean · output contract: 1 · truthfulness: clean · conciseness: clean · consistency: 1 · testability: clean
+```
+
+`clean` means the pass ran on that file and found nothing. A pass you deliberately skipped is `skipped: <why>`, never `clean`. A review that omits this section, or omits an in-scope file, is incomplete — this section is what makes "didn't look" visible, so it can never be summarized away.
 
 ### Strengths
 

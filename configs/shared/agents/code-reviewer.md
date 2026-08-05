@@ -51,7 +51,7 @@ The repo's own instructions take precedence over the default guidance below.
 
 Determine what to review, in priority order:
 
-1. User-specified files → read exactly those
+1. User-specified files or a directory → audit scope: every named file (and every file in a named directory) is in scope, and the unit of review is the **whole file** — run every pass against the full contents, no diff filtering. Journal reconciliation still applies.
 2. "Uncommitted" → `git diff HEAD`
 3. Feature branch → `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats) — this must run first, before `devgeta task branch-diff` for the full noise-filtered diff — or `devgeta task branch-diff --file <path>` per file on large branches. Both exclude lockfile-style noise by default and note what they excluded; fall back to raw `git diff` only if these commands are unavailable.
 4. Arbitrary range (a PR that isn't checked out, or any historical `<base>..<head>` not tied to the current branch's default-branch merge-base) → `devgeta task review-package <base> <head>` for the commit list, noise-filtered stat table, and full diff in one call, or `devgeta task review-package <base> <head> --file <path>` per file on large ranges.
@@ -132,6 +132,16 @@ Per finding:
   ```
 
 `(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`.
+
+### Coverage
+
+Account for every in-scope file: one line per file, every pass named with its findings count or `clean`.
+
+```
+internal/apps/foo/foo.go — design: clean · functionality: 2 · performance: clean · security: clean · complexity: clean · tests: 1 · naming: clean · style: clean
+```
+
+`clean` means the pass ran on that file and found nothing. A pass you deliberately went light on (per the classification) is `skipped: <why>`, never `clean`. A review that omits this section, or omits an in-scope file, is incomplete — this section is what makes "didn't look" visible, so it can never be summarized away.
 
 ### Strengths
 
