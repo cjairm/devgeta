@@ -9,7 +9,9 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // taskWorktreePath returns worktree.GetWorktreeBasePath()/<repoSlug>/<flat-name>
@@ -137,6 +139,10 @@ func (tm *TaskManager) worktreeFinishDiscard(wtPath, branch string, force bool) 
 		}
 	}
 
+	// Resolved BEFORE the removal: afterwards wtPath is gone, and the journal's
+	// location can only be resolved by running git somewhere that still exists.
+	mainWorktree, mainErr := tm.Git.GetMainWorktree(wtPath)
+
 	if err := tm.Git.RemoveWorktree(wtPath, true, branch); err != nil {
 		if !force {
 			return "", fmt.Errorf("failed to discard %s: %w", wtPath, err)
@@ -144,6 +150,9 @@ func (tm *TaskManager) worktreeFinishDiscard(wtPath, branch string, force bool) 
 		return tm.forceDiscardFallback(wtPath, branch, err)
 	}
 
+	if mainErr == nil {
+		tm.dropReviewJournal(mainWorktree, branch)
+	}
 	return fmt.Sprintf("Discarded worktree %s (branch %s deleted)", wtPath, branch), nil
 }
 
@@ -179,6 +188,7 @@ func (tm *TaskManager) forceDiscardFallback(
 				"removed %s but failed to delete branch %q: %w", wtPath, branch, err,
 			)
 		}
+		tm.dropReviewJournal(mainWorktree, branch)
 	}
 
 	return fmt.Sprintf("Discarded worktree %s (branch %s deleted)", wtPath, branch), nil
@@ -256,7 +266,37 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		)
 	}
 
+	tm.dropReviewJournal(mainWorktree, branch)
 	return fmt.Sprintf("Merged %s into %s; removed worktree %s", branch, defaultBranch, wtPath), nil
+}
+
+// dropReviewJournal deletes branch's review journal once the branch itself is
+// gone (ADR-0012). Every path that deletes a worktree's branch must call this,
+// or the journal outlives the work it describes: worktree-finish deletes the
+// branch through Git.RemoveWorktree directly rather than through
+// WorktreeManager.removeByRepo, so it does not inherit that path's cleanup and
+// needs its own.
+//
+// repoDir must be a path inside the repo that still exists after the removal —
+// the main checkout, never the deleted worktree — because resolving the
+// journal's location runs git there.
+//
+// Best-effort: the worktree and branch are already gone by the time this runs,
+// so failing the command over a leftover text file would report failure for an
+// operation that succeeded. A survivor is self-correcting —
+// `devgeta task review-notes --prune` drops journals whose branch no longer
+// exists, which this one now satisfies.
+func (tm *TaskManager) dropReviewJournal(repoDir, branch string) {
+	if branch == "" {
+		return
+	}
+	if err := reviewjournal.New(tm.Git).Delete(repoDir, branch); err != nil {
+		logger.L().Debugw(
+			"worktree-finish: could not delete the branch's review journal",
+			"branch", branch,
+			"error", err,
+		)
+	}
 }
 
 // resolveWorktreeTarget implements worktree-finish's deterministic target
@@ -344,16 +384,7 @@ func (tm *TaskManager) findWorktreePath(name string) (string, error) {
 // worktree list --porcelain`, run from wtPath itself so it works regardless
 // of the process's actual working directory.
 func (tm *TaskManager) branchForWorktree(wtPath string) (string, error) {
-	worktrees, err := tm.Git.ListWorktreesAt(wtPath)
-	if err != nil {
-		return "", err
-	}
-	for _, wt := range worktrees {
-		if wt.Path == wtPath {
-			return wt.Branch, nil
-		}
-	}
-	return "", fmt.Errorf("could not determine branch for worktree %s", wtPath)
+	return tm.Git.BranchForWorktree(wtPath)
 }
 
 // availableWorktreesNote renders the "never guess, list what's available"

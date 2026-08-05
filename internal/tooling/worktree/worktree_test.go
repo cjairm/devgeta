@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1366,6 +1367,153 @@ func TestRemoveByRepoUsesCorrectPath(t *testing.T) {
 			t.Error("expected directory to be removed with correct repoSlug")
 		}
 	})
+}
+
+// TestRemoveByRepoDeletesTheBranchsReviewJournal is the cleanup half of
+// ADR-0012: the journal's location was chosen so that removing the worktree —
+// which deletes the branch — takes its remembered review exchanges with it, in
+// Go, with no agent involved. A sibling branch's journal must survive, since
+// only the removed branch's work stopped existing.
+//
+// The branch here is "fix/bug" while the worktree/row name is "fix-bug"
+// (FlattenName strips "/"), because those two being different is exactly where
+// this went wrong: keying cleanup off the row name deleted "fix-bug.md" — a
+// file belonging to a DIFFERENT branch, if one exists — and left the real
+// journal "fix%2Fbug.md" behind forever.
+func TestRemoveByRepoDeletesTheBranchsReviewJournal(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+
+	const (
+		branch = "fix/bug"
+		wtName = "fix-bug" // FlattenName(branch)
+	)
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	gitDir := filepath.Join(repoRoot, ".git")
+	reviewDir := filepath.Join(gitDir, "devgeta", "review")
+	if err := os.MkdirAll(reviewDir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	// The literal encoded name, not reviewjournal.EncodeBranch(branch): pinning
+	// the concrete filename catches an encoder change too, instead of moving
+	// with it.
+	removed := filepath.Join(reviewDir, "fix%2Fbug.md")
+	// Named after the FLATTENED form: a real branch can be called "fix-bug"
+	// while another is "fix/bug". Cleanup must not touch this one.
+	flatNamesake := filepath.Join(reviewDir, wtName+".md")
+	sibling := filepath.Join(reviewDir, "other-branch.md")
+	for _, p := range []string{removed, flatNamesake, sibling} {
+		if err := os.WriteFile(p, []byte("---\n---\n"), 0o644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+	}
+
+	wtPathForBranch := filepath.Join(
+		paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName,
+	)
+
+	// git: the common dir, plus a porcelain listing that gives the worktree its
+	// REAL branch; everything else succeeds so the removal takes the clean path.
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "--git-common-dir") {
+			return gitDir + "\n", "", nil
+		}
+		return worktreePorcelain(repoRoot, [2]string{wtPathForBranch, branch}), "", nil
+	}
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResult("", "", nil)
+	wm := &WorktreeManager{
+		Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+		Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	})
+
+	if err := wm.removeByRepo(repoSlug, wtName, true); err != nil {
+		t.Fatalf("removeByRepo: %v", err)
+	}
+
+	if _, err := os.Stat(removed); !os.IsNotExist(err) {
+		t.Errorf("the removed branch's journal (%s) should be gone",
+			filepath.Base(removed))
+	}
+	if _, err := os.Stat(flatNamesake); err != nil {
+		t.Errorf(
+			"cleanup keyed off the flattened row name and destroyed %s, which belongs "+
+				"to a different branch: %v",
+			filepath.Base(flatNamesake), err,
+		)
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("another branch's journal must survive: %v", err)
+	}
+}
+
+// A journal that cannot be deleted warns and never fails the removal: the
+// worktree and branch are already gone by then, and `review-notes --prune`
+// clears the survivor.
+func TestRemoveByRepoSurvivesJournalDeleteFailure(t *testing.T) {
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	defer cleanupPaths()
+
+	const wtName = "fix-bug"
+	repoRoot := t.TempDir()
+	repoSlug := filepath.Base(repoRoot)
+	wtPathForBranch := filepath.Join(
+		paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName,
+	)
+
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "--git-common-dir") {
+			// The branch resolves fine, but the journal's location cannot be
+			// found -> the delete itself fails, which is what this test covers.
+			return "", "fatal: not a git repository", os.ErrNotExist
+		}
+		return worktreePorcelain(repoRoot, [2]string{wtPathForBranch, "fix-bug"}), "", nil
+	}
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResult("", "", nil)
+
+	var warnings []string
+	wm := &WorktreeManager{
+		Git:    &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+		Tmux:   &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		Base:   commands.NewMockBaseCommand(),
+		WarnFn: func(msg string) { warnings = append(warnings, msg) },
+	}
+
+	wtPath := filepath.Join(paths.Paths.Data.Root, "devgeta", "worktrees", repoSlug, wtName)
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+			t.Logf("cleanup: %v", err)
+		}
+	})
+
+	if err := wm.removeByRepo(repoSlug, wtName, true); err != nil {
+		t.Fatalf("a failed journal delete must not fail the removal: %v", err)
+	}
+	joined := strings.Join(warnings, "\n")
+	if !strings.Contains(joined, "review notes") {
+		t.Errorf("expected a warning naming the review notes, got: %v", warnings)
+	}
+	if !strings.Contains(joined, "--prune") {
+		t.Errorf("the warning should name the escape hatch, got: %v", warnings)
+	}
 }
 
 // setWorktreeLocation isolates the global config (via testutil.SetupIsolatedPaths,

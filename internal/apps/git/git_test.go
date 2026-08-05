@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -2059,6 +2060,99 @@ func TestShortHead(t *testing.T) {
 	})
 }
 
+// TestCommonDirIn pins the two flags ADR-0012's probes proved load-bearing:
+// --git-common-dir (never --git-dir, which is per-worktree and would split
+// per-branch state across checkouts) and --path-format=absolute (without it
+// the main checkout answers a relative ".git" that would resolve against the
+// caller's cwd).
+func TestCommonDirIn(t *testing.T) {
+	t.Run("asks for the absolute common dir and trims", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("/repos/app/.git\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		got, err := g.CommonDirIn("/repos/app/wt")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "/repos/app/.git" {
+			t.Fatalf("expected '/repos/app/.git', got %q", got)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		for _, want := range []string{"--path-format=absolute", "--git-common-dir", "-C", "/repos/app/wt"} {
+			if !slices.Contains(last.Args, want) {
+				t.Errorf("expected %q in args %v", want, last.Args)
+			}
+		}
+		if slices.Contains(last.Args, "--git-dir") {
+			t.Errorf(
+				"--git-dir is the per-worktree dir; must query --git-common-dir, args %v",
+				last.Args,
+			)
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "fatal: not a git repository", fmt.Errorf("exit 128"))
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.CommonDirIn("/nowhere"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestHashObjectIn(t *testing.T) {
+	t.Run("hashes the working-tree file with a -- guard", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("44858168\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		got, err := g.HashObjectIn("/repos/app", "pkg/file.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "44858168" {
+			t.Fatalf("expected '44858168', got %q", got)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		for _, want := range []string{"hash-object", "--", "pkg/file.go"} {
+			if !slices.Contains(last.Args, want) {
+				t.Errorf("expected %q in args %v", want, last.Args)
+			}
+		}
+	})
+
+	t.Run("propagates error for a missing file", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "fatal: Cannot open", fmt.Errorf("exit 128"))
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.HashObjectIn("/repos/app", "gone.go"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestShortHeadIn(t *testing.T) {
+	mockBase := commands.NewMockBaseCommand()
+	mockBase.SetExecCommandResult("abc1234\n", "", nil)
+	g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+	got, err := g.ShortHeadIn("/repos/app")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "abc1234" {
+		t.Fatalf("expected 'abc1234', got %q", got)
+	}
+	last := mockBase.GetLastExecCommandCall()
+	if !slices.Contains(last.Args, "-C") || !slices.Contains(last.Args, "/repos/app") {
+		t.Errorf("expected -C /repos/app in args %v", last.Args)
+	}
+}
+
 func TestRunCapture(t *testing.T) {
 	t.Run("returns stdout on success", func(t *testing.T) {
 		mockBase := commands.NewMockBaseCommand()
@@ -2289,7 +2383,11 @@ func TestFreeBranchIfHeldElsewhereSkipsPrunable(t *testing.T) {
 			commands.ExecCommandResult(porcelain, "", nil), // ListWorktreesAt
 		)
 
-		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+		if err := app.freeBranchIfHeldElsewhere(
+			"/repo",
+			"/repo/wt/feature",
+			"feature",
+		); err != nil {
 			t.Fatalf("a stale holder must be a no-op, not an error: %v", err)
 		}
 
@@ -2321,7 +2419,11 @@ func TestFreeBranchIfHeldElsewhereSkipsPrunable(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),        // checkout main
 		)
 
-		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+		if err := app.freeBranchIfHeldElsewhere(
+			"/repo",
+			"/repo/wt/feature",
+			"feature",
+		); err != nil {
 			t.Fatalf("freeBranchIfHeldElsewhere failed on a live holder: %v", err)
 		}
 		if len(warnings) != 1 || !strings.Contains(warnings[0], "was moved to") {
@@ -2345,7 +2447,11 @@ func TestFreeBranchIfHeldElsewhereSkipsPrunable(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),        // checkout
 		)
 
-		if err := app.freeBranchIfHeldElsewhere("/repo", "/repo/wt/feature", "feature"); err != nil {
+		if err := app.freeBranchIfHeldElsewhere(
+			"/repo",
+			"/repo/wt/feature",
+			"feature",
+		); err != nil {
 			t.Fatalf("expected the live holder to be freed: %v", err)
 		}
 		// The checkout must target the live path, never the missing one.

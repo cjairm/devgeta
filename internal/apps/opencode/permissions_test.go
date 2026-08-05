@@ -263,6 +263,84 @@ func TestSharedAgentsInheritGlobalBashPolicy(t *testing.T) {
 	}
 }
 
+// TestReviewerAgentsReadTheJournalAndCanApprove guards the two properties that
+// decide whether a review can ever converge (ADR-0012). Both were missing from
+// document-reviewer while its siblings had one of them, and the result was a
+// reviewer that asked the same questions every run and could not approve
+// anything:
+//
+//  1. Every reviewer reads the branch's review journal FIRST. Without it a
+//     fresh session re-asks what was already answered, because a reviewer has
+//     no memory of its own and the answers live in the journal.
+//  2. Every reviewer ends on a verdict it can actually reach.
+//     document-reviewer's output contract used to stop at a risk rating and a
+//     questions section — there was no APPROVE anywhere in it, so "never
+//     approves" was encoded in the template rather than being drift.
+//
+// Asserted across all three rather than left to each prompt's own review: this
+// asymmetry is invisible in any single file, since each agent reads fine alone
+// and only a check over the set catches one of them missing a section.
+func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
+	agentDir := filepath.Join("..", "..", "..", "configs", "shared", "agents")
+	entries, err := os.ReadDir(agentDir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", agentDir, err)
+	}
+
+	// Substrings, not whole lines: the surrounding prose differs per agent by
+	// design (each names its own subject), so this pins the contract each must
+	// carry without freezing how it is worded.
+	required := []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "devgeta task review-notes",
+			why: "the agent never reads the branch's settled exchanges, so answered " +
+				"questions come back on every re-review",
+		},
+		{
+			substr: "devgeta task review-note --open",
+			why: "the agent has no way to record an unanswered question, so nothing " +
+				"the next run reads will contain it",
+		},
+		{
+			substr: "[STALE]",
+			why: "without honoring the staleness marker the agent either trusts an " +
+				"entry judged against code that has since changed, or ignores the " +
+				"journal wholesale",
+		},
+		{
+			substr: "**Status:** APPROVE",
+			why: "the agent has no reachable verdict, so it can report findings " +
+				"forever without ever approving",
+		},
+	}
+
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "-reviewer.md") {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(agentDir, e.Name()))
+			if err != nil {
+				t.Fatalf("failed to read agent: %v", err)
+			}
+			body := string(data)
+			for _, req := range required {
+				if !strings.Contains(body, req.substr) {
+					t.Errorf("missing %q — %s", req.substr, req.why)
+				}
+			}
+		})
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no *-reviewer.md agents found in %s", agentDir)
+	}
+}
+
 // frontmatter returns the YAML block delimited by the leading and next "---".
 func frontmatter(t *testing.T, path string) []byte {
 	t.Helper()

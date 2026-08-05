@@ -44,6 +44,29 @@ type mockTaskRunner struct {
 	reviewPackageRet     string
 	reviewPackageErr     error
 
+	reviewNotesBranchArg string
+	reviewNotesPathArg   bool
+	reviewNotesPruneArg  bool
+	reviewNotesCalled    bool
+	reviewNotesRet       string
+	reviewNotesErr       error
+
+	reviewNoteOpenBranchArg string
+	reviewNoteOpenCiteArg   string
+	reviewNoteOpenNoteArg   string
+	reviewNoteOpenCalled    bool
+	reviewNoteOpenRet       string
+	reviewNoteOpenErr       error
+
+	reviewNoteSettleBranchArg string
+	reviewNoteSettleIDArg     string
+	reviewNoteSettleAsArg     string
+	reviewNoteSettleAtArg     string
+	reviewNoteSettleNoteArg   string
+	reviewNoteSettleCalled    bool
+	reviewNoteSettleRet       string
+	reviewNoteSettleErr       error
+
 	worktreeStartNameArg string
 	worktreeStartBaseArg string
 	worktreeStartCalled  bool
@@ -112,6 +135,34 @@ func (m *mockTaskRunner) ReviewPackage(base, head, file string) (string, error) 
 	m.reviewPackageHeadArg = head
 	m.reviewPackageFileArg = file
 	return m.reviewPackageRet, m.reviewPackageErr
+}
+
+func (m *mockTaskRunner) ReviewNotes(branch string, showPath, prune bool) (string, error) {
+	m.reviewNotesCalled = true
+	m.reviewNotesBranchArg = branch
+	m.reviewNotesPathArg = showPath
+	m.reviewNotesPruneArg = prune
+	return m.reviewNotesRet, m.reviewNotesErr
+}
+
+func (m *mockTaskRunner) ReviewNoteOpen(branch, cite, note string) (string, error) {
+	m.reviewNoteOpenCalled = true
+	m.reviewNoteOpenBranchArg = branch
+	m.reviewNoteOpenCiteArg = cite
+	m.reviewNoteOpenNoteArg = note
+	return m.reviewNoteOpenRet, m.reviewNoteOpenErr
+}
+
+func (m *mockTaskRunner) ReviewNoteSettle(
+	branch, id, resolution, cite, note string,
+) (string, error) {
+	m.reviewNoteSettleCalled = true
+	m.reviewNoteSettleBranchArg = branch
+	m.reviewNoteSettleIDArg = id
+	m.reviewNoteSettleAsArg = resolution
+	m.reviewNoteSettleAtArg = cite
+	m.reviewNoteSettleNoteArg = note
+	return m.reviewNoteSettleRet, m.reviewNoteSettleErr
 }
 
 func (m *mockTaskRunner) WorktreeStart(name, base string) (string, error) {
@@ -484,6 +535,186 @@ func TestTask_ReviewPackage(t *testing.T) {
 			[]string{"main", "feat"},
 		); err != nil {
 			t.Fatalf("expected no error for two args, got: %v", err)
+		}
+	})
+}
+
+// resetReviewNoteFlags clears the package-level flag vars both review-note
+// tests and any prior test may have set, so a leaked value cannot make a later
+// case pass for the wrong reason.
+func resetReviewNoteFlags(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		taskReviewNotesBranchFlag, taskReviewNotesPathFlag, taskReviewNotesPruneFlag = "", false, false
+		taskReviewNoteBranchFlag, taskReviewNoteOpenFlag, taskReviewNoteSettleFlag = "", false, false
+		taskReviewNoteIDFlag, taskReviewNoteAsFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag = "", "", "", ""
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+func TestTask_ReviewNotes(t *testing.T) {
+	t.Run("passes branch, path and prune flags through", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNotesRet: "branch: feat"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNotesBranchFlag = "fix/retry"
+		taskReviewNotesPathFlag = true
+
+		if err := taskReviewNotesCmd.RunE(taskReviewNotesCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewNotesCalled {
+			t.Fatal("expected ReviewNotes to be called")
+		}
+		if mock.reviewNotesBranchArg != "fix/retry" {
+			t.Errorf("expected branch 'fix/retry', got %q", mock.reviewNotesBranchArg)
+		}
+		if !mock.reviewNotesPathArg || mock.reviewNotesPruneArg {
+			t.Errorf("expected path=true prune=false, got path=%v prune=%v",
+				mock.reviewNotesPathArg, mock.reviewNotesPruneArg)
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNotesErr: fmt.Errorf("not a git repository")}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+
+		if err := taskReviewNotesCmd.RunE(taskReviewNotesCmd, []string{}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("--path and --prune are mutually exclusive", func(t *testing.T) {
+		if err := taskReviewNotesCmd.ValidateFlagGroups(); err != nil {
+			t.Fatalf("unexpected group error with no flags set: %v", err)
+		}
+		// The declaration is what enforces it at parse time; assert it exists
+		// so removing MarkFlagsMutuallyExclusive fails here.
+		ann := taskReviewNotesCmd.Flags().Lookup("path").Annotations
+		if _, ok := ann["cobra_annotation_mutually_exclusive"]; !ok {
+			t.Error("--path must be declared mutually exclusive with --prune")
+		}
+	})
+}
+
+func TestTask_ReviewNote(t *testing.T) {
+	t.Run("--open passes cite and note", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteOpenRet: "Noted n4"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteOpenFlag = true
+		taskReviewNoteAtFlag = "store.go:12"
+		taskReviewNoteNoteFlag = "write is not atomic"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewNoteOpenCalled {
+			t.Fatal("expected ReviewNoteOpen to be called")
+		}
+		if mock.reviewNoteOpenCiteArg != "store.go:12" ||
+			mock.reviewNoteOpenNoteArg != "write is not atomic" {
+			t.Errorf("args not passed through: %+v", mock)
+		}
+		if mock.reviewNoteSettleCalled {
+			t.Error("--open must not settle")
+		}
+	})
+
+	t.Run("--settle with an id passes the id and resolution", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteSettleRet: "Settled n4 (fixed)"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteSettleFlag = true
+		taskReviewNoteIDFlag = "n4"
+		taskReviewNoteAsFlag = "fixed"
+		taskReviewNoteNoteFlag = "atomic rename added"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewNoteSettleIDArg != "n4" || mock.reviewNoteSettleAsArg != "fixed" {
+			t.Errorf("expected id=n4 as=fixed, got id=%q as=%q",
+				mock.reviewNoteSettleIDArg, mock.reviewNoteSettleAsArg)
+		}
+		if mock.reviewNoteOpenCalled {
+			t.Error("--settle must not open")
+		}
+	})
+
+	t.Run("--settle without an id is the direct form", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteSettleRet: "Settled n1 (answered)"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteSettleFlag = true
+		taskReviewNoteAsFlag = "answered"
+		taskReviewNoteNoteFlag = "yes, ctx is threaded through"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewNoteSettleIDArg != "" {
+			t.Errorf("expected no id, got %q", mock.reviewNoteSettleIDArg)
+		}
+	})
+
+	// --id without --settle is a caller mistake worth naming: it would
+	// otherwise be silently ignored on the --open path.
+	t.Run("--id without --settle errors", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteOpenFlag = true
+		taskReviewNoteIDFlag = "n4"
+		taskReviewNoteNoteFlag = "x"
+
+		err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{})
+		if err == nil {
+			t.Fatal("expected an error for --id without --settle")
+		}
+		if mock.reviewNoteOpenCalled || mock.reviewNoteSettleCalled {
+			t.Error("nothing should have been written")
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{
+			reviewNoteSettleErr: fmt.Errorf("no entry n9 in the journal"),
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteSettleFlag = true
+		taskReviewNoteIDFlag = "n9"
+		taskReviewNoteAsFlag = "answered"
+		taskReviewNoteNoteFlag = "x"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	// --open/--settle must be exclusive and one required, declared on the
+	// command so cobra enforces it during parsing (RunE never sees the bad
+	// combination).
+	t.Run("open and settle are exclusive and one is required", func(t *testing.T) {
+		openAnn := taskReviewNoteCmd.Flags().Lookup("open").Annotations
+		if _, ok := openAnn["cobra_annotation_mutually_exclusive"]; !ok {
+			t.Error("--open must be declared mutually exclusive with --settle")
+		}
+		if _, ok := openAnn["cobra_annotation_one_required"]; !ok {
+			t.Error("one of --open/--settle must be declared required")
+		}
+		if ann := taskReviewNoteCmd.Flags().Lookup("note").Annotations; ann == nil {
+			t.Error("--note must be marked required")
 		}
 	})
 }
