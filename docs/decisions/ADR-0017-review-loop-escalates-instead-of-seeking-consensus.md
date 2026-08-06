@@ -118,21 +118,35 @@ reviewer N would necessarily read reviewer N−1's fresh findings and land in ex
 position that literature measures a 32.3-point loss in: primed to treat covered ground as
 settled, and to abandon its own correct-but-divergent finding.
 
-**The mechanism is a read floor, and it works because ids are monotonic.** `nextID()` is
-`max+1` and ids are never reused within a journal (`journal.go:69-81`, pinned by
-`TestNextIDNeverReusesAfterDeletion`), so a higher sequence number always means "created
-later." The loop therefore records the journal's highest id at the start of round R and
-passes that floor to each reviewer's environment; `review-notes` shows entries at or below
-the floor and hides the rest. One integer, read-side only.
+**The mechanism is a round-start snapshot of the journal file, read-only.** At the start of
+round R, `review-run` copies the journal to a disposable snapshot. Each reviewer's
+`review-notes` reads that snapshot; every write still goes to the live journal, immediately,
+as today. At round end the snapshot is discarded, so round R+1 takes a fresh one.
 
-How the floor reaches the reviewer is an implementation detail with one assumption worth
-naming: it relies on the reviewer's `devgeta task review-notes` inheriting the environment
-of the `opencode run` process that the loop spawned. That must be probed rather than assumed,
-because it fails **open** — an absent floor means reviewers see everything, which is the
-anchored behavior this section exists to remove, and it produces no error while doing so. If
-the agent runtime does not pass the environment through, the floor moves to a devgeta-owned
-channel (a small state file beside the journal) and this section is amended to say so; the
-decision — isolate on the read side — is unaffected either way.
+**The snapshot must freeze entry state, not merely entry existence**, and this is the whole
+reason it is a file copy rather than a cheaper "hide ids above N" filter. An entry that is
+_open_ at round start has no settled conclusion to inherit, and the reviewer contract
+explicitly tells a reviewer to close one: "An entry under `open:` is still unanswered. It
+keeps its id: re-raise it in the report citing that id, or — if the code has since fixed it —
+settle it `--as fixed`" (`configs/shared/agents/code-reviewer.md:31`). Paired with "An entry
+marked `[fresh]` is settled. **Do not raise it again**" (line 28), an existence-only filter
+leaks a fresh peer conclusion straight into the next reviewer's read: reviewer 1 settles a
+round-start-open entry, and reviewer 2 is instructed not to evaluate it. Freezing the file
+closes that path, because the snapshot still shows the entry open.
+
+Writes are deliberately **not** snapshotted, which is what keeps this cheap: ids continue to
+come from `nextID()` on the live journal (`max+1`, never reused —
+`journal.go:69-81`, pinned by `TestNextIDNeverReusesAfterDeletion`), so two reviewers reading
+the same snapshot still get distinct, final ids.
+
+How the snapshot is pointed at needs one real capability that does not exist yet — a
+child-only environment variable on the spawned reviewer process — and one assumption worth
+probing, that the variable reaches the `devgeta task review-notes` the agent shells out to.
+Both are specified in the cycle's Step 4. The pointer matters for safety, not just
+plumbing: a snapshot at a well-known path would be read by any `review-notes` that happened
+to find it, so a leftover file from a killed loop would silently freeze reads indefinitely.
+Pointed-at-by-the-caller means a stale snapshot is simply never read, and an absent pointer
+falls back to the live journal — today's behavior.
 
 This is deliberately chosen over staging writes and merging them at round end. Everything
 stays durable and identity-stable:
@@ -141,32 +155,20 @@ stays durable and identity-stable:
 - **No temporary ids, and no id remapping.** A reviewer that is told `Noted n7` can print
   `review-note --settle --id n7` and that id is correct permanently. Under a staging design
   the merge would renumber, silently invalidating the id the reviewer just reported.
-- **No crash cleanup.** A loop killed mid-round leaves every finding already journaled,
-  because nothing was being held back. There is no partial-merge state to repair.
+- **No crash cleanup that can lose data.** A loop killed mid-round leaves every finding
+  already journaled, because nothing was being held back. The only debris is an orphan
+  snapshot, which is disposable and — because it is read only when pointed at — inert.
 - **No deduplication in Go**, which keeps §5 intact — see below.
 
 What this does and does not change:
 
 - **Cross-round visibility is unaffected**, and must be. A later round _should_ see earlier
   findings — that is ADR-0012 working as intended, and it is what stops the re-raise circle.
-- **Within-round isolation holds for findings**, so N reviewers are N independent samples of
-  the same diff rather than one sample plus N−1 anchored follow-ups.
-- **Reviewer agents need no change**, and this is now literally true rather than
-  aspirational: they keep calling `review-notes` and `review-note --open` with the same
-  arguments, and only `review-notes`' own output is filtered by the ambient floor.
-
-### The limit of this isolation, stated rather than implied
-
-The floor hides entries **created** during the round. It does not hide **state changes to
-entries that already existed** — if a reviewer settles a pre-existing entry mid-round, the
-next reviewer sees it settled.
-
-Accepted, for two reasons. Substantively, a settled pre-existing exchange is round-start
-knowledge: its resolution was reached before this round and is exactly what ADR-0012 exists
-to carry forward. And mechanically, hiding state transitions would require snapshotting the
-whole journal, which reintroduces every cost the read floor avoids. The anchoring this
-decision is aimed at — "the previous reviewer already found the bugs here" — is about newly
-raised findings, and those are hidden.
+- **Within-round isolation covers both new findings and state changes**, so N reviewers are
+  N independent samples of the same diff rather than one sample plus N−1 anchored follow-ups.
+- **Reviewer agents need no change**, and this is literally true rather than aspirational:
+  they keep calling `review-notes` and `review-note --open` with the same arguments. Only
+  where `review-notes` reads from moves.
 
 ### Duplicates are kept, not merged
 
@@ -247,10 +249,17 @@ guard test asserts the command file never mentions them outside the report templ
   The human sees near-identical findings, and the coding agent settles each. This is the
   accepted cost of refusing to put semantic judgment in Go, and the direction of the error
   is chosen: noise rather than silence.
-- **`review-notes` gains ambient behavior.** Its output depends on a floor supplied by the
-  environment, so the same command prints different things inside and outside a loop round.
-  That is a real readability cost and needs a test pinning both: with no floor set, output
-  is unchanged from today.
+- **`review-notes` gains ambient behavior.** Its output depends on a snapshot pointer
+  supplied by the environment, so the same command prints different things inside and
+  outside a loop round. That is a real readability cost and needs a test pinning both ways:
+  with no pointer set, output is byte-identical to today.
+- **The shared executor has to grow an environment overlay.** `CommandParams` today carries
+  `Args`, `Timeout`, `Dir`, `Stream` and no environment, and `ExecCommand` never sets
+  `exec.Cmd.Env` (`internal/commands/base.go:247-251`), so there is currently no way to add
+  a variable for one child process. That capability has to be added to the executor and
+  exposed through the OpenCode wrapper — the sanctioned direction per CLAUDE.md §6, but real
+  work in a shared, widely-used code path, and it must be an overlay on the inherited
+  environment rather than a replacement.
 - **The human-only rule is prose-level.** See §6. A guard test narrows it; it does not
   close it.
 - **The loop's judgment step cannot be unit-tested in Go.** That is the direct cost of
@@ -300,8 +309,8 @@ nothing reliable to decide on. Failures surface by name instead.
 
 ### Parallel reviewers
 
-Deferred, not rejected. Parallelism needs a **file lock on journal writes**; §4's read floor
-is orthogonal to it and would carry over unchanged.
+Deferred, not rejected. Parallelism needs a **file lock on journal writes**; §4's round-start
+snapshot is orthogonal to it and would carry over unchanged.
 
 Note the two decisions point the same way, where an earlier draft had them conflicting: §4
 already forbids a reviewer from seeing a peer's in-round findings, which is the property
@@ -327,11 +336,26 @@ Rejected as more machinery for a worse result, once the details were worked thro
 - **It needs write redirection that does not exist.** Each `review-note` call is a separate
   `devgeta` process that loads, appends, and saves the shared journal immediately; nothing
   in `reviewjournal` or `reviewnotes.go` accepts a path or destination override today. The
-  read-floor design needs no write-side change at all.
+  snapshot design needs no write-side change at all.
 - **It breaks id stability.** Two reviewers staging from the same base both compute the same
   `nextID()`, so the merge must renumber — which invalidates the id the reviewer already
   reported to the human in its own settle line.
-- **It adds a crash-cleanup problem** that the read floor simply does not have: held-back
-  findings can be lost or half-merged, so the merge has to become a transactional writer.
+- **It adds a crash-cleanup problem** the snapshot does not have: held-back findings can be
+  lost or half-merged, so the merge has to become a transactional writer. A snapshot, by
+  contrast, is disposable — the live journal is always the truth.
+
+### Hide ids above a round-start floor instead of copying the journal (the third draft of §4)
+
+Pass the highest id at round start and have `review-notes` hide anything above it. One
+integer instead of a file.
+
+Rejected because it freezes **existence** but not **state**. `code-reviewer.md:31` tells a
+reviewer to settle a round-start-open entry `--as fixed` when the code now fixes it, and
+line 28 tells the next reviewer not to re-raise anything already settled — so reviewer 1's
+in-round conclusion reaches reviewer 2 through an entry whose id is below the floor and
+therefore visible. The anchoring the section exists to prevent survives, on precisely the
+findings most likely to matter (the ones already under discussion). A file copy costs
+almost nothing more and closes the path completely.
+
 - **Its dedup step requires semantic judgment in Go**, violating §5. See "Duplicates are
   kept, not merged" in §4.
