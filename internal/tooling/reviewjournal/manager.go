@@ -102,7 +102,15 @@ func (m *Manager) SnapshotPathFor(repoDir, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSuffix(path, ".md") + snapshotSuffix, nil
+	return snapshotPathOf(path), nil
+}
+
+// snapshotPathOf derives a journal's snapshot path from the journal path
+// itself, so a caller that already resolved one (Delete) does not pay a second
+// git call to resolve the other, and the two paths cannot be derived by two
+// different rules.
+func snapshotPathOf(journalPath string) string {
+	return strings.TrimSuffix(journalPath, ".md") + snapshotSuffix
 }
 
 // WriteSnapshot serializes branch's journal as it stands right now to the
@@ -132,31 +140,22 @@ func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
 // save writes the journal atomically: temp file in the same directory, then
 // rename — the same write-to-temp-then-rename rule CLAUDE.md §7 mandates for
 // the global config. A crash mid-write leaves the previous journal intact.
+//
+// It delegates to files.WriteFileAtomic, which is that rule's one
+// implementation and is what WriteSnapshot above already uses; a second
+// hand-rolled MkdirAll + CreateTemp + rename here would be the same logic
+// twice, differing only in which of the two could grow a bug. One consequence
+// is deliberate: the journal is now created with files.FilePermission (0644)
+// like every other file devgeta writes, instead of the 0600 os.CreateTemp
+// happened to give it — that mode was never a decision, and it disagreed with
+// the 0644 snapshot sitting beside it in the same directory.
 func (m *Manager) save(repoDir string, j *Journal) error {
 	path, err := m.PathFor(repoDir, j.Branch)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create the review directory: %w", err)
-	}
 	j.LastReview = m.NowFn().Format("2006-01-02")
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".journal-*")
-	if err != nil {
-		return fmt.Errorf("failed to stage the review journal: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.WriteString(j.Render()); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to write the review journal: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to write the review journal: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), files.FilePermission); err != nil {
 		return fmt.Errorf("failed to save the review journal: %w", err)
 	}
 	return nil
@@ -290,13 +289,13 @@ func (m *Manager) Ratify(repoDir, branch, id string) error {
 			id, e.Resolution,
 		)
 	}
-	if !strings.HasPrefix(e.Answer, AgentNotePrefix) {
+	if !HasAgentNote(e.Answer) {
 		return fmt.Errorf(
 			"entry %s is already an ordinary rejection (no %s prefix to strip)",
-			id, strings.TrimSpace(AgentNotePrefix),
+			id, AgentNotePrefix,
 		)
 	}
-	e.Answer = strings.TrimPrefix(e.Answer, AgentNotePrefix)
+	e.Answer = StripAgentNote(e.Answer)
 	return m.save(repoDir, j)
 }
 
@@ -378,15 +377,25 @@ func (m *Manager) Verdict(repoDir string, e Entry) string {
 	return FreshnessFresh
 }
 
-// Delete removes branch's journal. A journal that never existed is success —
-// callers (the worktree teardown) only care that no journal remains.
+// Delete removes branch's journal AND its round-start snapshot. A file that
+// never existed is success — callers (the worktree teardown) only care that
+// nothing of the branch's review memory remains.
+//
+// The snapshot is deleted here rather than left to Prune because Prune only
+// looks at "*.md" and would never see it: review-run removes its own snapshot
+// on every exit path, but a hard-killed run leaves one behind, and without
+// this that orphan would outlive the branch forever — making the promise that
+// removing a worktree deletes the journal "so memory does not accumulate for
+// work that no longer exists" (docs/spec.md) quietly false.
 func (m *Manager) Delete(repoDir, branch string) error {
 	path, err := m.PathFor(repoDir, branch)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove the review journal: %w", err)
+	for _, p := range []string{path, snapshotPathOf(path)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove the review journal: %w", err)
+		}
 	}
 	return nil
 }
