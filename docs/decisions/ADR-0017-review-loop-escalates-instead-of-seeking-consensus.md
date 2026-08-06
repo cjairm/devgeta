@@ -1,6 +1,6 @@
 # ADR-0017: The review loop escalates instead of seeking consensus
 
-**Status:** PROPOSED
+**Status:** ACCEPTED
 **Date:** 2026-08-06
 **Deciders:** cjairm
 **Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)

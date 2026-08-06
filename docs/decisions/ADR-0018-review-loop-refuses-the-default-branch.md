@@ -1,6 +1,6 @@
 # ADR-0018: The review loop refuses the default branch, and the fix is a branch
 
-**Status:** PROPOSED
+**Status:** ACCEPTED
 **Date:** 2026-08-06
 **Deciders:** cjairm
 **Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)

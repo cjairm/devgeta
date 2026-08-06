@@ -100,10 +100,14 @@ A process failure or an unratified pushback can therefore never masquerade as st
 
 ### In Scope
 
-- [ ] ADR: loop contract — bounded rounds, any-single-blocker rule, escalation over
-      consensus, sequential reviewers (write before implementation, §11)
-- [ ] ADR: isolation — refuse on default branch, auto-branch not auto-worktree,
-      worktree as opt-in (write before implementation, §11)
+- [x] ADR: loop contract — bounded rounds, any-single-blocker rule, escalation over
+      consensus, sequential reviewers (write before implementation, §11) →
+      [ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md),
+      ACCEPTED 2026-08-06
+- [x] ADR: isolation — refuse on default branch, a branch (not a worktree) as the
+      mechanism, worktree as opt-in (write before implementation, §11) →
+      [ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md),
+      ACCEPTED 2026-08-06
 - [ ] `ReviewConfig` in `GlobalConfig` + `review.reviewers` (stringlist) and
       `review.rounds` (int, default 3, max 5) in the `dg config` registry
 - [ ] OpenCode wrapper method for headless review runs (`opencode run --agent <a>
@@ -215,7 +219,13 @@ A process failure or an unratified pushback can therefore never masquerade as st
   `edit: deny` and is not). Out of scope here — filed as its own cycle,
   [2026-08-05-shared-command-permissions.md](2026-08-05-shared-command-permissions.md).
 
-#### Step 1: ADRs
+#### Step 1: ADRs — DONE (both ACCEPTED 2026-08-06)
+
+[ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)
+(loop contract) and
+[ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md) (isolation)
+are written, reviewed, and accepted. Numbered 0017/0018 rather than the 0016/0017 this
+doc originally guessed, because ADR-0016 was already taken.
 
 Write both ADRs (scope list above), get approval. Decisions already made in
 discussion, to be recorded not re-litigated: bounded rounds (3/5) · any single
@@ -618,13 +628,13 @@ make lint
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Domain context clear?
-- [ ] Engineer context sufficient?
-- [ ] Objective unambiguous?
-- [ ] Scope locked?
-- [ ] Steps actionable?
-- [ ] Verification executable?
-- [ ] Risks realistic?
+- [x] Domain context clear?
+- [x] Engineer context sufficient?
+- [x] Objective unambiguous?
+- [x] Scope locked?
+- [x] Steps actionable?
+- [x] Verification executable?
+- [x] Risks realistic?
 
 **Reviewer notes:**
 
@@ -632,9 +642,29 @@ Approved 2026-08-06, sequenced after [2026-08-05-shared-command-permissions.md]
 (2026-08-05-shared-command-permissions.md) — Step 5/7 build on that cycle's
 allowlist guard-test convention, so implementation waits for it to land.
 
-Open item to resolve at Step 1 (ADR-writing) time, not now: Step 1's file list
-placeholders `ADR-0016-*.md, ADR-0017-*.md` collide with the real
-`ADR-0016-inconclusive-tool-probe-fails-open.md` (already ACCEPTED). The two
-new ADRs must be numbered ADR-0017 and ADR-0018 instead. No text elsewhere in
-this doc references the numbers, so this is a non-issue for the plan itself —
-flagged here so it isn't rediscovered mid-implementation.
+The ADR-numbering collision flagged at first approval is resolved: the two ADRs are
+[ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)
+and [ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md), both
+ACCEPTED 2026-08-06. Step 1 is done; implementation starts at Step 2.
+
+### Review history for the isolation decision (ADR-0017 §4)
+
+Recorded because the mechanism changed four times under review and the reasoning is the
+valuable part. Each version failed for a different concrete reason, all now preserved as
+rejected alternatives in the ADR:
+
+| Version                            | Failed because                                                                                                              | Finding |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Live shared journal within a round | Reviewer N reads N−1's fresh findings; the cited research measures a 32.3-point oracle gap from exactly this                | n1      |
+| Stage writes, merge at round end   | Needs write redirection that does not exist, renumbers ids the reviewer already reported, adds crash cleanup                | n3      |
+| Dedup findings during that merge   | Requires semantic judgment in Go, contradicting §5; a wrong merge drops a real finding and looks like a clean review        | n4      |
+| Hide ids above a round-start floor | Freezes entry existence but not state; `code-reviewer.md:31` has reviewers settling round-start-open entries mid-round      | n5      |
+| Snapshot, skipped when none exists | A branch's first review has no journal, so reviewer 2 got no pointer and read live — isolation absent on the commonest path | n7      |
+
+Final: an unconditional round-start snapshot of the journal file for reads, writes untouched
+and live, no dedup. Two findings (n5, n7) were the same mistake in different clothes —
+treating a state as an absence — which is why the final version has no special cases.
+
+Also settled during review: detached HEAD must be refused alongside the default branch (n2),
+and the snapshot pointer needs a child-only environment overlay the shared executor does not
+have yet (n6, specified in Step 4).
