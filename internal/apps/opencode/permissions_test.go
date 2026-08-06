@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/pkg/files"
 	"gopkg.in/yaml.v3"
 )
@@ -963,6 +964,59 @@ func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
 				"review-run` — without this, --reviewer is parsed in step 0 but "+
 				"never passed through, so the documented selector silently does "+
 				"nothing",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopAgentPrefixMatchesTheConstant guards the one thing
+// reviewjournal.AgentNotePrefix's own doc comment demands and nothing else
+// could enforce: the marker the loop is told to WRITE, and the marker step 3
+// is told to DETECT, are both the constant's actual value.
+//
+// It has drifted once already. The constant carried a trailing space while
+// step 3 looked for the marker without one, so a note settled as
+// "agent:<evidence>" was reported to the human with a --ratify command that
+// Ratify then refused. Prose cannot import a Go constant, so this test is the
+// only thing tying the two together.
+//
+// What this catches: the constant changing without review-loop.md following,
+// or either half of review-loop.md (the write instruction in step 4, the
+// detection instruction in step 3) losing the marker.
+// What this does NOT catch: an executing agent writing a note that omits the
+// marker entirely — that is judgment, and the terminal report is where a
+// human sees the rejection either way.
+func TestReviewLoopAgentPrefixMatchesTheConstant(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	if want := `--note "` + reviewjournal.AgentNotePrefix; !strings.Contains(body, want) {
+		t.Errorf(
+			"%s no longer tells the loop to settle a rejection with %q — the marker "+
+				"it writes must be reviewjournal.AgentNotePrefix verbatim, or the "+
+				"rejection is not recognizable as the agent's and Ratify refuses it",
+			path, want,
+		)
+	}
+
+	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+	if !strings.Contains(section, reviewjournal.AgentNotePrefix) {
+		t.Errorf(
+			"%s step 3 no longer names %q as the marker of an unratified agent "+
+				"rejection — without the constant's exact value there, an all-APPROVE "+
+				"round with a pending agent rejection reads as a clean approval",
+			path, reviewjournal.AgentNotePrefix,
+		)
+	}
+	if !strings.Contains(section, "answer:") {
+		t.Errorf(
+			"%s step 3 no longer says the marker is read from the entry's `answer:` "+
+				"line — renderNotes only ever puts it there, so a loop told to look at "+
+				"the finding line finds no marker anywhere and declares a false approval",
 			path,
 		)
 	}

@@ -86,11 +86,35 @@ here, so both get reported rather than silently rerun.
 If every reviewer's outcome this round is `APPROVE` **and** the round's `open:` line reads
 `open: none`, read `devgeta task review-notes`.
 
-- If no settled entry's note begins with `agent:`, this is a clean approval. Stop here
-  and report it — do not run another round just because rounds remain.
-- If any settled entry's note begins with `agent:`, an agent-authored rejection is still
-  waiting on a human decision. All-APPROVE with nothing open does **not** make this clean;
-  go to the terminal report instead, carrying that entry into it.
+Read the right line. Each settled entry in that output is a head line (id, resolution,
+cite, freshness), then the reviewer's finding on an indented line with no label, then — when
+the entry was settled with a note — an indented line labelled `answer:` carrying that note.
+The `agent:` marker only ever appears on the `answer:` line, because that is the settle
+note. It is never on the finding line, which is the reviewer's words, not the settler's.
+Looking for it there finds nothing and turns an unratified pushback into a false approval:
+
+```
+branch: feat/retry-context
+base: origin/main
+last-review: 2026-08-06
+
+settled:
+- n2 fixed internal/tooling/task/reviewrun.go:73 [fresh]
+  the (?m) flag makes statusLinePattern scan the whole report
+  answer: dropped the flag; the scanner already feeds it one line at a time
+- n3 rejected docs/spec.md:120 [fresh]
+  the spec should name the flag too
+  answer: agent: the spec documents behavior, not regex flags — nothing to change
+```
+
+There, `n2` is an ordinary settled entry and `n3` is an agent rejection: its `answer:` line
+begins with `agent:`.
+
+- If no settled entry's `answer:` line begins with `agent:`, this is a clean approval. Stop
+  here and report it — do not run another round just because rounds remain.
+- If any settled entry's `answer:` line begins with `agent:`, an agent-authored rejection is
+  still waiting on a human decision. All-APPROVE with nothing open does **not** make this
+  clean; go to the terminal report instead, carrying that entry into it.
 
 Otherwise — any reviewer's outcome is not `APPROVE`, or `open:` names any ids even though
 every outcome was `APPROVE` — this round is not a clean approval. Continue to step 4. An
@@ -112,11 +136,13 @@ where>"`.
   finding just comes back next round. Settle it rejected, with the evidence that
   disproves it, and mark it as an agent call:
   `devgeta task review-note --settle --id <id> --as rejected --note "agent: <the
-disproving evidence>"`. The `agent:` prefix is mandatory; it is the only thing that
-  tells a later reader — human or reviewer — that this rejection is provisional rather
-  than final. Never settle a finding rejected without real evidence, and never omit the
-  evidence to save time: the human's decision at the end rests on being able to check
-  your reasoning, not just your conclusion.
+disproving evidence>"`. The `agent:` prefix is mandatory and belongs at the very
+  start of the `--note` value, so it lands at the start of the entry's `answer:` line —
+  the one line step 3 reads. It is the only thing that tells a later reader — human or
+  reviewer — that this rejection is provisional rather than final. Never settle a finding
+  rejected without real evidence, and never omit the evidence to save time: the human's
+  decision at the end rests on being able to check your reasoning, not just your
+  conclusion.
 
 Never use a rejection to make a disagreement disappear because re-litigating it is
 inconvenient. It does not remove the finding from anyone's view — it turns into a
@@ -146,7 +172,8 @@ only place either human-only journal transition is written out.
 ```
 ## Review loop — clean approval
 
-Round <n> of <cap>. Every reviewer approved. No agent rejection is pending ratification.
+Round <n> of <cap>. Every reviewer approved, the round's `open:` line read `open: none`,
+and no settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
 ```
 
 **Report to the human** — everything else, including a reviewer failure (step 2) and

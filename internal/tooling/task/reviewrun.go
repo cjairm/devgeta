@@ -66,11 +66,14 @@ const reviewRunTimeout = 30 * time.Minute
 // The reason is OpenCode's own text, cut — never reworded or guessed at.
 const maxReasonLen = 120
 
-// statusLinePattern matches the reviewer's verdict line, e.g.
-// "**Status:** REQUEST CHANGES". Case-insensitive because the marker is
-// prose the model reproduces, and per-line ([^\S\n]) so the capture stops at
-// the end of that line rather than swallowing the rest of the report.
-var statusLinePattern = regexp.MustCompile(`(?mi)^[^\S\n]*\*\*status:\*\*[^\S\n]*(.*)$`)
+// statusLinePattern matches ONE reviewer verdict line, e.g.
+// "**Status:** REQUEST CHANGES". Case-insensitive because the marker is prose
+// the model reproduces. It is applied to a single line at a time by
+// lastStatusVerdict — which is why it carries no (?m) flag: there is no
+// multi-line text for ^ and $ to anchor within, and the horizontal-only
+// whitespace classes ([^\S\n]) keep it that way even if a caller ever passed
+// a fragment containing a newline.
+var statusLinePattern = regexp.MustCompile(`(?i)^[^\S\n]*\*\*status:\*\*[^\S\n]*(.*)$`)
 
 // reviewerRun is one reviewer this round runs: how its line is labeled, and
 // which model to pin it to ("" = no -m flag, i.e. OpenCode's own default).
@@ -365,6 +368,15 @@ func errorEventReason(raw json.RawMessage) string {
 // fence showing what "**Status:** APPROVE" looks like — sits below its own
 // real verdict, and the unsafe direction is toward APPROVE, so a quoted
 // example must never be able to overwrite a decision already made.
+//
+// Fence tracking is a plain open/close toggle, so an UNBALANCED fence in a
+// report (an opening ``` the model never closes) leaves the scanner "inside a
+// fence" for the rest of the text and every status line after it is skipped —
+// yielding NO VERDICT. That is deliberate rather than a gap worth repairing:
+// NO VERDICT is blocking, so a malformed report costs a round and is reported
+// to the human, which is the safe direction. Repairing it would mean guessing
+// where the author meant the fence to end, and a wrong guess points the other
+// way — toward reading a quoted example as a real approval.
 func lastStatusVerdict(text string) string {
 	verdict := ""
 	inFence := false

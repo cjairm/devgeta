@@ -292,7 +292,7 @@ committed and never appears in a diff, and it is deleted with the branch by
 }
 
 var taskReviewNoteCmd = &cobra.Command{
-	Use:   "review-note --open|--settle|--ratify|--reopen --note <text>",
+	Use:   "review-note (--open|--settle) --note <text> | (--ratify|--reopen) --id <id>",
 	Short: "Record, settle, ratify, or reopen one review exchange (for agents and humans)",
 	Long: `Write one entry to the branch's review journal. Exactly one of --open,
 --settle, --ratify, or --reopen is required.
@@ -359,7 +359,7 @@ cite code but could never be checked against it.
 		case taskReviewNoteReopenFlag:
 			out, err := tm.ReviewNoteReopen(taskReviewNoteBranchFlag, taskReviewNoteIDFlag)
 			return emitPRResult(cmd, out, err)
-		default: // --settle
+		case taskReviewNoteSettleFlag:
 			out, err := tm.ReviewNoteSettle(
 				taskReviewNoteBranchFlag,
 				taskReviewNoteIDFlag,
@@ -368,6 +368,12 @@ cite code but could never be checked against it.
 				taskReviewNoteNoteFlag,
 			)
 			return emitPRResult(cmd, out, err)
+		default:
+			// Cobra's MarkFlagsOneRequired already rejects this in production,
+			// but RunE is also called directly by tests. Making --settle an
+			// explicit case rather than the default means "no mode flag" can
+			// never quietly settle an entry if that flag rule is ever relaxed.
+			return fmt.Errorf("one of --open, --settle, --ratify, or --reopen is required")
 		}
 	},
 }
