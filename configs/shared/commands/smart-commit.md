@@ -1,15 +1,6 @@
 ---
 description: Create focused commits from staged changes
-temperature: 0.1
 model: haiku
-tools:
-  write: false
-  edit: false
-  bash:
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git commit*": allow
 ---
 
 Create small, reviewable commits. Commits are granular steps; PRs show the complete picture.
@@ -37,16 +28,19 @@ Match repo conventions (conventional commits, prefixes, etc.).
 ### 3. Validate Scope & Size
 
 **Good:**
+
 - One self-contained change (one part of feature, not whole feature)
 - ~100 lines is reasonable, 200-500 acceptable if focused
 
 **Warn and suggest splitting:**
+
 - Multiple unrelated changes
 - Refactor mixed with behavior change
 - 1000+ lines
 - Changes spread across many unrelated files
 
 **Splitting strategies:**
+
 - Separate refactorings from features/fixes
 - Split by layer (model, API, client)
 - Split by sub-feature
@@ -55,6 +49,7 @@ Match repo conventions (conventional commits, prefixes, etc.).
 ### 4. Generate Message
 
 **Subject (max 70 chars):**
+
 - Imperative: "Add" not "Added"
 - Specific: "Fix login crash on empty password" not "Fix bug"
 - Match repo style
@@ -62,6 +57,7 @@ Match repo conventions (conventional commits, prefixes, etc.).
 - Include $ARGUMENTS context if provided
 
 **Body (complex changes only):**
+
 - Blank line after subject
 - Explain WHY (diff shows what)
 - Wrap at 72 chars
@@ -76,6 +72,7 @@ git commit -m "Subject line"
 ```
 
 With body:
+
 ```bash
 git commit -m "Subject" -m "Body explaining why.
 
@@ -96,6 +93,7 @@ After commit: show hash and message. If large, suggest splitting next time.
 ## Examples
 
 **Good:**
+
 ```
 Add user profile caching
 
@@ -109,9 +107,11 @@ Closes #410
 ```
 
 **Bad:**
+
 - "fix stuff" / "updates" / "WIP" - not descriptive
 - "Add feature X with refactoring" - multiple concerns
 
 #### References
+
 - https://google.github.io/eng-practices/review/developer/
 - https://gist.github.com/hcastro/52c5824a747b901c289261518504effb

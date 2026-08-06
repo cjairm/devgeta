@@ -1,17 +1,5 @@
 ---
 description: Open a PR from the current branch — generate a title and body from the branch's commits and diff, honoring the repo's PR template
-temperature: 0.1
-permission:
-  write: allow
-  edit: deny
-  bash:
-    "*": deny
-    "devgeta task *": allow
-    "git branch*": allow
-    "git push*": allow
-    "git status": allow
-    "cat .github/*": allow
-    "test -f *": allow
 ---
 
 Open a pull request describing the branch's overall impact. Commits are granular steps; the PR shows the complete picture — what changed, why, and how to verify it.

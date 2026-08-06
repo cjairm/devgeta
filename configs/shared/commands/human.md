@@ -1,11 +1,5 @@
 ---
 description: Rewrite content as a short, natural message ready to paste into Slack or WhatsApp — sounds like an engineer, not an AI
-temperature: 0.3
-permission:
-  write: deny
-  edit: deny
-  bash:
-    "*": deny
 ---
 
 Rewrite this as a natural message that an engineer would send to teammates. Think "busy Slack conversation," not "formal document."

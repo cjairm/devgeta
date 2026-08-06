@@ -1,11 +1,5 @@
 ---
 description: Re-explain the previous answer or a given topic in plain language for someone new to the project
-temperature: 0.1
-permission:
-  write: deny
-  edit: deny
-  bash:
-    "*": deny
 ---
 
 Explain something so a person with zero project background understands it on first read. This is a fresh explanation, not a sentence-by-sentence rewrite — keep every technical fact and caveat, change only how it's told.

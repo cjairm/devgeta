@@ -1,23 +1,5 @@
 ---
 description: Address PR review feedback — implement suggestions, reply to reviewers, and resolve threads on the current branch's PR
-temperature: 0.2
-permission:
-  write: allow
-  edit: allow
-  bash:
-    "*": deny
-    "devgeta task *": allow
-    "git add *": allow
-    "git commit *": allow
-    "git push*": allow
-    "git status": allow
-    "git diff*": allow
-    "go *": allow
-    "npm *": allow
-    "npx *": allow
-    "pnpm *": allow
-    "yarn *": allow
-    "make *": allow
 ---
 
 Address PR review feedback: implement the requested changes, reply to each reviewer thread, and resolve the ones you handled.

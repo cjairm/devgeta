@@ -1,12 +1,5 @@
 ---
 description: Verify a PR's review feedback was addressed, then approve it or report what's still blocking. The final-approver step after a review — use when deciding whether to approve a PR that has already been reviewed.
-temperature: 0.1
-permission:
-  write: deny
-  edit: deny
-  bash:
-    "*": deny
-    "devgeta task *": allow
 ---
 
 Confirm that the feedback on an already-reviewed PR was actually addressed, then approve it — or report what still blocks the merge.

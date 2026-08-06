@@ -1,13 +1,5 @@
 ---
 description: Teach a work item — ticket, issue, PR, or idea — in plain language: what it is, why it exists, and how the flow works, shown as a small diagram instead of walls of prose
-temperature: 0.1
-permission:
-  write: deny
-  edit: deny
-  bash:
-    "*": deny
-    "gh issue view*": allow
-    "gh pr view*": allow
 ---
 
 Teach one work item in the fewest words that still carry every important fact.

@@ -1,16 +1,5 @@
 ---
 description: Review a PR and post one cohesive review with inline comments — apply findings already in context (from a code/doc reviewer agent or another model) or review directly, dedup against existing threads, and submit a single verdict. Use for "review this PR", code review, or doc review.
-temperature: 0.1
-permission:
-  write: allow
-  edit: deny
-  bash:
-    "*": deny
-    "devgeta task *": allow
-    "git diff*": allow
-    "git fetch*": allow
-    "git log*": allow
-    "git branch*": allow
 ---
 
 Post review feedback to a PR as **one cohesive review**. Findings often already sit in the conversation — produced by a `code-reviewer`/`document-reviewer`/`skill-reviewer` agent or another model (gpt, qwen, kimi, …). Use those; if context is thin, review directly with the lens below. The repo is the current working directory.
