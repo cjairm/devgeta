@@ -10,6 +10,7 @@ package task
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
@@ -22,6 +23,13 @@ const (
 	noNotesFmt       = "No review notes for branch %s."
 	nothingPrunedMsg = "No review journals to prune."
 )
+
+// ReviewJournalSnapshotEnvVar names the child-only environment variable
+// review-run sets on a spawned reviewer so it reads the journal as it stood
+// at round start, not the live file (ADR-0017 §4). Defined once here and
+// referenced everywhere else so a later task's writer and this reader always
+// agree on the name.
+const ReviewJournalSnapshotEnvVar = "DEVGETA_REVIEW_JOURNAL_SNAPSHOT"
 
 // journalBranch resolves the branch a journal belongs to: the explicit
 // --branch when given, else the current one. A detached HEAD has no branch, so
@@ -73,7 +81,7 @@ func (tm *TaskManager) ReviewNotes(branch string, showPath, prune bool) (string,
 		return jm.PathFor("", target)
 	}
 
-	j, err := jm.Load("", target)
+	j, err := loadJournalForDisplay(jm, target)
 	if err != nil {
 		return "", err
 	}
@@ -81,6 +89,40 @@ func (tm *TaskManager) ReviewNotes(branch string, showPath, prune bool) (string,
 		return fmt.Sprintf(noNotesFmt, target), nil
 	}
 	return renderNotes(jm, j), nil
+}
+
+// loadJournalForDisplay is the ONLY read path a reviewer's `review-notes`
+// call goes through, and the only place ReviewJournalSnapshotEnvVar is read.
+// Writes (ReviewNoteOpen, ReviewNoteSettle, Ratify, Reopen, --path, --prune)
+// never call this — they always hit the live journal, which is the point:
+// round-start isolation is a display-side illusion, not a second store
+// (ADR-0017 §4).
+//
+// When the variable is unset, empty, or names a file that cannot be read,
+// this falls back to the live journal — never an error. Step 1 of the
+// snapshot sequence (owned elsewhere) always writes the snapshot before a
+// round starts, including an empty one when no journal exists yet, so a
+// missing or unreadable file here is an anomaly (someone deleted it, a bug),
+// not the normal first-review path. Falling back to live state is the right
+// response to that anomaly: it costs that one reviewer its isolation for the
+// round, which is recoverable. The alternative — treating a missing snapshot
+// as an empty journal — would hide every already-settled entry and send the
+// reviewer back around the re-raise circle the journal exists to break
+// (ADR-0012), which is not recoverable in the same way. Losing isolation is
+// the safe failure mode; losing history is not.
+func loadJournalForDisplay(
+	jm *reviewjournal.Manager,
+	branch string,
+) (*reviewjournal.Journal, error) {
+	path := os.Getenv(ReviewJournalSnapshotEnvVar)
+	if strings.TrimSpace(path) == "" {
+		return jm.Load("", branch)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return jm.Load("", branch)
+	}
+	return reviewjournal.Parse(branch, data), nil
 }
 
 // renderNotes formats the journal for an agent: labeled plain text, one entry

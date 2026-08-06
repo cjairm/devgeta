@@ -437,3 +437,171 @@ func TestReviewNoteReopenRequiresID(t *testing.T) {
 		t.Error("expected an error for --reopen without an id")
 	}
 }
+
+// --- round-start snapshot read (ADR-0017 §4) ---
+//
+// review-run's snapshot writer and the executor's env overlay belong to other
+// tasks. These tests only cover the read side: review-notes consults
+// ReviewJournalSnapshotEnvVar and falls back to the live journal on any
+// failure to resolve it.
+
+// The regression that matters most: with the pointer unset (today's world),
+// review-notes must produce byte-identical output to reading the live
+// journal directly, since review-notes is used by hand and by every agent
+// outside the review loop, not just inside a round.
+func TestReviewNotesSnapshotPointerUnsetMatchesLiveJournal(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "first finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle("", "n1", "answered", "", "resolved"); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	viaTask, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+
+	jm := reviewjournal.New(tm.Git)
+	j, err := jm.Load("", "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	viaLive := renderNotes(jm, j)
+
+	if viaTask != viaLive {
+		t.Fatalf(
+			"pointer-unset output diverged from the live journal:\ngot:  %q\nwant: %q",
+			viaTask,
+			viaLive,
+		)
+	}
+}
+
+// Pointer set to the empty string is explicitly the same as unset, not "an
+// empty snapshot" — the empty string never names a file.
+func TestReviewNotesSnapshotPointerEmptyStringUsesLiveJournal(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, "")
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// The isolation case: a reviewer pointed at a snapshot taken before a
+// second, later entry was opened must not see that later entry, even though
+// it is sitting in the live journal file right next to it.
+func TestReviewNotesSnapshotPointerReadsSnapshotNotLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "round-start finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	jm := reviewjournal.New(tm.Git)
+	journalPath, err := jm.PathFor("", "feat")
+	if err != nil {
+		t.Fatalf("PathFor: %v", err)
+	}
+	snapshotData, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatalf("reading the live journal to build the snapshot: %v", err)
+	}
+	snapshotPath := filepath.Join(root, "feat.round-1.snapshot.md")
+	if err := os.WriteFile(snapshotPath, snapshotData, 0o644); err != nil {
+		t.Fatalf("writing snapshot: %v", err)
+	}
+
+	// Diverge the live journal after the snapshot was taken.
+	if _, err := tm.ReviewNoteOpen("", "", "same-round finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	t.Setenv(ReviewJournalSnapshotEnvVar, snapshotPath)
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(out, "round-start finding") {
+		t.Errorf("expected the snapshot's entry in output:\n%s", out)
+	}
+	if strings.Contains(out, "same-round finding") {
+		t.Errorf("a same-round live entry must be invisible when reading the snapshot:\n%s", out)
+	}
+}
+
+// A missing snapshot is an anomaly (step 1 always writes one before a round
+// starts), not the normal path — but review-notes must never fail because of
+// it; it falls back to the live journal.
+func TestReviewNotesSnapshotPointerMissingFileFallsBackToLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, filepath.Join(root, "no-such-snapshot.md"))
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("expected no error falling back to the live journal, got: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// An unreadable snapshot (here: the pointer names a directory, so
+// os.ReadFile fails) falls back the same way a missing one does.
+func TestReviewNotesSnapshotPointerUnreadableFileFallsBackToLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	dirAsPointer := filepath.Join(root, "not-a-file")
+	if err := os.MkdirAll(dirAsPointer, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, dirAsPointer)
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("expected no error falling back to the live journal, got: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// Writes must keep hitting the live journal regardless of the pointer: the
+// snapshot is a read-side illusion, not a second store.
+func TestReviewNoteWritesStillHitLiveJournalWhileSnapshotPointerSet(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	t.Setenv(ReviewJournalSnapshotEnvVar, filepath.Join(root, "no-such-snapshot.md"))
+
+	out, err := tm.ReviewNoteOpen("", "", "written while pointer is set")
+	if err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if out != "Noted n1" {
+		t.Fatalf("expected 'Noted n1', got %q", out)
+	}
+
+	// Read the live file directly (bypassing loadJournalForDisplay) to prove
+	// the write landed in the live journal, not somewhere the pointer
+	// redirected it.
+	jm := reviewjournal.New(tm.Git)
+	j, err := jm.Load("", "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(j.Entries) != 1 || j.Entries[0].Note != "written while pointer is set" {
+		t.Fatalf("expected the write in the live journal, got entries: %+v", j.Entries)
+	}
+}
