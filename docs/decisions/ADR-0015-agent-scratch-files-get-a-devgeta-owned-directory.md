@@ -135,6 +135,15 @@ about. `mktemp` is not on either list, so it would be **denied**, not prompted.
 An earlier draft of this ADR claimed `mktemp` runs under `Bash(*)`; that is true
 of an ordinary session and false inside these commands.
 
+**Correction (2026-08-06):** the paragraph above is wrong. The cycle documented
+in `docs/plans/cycles/2026-08-05-shared-command-permissions.md` established that
+command frontmatter — including any `permission:`/`bash:` block — is ignored by
+both agents; a command's real permissions come from the agent it runs under, or
+the global policy if it has none. `mktemp` would in fact be **allowed** by the
+global `Bash(*)` policy, not denied. This corrects the reasoning above, not the
+decision below: it still holds on its other, independent legs (the global
+`rm -rf *` deny, Go-confined deletion, and avoiding `/tmp`).
+
 Cleanup is worse: `Bash(rm -rf *)` is denied globally in both configs, and deny
 is evaluated before any allow from any scope, so no command-level rule can
 re-enable it. Widening that deny to let a command clean up after itself would
@@ -281,10 +290,12 @@ and this ADR does not claim otherwise.
 - One new `dg task` subcommand to maintain. In exchange, no command frontmatter
   changes here or in future — `devgeta task *` is already allowed everywhere —
   and no global deny gets weakened to let a command clean up after itself.
-- A reminder the frontmatter is load-bearing: a command's `bash` allowlist
-  overrides the host policy, so "the global config allows it" is not a reason to
-  believe a command can run something. This ADR was drafted twice on that
-  mistake.
+- **Correction (2026-08-06):** this ADR was drafted twice believing a command's
+  `bash` frontmatter overrides the host policy. It does not — command
+  frontmatter is ignored by both agents (see
+  `docs/plans/cycles/2026-08-05-shared-command-permissions.md`), so "the global
+  config allows it" was actually the right reason to believe a command can run
+  something, not a mistake to guard against.
 - Anything else needing scratch space has a documented home, so the next command
   does not reinvent one.
 - The `skill-creator` prompt remains. If it becomes annoying, the fix is to fork

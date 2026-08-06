@@ -158,6 +158,7 @@ Users should be able to choose between alternatives:
 - **Opencode integrations** — Check [Opencode.nvim](https://github.com/nickjvandyke/opencode.nvim) for nvim integration
 - **Super powers** — How to extend [super powers](https://github.com/obra/superpowers) for Opencode?
 - **Auto Claude integration** — Reuse or build [Auto Claude](https://github.com/AndyMik90/Auto-Claude)?
+- **`/review-pr` read-only enforcement** — Consider making `/review-pr` genuinely read-only via a dedicated restricted agent (currently it can edit despite reviewing) — see [docs/plans/cycles/2026-08-05-shared-command-permissions.md](docs/plans/cycles/2026-08-05-shared-command-permissions.md)
 
 ### References & Templates
 

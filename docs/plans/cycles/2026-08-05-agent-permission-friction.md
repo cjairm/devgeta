@@ -545,6 +545,10 @@ command-scope allow can lift. Replaced with `devgeta task scratch` (ADR-0015 §3
 which both commands can already invoke and which confines deletion in Go.
 Verified separately that the vendored skills in §7 declare no `permission:`
 frontmatter, so that section's reasoning is unaffected.
+_(Correction, 2026-08-06: the premise above was wrong — command frontmatter is
+ignored by both agents, so `mktemp` would have been allowed, not denied; see
+`docs/plans/cycles/2026-08-05-shared-command-permissions.md`. The decision to
+use `devgeta task scratch` stands on its other merits regardless.)_
 
 Round 11, three findings folded in.
 

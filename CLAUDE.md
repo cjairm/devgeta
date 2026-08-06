@@ -521,10 +521,13 @@ Accepted differences (deliberate, do not "fix" by halves):
 - **Agent frontmatter is enforced by OpenCode only; command frontmatter is
   ignored by both.** Agent `.md` files use OpenCode's `permission:` schema;
   Claude Code ignores it. OpenCode's `tools:` is `object<string, boolean>`,
-  Claude Code's is comma-separated, resulting in read-only reviewer agents in
-  OpenCode but unrestricted in Claude Code. Command-level `permission:` and
-  `tools:` blocks have no effect in either agent. A command's permissions come
-  from the agent it designates via `agent:`.
+  Claude Code's is comma-separated — the two schemas can't share one key, so
+  the reviewer agents are read-only in OpenCode but unrestricted in Claude
+  Code. Command-level `permission:` and `tools:` blocks have no effect in
+  either agent. A command's permissions come from the agent it runs under,
+  which a command can select with `agent:`. Unifying this needs per-agent
+  frontmatter rendering from one policy source (an ADR-level change, not yet
+  made).
 - **The lint feedback loop is Claude-only.** `format.sh` returns linter findings
   via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
   return context, and OpenCode surfaces LSP diagnostics instead.

@@ -374,10 +374,11 @@ func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
 // body/prompt content; none of these files set it explicitly in frontmatter,
 // but it stays in the allowlist because it is a valid schema key.
 //
-// This must stay an allowlist, not a denylist of "known bad keys": commit
-// 3d813f4 removed `permission`, `tools`, and `temperature` from every shared
-// command file because OpenCode silently ignores keys outside this schema —
-// they looked enforced but did nothing. A denylist of those three names would
+// This must stay an allowlist, not a denylist of "known bad keys": the cycle
+// documented in docs/plans/cycles/2026-08-05-shared-command-permissions.md
+// removed `permission`, `tools`, and `temperature` from every shared command
+// file because OpenCode silently ignores keys outside this schema — they
+// looked enforced but did nothing. A denylist of those three names would
 // never have caught `temperature` before someone noticed by hand; only
 // rejecting everything not on the real schema catches the next one too.
 var commandFrontmatterAllowlist = map[string]bool{
@@ -389,14 +390,10 @@ var commandFrontmatterAllowlist = map[string]bool{
 	"subtask":     true,
 }
 
-// TestSharedCommandsFrontmatterMatchesSchema guards against dead frontmatter
-// keys creeping back into configs/shared/commands/*.md. OpenCode's command
-// schema (https://opencode.ai/config.json) only recognizes template,
-// description, agent, model, variant, and subtask — any other key is parsed
-// but silently dropped at runtime, so it looks enforced in the file while
-// doing nothing. That is exactly how `permission`, `tools`, and `temperature`
-// went unnoticed until commit 3d813f4 removed them.
-func TestSharedCommandsFrontmatterMatchesSchema(t *testing.T) {
+// forEachSharedCommand runs fn as a subtest for every
+// configs/shared/commands/*.md file.
+func forEachSharedCommand(t *testing.T, fn func(t *testing.T, name, path string)) {
+	t.Helper()
 	dir := filepath.Join("..", "..", "..", "configs", "shared", "commands")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -408,34 +405,65 @@ func TestSharedCommandsFrontmatterMatchesSchema(t *testing.T) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
 			continue
 		}
+		path := filepath.Join(dir, e.Name())
 		t.Run(e.Name(), func(t *testing.T) {
-			fm := frontmatter(t, filepath.Join(dir, e.Name()))
-
-			var parsed map[string]any
-			if err := yaml.Unmarshal(fm, &parsed); err != nil {
-				t.Fatalf("frontmatter is not valid YAML: %v", err)
-			}
-			for key := range parsed {
-				if !commandFrontmatterAllowlist[key] {
-					t.Errorf(
-						"%s frontmatter declares %q, which is outside OpenCode's real "+
-							"command schema (https://opencode.ai/config.json: template, "+
-							"description, agent, model, variant, subtask). OpenCode silently "+
-							"drops unknown frontmatter keys at runtime, so %q is not merely "+
-							"unused — it looks enforced but does nothing. Remove it or add it "+
-							"to the schema allowlist if OpenCode has genuinely added it.",
-						e.Name(),
-						key,
-						key,
-					)
-				}
-			}
+			fn(t, e.Name(), path)
 		})
 		checked++
 	}
 	if checked == 0 {
 		t.Fatalf("no command files found in %s", dir)
 	}
+}
+
+// TestSharedCommandsFrontmatterMatchesSchema guards against dead frontmatter
+// keys creeping back into configs/shared/commands/*.md. OpenCode's command
+// schema (https://opencode.ai/config.json) only recognizes template,
+// description, agent, model, variant, and subtask — any other key is parsed
+// but silently dropped at runtime, so it looks enforced in the file while
+// doing nothing. That is exactly how `permission`, `tools`, and `temperature`
+// went unnoticed until the cycle in
+// docs/plans/cycles/2026-08-05-shared-command-permissions.md removed them.
+func TestSharedCommandsFrontmatterMatchesSchema(t *testing.T) {
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		// OpenCode's command schema only requires `template` (the body) — a
+		// command file with no frontmatter block at all is legal, so there is
+		// nothing here for the allowlist to check.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(string(data)), "---") {
+			return
+		}
+
+		fm := frontmatter(t, path)
+
+		var parsed map[string]any
+		if err := yaml.Unmarshal(fm, &parsed); err != nil {
+			t.Fatalf("frontmatter is not valid YAML: %v", err)
+		}
+		for key := range parsed {
+			if !commandFrontmatterAllowlist[key] {
+				t.Errorf(
+					"%s frontmatter declares %q, which is outside OpenCode's real "+
+						"command schema (https://opencode.ai/config.json: template, "+
+						"description, agent, model, variant, subtask). OpenCode silently "+
+						"drops unknown frontmatter keys at runtime, so %q is not merely "+
+						"unused — it looks enforced but does nothing. Remove it or add it "+
+						"to the schema allowlist if OpenCode has genuinely added it. This "+
+						"also deliberately rejects Claude-Code-only keys (e.g. "+
+						"allowed-tools, argument-hint): per-command restriction on the "+
+						"Claude side is a separate decision that hasn't been made, not a "+
+						"frontmatter edit — see "+
+						"docs/plans/cycles/2026-08-05-shared-command-permissions.md.",
+					name,
+					key,
+					key,
+				)
+			}
+		}
+	})
 }
 
 // frontmatter returns the YAML block delimited by the leading and next "---".
@@ -800,32 +828,16 @@ func mustJSONString(t *testing.T, v string) string {
 // edits. Only commands/ is checked: skills/ vendors upstream Superpowers
 // content with its own /tmp paths, deliberately excluded (ADR-0015 §7).
 func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
-	dir := filepath.Join("..", "..", "..", "configs", "shared", "commands")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", dir, err)
-	}
-
-	checked := 0
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
 		}
-		t.Run(e.Name(), func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
-			if err != nil {
-				t.Fatalf("failed to read %s: %v", e.Name(), err)
-			}
-			if strings.Contains(string(data), "/tmp/") {
-				t.Errorf(
-					"%s references /tmp/ — use `devgeta task scratch` instead (ADR-0015)",
-					e.Name(),
-				)
-			}
-		})
-		checked++
-	}
-	if checked == 0 {
-		t.Fatalf("no command files found in %s", dir)
-	}
+		if strings.Contains(string(data), "/tmp/") {
+			t.Errorf(
+				"%s references /tmp/ — use `devgeta task scratch` instead (ADR-0015)",
+				name,
+			)
+		}
+	})
 }
