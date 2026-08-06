@@ -295,16 +295,32 @@ Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
 
   The exact sequence, so this is executable rather than aspirational:
 
-  1. Before launching round R's reviewers, `review-run` copies the branch's journal file to a
-     disposable snapshot (under the same review directory, e.g.
-     `<encoded-branch>.round-<n>.snapshot.md`). An absent journal means no snapshot and no
-     pointer — reviewers just see an empty journal, as today.
+  1. Before launching round R's reviewers, `review-run` writes the branch's current journal
+     to a disposable snapshot (under the same review directory, e.g.
+     `<encoded-branch>.round-<n>.snapshot.md`). **Always — including when no journal exists
+     yet.** An absent journal is the state "empty at round start", and it must be captured as
+     a real empty snapshot rather than skipped: on a branch's first review (the most common
+     case) the file does not exist, reviewer 1's first `--open` creates it, and skipping the
+     snapshot would leave reviewer 2 with no pointer, falling through to the live journal and
+     reading reviewer 1's brand-new findings. `Load` already returns an empty journal instead
+     of an error when the file is missing (`reviewjournal/manager.go:70-72`), so the snapshot
+     is just "serialize whatever `Load` returns" and there is **no absent-journal branch in
+     the code at all**.
   2. `review-run` points each spawned `opencode run` at it with a child-only environment
      variable (`DEVGETA_REVIEW_JOURNAL_SNAPSHOT=<path>`). See the executor bullet below —
      this capability does not exist yet.
   3. `review-notes` reads the snapshot when that variable names a readable file, and the live
      journal otherwise. Unset, empty, or unreadable → live journal, i.e. today's behavior
      exactly. It must never fail because a snapshot is missing.
+
+     Note what that fallback is and is not for. Because step 1 always writes the snapshot, a
+     missing file is an **anomaly** (someone deleted it, a bug), never the normal
+     first-review path. Falling back to the live journal is the right response to the anomaly
+     — it loses isolation for that reviewer, but the alternative, treating a missing snapshot
+     as "empty", would hide every settled entry and send the reviewer round the re-raise
+     circle ADR-0012 exists to break. Losing isolation is recoverable; losing history is the
+     original bug.
+
   4. Reviewer writes go to the **live** journal and get real, final ids from `nextID()`
      (`max+1`, never reused — `reviewjournal/journal.go:69-81`, pinned by
      `TestNextIDNeverReusesAfterDeletion`). Reviewer 1's new `n7` and its settling of the
@@ -320,10 +336,12 @@ Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
   in-round conclusion would reach reviewer 2 through an entry whose id is below any floor.
 
   Tests: snapshot pointer set → a same-round `--open` is hidden and a same-round `--settle`
-  of a pre-existing entry still reads as open; pointer unset → output byte-identical to
-  today (**the regression that matters**, since `review-notes` is used outside the loop);
-  pointer naming a missing or unreadable file → falls back to the live journal without
-  erroring; ids keep advancing while reads are frozen; snapshot removed at round end.
+  of a pre-existing entry still reads as open; **no journal on disk at round start → a
+  snapshot is still written, and a reviewer reading it does not see an entry created after it
+  (the first-review path, finding n7)**; pointer unset → output byte-identical to today
+  (**the regression that matters**, since `review-notes` is used outside the loop); pointer
+  naming a missing or unreadable file → falls back to the live journal without erroring; ids
+  keep advancing while reads are frozen; snapshot removed at round end.
 
   **One assumption to probe before building this, not to assume:** that an environment
   variable set on the `opencode run` process actually reaches the `devgeta task review-notes`
@@ -511,11 +529,13 @@ make lint
    default model
 3. `/review-loop` on a branch with a planted bug → finding journaled, fixed, settled,
    round 2 approves
-   3b. Two reviewers configured, on a branch with one obvious planted bug → confirm the
-   second reviewer's `review-notes` output does **not** contain the first reviewer's
-   round-1 findings (isolation holds, ADR-0017 §4). Both reviewers finding the same bug
-   should leave **two** open entries, not one — duplicates are kept by design, and the
-   coding agent settles both from one verification. Then confirm round 2 sees both.
+   3b. Two reviewers configured, on a **fresh branch with no journal yet** and one obvious
+   planted bug → confirm the second reviewer's `review-notes` output does **not** contain the
+   first reviewer's round-1 findings (isolation holds on the first-review path, findings
+   n1/n7 — run it this way round precisely because an existing journal would mask n7). Both
+   reviewers finding the same bug should leave **two** open entries, not one — duplicates are
+   kept by design, and the coding agent settles both from one verification. Then confirm
+   round 2 sees both.
    3c. Same run, with one entry already **open** before the round and now genuinely fixed in
    the code: reviewer 1 settles it `--as fixed`; confirm reviewer 2's `review-notes` still
    shows it **open** (state is frozen, not just existence — finding n5)
@@ -582,6 +602,11 @@ make lint
   mutation would leak the pointer into unrelated `review-notes` calls and is unsafe under
   concurrency. Costs a new field on the shared `CommandParams` and a change in a hot code
   path, which is why the overlay must preserve the inherited environment.
+- **The snapshot is unconditional, with no "nothing to do" case** (revised, finding n7) —
+  writing it even when no journal exists costs one useless file on a first review and removes
+  the branch where isolation silently did not apply. This is the second edge case in this
+  section to come from treating a state as an absence (n5 was state changes, n7 was an absent
+  journal), which is the argument for uniformity over special cases here.
 - **Duplicates kept, never merged** (revised, finding n4) — Go does not guess whether two
   wordings are one defect. Noise is recoverable; a silently dropped finding is not, and it
   is indistinguishable from a clean review.

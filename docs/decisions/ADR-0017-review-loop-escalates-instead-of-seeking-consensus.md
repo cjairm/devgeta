@@ -123,6 +123,17 @@ round R, `review-run` copies the journal to a disposable snapshot. Each reviewer
 `review-notes` reads that snapshot; every write still goes to the live journal, immediately,
 as today. At round end the snapshot is discarded, so round R+1 takes a fresh one.
 
+**The snapshot is written unconditionally, including when no journal exists yet.** This is
+not a detail — it is the difference between the mechanism working and not working on the
+single most common case, a branch's first review. There, the journal file is absent at round
+start and reviewer 1's first `--open` creates it; if an absent journal were treated as
+"nothing to snapshot, no pointer," reviewer 2 would fall through to the live journal and read
+reviewer 1's brand-new findings. Isolation would be missing exactly where a first review needs
+it most. An absent journal is a real state to capture — "empty at round start" — not an
+absence of state. `Load` already returns an empty journal rather than an error when the file
+does not exist (`manager.go:70-72`), so the snapshot is simply whatever `Load` yields, and the
+implementation needs no absent-journal special case at all.
+
 **The snapshot must freeze entry state, not merely entry existence**, and this is the whole
 reason it is a file copy rather than a cheaper "hide ids above N" filter. An entry that is
 _open_ at round start has no settled conclusion to inherit, and the reviewer contract
