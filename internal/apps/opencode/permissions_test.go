@@ -859,6 +859,115 @@ const reviewLoopReportHeading = "## Terminal report"
 // flag must fall after the report template's heading, so an instruction
 // earlier in the file telling the loop to run one itself fails the build
 // instead of shipping silently.
+// reviewLoopSection extracts the body of one flow step from review-loop.md:
+// everything from `heading` up to (but not including) the next line that
+// starts with "#" — so a guard test can anchor on a single step's content
+// without being tripped by wording changes in the rest of the file.
+func reviewLoopSection(t *testing.T, body, heading string) string {
+	t.Helper()
+	start := strings.Index(body, heading)
+	if start < 0 {
+		t.Fatalf(
+			"%q heading not found in review-loop.md — this is the anchor a guard "+
+				"test uses to isolate one flow step's content",
+			heading,
+		)
+	}
+	rest := body[start+len(heading):]
+	if next := strings.Index(rest, "\n#"); next >= 0 {
+		return rest[:next]
+	}
+	return rest
+}
+
+// TestReviewLoopCleanApprovalRequiresOpenNone guards the fix that closed a
+// real correctness bug (see the cycle history around commit 0b39f28): a round
+// where every reviewer said APPROVE but the journal still had open findings
+// (open: n4 n7) used to read as a clean approval. Step 3 must gate on BOTH
+// every verdict being APPROVE AND the round's `open:` line reading
+// `open: none` — drop the open: none half and the loop can declare victory
+// while a finding sits unanswered in the journal.
+//
+// What this catches: the `open: none` condition (or the whole clause
+// requiring it) being deleted from step 3, which would silently reintroduce
+// the bug — an all-APPROVE round with unanswered findings reported as clean.
+// What this does NOT catch: an executing agent misreading a correctly-worded
+// instruction, or a reword that keeps the string "open: none" in the section
+// but no longer makes it a requirement (a substring match cannot distinguish
+// "requires open: none" from "ignores open: none" — it only proves the
+// concept is still named in the right place).
+func TestReviewLoopCleanApprovalRequiresOpenNone(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+
+	if !strings.Contains(section, "open: none") {
+		t.Errorf(
+			"%s step 3 no longer requires the round's `open:` line to read "+
+				"`open: none` for a clean approval — without this, an all-APPROVE "+
+				"round with findings still open in the journal (open: n4 n7) reads "+
+				"as clean when it is not",
+			path,
+		)
+	}
+	if !strings.Contains(section, "APPROVE") {
+		t.Errorf(
+			"%s step 3 no longer checks that every reviewer's outcome is APPROVE — "+
+				"the clean approval gate needs both conditions together, not "+
+				"open: none alone",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopForwardsReviewerSelector guards the fix that closed the other
+// real bug: `--reviewer <key>` was documented in the Usage section but never
+// actually read from $ARGUMENTS or passed on to `devgeta task review-run`, so
+// the documented selector silently did nothing. Step 0 must parse
+// $ARGUMENTS, and step 1 must forward the resolved key to review-run on
+// every round.
+//
+// What this catches: either half — the $ARGUMENTS parse in step 0, or the
+// `--reviewer <key>` forwarding in step 1 — being deleted, which would
+// silently restore "the selector is documented but does nothing".
+// What this does NOT catch: the parse or forwarding being reworded to read
+// plausibly while actually forwarding a stale or wrong value, since this is a
+// substring check over prose, not an execution of the instructions.
+func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	parseSection := reviewLoopSection(t, body, "### 0. Resolve the reviewer selector")
+	if !strings.Contains(parseSection, "$ARGUMENTS") {
+		t.Errorf(
+			"%s step 0 no longer mentions parsing $ARGUMENTS — without this the "+
+				"documented --reviewer flag is never read from anywhere, so it is "+
+				"just Usage-section text with no effect",
+			path,
+		)
+	}
+
+	runSection := reviewLoopSection(t, body, "### 1. Run a round")
+	if !strings.Contains(runSection, "--reviewer <key>") {
+		t.Errorf(
+			"%s step 1 no longer forwards --reviewer <key> to `devgeta task "+
+				"review-run` — without this, --reviewer is parsed in step 0 but "+
+				"never passed through, so the documented selector silently does "+
+				"nothing",
+			path,
+		)
+	}
+}
+
 func TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
 	data, err := os.ReadFile(path)

@@ -71,9 +71,15 @@ state.
 
 If any reviewer's outcome this round is `ERROR(<reason>)` or `NO VERDICT`, stop. Do not
 run another round, and do not attempt to fix anything based on a run that did not
-complete. Go straight to the terminal report and name the failing reviewer and its
-reason, verbatim. There is no retry in this version — a flaky run and a broken one look
-the same from here, so both get reported rather than silently rerun.
+complete. Go straight to the terminal report, and name the failing reviewer in it:
+
+- `ERROR(<reason>)`: report the reason verbatim.
+- `NO VERDICT`: there is no reason to report — the outcome is the bare string. State
+  that the reviewer completed without producing a verdict. Do not invent a reason; the
+  outcome carries none, and making one up would misreport what happened.
+
+There is no retry in this version — a flaky run and a broken one look the same from
+here, so both get reported rather than silently rerun.
 
 ### 3. Check for clean approval
 
@@ -163,7 +169,9 @@ hitting the round cap (step 5):
 (Omit this table when there are no agent rejections outstanding.)
 
 ### Failures
-<name the reviewer and its ERROR/NO VERDICT reason, verbatim — omit this section if none>
+<name the failing reviewer. For ERROR(<reason>), give the reason verbatim. For NO
+VERDICT, state that the reviewer completed without producing a verdict — do not invent
+a reason, since NO VERDICT carries none. Omit this section if none>
 
 ### Journal
 <the full, verbatim output of `devgeta task review-notes`>
