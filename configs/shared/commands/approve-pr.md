@@ -51,7 +51,14 @@ devgeta task review-threads --state unresolved
 
 If either holds, treat the thread as satisfied and note it in the report ("addressed, thread left open"). **Never withhold approval over the resolve button, and never ask the author to go resolve a thread whose concern is already handled.**
 
-Only a thread whose concern is still live in the code, with no reply explaining it away, blocks approval.
+**Unaddressed is not the same as blocking.** A thread whose concern is still live in the code blocks approval only when the concern itself is a blocker — something that breaks correctness, security, or data integrity. Bots and reviewers routinely leave suggestions, style points, and nits that nobody acted on; those are worth passing along, not worth holding a merge over. Sorting by "did anyone touch it" instead of "does it matter" is how a PR ends up parked over a Copilot nit.
+
+So triage each live thread into one of two buckets:
+
+- **Blocker** — the code is wrong, unsafe, or loses data. Do not approve.
+- **Non-blocking** — a suggestion, nit, style preference, or optional improvement. Approve, and name it.
+
+Approving over live non-blocking comments takes one thing beyond your own read: **a reviewer agent verdict of `APPROVE` already in this conversation** — from a `code-reviewer`/`document-reviewer`/`skill-reviewer` run, or another model's review sitting in context. That verdict is the judgment that the code has no blockers; it is what you are standing on when you say so on the PR. Without it you have no such basis — say the PR needs `/review-pr` first rather than approving over comments you haven't independently judged.
 
 Then confirm the resolved ones were actually fixed, not just replied to and forgotten:
 
@@ -73,7 +80,7 @@ A failing or errored check is often flaky, an unrelated job, or otherwise still 
 
 **Write plainly.** Anything posted to the PR — the approval body or a comment — must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler.
 
-**Approve when both gates hold:** the PR is open, and every thread's concern is handled — whether or not the thread is marked resolved (and any resolved one you spot-checked holds up). Failing checks are noted, not blocking.
+**Approve when both gates hold:** the PR is open, and nothing live is a blocker — a thread's concern is either handled (whether or not it's marked resolved) or non-blocking. Failing checks are noted, not blocking.
 
 ```bash
 devgeta task approve-pr --body "<body picked below>"
@@ -81,15 +88,27 @@ devgeta task approve-pr --body "<body picked below>"
 
 **The body must match what actually happened on this PR — never thank the author for addressing feedback that was never given.** Pick by situation:
 
-| Situation                                                       | Body                                                                                            |
-| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| No feedback was ever raised (no threads, no prior review notes) | `LGTM.` — plain, nothing more                                                                   |
-| Feedback was raised and addressed                               | `LGTM. Thanks for working on the suggestions 🔥` — vary the phrasing, keep it one line          |
-| Approving while flagging something non-blocking                 | `LGWC; <one short clause naming it>` — comments worth addressing before merge, but not blockers |
+| Situation                                                       | Body                                                                                                      |
+| --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| No feedback was ever raised (no threads, no prior review notes) | `LGTM.` — plain, nothing more                                                                             |
+| Feedback was raised and addressed                               | `LGTM. Thanks for working on the suggestions 🔥` — vary the phrasing, keep it one line                    |
+| Comments are still open but none of them block                  | `LGWC; <who> left some comments worth addressing — I don't see anything blocking.` — **name the authors** |
+
+Name the people (and bots) whose comments are still open — the `review-threads`
+output gives you each commenter's login. Naming them is the whole point of the
+line: the author learns whose feedback to go read, and nobody has to guess what
+"with comments" refers to. Examples:
+
+```
+LGWC; Copilot left some comments worth addressing — I don't see anything blocking.
+LGWC; Copilot and @maria left a few suggestions — worth a look, but nothing blocking.
+```
+
+Keep it to one line, and never dress a real blocker up as a comment.
 
 Don't paste the gate summary or per-thread detail into the PR — that belongs in the report to the user, not the review. If checks are red, mention it in one short clause (e.g. "LGTM — CI has a failing job worth a look") rather than withholding approval.
 
-**If a real gate blocks** (a thread whose concern is still unhandled in the code, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment naming the concern itself — never "please resolve the threads":
+**If a real gate blocks** (a live concern that is a blocker, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment naming the concern itself — never "please resolve the threads":
 
 ```bash
 devgeta task comment-pr --body "<one short line naming what's left>"
@@ -102,9 +121,10 @@ Return only this terse summary to the user — keep it out of the PR itself:
 ```
 ## PR #<num> — <approved | not approved>
 
-- threads: <all handled | N open but addressed | N unaddressed>
+- threads: <all handled | N open but addressed | N open, non-blocking (from <who>) | N blocking>
 - checks: <passing | N failing (flagged, non-blocking)>
 - reviews: <present | none>
+- verdict in context: <reviewer agent APPROVE | none>
 
 <if not approved: a short bullet per blocker>
 ```
@@ -112,6 +132,7 @@ Return only this terse summary to the user — keep it out of the PR itself:
 ## Notes
 
 - This command never edits code and never runs a full review — that's `/review-pr`.
-- Never approve while a thread's concern is genuinely unhandled. But an open thread whose concern was fixed is **not** a blocker — verify the code and approve; resolving threads is the author's bookkeeping, not an approval gate.
+- Severity decides, not activity. A thread blocks when its concern is a blocker and still live in the code. A thread whose concern was fixed is not a blocker, and neither is an untouched suggestion or nit — approve with `LGWC` and name who left it. Resolving threads is the author's bookkeeping, not an approval gate.
+- Approving over live comments rests on a reviewer agent's `APPROVE` verdict in context. Without one, don't approve over them — point at `/review-pr` instead.
 - Failing CI is flagged, not a blocker — the user decides what to do about it.
 - Both the approval and any comment stay terse; the detail goes to the user, not the PR.
