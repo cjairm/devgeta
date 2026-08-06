@@ -106,34 +106,83 @@ earlier draft of this ADR incoherent.
 **Execution is sequential.** The journal has no write lock, and serialized execution is
 what makes concurrent writes a non-problem.
 
-**Visibility is frozen at the start of each round.** Every reviewer in round R reads the
-journal as it stood when round R began. Findings raised during round R become visible to
-reviewers only in round R+1, after an end-of-round merge that deduplicates entries the
-reviewers raised independently.
+**Isolation is achieved by narrowing what a reviewer READS, never by deferring what it
+writes.** Writes stay exactly as they are today: `review-note --open` appends to the live
+journal and saves immediately (`manager.go:143`). What changes is that during a round,
+`review-notes` hides entries created in that same round.
 
-The reason is the oracle gap in the Context. Every reviewer is required to read the journal
-first — the guard test `TestReviewerAgentsReadTheJournalAndCanApprove` pins
-`devgeta task review-notes` into all three reviewer agents — so without a frozen view,
-reviewer N would necessarily read reviewer N−1's fresh findings and be placed in exactly
-the position the literature measures a 32.3-point loss in: primed to treat covered ground
-as settled, and to abandon its own correct-but-divergent finding. That erodes the
-non-overlapping blind spots which are the entire reason for configuring a second model.
+The reason for isolation is the oracle gap in the Context. Every reviewer is required to
+read the journal first — the guard test `TestReviewerAgentsReadTheJournalAndCanApprove`
+pins `devgeta task review-notes` into all three reviewer agents — so on a live shared view,
+reviewer N would necessarily read reviewer N−1's fresh findings and land in exactly the
+position that literature measures a 32.3-point loss in: primed to treat covered ground as
+settled, and to abandon its own correct-but-divergent finding.
+
+**The mechanism is a read floor, and it works because ids are monotonic.** `nextID()` is
+`max+1` and ids are never reused within a journal (`journal.go:69-81`, pinned by
+`TestNextIDNeverReusesAfterDeletion`), so a higher sequence number always means "created
+later." The loop therefore records the journal's highest id at the start of round R and
+passes that floor to each reviewer's environment; `review-notes` shows entries at or below
+the floor and hides the rest. One integer, read-side only.
+
+How the floor reaches the reviewer is an implementation detail with one assumption worth
+naming: it relies on the reviewer's `devgeta task review-notes` inheriting the environment
+of the `opencode run` process that the loop spawned. That must be probed rather than assumed,
+because it fails **open** — an absent floor means reviewers see everything, which is the
+anchored behavior this section exists to remove, and it produces no error while doing so. If
+the agent runtime does not pass the environment through, the floor moves to a devgeta-owned
+channel (a small state file beside the journal) and this section is amended to say so; the
+decision — isolate on the read side — is unaffected either way.
+
+This is deliberately chosen over staging writes and merging them at round end. Everything
+stays durable and identity-stable:
+
+- **No staging area, no write redirection.** Writes go where they always went.
+- **No temporary ids, and no id remapping.** A reviewer that is told `Noted n7` can print
+  `review-note --settle --id n7` and that id is correct permanently. Under a staging design
+  the merge would renumber, silently invalidating the id the reviewer just reported.
+- **No crash cleanup.** A loop killed mid-round leaves every finding already journaled,
+  because nothing was being held back. There is no partial-merge state to repair.
+- **No deduplication in Go**, which keeps §5 intact — see below.
 
 What this does and does not change:
 
 - **Cross-round visibility is unaffected**, and must be. A later round _should_ see earlier
   findings — that is ADR-0012 working as intended, and it is what stops the re-raise circle.
-- **Within-round isolation is now preserved**, so N reviewers are N independent samples of
+- **Within-round isolation holds for findings**, so N reviewers are N independent samples of
   the same diff rather than one sample plus N−1 anchored follow-ups.
-- **Reviewer agents need no change.** They keep calling `review-notes` and
-  `review-note --open` exactly as today; what moves is when their writes become visible to
-  a peer. This matters because their read-first contract is pinned by a guard test, so a
-  design requiring new reviewer-side commands would have to fight that test.
+- **Reviewer agents need no change**, and this is now literally true rather than
+  aspirational: they keep calling `review-notes` and `review-note --open` with the same
+  arguments, and only `review-notes`' own output is filtered by the ambient floor.
 
-The merge is where cross-reviewer deduplication happens. It is real work that
-sequential-with-a-shared-journal got for free, and it is the honest price of this decision
-— see Consequences. It is also the larger half of what parallel reviewers need, so it is
-not throwaway.
+### The limit of this isolation, stated rather than implied
+
+The floor hides entries **created** during the round. It does not hide **state changes to
+entries that already existed** — if a reviewer settles a pre-existing entry mid-round, the
+next reviewer sees it settled.
+
+Accepted, for two reasons. Substantively, a settled pre-existing exchange is round-start
+knowledge: its resolution was reached before this round and is exactly what ADR-0012 exists
+to carry forward. And mechanically, hiding state transitions would require snapshotting the
+whole journal, which reintroduces every cost the read floor avoids. The anchoring this
+decision is aimed at — "the previous reviewer already found the bugs here" — is about newly
+raised findings, and those are hidden.
+
+### Duplicates are kept, not merged
+
+Two reviewers may independently raise the same defect in different words. Nothing in Go
+tries to detect that.
+
+This follows directly from §5: deciding whether two differently-worded findings are one
+defect or two is a judgment call, and path-plus-line cannot answer it — two distinct defects
+share a line often enough that location is not identity. Any Go-side heuristic here would be
+mechanical code making a semantic call, and its failure mode is the worst available: a
+dropped finding looks exactly like a clean review.
+
+So both entries persist, both are visible to the human, and both are visible to the next
+round. The coding agent — which is the component that holds judgment — verifies the defect
+once and settles both, citing the same evidence. A duplicate costs a human one glance; a
+silently dropped defect costs a defect.
 
 ### 5. Go does the mechanism, the agent does the judgment
 
@@ -191,19 +240,17 @@ guard test asserts the command file never mentions them outside the report templ
   glance, a silently outvoted finding costs a defect.
 - **Wall-clock per round is the sum of the reviewers, not the max.** Sequential execution
   is a real cost on a multi-model configuration; subagent execution keeps the human
-  unblocked in the meantime, and parallelism is left as future work — now needing only a
-  journal write lock, since §4's merge already covers the dedup half.
-- **An end-of-round merge with deduplication is now required work, in v1.** This is the
-  direct price of §4: the shared-journal design got cross-reviewer dedup for free, and
-  freezing the read view means two reviewers can independently raise the same finding with
-  no chance to notice. The merge has to decide what "the same finding" means (same path and
-  line is the obvious key, but two reviewers will word the same defect differently), and a
-  merge that is too aggressive silently drops a real finding. It is the highest-risk piece
-  this decision introduces and needs its own tests.
-- **A crash mid-round is messier than before.** With writes deferred to a merge, a loop
-  killed partway through a round can lose that round's findings rather than having them
-  already durably journaled. The merge must therefore be the only writer, and it must write
-  atomically the way ADR-0012's writes already do.
+  unblocked in the meantime, and parallelism is left as future work needing a journal write
+  lock.
+- **Duplicate open entries are now possible and are not cleaned up.** Two reviewers that
+  independently find the same defect produce two entries, and §4 deliberately keeps both.
+  The human sees near-identical findings, and the coding agent settles each. This is the
+  accepted cost of refusing to put semantic judgment in Go, and the direction of the error
+  is chosen: noise rather than silence.
+- **`review-notes` gains ambient behavior.** Its output depends on a floor supplied by the
+  environment, so the same command prints different things inside and outside a loop round.
+  That is a real readability cost and needs a test pinning both: with no floor set, output
+  is unchanged from today.
 - **The human-only rule is prose-level.** See §6. A guard test narrows it; it does not
   close it.
 - **The loop's judgment step cannot be unit-tested in Go.** That is the direct cost of
@@ -253,21 +300,38 @@ nothing reliable to decide on. Failures surface by name instead.
 
 ### Parallel reviewers
 
-Deferred, not rejected — and §4 makes it materially cheaper than it was. Parallelism needed
-two additions: a file lock on journal writes, and a post-fan-out dedup pass. The dedup pass
-is now built as part of §4's end-of-round merge, so **only the write lock remains**.
+Deferred, not rejected. Parallelism needs a **file lock on journal writes**; §4's read floor
+is orthogonal to it and would carry over unchanged.
 
-Note the two decisions also point the same way now, where before they conflicted:
-§4 already forbids a reviewer from seeing a peer's in-round findings, which is exactly the
-property parallel execution would impose anyway. Sequential-vs-parallel becomes purely a
-question of write safety and wall-clock, not of what reviewers can observe.
+Note the two decisions point the same way, where an earlier draft had them conflicting: §4
+already forbids a reviewer from seeing a peer's in-round findings, which is the property
+parallel execution would impose anyway. Sequential-vs-parallel is purely a question of write
+safety and wall-clock, not of what reviewers can observe. Parallelism no longer implies a
+dedup pass either, because §4 keeps duplicates by design.
 
-### Keep a shared live journal within a round (the earlier draft of §4)
+### Keep a shared live journal within a round (the first recorded decision)
 
 Let reviewer N read reviewer N−1's fresh findings, taking cross-reviewer dedup for free.
 
-Rejected on the Context's oracle-gap evidence, after being the recorded decision earlier in
-this cycle. It buys a convenience (no merge pass) by spending the property that justifies
-multi-model review at all, and it does so silently — the loop would still print two reviewer
-names and look like two opinions. The merge pass is the price of the second opinion being
-real.
+Rejected on the Context's oracle-gap evidence. It buys a convenience by spending the
+property that justifies multi-model review at all, and it does so silently — the loop would
+still print two reviewer names and look like two opinions.
+
+### Stage each reviewer's writes and merge them at round end (the second draft of §4)
+
+Redirect `review-note --open` into per-reviewer staging state during a round, then merge
+into the journal at round end with deduplication.
+
+Rejected as more machinery for a worse result, once the details were worked through:
+
+- **It needs write redirection that does not exist.** Each `review-note` call is a separate
+  `devgeta` process that loads, appends, and saves the shared journal immediately; nothing
+  in `reviewjournal` or `reviewnotes.go` accepts a path or destination override today. The
+  read-floor design needs no write-side change at all.
+- **It breaks id stability.** Two reviewers staging from the same base both compute the same
+  `nextID()`, so the merge must renumber — which invalidates the id the reviewer already
+  reported to the human in its own settle line.
+- **It adds a crash-cleanup problem** that the read floor simply does not have: held-back
+  findings can be lost or half-merged, so the merge has to become a transactional writer.
+- **Its dedup step requires semantic judgment in Go**, violating §5. See "Duplicates are
+  kept, not merged" in §4.

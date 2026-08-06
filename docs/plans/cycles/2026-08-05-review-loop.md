@@ -112,9 +112,9 @@ A process failure or an unratified pushback can therefore never masquerade as st
       verdict, print compact per-reviewer verdicts + open journal ids (task-design
       output contract); refuses unless HEAD is a named non-default branch — both the
       default branch and a detached HEAD are refused, with an actionable error (ADR-0018)
-- [ ] Round-start journal read view + end-of-round merge with deduplication, so no
-      reviewer is anchored by a peer's in-round findings (ADR-0017 §4). Reviewer agents
-      unchanged; the merge is the round's only writer and writes atomically
+- [ ] Round read floor on `review-notes`, so no reviewer is anchored by a peer's in-round
+      findings (ADR-0017 §4). Read-side only: writes are untouched, no staging, no id
+      remapping, no dedup. Reviewer agents unchanged
 - [ ] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
       execution, per-finding verification (receiving-code-review discipline), journal
       settle, round cap, escalation report
@@ -131,8 +131,8 @@ A process failure or an unratified pushback can therefore never masquerade as st
 ### Explicitly Out of Scope
 
 - **Parallel reviewers.** Ship sequential. Parallel later now needs only **one** addition —
-  a file lock on journal writes — because the dedup pass lands in v1 as part of the
-  end-of-round merge (ADR-0017 §4). Recorded here so the
+  a file lock on journal writes — the dedup pass it was also thought to need is gone,
+  because ADR-0017 §4 keeps duplicates by design rather than merging them. Recorded here so the
   future flag has its checklist.
 - **Cross-model debate** (reviewers critiquing each other's findings). The journal
   already carries rejections between rounds; explicit debate topologies are unproven
@@ -157,19 +157,20 @@ A process failure or an unratified pushback can therefore never masquerade as st
 
 ### File Changes
 
-| Action | File Path                                           | Description                                                                                       |
-| ------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Done   | `docs/decisions/ADR-0017-*.md`, `ADR-0018-*.md`     | Loop contract; isolation (0016 was taken)                                                         |
-| Modify | `internal/config/fromFile.go`                       | `ReviewConfig{Reviewers []string; Rounds int}`                                                    |
-| Modify | `cmd/config_settings.go`                            | `review.reviewers`, `review.rounds` registry entries                                              |
-| Modify | `internal/apps/opencode/opencode.go` (+test)        | Headless run method on the wrapper                                                                |
-| Create | `internal/tooling/task/reviewrun.go` (+test)        | Fan-out, verdict parse, output contract                                                           |
-| Modify | `cmd/task.go`                                       | Register `review-run`; `--ratify`/`--reopen` flags                                                |
-| Modify | `internal/tooling/reviewjournal/manager.go` (+test) | `Ratify` and `Reopen` transitions; round-start read view + end-of-round merge/dedup (ADR-0017 §4) |
-| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Wire the two transitions into `review-note`                                                       |
-| Create | `configs/shared/commands/review-loop.md`            | The loop command (both agents, per sync rule)                                                     |
-| Modify | `internal/apps/opencode/permissions_test.go`        | Extend guards to the new command                                                                  |
-| Modify | `docs/spec.md`, `docs/plans/cycles/` (this file)    | Document; check off steps                                                                         |
+| Action | File Path                                           | Description                                          |
+| ------ | --------------------------------------------------- | ---------------------------------------------------- |
+| Done   | `docs/decisions/ADR-0017-*.md`, `ADR-0018-*.md`     | Loop contract; isolation (0016 was taken)            |
+| Modify | `internal/config/fromFile.go`                       | `ReviewConfig{Reviewers []string; Rounds int}`       |
+| Modify | `cmd/config_settings.go`                            | `review.reviewers`, `review.rounds` registry entries |
+| Modify | `internal/apps/opencode/opencode.go` (+test)        | Headless run method on the wrapper                   |
+| Create | `internal/tooling/task/reviewrun.go` (+test)        | Fan-out, verdict parse, output contract              |
+| Modify | `cmd/task.go`                                       | Register `review-run`; `--ratify`/`--reopen` flags   |
+| Modify | `internal/tooling/reviewjournal/manager.go` (+test) | `Ratify` and `Reopen` transitions                    |
+| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Round read floor honored on read (ADR-0017 §4)       |
+| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Wire the two transitions into `review-note`          |
+| Create | `configs/shared/commands/review-loop.md`            | The loop command (both agents, per sync rule)        |
+| Modify | `internal/apps/opencode/permissions_test.go`        | Extend guards to the new command                     |
+| Modify | `docs/spec.md`, `docs/plans/cycles/` (this file)    | Document; check off steps                            |
 
 ### Step-by-Step
 
@@ -216,13 +217,17 @@ Write both ADRs (scope list above), get approval. Decisions already made in
 discussion, to be recorded not re-litigated: bounded rounds (3/5) · any single
 REQUEST CHANGES blocks; NEEDS DISCUSSION is treated as blocking and escalates if it
 survives a round · disagreement at cap → human, never a vote · sequential reviewers
-(journal has no lock) · **revised 2026-08-06 after review finding n1:** reviewers do
-**not** see each other's in-round findings — each reads the journal as of the round's
-start, and findings merge with deduplication at round end (ADR-0017 §4). The original
-"sequence gives reviewer N sight of N−1's entries" framing treated that visibility as a
-benefit; the research the ADR cites measures it as a 32.3-point loss, so isolation won
-and the merge pass is the accepted price · refuse on the default branch **and on detached
-HEAD**, tell the user the `git switch -c` fix · Go does fan-out/parse/journal,
+(journal has no lock) · **revised 2026-08-06 after review findings n1/n3/n4:** reviewers do
+**not** see each other's in-round findings. The original "sequence gives reviewer N sight of
+N−1's entries" framing treated that visibility as a benefit; the research the ADR cites
+measures it as a 32.3-point loss, so isolation won (n1). It is implemented as a **read floor
+on `review-notes`** — the loop passes the journal's highest id at round start, and entries
+above it are hidden — **not** by staging writes and merging: staging needs write redirection
+that does not exist, renumbers ids the reviewer already reported, and adds crash cleanup
+(n3). Duplicate findings from two reviewers are **kept, not merged**, because deciding
+whether two wordings are one defect needs judgment that ADR-0017 §5 keeps out of Go (n4)
+· refuse on the default branch **and on detached HEAD**, tell the user the `git switch -c`
+fix · Go does fan-out/parse/journal,
 the agent does judgment · **agent rejections are provisional** — provenance-marked
 (`agent:` note prefix) and always surfaced in the terminal report for human
 ratification, because ADR-0012's settled-means-settled rule leaves the reviewer no
@@ -270,19 +275,56 @@ Verify: `go test ./internal/apps/opencode/`.
   and a check written only as `current != defaultBranch` lets it through. The journal's
   own empty-branch error (`reviewjournal/manager.go:48`) is a late backstop that fires
   only after a full multi-model review has already been spent.
-- **Freeze the journal read view for the round, and merge at round end** (ADR-0017 §4).
-  Every reviewer in a round must see the journal as it stood when the round began, so no
-  reviewer is anchored by a peer's in-round findings. Reviewer agents must need **no
-  change** — they keep calling `review-notes` / `review-note --open`, since their
-  read-first contract is pinned by `TestReviewerAgentsReadTheJournalAndCanApprove`; what
-  changes is when a write becomes visible to the next reviewer. The end-of-round merge
-  deduplicates findings raised independently by more than one reviewer, and is the only
-  writer for the round (atomic, like ADR-0012's existing writes).
-  Two things this must get right, both worth their own tests: the dedup key (same path +
-  line is the obvious start, but two reviewers word the same defect differently, and a
-  merge that is too aggressive silently drops a real finding — bias toward keeping both),
-  and crash safety (a loop killed mid-round must not corrupt the journal; losing that
-  round's un-merged findings is acceptable, corrupting the file is not).
+- **Round read floor: isolate reviewers on the READ side only** (ADR-0017 §4). No reviewer
+  may see a finding another reviewer raised in the same round. **Writes are not touched** —
+  `review-note --open` keeps appending to the live journal immediately, as it does today.
+
+  The exact sequence, so this is executable rather than aspirational:
+
+  1. Before launching round R's reviewers, `review-run` reads the journal and records the
+     highest existing entry sequence — call it the floor (e.g. `6` when the last entry is
+     `n6`). An empty journal gives floor `0`.
+  2. `review-run` sets that floor in the environment of each `opencode run` it spawns
+     (`DEVGETA_REVIEW_ROUND_FLOOR=6`). Child processes inherit it, so the
+     `devgeta task review-notes` the reviewer shells out to sees it without the reviewer
+     passing anything.
+  3. `review-notes` shows entries whose sequence is **≤ the floor** and hides the rest.
+     With the variable unset or unparseable it shows everything — today's behavior exactly.
+  4. Reviewer writes proceed normally and land in the journal immediately with their real,
+     final ids. Reviewer 1's `n7` is simply invisible to reviewer 2, which reads with floor
+     `6` and then writes `n8`.
+  5. Round R+1 recomputes the floor, so both `n7` and `n8` are visible from then on.
+
+  This works because `nextID()` is `max+1` and ids are never reused
+  (`reviewjournal/journal.go:69-81`, pinned by `TestNextIDNeverReusesAfterDeletion`), so a
+  higher sequence reliably means "created later." Nothing is staged, no id is ever
+  renumbered (the id a reviewer reports in its own settle line stays correct forever), and a
+  loop killed mid-round leaves every finding already durably journaled — there is no
+  partial state to repair.
+
+  Tests: floor hides a same-round entry and shows everything at or below it; floor unset →
+  output identical to today (this is the regression that matters, since `review-notes` is
+  used outside the loop); floor set to a nonsense value → treated as unset, never as zero;
+  ids keep advancing across the floor boundary.
+
+  **One assumption to probe before building this, not to assume:** that an environment
+  variable set on the `opencode run` process actually reaches the `devgeta task review-notes`
+  that the reviewer agent shells out to. Ordinary process inheritance says yes, but the agent
+  runs the command through its own bash tool, and an agent runtime that sanitized or reset the
+  environment would make the floor silently absent — which fails **open** (reviewers see
+  everything, i.e. today's anchored behavior) with no error. Probe it the way Step 0 probed
+  the headless run: set a marker variable, have a command echo it from inside a reviewer run,
+  confirm it arrives. If it does not, the fallback is a devgeta-side channel that does not
+  depend on the agent's environment — e.g. `review-run` writing the floor to a state file
+  next to the journal that `review-notes` reads — and the ADR needs amending to say so.
+
+  **Explicitly NOT done here:** no per-reviewer staging area, no temporary ids, no
+  end-of-round merge, and **no deduplication**. Two reviewers that independently report the
+  same defect produce two entries and both are kept — telling "one defect worded twice" from
+  "two defects on one line" is judgment, which ADR-0017 §5 keeps out of Go, and a
+  wrong merge drops a real finding while looking like a clean review. The coding agent
+  verifies once and settles both.
+
 - Run reviewers **sequentially** through the wrapper. Each reviewer ends in exactly
   one of five outcomes — the three verdicts parsed from the last `**Status:**` line
   (`APPROVE`, `REQUEST CHANGES`, `NEEDS DISCUSSION`), plus:
@@ -436,9 +478,12 @@ make lint
 3. `/review-loop` on a branch with a planted bug → finding journaled, fixed, settled,
    round 2 approves
    3b. Two reviewers configured, on a branch with one obvious planted bug → confirm the
-   second reviewer's transcript shows the journal **without** the first reviewer's
-   round-1 findings (isolation holds, ADR-0017 §4), and that the merged journal ends with
-   one entry per real defect rather than one per reviewer
+   second reviewer's `review-notes` output does **not** contain the first reviewer's
+   round-1 findings (isolation holds, ADR-0017 §4). Both reviewers finding the same bug
+   should leave **two** open entries, not one — duplicates are kept by design, and the
+   coding agent settles both from one verification. Then confirm round 2 sees both.
+   3c. `devgeta task review-notes` run by hand, outside any loop → output unchanged from
+   before this cycle (the floor is unset, so nothing is hidden)
 4. `dg config set review.rounds 1` + a disputed finding → escalation report, no
    further rounds
 5. Journal after approval: entries settled, file still present (cleanup stays on
@@ -461,27 +506,33 @@ make lint
 
 ## 7. Risks & Trade-offs
 
-| Risk                                                   | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------ | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `opencode run` blocks on permissions headless          | Med        | Step 0 probe is a hard gate; redesign before code if it fails                                                                                                                                                                                                                                                                                                                                                                                            |
-| End-of-round dedup merge silently drops a real finding | Med–High   | The highest-risk piece introduced by ADR-0017 §4, and it fails invisibly — a dropped finding looks like a clean review. Bias the merge toward KEEPING both entries when uncertain (a duplicate costs the human one glance; a dropped defect costs a defect). Dedup key starts at same path + line, never fuzzy text matching. Its own tests, including two reviewers wording one defect differently and two genuinely distinct findings on the same line |
-| Loop killed mid-round corrupts the journal             | Low        | The merge is the round's only writer and writes atomically, like ADR-0012's existing writes. Losing an un-merged round's findings is acceptable; a corrupt journal is not — test the kill path                                                                                                                                                                                                                                                           |
-| Verdict line missing/malformed in a reviewer's output  | Med        | Explicit `NO VERDICT` outcome, surfaced not guessed; reviewer templates already carry the line                                                                                                                                                                                                                                                                                                                                                           |
-| Two models both wrong, both approve                    | Low–Med    | Inherent to AI review; bounded rounds + human owns the merge decision; loop never self-merges                                                                                                                                                                                                                                                                                                                                                            |
-| Long wall-clock per round (full review × N models)     | High       | Sequential is a deliberate trade; subagent execution keeps the human unblocked; parallel later                                                                                                                                                                                                                                                                                                                                                           |
-| Loop fixes drift from what the user wanted             | Med        | receiving-code-review verification per finding; escalation report shows every fix and rejection                                                                                                                                                                                                                                                                                                                                                          |
-| Model/provider strings go stale in config              | Low        | Pass-through by design; surfaces as an `ERROR(<reason>)` outcome in the report, never a silent skip                                                                                                                                                                                                                                                                                                                                                      |
-| Loop calls `--ratify`/`--reopen` itself                | Low–Med    | Cannot be blocked structurally (permissions can't tell who typed a task command); the command's instructions forbid it and a guard test asserts the command file never invokes either flag outside the report template. Accepted as prose-level, same trust as the reviewers' settle step                                                                                                                                                                |
+| Risk                                                                                    | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `opencode run` blocks on permissions headless                                           | Med        | Step 0 probe is a hard gate; redesign before code if it fails                                                                                                                                                                                                                                                                                    |
+| The read floor hides a finding it should have shown, or leaks one it should have hidden | Low        | Read-side only and mechanical: one integer compared against a monotonic sequence, no text matching and no judgment. The failure that would actually hurt is the floor leaking into normal use, so the load-bearing test is "unset → output identical to today"; a nonsense value is treated as unset, never as `0` (which would hide everything) |
+| Duplicate open entries pile up when several reviewers find the same defect              | Med        | Accepted by design (ADR-0017 §4): duplicates are noise, a wrong merge is a silently dropped defect. The coding agent settles all copies from one verification, and `review-notes` output stays compact because entries are one line plus a note                                                                                                  |
+| Verdict line missing/malformed in a reviewer's output                                   | Med        | Explicit `NO VERDICT` outcome, surfaced not guessed; reviewer templates already carry the line                                                                                                                                                                                                                                                   |
+| Two models both wrong, both approve                                                     | Low–Med    | Inherent to AI review; bounded rounds + human owns the merge decision; loop never self-merges                                                                                                                                                                                                                                                    |
+| Long wall-clock per round (full review × N models)                                      | High       | Sequential is a deliberate trade; subagent execution keeps the human unblocked; parallel later                                                                                                                                                                                                                                                   |
+| Loop fixes drift from what the user wanted                                              | Med        | receiving-code-review verification per finding; escalation report shows every fix and rejection                                                                                                                                                                                                                                                  |
+| Model/provider strings go stale in config                                               | Low        | Pass-through by design; surfaces as an `ERROR(<reason>)` outcome in the report, never a silent skip                                                                                                                                                                                                                                              |
+| Loop calls `--ratify`/`--reopen` itself                                                 | Low–Med    | Cannot be blocked structurally (permissions can't tell who typed a task command); the command's instructions forbid it and a guard test asserts the command file never invokes either flag outside the report template. Accepted as prose-level, same trust as the reviewers' settle step                                                        |
 
 ### Trade-offs Made
 
 - **Branch, not worktree, as the on-main fix** — carries dirty files for free, no
   merge-back machinery; loses "keep coding while it runs" (future `--worktree`).
 - **Sequential, not parallel** — slower rounds; buys journal-write safety with no lock.
-- **Round-start read view, not a live shared journal** (revised, finding n1) — reviewers
-  stay independent within a round, so a second configured model genuinely adds coverage.
-  Costs an end-of-round merge with deduplication, which is now v1 work and is the
-  highest-risk piece in the cycle: too aggressive and it silently drops a real finding.
+- **Read floor, not a live shared journal** (revised, finding n1) — reviewers stay
+  independent within a round, so a second configured model genuinely adds coverage. Costs
+  one integer of ambient state on `review-notes`, and duplicate entries when two reviewers
+  find the same thing.
+- **Isolation on the read side, not by staging writes** (revised, finding n3) — staging
+  would need write redirection that does not exist today, would renumber ids the reviewer
+  has already reported, and would add crash cleanup. The read floor needs none of that.
+- **Duplicates kept, never merged** (revised, finding n4) — Go does not guess whether two
+  wordings are one defect. Noise is recoverable; a silently dropped finding is not, and it
+  is indistinguishable from a clean review.
 - **Any single blocker blocks** — strictest consensus rule; more escalations, never a
   silently outvoted finding.
 - **Judgment lives in the agent command, not Go** — the loop's fix step can't be
