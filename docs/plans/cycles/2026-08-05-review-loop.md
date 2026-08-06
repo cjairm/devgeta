@@ -110,7 +110,8 @@ A process failure or an unratified pushback can therefore never masquerade as st
 [-m <provider/model>] --format json`)
 - [ ] `dg task review-run` — run each configured reviewer sequentially, parse each
       verdict, print compact per-reviewer verdicts + open journal ids (task-design
-      output contract); refuses on the default branch with an actionable error
+      output contract); refuses unless HEAD is a named non-default branch — both the
+      default branch and a detached HEAD are refused, with an actionable error (ADR-0018)
 - [ ] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
       execution, per-finding verification (receiving-code-review discipline), journal
       settle, round cap, escalation report
@@ -249,8 +250,17 @@ Verify: `go test ./internal/apps/opencode/`.
   when unset; `--reviewer` picks the agent (default `code`), validated against the
   existing registry (`worktree.BuiltinReviewerChoices` — `internal/tooling/task`
   already imports that package), never a restated list
-- Refuse on the default branch (reuse the existing default-branch resolution the
-  review-scope family uses) with the `git switch -c` suggestion in the error
+- Resolve HEAD to one of three outcomes and refuse two of them **before launching any
+  reviewer** (ADR-0018): named non-default branch → proceed; default branch → refuse;
+  **detached HEAD → refuse**. Reuse the existing default-branch resolution the
+  review-scope family uses, and share the comparison with `release.go`'s
+  `checkOnDefaultBranch` rather than hand-rolling a second copy (CLAUDE.md §6). Both
+  refusals carry the `git switch -c` suggestion in the error.
+  The detached case needs its own explicit test: `git branch --show-current` prints
+  nothing when HEAD is detached, so `CurrentBranchIn` returns `("", nil)` — no error —
+  and a check written only as `current != defaultBranch` lets it through. The journal's
+  own empty-branch error (`reviewjournal/manager.go:48`) is a late backstop that fires
+  only after a full multi-model review has already been spent.
 - Run reviewers **sequentially** through the wrapper. Each reviewer ends in exactly
   one of five outcomes — the three verdicts parsed from the last `**Status:**` line
   (`APPROVE`, `REQUEST CHANGES`, `NEEDS DISCUSSION`), plus:
@@ -397,6 +407,8 @@ make lint
 ### Manual
 
 1. `dg task review-run` on `main` → refuses, names the branch fix
+   1b. `git checkout <sha>` (detached HEAD), then `dg task review-run` → refuses before any
+   reviewer starts, names the branch fix; no journal file is created and no model is called
 2. `dg config set review.reviewers openai/gpt-5.2` → `review-run` uses it; unset →
    default model
 3. `/review-loop` on a branch with a planted bug → finding journaled, fixed, settled,

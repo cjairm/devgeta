@@ -37,11 +37,41 @@ provides the isolation itself, is the right mechanism a branch or a worktree?
 
 ## Decision
 
-**`dg task review-run` refuses to run on the default branch, with an actionable error
-naming the `git switch -c` fix. It creates nothing on the user's behalf.**
+**`dg task review-run` refuses to run unless HEAD is a named, non-default branch, with an
+actionable error naming the fix. It creates nothing on the user's behalf.**
+
+Two states are refused, not one:
+
+| HEAD state               | Why it is refused                                                        | Error names            |
+| ------------------------ | ------------------------------------------------------------------------ | ---------------------- |
+| **The default branch**   | The diff is empty, and a `main` journal can never be cleaned up          | `git switch -c <name>` |
+| **Detached (no branch)** | There is no branch to key a journal by and no branch to diff — see below | `git switch -c <name>` |
 
 The refusal reuses the existing default-branch resolution that the `review-scope` family
 already uses — not a restated branch name or a hardcoded `main`.
+
+### Detached HEAD must be refused explicitly, not by implication
+
+This case is easy to miss and fails late and expensively, so it is called out here rather
+than left to the implementer. `Git.CurrentBranchIn` runs `git branch --show-current`, which
+**prints nothing when HEAD is detached** and is therefore returned as `("", nil)` — an empty
+string with **no error** (`internal/apps/git/git.go:356`). So a check written only as the
+inverse of the default-branch test passes straight through: `"" != "main"` is true.
+
+The journal does refuse an empty branch — `PathFor` returns "a branch name is required"
+(`internal/tooling/reviewjournal/manager.go:48`) — but that is a **late backstop, not a
+gate**. By the time it fires, the loop has already spent a full multi-model review; the
+findings then cannot be journaled, so the next round has no memory and the loop cannot
+function as designed. A guard that fires after the expensive work is not a guard.
+
+Detached HEAD is a reachable state, not a theoretical one: `git checkout <sha>`, `git
+bisect`, and CI checkouts all produce it, and devgeta's own
+`finishing-a-development-branch` flow treats "detached HEAD (externally managed workspace)"
+as an ordinary case with its own menu.
+
+So the branch resolution must distinguish three outcomes — named non-default branch
+(proceed), default branch (refuse), no branch at all (refuse) — and both refusals must
+happen before any reviewer is launched.
 
 **The same package already contains the mirror image of this check, and it must be shared
 rather than copied.** `internal/tooling/task/release.go:143` has
@@ -85,6 +115,10 @@ error learns something true about how reviews are scoped.
 
 - **A review of an empty diff cannot report approval**, because it cannot start. The
   dangerous outcome is removed by construction rather than by a check downstream.
+- **No expensive run is spent on a state that cannot be journaled.** Both refusals fire
+  before the first reviewer launches, so the journal's own empty-branch error
+  (`manager.go:48`) is never reached in practice — it stays a backstop instead of being
+  the thing that stops you, minutes and several model calls too late.
 - **No `main` journal is ever created**, so ADR-0012's cleanup-on-branch-deletion stays
   sufficient and nothing accumulates unbounded.
 - **devgeta never silently changes which branch the user is on.** The one destructive-ish

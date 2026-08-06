@@ -31,9 +31,32 @@ away from the obvious answer:
 
 - **Models conform to each other.** Unanimous agreement between models is not evidence of
   correctness — it is partly an artifact of them agreeing. So a loop that runs until the
-  reviewers agree is optimizing the wrong quantity.
-- **Different vendors have non-overlapping blind spots.** That makes multiple reviewers
-  worth having, but as _independent_ samples, not as voters whose majority is the verdict.
+  reviewers agree is optimizing the wrong quantity. Cross-agent sycophancy is documented to
+  suppress productive disagreement and drive premature consensus
+  ([Too Polite to Disagree](https://arxiv.org/html/2604.02668)), with conformity past a
+  threshold producing collectively biased norms
+  ([Emergence of Biased Consensus](https://arxiv.org/html/2608.02827)).
+- **Aggregating by majority discards correct minority findings.** Debate is reported not to
+  improve correctness once the aggregation strategy is controlled for, and to suppress
+  correct minority opinions through social pressure
+  ([Minority Sentinel](https://arxiv.org/pdf/2606.29270)). Multiple reviewers are therefore
+  worth having as independent samples, not as voters whose majority is the verdict.
+
+**A caution the same literature raises against part of this design.**
+[The Cost of Consensus](https://arxiv.org/html/2605.00914) reports that "isolated
+self-correction consistently offers a more favorable cost-accuracy tradeoff" than unguided
+homogeneous debate, and — most pointedly here — that "teams systematically generate, but
+subsequently discard, correct answers due to peer-induced sycophancy." It quantifies this as
+an _oracle gap_: in one reported configuration a correct answer appeared somewhere in the
+team 53.0% of the time while final team accuracy was 20.7%, a 32.3-point gap of correct
+answers found and then thrown away.
+
+That is a direct argument for keeping reviewers **isolated from each other's in-progress
+findings**, which §4 below does not do. It is recorded as an open question rather than
+silently resolved.
+
+These citations are supporting evidence for a design already chosen on other grounds; none
+of them is about code review specifically, and none was replicated here.
 
 One more constraint comes from ADR-0012 itself, and it is the sharp one. Its journal is
 deliberately **settled-means-settled**: `manager.go:186` refuses to settle an
@@ -76,10 +99,40 @@ process failure (`ERROR` / `NO VERDICT`), and approval that rests on an unratifi
 rejection. A process failure can therefore never be mistaken for approval, and there is no
 third, undocumented outcome. `ERROR` and `NO VERDICT` are not retried in v1.
 
-### 4. Reviewers run sequentially
+### 4. Reviewers run sequentially — and see each other's findings within a round
 
-Two reasons, both concrete: the journal has no write lock, and running in sequence gives
-reviewer N sight of what reviewer N−1 already recorded, which dedups findings for free.
+The execution order is settled: sequential, because the journal has no write lock and
+serialized execution is what makes concurrent writes a non-problem.
+
+**What reviewers can see is a separate question, and it is deliberately stated rather than
+left implicit.** Every reviewer is required to read the journal first — the guard test
+`TestReviewerAgentsReadTheJournalAndCanApprove` pins `devgeta task review-notes` into all
+three reviewer agents — and reviewer N−1's findings are written to that same journal as
+open entries during the round. So **reviewer N does read reviewer N−1's findings from the
+same round.** This is structural, not incidental: given the read-first rule and a shared
+journal, it cannot be avoided without changing one of the two.
+
+That buys cross-reviewer dedup for free. It also costs within-round independence, which is
+the property the multi-model configuration exists to provide, and the literature cited in
+the Context is specifically unfriendly to it. The honest accounting:
+
+- **Cross-round independence is unaffected.** A later round _should_ see earlier findings —
+  that is ADR-0012 working as intended.
+- **Within-round independence is given up.** Reviewer 2 may search less thoroughly in
+  ground reviewer 1 appears to have covered, which directly erodes the non-overlapping
+  blind spots that justify a second model.
+- **The conformity failure mode is narrower here than in the debate literature**, because
+  this design never treats agreement as evidence. Verdicts are not journaled, so reviewer 2
+  never sees reviewer 1's verdict, and §2's any-single-blocker rule aggregates nothing. The
+  residual risk is reduced _discovery_, not a manufactured consensus.
+
+**Open question, flagged not resolved:** whether each reviewer should instead read a
+snapshot of the journal taken at the start of the round, with a dedup pass afterward. That
+preserves within-round independence and still needs no write lock (execution stays
+sequential), at the cost of the dedup pass — which the cycle already lists as one of the two
+prerequisites for parallel reviewers. Not adopted here because sequential-with-shared-journal
+is the recorded decision; revisit before the multi-model path is relied on for coverage
+rather than for a second opinion.
 
 ### 5. Go does the mechanism, the agent does the judgment
 
@@ -124,7 +177,7 @@ guard test asserts the command file never mentions them outside the report templ
 - **The two terminal states are exhaustive and auditable.** "It approved" always means the
   same thing. A crashed reviewer reports as a crashed reviewer.
 - **Sequential order buys journal safety and cross-reviewer dedup without any new
-  machinery** — no lock, no post-fan-out merge pass.
+  machinery** — no lock, no post-fan-out merge pass. See §4 for what it costs.
 - **The escalation report is the product.** Verdict table per reviewer per round, every
   agent rejection with its evidence, and the exact ratify/reopen command with the id
   filled in — so the human's remaining work is a decision, not an investigation.
@@ -138,6 +191,11 @@ guard test asserts the command file never mentions them outside the report templ
   is a real cost on a multi-model configuration; subagent execution keeps the human
   unblocked in the meantime, and parallelism is left as future work with a known
   checklist (a journal write lock plus a dedup pass).
+- **Within-round reviewer independence is given up to get dedup.** See §4. This is the one
+  negative that partly contradicts the Context's own justification for multi-model review,
+  and it is the reason §4 carries an open question instead of a settled rationale. It
+  matters most if `review.reviewers` is ever configured for _coverage_ — trusting two models
+  to find different things — rather than for a second opinion.
 - **The human-only rule is prose-level.** See §6. A guard test narrows it; it does not
   close it.
 - **The loop's judgment step cannot be unit-tested in Go.** That is the direct cost of
