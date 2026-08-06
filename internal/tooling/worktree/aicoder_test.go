@@ -3,6 +3,8 @@ package worktree
 import (
 	"strings"
 	"testing"
+
+	"github.com/cjairm/devgeta/internal/commands"
 )
 
 func TestResolveAICoder(t *testing.T) {
@@ -126,12 +128,13 @@ func TestOpenCodePromptCommandWithAgent(t *testing.T) {
 }
 
 // OpenCodeCoder/ClaudeCoder.EnsureInstalled route through the shared
-// ensureToolInstalled helper, which resolves the underlying binary through the
-// swappable commands.ShellCommandExistsFn (see setShellCommandExistsFn in
-// repo_candidates_test.go) - the interactive-shell probe, not exec.LookPath -
-// so both the success and failure paths are exercisable here without spawning a
-// real shell. The check targets the binary name (opencode/claude), not the
-// alias, since that binary is the real dependency.
+// ensureToolInstalled helper, which resolves the launch token through the
+// swappable commands.ShellCommandLookupFn (see setShellCommandExistsFn /
+// setShellCommandLookupFn in repo_candidates_test.go) - the interactive-shell
+// probe, not exec.LookPath - so found, not-found, and inconclusive are all
+// exercisable here without spawning a real shell. The check targets the
+// alias the pane will launch (oc/cc), not the underlying binary; only the
+// error message names the binary.
 
 func TestOpenCodeCoderEnsureInstalledOK(t *testing.T) {
 	// EnsureInstalled checks the launch token (the oc alias), not the raw binary.
@@ -172,5 +175,23 @@ func TestClaudeCoderEnsureInstalledMissing(t *testing.T) {
 	}
 	if got := err.Error(); !strings.Contains(got, "claude") {
 		t.Errorf("expected error to mention claude, got %q", got)
+	}
+}
+
+// An inconclusive probe — the interactive shell didn't answer within the
+// deadline, or couldn't run — must NOT block the coder (ADR-0016): only a
+// probe that proved the tool absent may. This is the regression test for the
+// bug where a machine with slow shell startup turned every `dg ws` create
+// into a false "opencode is not installed".
+func TestEnsureInstalledInconclusiveProbeFailsOpen(t *testing.T) {
+	setShellCommandLookupFn(t, func(string) commands.ShellLookupResult {
+		return commands.ShellLookupInconclusive
+	})
+
+	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
+		t.Errorf("expected an inconclusive probe to fail open for opencode, got %v", err)
+	}
+	if err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
+		t.Errorf("expected an inconclusive probe to fail open for claude, got %v", err)
 	}
 }

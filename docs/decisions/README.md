@@ -35,3 +35,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0013](ADR-0013-normalize-the-worktree-gitfile.md) — Normalize the worktree gitfile instead of warning about it
 - [ADR-0014](ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md) — Agent-config protection is a capability guard, not a path deny
 - [ADR-0015](ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md) — Agent scratch files get a devgeta-owned directory, not `/tmp`
+- [ADR-0016](ADR-0016-inconclusive-tool-probe-fails-open.md) — An inconclusive tool probe must not block worktree creation

@@ -39,15 +39,33 @@ func okLookPath(t *testing.T) {
 	})
 }
 
-// setShellCommandExistsFn swaps commands.ShellCommandExistsFn for the duration
+// setShellCommandExistsFn swaps commands.ShellCommandLookupFn for the duration
 // of a test, so the coder/nvim install checks (which resolve tools through the
 // interactive shell, not exec.LookPath) can be driven to present/absent without
 // spawning a real shell. Same swap-and-restore pattern as setLookPathFn.
+//
+// It keeps a bool signature because present/absent is what nearly every test
+// means; the bool maps onto the seam's Found/NotFound. The third outcome —
+// Inconclusive, a probe that proved nothing (ADR-0016) — is the exception, via
+// setShellCommandLookupFn.
 func setShellCommandExistsFn(t *testing.T, fn func(string) bool) {
 	t.Helper()
-	orig := commands.ShellCommandExistsFn
-	commands.ShellCommandExistsFn = fn
-	t.Cleanup(func() { commands.ShellCommandExistsFn = orig })
+	setShellCommandLookupFn(t, func(name string) commands.ShellLookupResult {
+		if fn(name) {
+			return commands.ShellLookupFound
+		}
+		return commands.ShellLookupNotFound
+	})
+}
+
+// setShellCommandLookupFn is setShellCommandExistsFn's tri-state form, for
+// tests that need the probe to come back Inconclusive rather than a definite
+// present/absent.
+func setShellCommandLookupFn(t *testing.T, fn func(string) commands.ShellLookupResult) {
+	t.Helper()
+	orig := commands.ShellCommandLookupFn
+	commands.ShellCommandLookupFn = fn
+	t.Cleanup(func() { commands.ShellCommandLookupFn = orig })
 }
 
 // newRecordingWM builds a WorktreeManager wired to fresh mocks, mirroring the

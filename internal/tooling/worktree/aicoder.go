@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // AICoder represents an AI coding assistant that can be launched in a worktree window
@@ -33,7 +34,7 @@ type AICoder interface {
 // isn't an AI coder) - one lookup + error-format shape instead of three
 // hand-rolled copies of it.
 //
-// It goes through commands.ShellCommandExistsFn, NOT commands.LookPathFn /
+// It goes through commands.ShellCommandLookupFn, NOT commands.LookPathFn /
 // exec.LookPath, on purpose: a worktree window launches its coder by sending a
 // shell command to an interactive tmux pane, and that pane's PATH (repaired via
 // ~/.zshenv) can differ from dg's own process PATH when dg ws was started
@@ -41,6 +42,15 @@ type AICoder interface {
 // installed" for a tool that would actually launch fine. Resolving the tool the
 // same way the pane will is the only check that matches reality. The seam is
 // swappable in tests (see setShellCommandExistsFn), same as LookPathFn.
+//
+// Only a probe that PROVED the tool absent blocks the caller. An inconclusive
+// probe — the shell didn't answer within the deadline, or couldn't run at
+// all — proceeds instead (ADR-0016): this check exists to pre-empt a cosmetic
+// `command not found` inside the pane, and blocking a whole worktree create on
+// evidence the probe doesn't have is strictly worse than the failure it
+// softens. On a loaded machine (interactive-shell startup slower than the
+// probe's deadline) the old bool seam turned every create into a false
+// "opencode is not installed" with an install suggestion that fixed nothing.
 //
 // launchToken is the exact token the window build will send to the pane (the
 // cc/oc alias for a coder, "nvim" for the editor), NOT the underlying binary -
@@ -50,10 +60,21 @@ type AICoder interface {
 // whose pane then dies on `cc: command not found`. displayName is the binary the
 // message names (claude/opencode/nvim), which reads better than the alias.
 func ensureToolInstalled(launchToken, displayName string) error {
-	if !commands.ShellCommandExistsFn(launchToken) {
+	switch commands.ShellCommandLookupFn(launchToken) {
+	case commands.ShellLookupNotFound:
 		return fmt.Errorf(
 			"%s is not installed. Install it with: dg install --only terminal",
 			displayName,
+		)
+	case commands.ShellLookupInconclusive:
+		// Debug, not Warn: this runs under the dg ws bubbletea alt-screen,
+		// where anything printed to the terminal corrupts the TUI, and there
+		// is nothing the user needs to do — if the tool really is missing,
+		// the pane says so the moment it launches.
+		logger.L().Debugw(
+			"tool probe inconclusive, proceeding without blocking (ADR-0016)",
+			"launchToken", launchToken,
+			"tool", displayName,
 		)
 	}
 	return nil
