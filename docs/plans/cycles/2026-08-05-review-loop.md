@@ -130,7 +130,7 @@ A process failure or an unratified pushback can therefore never masquerade as st
       ordinary rejection) and `review-note --reopen --id <id>` (human refuses: the
       settled entry returns to open under the **same id** — no duplication — with its
       original finding text, the agent's rejection note dropped). Today neither move
-      exists: `manager.go:186` refuses to settle a settled entry, and nothing reopens
+      exists: `manager.go:239` refuses to settle a settled entry, and nothing reopens
       one — without these, an agent rejection blocks clean approval forever
 - [x] Guard-test updates (`permissions_test.go` family) for the new shared command
 - [x] Docs: `docs/spec.md`, command doc
@@ -332,7 +332,7 @@ Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
      original bug.
 
   4. Reviewer writes go to the **live** journal and get real, final ids from `nextID()`
-     (`max+1`, never reused — `reviewjournal/journal.go:69-81`, pinned by
+     (`max+1`, never reused — `reviewjournal/journal.go:77-89`, pinned by
      `TestNextIDNeverReusesAfterDeletion`). Reviewer 1's new `n7` and its settling of the
      round-start-open `n3` are both invisible to reviewer 2, which reads the snapshot and
      then writes `n8`.
@@ -373,7 +373,7 @@ Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
 - **Executor: a child-only environment overlay** (prerequisite for the snapshot pointer).
   `CommandParams` carries `Args`, `Timeout`, `Dir`, `Stream` and **no environment**, and
   `ExecCommand` sets `Dir` and `Stdin` but never `exec.Cmd.Env`
-  (`internal/commands/base.go:66-86`, `:247-251`). So there is currently no way to add a
+  (`internal/commands/base.go:66-86`, `:254-256`, `:266`). So there is currently no way to add a
   variable for one spawned process. Add it — per CLAUDE.md §6 a wrapper gap that is really an
   executor gap is fixed in the executor — as an **overlay, not a replacement**:
   `execCommand.Env = append(os.Environ(), cmd.Env...)` when `cmd.Env` is non-empty, and leave
