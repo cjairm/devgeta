@@ -1,5 +1,5 @@
 ---
-description: Teach a work item — ticket, issue, PR, or idea — in plain language: what it is, why it exists, and how the flow works, shown as a small diagram instead of walls of prose
+description: "Teach a work item — ticket, issue, PR, or idea — in plain language: what it is, why it exists, and how the flow works, shown as a small diagram instead of walls of prose"
 ---
 
 Teach one work item in the fewest words that still carry every important fact.

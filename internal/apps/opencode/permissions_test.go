@@ -368,6 +368,76 @@ func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
 	}
 }
 
+// commandFrontmatterAllowlist is OpenCode's real command-object schema
+// (https://opencode.ai/config.json) — the only frontmatter keys a command
+// file is allowed to set. "template" is the schema's name for the command
+// body/prompt content; none of these files set it explicitly in frontmatter,
+// but it stays in the allowlist because it is a valid schema key.
+//
+// This must stay an allowlist, not a denylist of "known bad keys": commit
+// 3d813f4 removed `permission`, `tools`, and `temperature` from every shared
+// command file because OpenCode silently ignores keys outside this schema —
+// they looked enforced but did nothing. A denylist of those three names would
+// never have caught `temperature` before someone noticed by hand; only
+// rejecting everything not on the real schema catches the next one too.
+var commandFrontmatterAllowlist = map[string]bool{
+	"template":    true,
+	"description": true,
+	"agent":       true,
+	"model":       true,
+	"variant":     true,
+	"subtask":     true,
+}
+
+// TestSharedCommandsFrontmatterMatchesSchema guards against dead frontmatter
+// keys creeping back into configs/shared/commands/*.md. OpenCode's command
+// schema (https://opencode.ai/config.json) only recognizes template,
+// description, agent, model, variant, and subtask — any other key is parsed
+// but silently dropped at runtime, so it looks enforced in the file while
+// doing nothing. That is exactly how `permission`, `tools`, and `temperature`
+// went unnoticed until commit 3d813f4 removed them.
+func TestSharedCommandsFrontmatterMatchesSchema(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "configs", "shared", "commands")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			fm := frontmatter(t, filepath.Join(dir, e.Name()))
+
+			var parsed map[string]any
+			if err := yaml.Unmarshal(fm, &parsed); err != nil {
+				t.Fatalf("frontmatter is not valid YAML: %v", err)
+			}
+			for key := range parsed {
+				if !commandFrontmatterAllowlist[key] {
+					t.Errorf(
+						"%s frontmatter declares %q, which is outside OpenCode's real "+
+							"command schema (https://opencode.ai/config.json: template, "+
+							"description, agent, model, variant, subtask). OpenCode silently "+
+							"drops unknown frontmatter keys at runtime, so %q is not merely "+
+							"unused — it looks enforced but does nothing. Remove it or add it "+
+							"to the schema allowlist if OpenCode has genuinely added it.",
+						e.Name(),
+						key,
+						key,
+					)
+				}
+			}
+		})
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no command files found in %s", dir)
+	}
+}
+
 // frontmatter returns the YAML block delimited by the leading and next "---".
 func frontmatter(t *testing.T, path string) []byte {
 	t.Helper()
