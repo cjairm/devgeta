@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Estimated Duration:** ~3 hours
-**Status:** Approved — awaiting implementation
+**Status:** Done
 
 ---
 
@@ -97,14 +97,14 @@ agent a command runs under.**
 
 ### In Scope
 
-- [ ] Apply the Step 1 disposition table to all eight `configs/shared/commands/*.md`
+- [x] Apply the Step 1 disposition table to all eight `configs/shared/commands/*.md`
       (decisions already made — see the table; nothing is deferred to implementation)
-- [ ] Guard test: no command file declares a key outside OpenCode's command schema
+- [x] Guard test: no command file declares a key outside OpenCode's command schema
       (`template`, `description`, `agent`, `model`, `variant`, `subtask`) — an
       allowlist, so a future invalid key of any name is caught, not just today's three
-- [ ] Correct CLAUDE.md's accepted-differences entry: agent frontmatter enforced by
+- [x] Correct CLAUDE.md's accepted-differences entry: agent frontmatter enforced by
       OpenCode, command frontmatter enforced by neither; `agent:` is the real lever
-- [ ] Re-verify with the real binary after the change (one command, one probe)
+- [x] Re-verify with the real binary after the change (one command, one probe)
 
 ### Explicitly Out of Scope
 
@@ -139,6 +139,8 @@ _newly_ restrict a command that is unrestricted today.
 | `review-pr.md`        | `permission` (**`edit: deny`**)                       | **Drop — and do NOT add agent** | See below. The one genuine intent, deliberately not converted.                                                                                  |
 
 Plus: **drop `temperature:` from all eight** (schema-invalid, see §1).
+
+**Note on `teach.md`:** During Step 3, the `description:` value was also changed from unquoted to double-quoted because the original was invalid YAML — an unquoted plain scalar with a mid-value `: ` that YAML's grammar treats as an ambiguous nested mapping. This was a pre-existing bug fix discovered because the new guard test could not parse the file, not a planned disposition change, but necessary for correctness.
 
 **`review-pr.md` — the one real decision.** Its `edit: deny` expresses a genuine and
 defensible intent: a review command that cannot rewrite the code it is reviewing.
@@ -203,6 +205,8 @@ runs under the default agent.
 
 Verify: probe output matches the table in §1.
 
+**Probe result:** Built and installed this worktree's binary (`make build` + `sh install.sh --local ./devgeta`), ran `dg configure opencode --force`, then probed with two temporary command files (later deleted, never committed): one with `agent: code-reviewer` (edit tool reported unavailable, no file written) and one without an `agent:` field (edit tool worked normally, file written). Matches the plan's expected outcome exactly.
+
 ## 6. Verification Plan
 
 ### Automated
@@ -263,4 +267,4 @@ make lint
 Approved 2026-08-06. Disposition table and guard-test plan verified against the
 current repo state before approval: all 8 command files still carry the dead
 keys as described, and `permissions_test.go` has no existing test that reads
-command frontmatter. Implementation not yet started.
+command frontmatter. Implementation complete: all 4 steps shipped and reviewed clean. The per-task review loop caught and fixed a markdown-formatter body-mangling bug in Step 2, an unverified overclaim added to Step 4's CLAUDE.md fix, and a stale ADR-0015 claim and test-code duplication in the final whole-branch review. Real-binary probe in Step 5 confirmed the `agent:` mechanism works exactly as designed: a command with `agent: code-reviewer` had its edit tool genuinely unavailable; a command without an `agent:` field edited normally.

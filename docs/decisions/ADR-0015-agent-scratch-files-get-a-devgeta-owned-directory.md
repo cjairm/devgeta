@@ -152,10 +152,11 @@ trade a real global guardrail for a convenience.
 The task form avoids both, and is better than an allowlist entry would have
 been:
 
-- **It needs no frontmatter change.** Both commands already allow
-  `devgeta task *`, so every future command that wants scratch space gets it
-  free rather than repeating boilerplate — CLAUDE.md §3's "everything general,
-  never bespoke".
+- **It needs no frontmatter change.** Command frontmatter is ignored anyway, so
+  `devgeta task *` is available to every command by default via the global policy
+  (not a command-level allowlist), meaning every future command that wants scratch
+  space gets it free rather than repeating boilerplate — CLAUDE.md §3's "everything
+  general, never bespoke".
 - **Deletion is confined in Go, not in a glob.** CLAUDE.md §4 prefers a mistake
   class made structurally impossible over a shell rule that must be written
   correctly every time.
