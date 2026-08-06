@@ -183,6 +183,65 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"REQUEST CHANGES",
 		},
+		// A verdict followed by prose (an em dash, or the ASCII-hyphen
+		// variant) still counts as that verdict — this is the common,
+		// legitimate shape "**Status:** APPROVE — looks good" and must not
+		// regress to NO VERDICT. A verdict followed by a letter (APPROVED) or
+		// another word (APPROVE NOT) must NOT count, because the unsafe
+		// direction is toward approval: a malformed line costs a round rather
+		// than fabricating one.
+		{"approve with em-dash prose", statusReport("APPROVE — looks good"), nil, "APPROVE"},
+		{"approve with ascii-hyphen prose", statusReport("APPROVE - looks good"), nil, "APPROVE"},
+		{"approved is not approve", statusReport("APPROVED"), nil, "NO VERDICT"},
+		{"approve not is not approve", statusReport("APPROVE NOT"), nil, "NO VERDICT"},
+		{
+			"request changes with em-dash prose",
+			statusReport("REQUEST CHANGES — see below"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"request changes with ascii-hyphen prose",
+			statusReport("REQUEST CHANGES - see below"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"request changesx is not request changes",
+			statusReport("REQUEST CHANGESX"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			"request changes not is not request changes",
+			statusReport("REQUEST CHANGES NOT"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			"needs discussion with em-dash prose",
+			statusReport("NEEDS DISCUSSION — open question"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"needs discussion with ascii-hyphen prose",
+			statusReport("NEEDS DISCUSSION - open question"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"needs discussionx is not needs discussion",
+			statusReport("NEEDS DISCUSSIONX"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			"needs discussion not is not needs discussion",
+			statusReport("NEEDS DISCUSSION NOT"),
+			nil,
+			"NO VERDICT",
+		},
 	}
 
 	for _, tt := range tests {

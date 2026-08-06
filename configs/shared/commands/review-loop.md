@@ -1,5 +1,5 @@
 ---
-description: Run the automated review loop on the current branch — repeat devgeta task review-run, verify and settle findings each round, until a clean approval or a report to the human
+description: Use when a branch is ready for an unattended review cycle before merge — repeats devgeta task review-run, verifying and settling each finding, until a clean approval or a report to the human
 ---
 
 Run the review loop: call `devgeta task review-run` round after round, verify and settle
@@ -15,6 +15,8 @@ approval.
 
 `--reviewer` picks the reviewer agent for every round — the same choices `devgeta task
 review-run` takes; default is `code`. The branch is whatever is currently checked out.
+`--reviewer` is read from `$ARGUMENTS` once, at step 0 below, and forwarded to every
+`review-run` call the loop makes — it is not just documentation here.
 
 ## What this drives
 
@@ -44,11 +46,26 @@ the one round it just ran.
 
 ## Flow
 
+### 0. Resolve the reviewer selector
+
+Parse `$ARGUMENTS` once, before the first round.
+
+- Empty (no `--reviewer` at all): this is the default, not an error. Every round below
+  calls `devgeta task review-run` with no `--reviewer` flag, and `review-run` falls back to
+  its own default (`code`).
+- `--reviewer <key>` with `<key>` one of `code`, `document`, `skill`: carry that exact value
+  into every `devgeta task review-run` call this loop makes, round after round — the same
+  key each time, never re-parsed per round.
+- `--reviewer <key>` with anything else: stop before running a single round. Report that
+  `--reviewer` only accepts `code`, `document`, or `skill`, naming the value that was
+  actually passed. Do not guess which one was meant.
+
 ### 1. Run a round
 
-Run `devgeta task review-run [--reviewer <key>]`. Read its output exactly as printed —
-one verdict line per reviewer, then the open ids. Never guess at, soften, or invent a
-verdict the line does not state.
+Run `devgeta task review-run`, passing `--reviewer <key>` when step 0 resolved one — omit
+the flag entirely otherwise. Read its output exactly as printed — one verdict line per
+reviewer, then the open ids. Never guess at, soften, or invent a verdict the line does not
+state.
 
 ### 2. A reviewer failure stops the loop here
 
@@ -60,13 +77,20 @@ the same from here, so both get reported rather than silently rerun.
 
 ### 3. Check for clean approval
 
-If every reviewer's outcome this round is `APPROVE`, read `devgeta task review-notes`.
+If every reviewer's outcome this round is `APPROVE` **and** the round's `open:` line reads
+`open: none`, read `devgeta task review-notes`.
 
 - If no settled entry's note begins with `agent:`, this is a clean approval. Stop here
   and report it — do not run another round just because rounds remain.
 - If any settled entry's note begins with `agent:`, an agent-authored rejection is still
-  waiting on a human decision. All-APPROVE does **not** make this clean; go to the
-  terminal report instead, carrying that entry into it.
+  waiting on a human decision. All-APPROVE with nothing open does **not** make this clean;
+  go to the terminal report instead, carrying that entry into it.
+
+Otherwise — any reviewer's outcome is not `APPROVE`, or `open:` names any ids even though
+every outcome was `APPROVE` — this round is not a clean approval. Continue to step 4. An
+id under `open:` is an unanswered finding regardless of what the verdicts say, and step 4
+has not run yet at this point in the flow, so it must never be waved through because every
+outcome happened to say `APPROVE`.
 
 ### 4. Otherwise, verify and settle each open finding
 

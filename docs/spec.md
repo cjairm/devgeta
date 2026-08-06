@@ -766,9 +766,10 @@ no pointer and reads the live journal exactly as before.
 `configs/shared/commands/review-loop.md` (`/review-loop`) is the agent-side driver built on
 top of `review-run`: it runs a round, verifies and settles each open finding with the
 `receiving-code-review` skill's rigor, and repeats — up to `review.rounds` rounds (default
-3, max 5) — until one of exactly two outcomes: a clean approval (every reviewer APPROVEs
-and no agent-authored rejection is still awaiting ratification), or a report to the human
-(persistent disagreement, the round cap, a reviewer failure, or an unratified rejection).
+3, max 5) — until one of exactly two outcomes: a clean approval (every reviewer APPROVEs,
+the round's `open:` line reads `none`, and no agent-authored rejection is still awaiting
+ratification), or a report to the human (persistent disagreement, an open finding not yet
+settled, the round cap, a reviewer failure, or an unratified rejection).
 When the coding agent judges a finding wrong, it settles it `rejected` with a note prefixed
 `agent:` so the rejection is visibly provisional; the report carries every such rejection
 with the exact `--ratify`/`--reopen` command to close it. The loop command itself never

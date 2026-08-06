@@ -89,8 +89,11 @@ outvoted.
 
 ### 3. Exactly two terminal states
 
-1. **Clean approval** — every reviewer APPROVEs _and_ no agent-authored rejection is still
-   awaiting ratification.
+1. **Clean approval** — every reviewer APPROVEs, the round's `open:` line reads `none`, _and_
+   no agent-authored rejection is still awaiting ratification. An entry still under `open:`
+   is an unanswered finding — allowing it to ride would make "clean approval" mean "approved
+   with outstanding findings," which is exactly the false approval this contract exists to
+   rule out.
 2. **Report to the human** — everything else.
 
 The report state covers: persistent disagreement, hitting the round cap, any reviewer

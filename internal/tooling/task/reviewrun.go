@@ -18,6 +18,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/config"
@@ -384,13 +385,51 @@ func lastStatusVerdict(text string) string {
 			continue
 		}
 		for _, known := range knownVerdicts {
-			if strings.HasPrefix(value, known) {
+			if matchesKnownVerdict(value, known) {
 				verdict = known
 				break
 			}
 		}
 	}
 	return verdict
+}
+
+// verdictProsePunctuation is the set of characters allowed to immediately
+// follow a known verdict (after at most one intervening space) for the value
+// to still count as that verdict. Each one unambiguously opens a trailing
+// prose clause rather than continuing the verdict word itself: an em dash or
+// an ASCII hyphen introduces a clause ("APPROVE — looks good" /
+// "APPROVE - looks good"), a colon or semicolon introduces an explanation, a
+// comma or period closes the clause, and an opening parenthesis opens an
+// aside. A letter or digit right after the verdict (as in "APPROVED") is not
+// prose punctuation, and neither is a plain space before another word (as in
+// "APPROVE NOT") — both must fall through to NO VERDICT rather than match,
+// because the unsafe direction here is toward APPROVE: a malformed line
+// should cost a round, never fabricate an approval.
+const verdictProsePunctuation = "—-:,.;("
+
+// matchesKnownVerdict reports whether value IS known, or known followed
+// immediately (or after a single space) by verdictProsePunctuation. This
+// replaces a plain strings.HasPrefix check, which let "APPROVED" match
+// "APPROVE" — and it deliberately stops short of strict equality, which
+// would break the common "**Status:** APPROVE — looks good" line by turning
+// a real approval into NO VERDICT.
+func matchesKnownVerdict(value, known string) bool {
+	if value == known {
+		return true
+	}
+	if !strings.HasPrefix(value, known) {
+		return false
+	}
+	rest := strings.TrimPrefix(value[len(known):], " ")
+	if rest == "" {
+		// Nothing but a trailing space after the verdict: normalizeStatusValue
+		// already trims via strings.Fields, so this should not occur — but
+		// treat it as "not clearly prose" rather than guess.
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(rest)
+	return strings.ContainsRune(verdictProsePunctuation, r)
 }
 
 // isFenceDelimiter reports whether line opens or closes a fenced code block
