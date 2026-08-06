@@ -29,6 +29,42 @@ func ValidResolution(s string) bool {
 	return s == ResolutionRejected || s == ResolutionAnswered || s == ResolutionFixed
 }
 
+// AgentNotePrefix marks a settle note as the coding agent's own provisional
+// rejection, never a human's (ADR-0017 §6). It is the single source of truth
+// for the literal — code, tests, and docs must reference this constant
+// rather than restate it, so the prefix cannot drift between the writer
+// (the loop settling `rejected`) and the reader (Manager.Ratify stripping
+// it).
+//
+// The constant deliberately carries NO trailing space. The space in the
+// written form ("agent: the evidence") is cosmetic: it is how the note reads,
+// not what makes it an agent note. Baking the space into the marker made the
+// writer and the reader disagree — the loop that wrote "agent:no space" got a
+// note that renderNotes shows as an agent rejection and Ratify then refused
+// to ratify, leaving --reopen as the human's only exit.
+//
+// Never test for the marker with a bare strings.HasPrefix on this constant:
+// HasAgentNote and StripAgentNote are the only two readers, and they are what
+// keep the space optional on both sides.
+const AgentNotePrefix = "agent:"
+
+// HasAgentNote reports whether a settle note carries the agent's provenance
+// marker, with or without the space that normally follows the colon.
+func HasAgentNote(answer string) bool {
+	return strings.HasPrefix(answer, AgentNotePrefix)
+}
+
+// StripAgentNote removes the agent's provenance marker and whatever spacing
+// followed it, leaving the evidence text alone. A note without the marker is
+// returned unchanged.
+func StripAgentNote(answer string) string {
+	rest, ok := strings.CutPrefix(answer, AgentNotePrefix)
+	if !ok {
+		return answer
+	}
+	return strings.TrimLeft(rest, " \t")
+}
+
 // Entry is one remembered exchange. Open entries have no Resolution; settled
 // ones carry it plus the answer text. Cite is the human-facing location
 // ("store.go:12" or empty for a design-level question); Blob is the hash of
@@ -89,6 +125,17 @@ func (j *Journal) find(id string) *Entry {
 		}
 	}
 	return nil
+}
+
+// findOrErr is find with the "no such entry" error every settle/ratify/reopen
+// refusal starts from, so the three write paths that look an id up don't
+// each restate the message.
+func (j *Journal) findOrErr(id string) (*Entry, error) {
+	e := j.find(id)
+	if e == nil {
+		return nil, fmt.Errorf("no entry %s in the journal for branch %s", id, j.Branch)
+	}
+	return e, nil
 }
 
 // --- rendering ---

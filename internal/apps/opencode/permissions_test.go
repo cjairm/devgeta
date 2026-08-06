@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/pkg/files"
 	"gopkg.in/yaml.v3"
 )
@@ -840,4 +841,219 @@ func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
 			)
 		}
 	})
+}
+
+// reviewLoopReportHeading is the stable anchor
+// TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport checks against. It must
+// stay exactly this string in configs/shared/commands/review-loop.md, above
+// the report template and nowhere else.
+const reviewLoopReportHeading = "## Terminal report"
+
+// TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport guards ADR-0017 §6's
+// human-only rule the only way prose can be guarded: `--ratify` and
+// `--reopen` retire an agent's provisional rejection, and that decision
+// belongs to a human, never to the loop itself. The permission model cannot
+// enforce this — it has no way to tell who typed a `devgeta task` command —
+// so the only thing standing between "the loop reports a rejection" and "the
+// loop quietly ratifies its own rejection" is review-loop.md's wording. This
+// test pins the one structural check available: every occurrence of either
+// flag must fall after the report template's heading, so an instruction
+// earlier in the file telling the loop to run one itself fails the build
+// instead of shipping silently.
+// reviewLoopSection extracts the body of one flow step from review-loop.md:
+// everything from `heading` up to (but not including) the next line that
+// starts with "#" — so a guard test can anchor on a single step's content
+// without being tripped by wording changes in the rest of the file.
+func reviewLoopSection(t *testing.T, body, heading string) string {
+	t.Helper()
+	start := strings.Index(body, heading)
+	if start < 0 {
+		t.Fatalf(
+			"%q heading not found in review-loop.md — this is the anchor a guard "+
+				"test uses to isolate one flow step's content",
+			heading,
+		)
+	}
+	rest := body[start+len(heading):]
+	if next := strings.Index(rest, "\n#"); next >= 0 {
+		return rest[:next]
+	}
+	return rest
+}
+
+// TestReviewLoopCleanApprovalRequiresOpenNone guards the fix that closed a
+// real correctness bug (see the cycle history around commit 0b39f28): a round
+// where every reviewer said APPROVE but the journal still had open findings
+// (open: n4 n7) used to read as a clean approval. Step 3 must gate on BOTH
+// every verdict being APPROVE AND the round's `open:` line reading
+// `open: none` — drop the open: none half and the loop can declare victory
+// while a finding sits unanswered in the journal.
+//
+// What this catches: the `open: none` condition (or the whole clause
+// requiring it) being deleted from step 3, which would silently reintroduce
+// the bug — an all-APPROVE round with unanswered findings reported as clean.
+// What this does NOT catch: an executing agent misreading a correctly-worded
+// instruction, or a reword that keeps the string "open: none" in the section
+// but no longer makes it a requirement (a substring match cannot distinguish
+// "requires open: none" from "ignores open: none" — it only proves the
+// concept is still named in the right place).
+func TestReviewLoopCleanApprovalRequiresOpenNone(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+
+	if !strings.Contains(section, "open: none") {
+		t.Errorf(
+			"%s step 3 no longer requires the round's `open:` line to read "+
+				"`open: none` for a clean approval — without this, an all-APPROVE "+
+				"round with findings still open in the journal (open: n4 n7) reads "+
+				"as clean when it is not",
+			path,
+		)
+	}
+	if !strings.Contains(section, "APPROVE") {
+		t.Errorf(
+			"%s step 3 no longer checks that every reviewer's outcome is APPROVE — "+
+				"the clean approval gate needs both conditions together, not "+
+				"open: none alone",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopForwardsReviewerSelector guards the fix that closed the other
+// real bug: `--reviewer <key>` was documented in the Usage section but never
+// actually read from $ARGUMENTS or passed on to `devgeta task review-run`, so
+// the documented selector silently did nothing. Step 0 must parse
+// $ARGUMENTS, and step 1 must forward the resolved key to review-run on
+// every round.
+//
+// What this catches: either half — the $ARGUMENTS parse in step 0, or the
+// `--reviewer <key>` forwarding in step 1 — being deleted, which would
+// silently restore "the selector is documented but does nothing".
+// What this does NOT catch: the parse or forwarding being reworded to read
+// plausibly while actually forwarding a stale or wrong value, since this is a
+// substring check over prose, not an execution of the instructions.
+func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	parseSection := reviewLoopSection(t, body, "### 0. Resolve the reviewer selector")
+	if !strings.Contains(parseSection, "$ARGUMENTS") {
+		t.Errorf(
+			"%s step 0 no longer mentions parsing $ARGUMENTS — without this the "+
+				"documented --reviewer flag is never read from anywhere, so it is "+
+				"just Usage-section text with no effect",
+			path,
+		)
+	}
+
+	runSection := reviewLoopSection(t, body, "### 1. Run a round")
+	if !strings.Contains(runSection, "--reviewer <key>") {
+		t.Errorf(
+			"%s step 1 no longer forwards --reviewer <key> to `devgeta task "+
+				"review-run` — without this, --reviewer is parsed in step 0 but "+
+				"never passed through, so the documented selector silently does "+
+				"nothing",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopAgentPrefixMatchesTheConstant guards the one thing
+// reviewjournal.AgentNotePrefix's own doc comment demands and nothing else
+// could enforce: the marker the loop is told to WRITE, and the marker step 3
+// is told to DETECT, are both the constant's actual value.
+//
+// It has drifted once already. The constant carried a trailing space while
+// step 3 looked for the marker without one, so a note settled as
+// "agent:<evidence>" was reported to the human with a --ratify command that
+// Ratify then refused. Prose cannot import a Go constant, so this test is the
+// only thing tying the two together.
+//
+// What this catches: the constant changing without review-loop.md following,
+// or either half of review-loop.md (the write instruction in step 4, the
+// detection instruction in step 3) losing the marker.
+// What this does NOT catch: an executing agent writing a note that omits the
+// marker entirely — that is judgment, and the terminal report is where a
+// human sees the rejection either way.
+func TestReviewLoopAgentPrefixMatchesTheConstant(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	if want := `--note "` + reviewjournal.AgentNotePrefix; !strings.Contains(body, want) {
+		t.Errorf(
+			"%s no longer tells the loop to settle a rejection with %q — the marker "+
+				"it writes must be reviewjournal.AgentNotePrefix verbatim, or the "+
+				"rejection is not recognizable as the agent's and Ratify refuses it",
+			path, want,
+		)
+	}
+
+	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+	if !strings.Contains(section, reviewjournal.AgentNotePrefix) {
+		t.Errorf(
+			"%s step 3 no longer names %q as the marker of an unratified agent "+
+				"rejection — without the constant's exact value there, an all-APPROVE "+
+				"round with a pending agent rejection reads as a clean approval",
+			path, reviewjournal.AgentNotePrefix,
+		)
+	}
+	if !strings.Contains(section, "answer:") {
+		t.Errorf(
+			"%s step 3 no longer says the marker is read from the entry's `answer:` "+
+				"line — renderNotes only ever puts it there, so a loop told to look at "+
+				"the finding line finds no marker anywhere and declares a false approval",
+			path,
+		)
+	}
+}
+
+func TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	headingAt := strings.Index(body, reviewLoopReportHeading)
+	if headingAt < 0 {
+		t.Fatalf(
+			"%s has no %q heading — that heading is the anchor this test uses to "+
+				"confirm --ratify/--reopen only appear in the human-facing report",
+			path, reviewLoopReportHeading,
+		)
+	}
+
+	for _, flag := range []string{"--ratify", "--reopen"} {
+		for i := 0; i+len(flag) <= len(body); i++ {
+			if body[i:i+len(flag)] != flag {
+				continue
+			}
+			if i < headingAt {
+				t.Errorf(
+					"%s mentions %q at byte %d, before the %q heading at byte %d — "+
+						"ratification is a human decision, and review-loop.md must never "+
+						"instruct the loop to run %s itself; the only place it may appear "+
+						"is inside the report template this loop prints for the human to "+
+						"act on",
+					path, flag, i, reviewLoopReportHeading, headingAt, flag,
+				)
+			}
+		}
+	}
 }

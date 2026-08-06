@@ -818,16 +818,17 @@ func TestBuiltinReviewersKeysAreComplete(t *testing.T) {
 	}
 }
 
-// TestBuiltinReviewerChoicesOrderAndLabels guards the exported accessor the
-// TUI's R picker builds its item list from: it must come back in
-// reviewerKeys order ("code" first, the common case) with each choice's
-// label matching the registry, so the picker's dropdown can never drift from
+// TestBuiltinReviewerChoicesOrderAndLabels guards the exported accessor both
+// the TUI's R picker and `dg task review-run --reviewer` read the registry
+// through: it must come back in reviewerKeys order ("code" first, the common
+// case) with each choice's label AND agent matching the registry, so neither
+// the picker's dropdown nor a headless run's `--agent` can drift from
 // builtinReviewers() (the thing TestBuiltinReviewersKeysAreComplete guards).
 func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
 	want := []ReviewerChoice{
-		{Key: "code", Label: "code — bugs, security"},
-		{Key: "document", Label: "document — plans, specs"},
-		{Key: "skill", Label: "skill — agents/commands"},
+		{Key: "code", Label: "code — bugs, security", Agent: "code-reviewer"},
+		{Key: "document", Label: "document — plans, specs", Agent: "document-reviewer"},
+		{Key: "skill", Label: "skill — agents/commands", Agent: "skill-reviewer"},
 	}
 
 	got := BuiltinReviewerChoices()

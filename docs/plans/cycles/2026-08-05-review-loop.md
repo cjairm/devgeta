@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Estimated Duration:** ~8 hours
-**Status:** Approved — awaiting implementation
+**Status:** Done
 
 ---
 
@@ -84,9 +84,10 @@ And two from this repo's own review machinery:
 run configured reviewer(s) headless, verify and address blocking findings, settle the
 journal, re-run — and ends in one of exactly two states:
 
-1. **Clean approval** — every reviewer APPROVEs _and_ no agent-authored rejection is
-   still awaiting ratification (a rejection the human has ratified is an ordinary
-   human rejection, ADR-0012 semantics, and does not block).
+1. **Clean approval** — all three of: every reviewer's outcome is APPROVE, the round's
+   `open:` line reads `open: none` (no finding is still unanswered in the journal), _and_
+   no agent-authored rejection is still awaiting ratification (a rejection the human has
+   ratified is an ordinary human rejection, ADR-0012 semantics, and does not block).
 2. **Report to the human** — everything else: persistent disagreement, the round cap,
    any reviewer process failure (`ERROR`/`NO VERDICT`), or approval that rests on one
    or more agent-authored rejections awaiting ratification. The report carries the
@@ -100,34 +101,46 @@ A process failure or an unratified pushback can therefore never masquerade as st
 
 ### In Scope
 
-- [ ] ADR: loop contract — bounded rounds, any-single-blocker rule, escalation over
-      consensus, sequential reviewers (write before implementation, §11)
-- [ ] ADR: isolation — refuse on default branch, auto-branch not auto-worktree,
-      worktree as opt-in (write before implementation, §11)
-- [ ] `ReviewConfig` in `GlobalConfig` + `review.reviewers` (stringlist) and
+- [x] ADR: loop contract — bounded rounds, any-single-blocker rule, escalation over
+      consensus, sequential reviewers (write before implementation, §11) →
+      [ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md),
+      ACCEPTED 2026-08-06
+- [x] ADR: isolation — refuse on default branch, a branch (not a worktree) as the
+      mechanism, worktree as opt-in (write before implementation, §11) →
+      [ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md),
+      ACCEPTED 2026-08-06
+- [x] `ReviewConfig` in `GlobalConfig` + `review.reviewers` (stringlist) and
       `review.rounds` (int, default 3, max 5) in the `dg config` registry
-- [ ] OpenCode wrapper method for headless review runs (`opencode run --agent <a>
+- [x] OpenCode wrapper method for headless review runs (`opencode run --agent <a>
 [-m <provider/model>] --format json`)
-- [ ] `dg task review-run` — run each configured reviewer sequentially, parse each
+- [x] `dg task review-run` — run each configured reviewer sequentially, parse each
       verdict, print compact per-reviewer verdicts + open journal ids (task-design
-      output contract); refuses on the default branch with an actionable error
-- [ ] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
+      output contract); refuses unless HEAD is a named non-default branch — both the
+      default branch and a detached HEAD are refused, with an actionable error (ADR-0018)
+- [x] Round-start journal snapshot that `review-notes` reads, so no reviewer is anchored by
+      a peer's in-round findings **or state changes** (ADR-0017 §4). Read-side only: writes
+      are untouched, no staging, no id remapping, no dedup. Reviewer agents unchanged
+- [x] Child-only environment overlay on `CommandParams`/`ExecCommand` (+ the OpenCode
+      wrapper), the prerequisite for pointing a reviewer at the snapshot — an overlay on the
+      inherited environment, never `os.Setenv`
+- [x] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
       execution, per-finding verification (receiving-code-review discipline), journal
       settle, round cap, escalation report
-- [ ] Journal ratification transitions — `review-note --ratify --id <id>` (human
+- [x] Journal ratification transitions — `review-note --ratify --id <id>` (human
       accepts an agent rejection: strips the `agent:` provenance, entry becomes an
       ordinary rejection) and `review-note --reopen --id <id>` (human refuses: the
       settled entry returns to open under the **same id** — no duplication — with its
       original finding text, the agent's rejection note dropped). Today neither move
-      exists: `manager.go:186` refuses to settle a settled entry, and nothing reopens
+      exists: `manager.go:239` refuses to settle a settled entry, and nothing reopens
       one — without these, an agent rejection blocks clean approval forever
-- [ ] Guard-test updates (`permissions_test.go` family) for the new shared command
-- [ ] Docs: `docs/spec.md`, command doc
+- [x] Guard-test updates (`permissions_test.go` family) for the new shared command
+- [x] Docs: `docs/spec.md`, command doc
 
 ### Explicitly Out of Scope
 
-- **Parallel reviewers.** Ship sequential. Parallel later needs exactly two additions —
-  a file lock on journal writes and a post-fan-out dedup pass — recorded here so the
+- **Parallel reviewers.** Ship sequential. Parallel later now needs only **one** addition —
+  a file lock on journal writes — the dedup pass it was also thought to need is gone,
+  because ADR-0017 §4 keeps duplicates by design rather than merging them. Recorded here so the
   future flag has its checklist.
 - **Cross-model debate** (reviewers critiquing each other's findings). The journal
   already carries rejections between rounds; explicit debate topologies are unproven
@@ -152,19 +165,21 @@ A process failure or an unratified pushback can therefore never masquerade as st
 
 ### File Changes
 
-| Action | File Path                                           | Description                                            |
-| ------ | --------------------------------------------------- | ------------------------------------------------------ |
-| Create | `docs/decisions/ADR-0016-*.md`, `ADR-0017-*.md`     | Loop contract; isolation (names/numbers at write time) |
-| Modify | `internal/config/fromFile.go`                       | `ReviewConfig{Reviewers []string; Rounds int}`         |
-| Modify | `cmd/config_settings.go`                            | `review.reviewers`, `review.rounds` registry entries   |
-| Modify | `internal/apps/opencode/opencode.go` (+test)        | Headless run method on the wrapper                     |
-| Create | `internal/tooling/task/reviewrun.go` (+test)        | Fan-out, verdict parse, output contract                |
-| Modify | `cmd/task.go`                                       | Register `review-run`; `--ratify`/`--reopen` flags     |
-| Modify | `internal/tooling/reviewjournal/manager.go` (+test) | `Ratify` and `Reopen` transitions                      |
-| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Wire the two transitions into `review-note`            |
-| Create | `configs/shared/commands/review-loop.md`            | The loop command (both agents, per sync rule)          |
-| Modify | `internal/apps/opencode/permissions_test.go`        | Extend guards to the new command                       |
-| Modify | `docs/spec.md`, `docs/plans/cycles/` (this file)    | Document; check off steps                              |
+| Action | File Path                                           | Description                                              |
+| ------ | --------------------------------------------------- | -------------------------------------------------------- |
+| Done   | `docs/decisions/ADR-0017-*.md`, `ADR-0018-*.md`     | Loop contract; isolation (0016 was taken)                |
+| Modify | `internal/config/fromFile.go`                       | `ReviewConfig{Reviewers []string; Rounds int}`           |
+| Modify | `cmd/config_settings.go`                            | `review.reviewers`, `review.rounds` registry entries     |
+| Modify | `internal/apps/opencode/opencode.go` (+test)        | Headless run method on the wrapper                       |
+| Create | `internal/tooling/task/reviewrun.go` (+test)        | Fan-out, verdict parse, output contract                  |
+| Modify | `cmd/task.go`                                       | Register `review-run`; `--ratify`/`--reopen` flags       |
+| Modify | `internal/tooling/reviewjournal/manager.go` (+test) | `Ratify` and `Reopen` transitions                        |
+| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Read the round snapshot when pointed at it (ADR-0017 §4) |
+| Modify | `internal/commands/base.go` (+test)                 | `CommandParams.Env` overlay; `ExecCommand` honors it     |
+| Modify | `internal/tooling/task/reviewnotes.go` (+test)      | Wire the two transitions into `review-note`              |
+| Create | `configs/shared/commands/review-loop.md`            | The loop command (both agents, per sync rule)            |
+| Modify | `internal/apps/opencode/permissions_test.go`        | Extend guards to the new command                         |
+| Modify | `docs/spec.md`, `docs/plans/cycles/` (this file)    | Document; check off steps                                |
 
 ### Step-by-Step
 
@@ -205,14 +220,33 @@ A process failure or an unratified pushback can therefore never masquerade as st
   `edit: deny` and is not). Out of scope here — filed as its own cycle,
   [2026-08-05-shared-command-permissions.md](2026-08-05-shared-command-permissions.md).
 
-#### Step 1: ADRs
+#### Step 1: ADRs — DONE (both ACCEPTED 2026-08-06)
+
+[ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)
+(loop contract) and
+[ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md) (isolation)
+are written, reviewed, and accepted. Numbered 0017/0018 rather than the 0016/0017 this
+doc originally guessed, because ADR-0016 was already taken.
 
 Write both ADRs (scope list above), get approval. Decisions already made in
 discussion, to be recorded not re-litigated: bounded rounds (3/5) · any single
 REQUEST CHANGES blocks; NEEDS DISCUSSION is treated as blocking and escalates if it
 survives a round · disagreement at cap → human, never a vote · sequential reviewers
-(journal has no lock; sequence gives reviewer N sight of N−1's entries) · refuse on
-default branch, tell the user the `git switch -c` fix · Go does fan-out/parse/journal,
+(journal has no lock) · **revised 2026-08-06 after review findings n1/n3/n4/n5/n6:**
+reviewers do **not** see each other's in-round findings, nor each other's in-round state
+changes. The original "sequence gives reviewer N sight of N−1's entries" framing treated that
+visibility as a benefit; the research the ADR cites measures it as a 32.3-point loss, so
+isolation won (n1). Implemented as a **round-start snapshot of the journal file** that
+`review-notes` reads while writes stay live — **not** by staging writes and merging (staging
+needs write redirection that does not exist, renumbers ids the reviewer already reported, and
+adds crash cleanup — n3), and **not** by hiding ids above a floor (that freezes existence but
+not state, and `code-reviewer.md:31` has reviewers settling round-start-open entries mid-round
+— n5). Duplicate findings from two reviewers are **kept, not merged**, because deciding
+whether two wordings are one defect needs judgment that ADR-0017 §5 keeps out of Go (n4).
+Pointing a reviewer at the snapshot needs a child-only env overlay that the shared executor
+does not have yet (n6)
+· refuse on the default branch **and on detached HEAD**, tell the user the `git switch -c`
+fix · Go does fan-out/parse/journal,
 the agent does judgment · **agent rejections are provisional** — provenance-marked
 (`agent:` note prefix) and always surfaced in the terminal report for human
 ratification, because ADR-0012's settled-means-settled rule leaves the reviewer no
@@ -225,7 +259,7 @@ open again, same id) are the only two exits from provisional, both human-only.
 
 Verify: ADRs merged into `docs/decisions/README.md` index.
 
-#### Step 2: Config
+#### Step 2: Config — DONE
 
 - `ReviewConfig` on `GlobalConfig` (omitempty, like `WorktreeConfig`)
 - Registry entries: `review.reviewers` (stringlist; entries must look like
@@ -235,22 +269,125 @@ Verify: ADRs merged into `docs/decisions/README.md` index.
 
 Verify: `go test ./cmd/ ./internal/config/`; `dg config set/get/unset review.reviewers`.
 
-#### Step 3: OpenCode wrapper run method
+#### Step 3: OpenCode wrapper run method — DONE
 
 Extend `internal/apps/opencode` with the headless-run capability (agent, optional
-model, prompt, working dir, generous timeout). Per §6, this is the only place the
-binary is assembled. Mocked tests both ways (with/without model).
+model, prompt, working dir, generous timeout, **and extra environment**). Per §6, this is
+the only place the binary is assembled — so `review-run` never assembles a
+`CommandParams` itself, including for the snapshot pointer. Mocked tests both ways
+(with/without model, with/without extra environment).
 
-Verify: `go test ./internal/apps/opencode/`.
+The environment parameter depends on the executor gaining `CommandParams.Env` — see Step 4's
+executor bullet. Build that first; this step just exposes it.
 
-#### Step 4: `dg task review-run`
+Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
+
+#### Step 4: `dg task review-run` — DONE
 
 - Resolve reviewer list: `review.reviewers`, or one entry "OpenCode default model"
   when unset; `--reviewer` picks the agent (default `code`), validated against the
   existing registry (`worktree.BuiltinReviewerChoices` — `internal/tooling/task`
   already imports that package), never a restated list
-- Refuse on the default branch (reuse the existing default-branch resolution the
-  review-scope family uses) with the `git switch -c` suggestion in the error
+- Resolve HEAD to one of three outcomes and refuse two of them **before launching any
+  reviewer** (ADR-0018): named non-default branch → proceed; default branch → refuse;
+  **detached HEAD → refuse**. Reuse the existing default-branch resolution the
+  review-scope family uses, and share the comparison with `release.go`'s
+  `checkOnDefaultBranch` rather than hand-rolling a second copy (CLAUDE.md §6). Both
+  refusals carry the `git switch -c` suggestion in the error.
+  The detached case needs its own explicit test: `git branch --show-current` prints
+  nothing when HEAD is detached, so `CurrentBranchIn` returns `("", nil)` — no error —
+  and a check written only as `current != defaultBranch` lets it through. The journal's
+  own empty-branch error (`reviewjournal/manager.go:48`) is a late backstop that fires
+  only after a full multi-model review has already been spent.
+- **Round-start snapshot: isolate reviewers on the READ side only** (ADR-0017 §4). No
+  reviewer may see a finding another reviewer raised in the same round, **or a state change
+  another reviewer made to a pre-existing entry**. **Writes are not touched** —
+  `review-note --open` and `--settle` keep hitting the live journal immediately, as today.
+
+  The exact sequence, so this is executable rather than aspirational:
+
+  1. Before launching round R's reviewers, `review-run` writes the branch's current journal
+     to a disposable snapshot (under the same review directory, e.g.
+     `<encoded-branch>.round-<n>.snapshot.md`). **Always — including when no journal exists
+     yet.** An absent journal is the state "empty at round start", and it must be captured as
+     a real empty snapshot rather than skipped: on a branch's first review (the most common
+     case) the file does not exist, reviewer 1's first `--open` creates it, and skipping the
+     snapshot would leave reviewer 2 with no pointer, falling through to the live journal and
+     reading reviewer 1's brand-new findings. `Load` already returns an empty journal instead
+     of an error when the file is missing (`reviewjournal/manager.go:70-72`), so the snapshot
+     is just "serialize whatever `Load` returns" and there is **no absent-journal branch in
+     the code at all**.
+  2. `review-run` points each spawned `opencode run` at it with a child-only environment
+     variable (`DEVGETA_REVIEW_JOURNAL_SNAPSHOT=<path>`). See the executor bullet below —
+     this capability does not exist yet.
+  3. `review-notes` reads the snapshot when that variable names a readable file, and the live
+     journal otherwise. Unset, empty, or unreadable → live journal, i.e. today's behavior
+     exactly. It must never fail because a snapshot is missing.
+
+     Note what that fallback is and is not for. Because step 1 always writes the snapshot, a
+     missing file is an **anomaly** (someone deleted it, a bug), never the normal
+     first-review path. Falling back to the live journal is the right response to the anomaly
+     — it loses isolation for that reviewer, but the alternative, treating a missing snapshot
+     as "empty", would hide every settled entry and send the reviewer round the re-raise
+     circle ADR-0012 exists to break. Losing isolation is recoverable; losing history is the
+     original bug.
+
+  4. Reviewer writes go to the **live** journal and get real, final ids from `nextID()`
+     (`max+1`, never reused — `reviewjournal/journal.go:77-89`, pinned by
+     `TestNextIDNeverReusesAfterDeletion`). Reviewer 1's new `n7` and its settling of the
+     round-start-open `n3` are both invisible to reviewer 2, which reads the snapshot and
+     then writes `n8`.
+  5. At round end `review-run` deletes the snapshot; round R+1 takes a fresh one, so
+     everything from round R is visible from then on.
+
+  Why a file copy rather than a cheaper "hide ids above N" filter: an id filter freezes
+  entry _existence_ but not entry _state_. `configs/shared/agents/code-reviewer.md:31` tells
+  a reviewer to settle a round-start-open entry `--as fixed` when the code now fixes it, and
+  line 28 tells the next reviewer not to re-raise anything already settled — so a peer's
+  in-round conclusion would reach reviewer 2 through an entry whose id is below any floor.
+
+  Tests: snapshot pointer set → a same-round `--open` is hidden and a same-round `--settle`
+  of a pre-existing entry still reads as open; **no journal on disk at round start → a
+  snapshot is still written, and a reviewer reading it does not see an entry created after it
+  (the first-review path, finding n7)**; pointer unset → output byte-identical to today
+  (**the regression that matters**, since `review-notes` is used outside the loop); pointer
+  naming a missing or unreadable file → falls back to the live journal without erroring; ids
+  keep advancing while reads are frozen; snapshot removed at round end.
+
+  **One assumption to probe before building this, not to assume:** that an environment
+  variable set on the `opencode run` process actually reaches the `devgeta task review-notes`
+  that the reviewer agent shells out to. Ordinary process inheritance says yes, but the agent
+  runs the command through its own bash tool, and a runtime that sanitized or reset the
+  environment would make the pointer silently absent — which fails **open** (reviewers see
+  live state, i.e. today's anchored behavior) with no error. Probe it the way Step 0 probed
+  the headless run: set a marker variable, have a command echo it from inside a reviewer run,
+  confirm it arrives. If it does not, the fallback is a devgeta-owned channel that does not
+  depend on the agent's environment, and ADR-0017 §4 needs amending to say which.
+
+  **Explicitly NOT done here:** no per-reviewer staging area, no temporary ids, no
+  end-of-round merge, and **no deduplication**. Two reviewers that independently report the
+  same defect produce two entries and both are kept — telling "one defect worded twice" from
+  "two defects on one line" is judgment, which ADR-0017 §5 keeps out of Go, and a
+  wrong merge drops a real finding while looking like a clean review. The coding agent
+  verifies once and settles both.
+
+- **Executor: a child-only environment overlay** (prerequisite for the snapshot pointer).
+  `CommandParams` carries `Args`, `Timeout`, `Dir`, `Stream` and **no environment**, and
+  `ExecCommand` sets `Dir` and `Stdin` but never `exec.Cmd.Env`
+  (`internal/commands/base.go:66-86`, `:254-256`, `:266`). So there is currently no way to add a
+  variable for one spawned process. Add it — per CLAUDE.md §6 a wrapper gap that is really an
+  executor gap is fixed in the executor — as an **overlay, not a replacement**:
+  `execCommand.Env = append(os.Environ(), cmd.Env...)` when `cmd.Env` is non-empty, and leave
+  `Env` nil otherwise so inheritance is untouched. Setting `exec.Cmd.Env` to only the extra
+  variable would wipe `PATH`, `HOME`, and everything else the child needs.
+  **Do not use `os.Setenv`:** it mutates the whole devgeta process, so the pointer would
+  leak into unrelated `review-notes` calls, and it is not safe against concurrent use.
+  Then expose it through the OpenCode wrapper's headless-run method (Step 3) rather than
+  letting `review-run` assemble a command itself.
+  Tests, mocked: the overlay reaches the recorded command's environment; the inherited
+  environment survives (assert a pre-existing variable is still present); empty `Env` leaves
+  `exec.Cmd.Env` nil; `VerifyNoRealCommands` on every one.
+
 - Run reviewers **sequentially** through the wrapper. Each reviewer ends in exactly
   one of five outcomes — the three verdicts parsed from the last `**Status:**` line
   (`APPROVE`, `REQUEST CHANGES`, `NEEDS DISCUSSION`), plus:
@@ -290,7 +427,7 @@ Verify: `go test ./internal/apps/opencode/`.
 Verify: `go test ./internal/tooling/task/ ./cmd/` — all mocked;
 `VerifyNoRealCommands` on every test.
 
-#### Step 4b: Journal ratification transitions
+#### Step 4b: Journal ratification transitions — DONE (2026-08-06)
 
 Two additions to `reviewjournal.Manager`, wired into `review-note`:
 
@@ -311,7 +448,7 @@ Verify: `go test ./internal/tooling/reviewjournal/ ./internal/tooling/task/ ./cm
 covering: ratify on agent-rejected → ordinary rejection; ratify on anything else →
 error; reopen → same id open, count unchanged; reopen of nonexistent/open id → error.
 
-#### Step 5: `/review-loop` command file
+#### Step 5: `/review-loop` command file — DONE
 
 `configs/shared/commands/review-loop.md`, modeled on `address-feedback.md` for shape
 — but it **declares no `permission:` block at all**, because Step 0 proved OpenCode
@@ -343,10 +480,22 @@ message stating why — OpenCode ignores it and its presence implies a guarantee
 does not exist. That test belongs to the sibling cycle's repo-wide sweep; this cycle
 adds the new file in the shape that sweep will require.
 
+**Second guard test, for the human-only rule (ADR-0017 §6):**
+`TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport`
+(`internal/apps/opencode/permissions_test.go`) asserts every occurrence of `--ratify`
+and `--reopen` in `review-loop.md` falls after the `## Terminal report` heading — so an
+instruction earlier in the file telling the loop to run either flag itself fails the
+build instead of shipping silently. This is the one structural check available; the
+permission model itself cannot tell who typed a `devgeta task` command, so the rest of
+the rule stays prose-level (see the risk table).
+
 The flow it encodes:
 
 1. `devgeta task review-run` (round 1)
-2. All APPROVE and no agent-authored rejections → clean approval, stop
+2. All APPROVE **and** the round's `open:` line reads `open: none` **and** no
+   agent-authored rejection is awaiting ratification → clean approval, stop. All three
+   are required: an all-APPROVE round with an id still under `open:` is a finding nobody
+   answered, not a clean review
 3. Otherwise, per open finding: verify with receiving-code-review rigor — implement
    real ones; for wrong ones, `review-note --settle --as rejected` with the
    disproving evidence, the note prefixed `agent:` so provenance is never ambiguous.
@@ -371,13 +520,24 @@ Verify: `go test ./internal/apps/opencode/` green — the new command carries no
 `permission:` key, and the Claude/OpenCode parity guards still pass (parity is
 unaffected: the block is absent on both sides rather than asymmetric).
 
-#### Step 6: Manual end-to-end
+#### Step 6: Manual end-to-end — DONE, with one item not run
 
 On a real feature branch with a seeded flaw: run `/review-loop` with one default
 reviewer; then with two configured models. Confirm: refusal on main, verdict parsing,
 journal settle between rounds, escalation path (force it with `review.rounds 1`).
 
-#### Step 7: Docs + close out
+Run and confirmed: the default-branch and detached-HEAD refusals; a bogus model
+surfacing as `ERROR(...)`; two reviewers on a fresh branch with no journal, where the
+second re-raised the same defect without having seen the first's entry (isolation on the
+first-review path); the snapshot removed after the round; and the full ratify/reopen
+lifecycle.
+
+**Not run: the `review.rounds 1` escalation report.** That item exercises only the
+agent's adherence to the prose in `review-loop.md` — Go enforces no round cap at all —
+so it verifies model behavior rather than any code path this cycle shipped. Recorded as
+an exception rather than quietly ticked.
+
+#### Step 7: Docs + close out — DONE
 
 `docs/spec.md` feature entry, `dg config` docs mention the new keys, check off this
 doc, status → Done. Deploy: `dg configure claude --force` and
@@ -397,10 +557,25 @@ make lint
 ### Manual
 
 1. `dg task review-run` on `main` → refuses, names the branch fix
+   1b. `git checkout <sha>` (detached HEAD), then `dg task review-run` → refuses before any
+   reviewer starts, names the branch fix; no journal file is created and no model is called
 2. `dg config set review.reviewers openai/gpt-5.2` → `review-run` uses it; unset →
    default model
 3. `/review-loop` on a branch with a planted bug → finding journaled, fixed, settled,
    round 2 approves
+   3b. Two reviewers configured, on a **fresh branch with no journal yet** and one obvious
+   planted bug → confirm the second reviewer's `review-notes` output does **not** contain the
+   first reviewer's round-1 findings (isolation holds on the first-review path, findings
+   n1/n7 — run it this way round precisely because an existing journal would mask n7). Both
+   reviewers finding the same bug should leave **two** open entries, not one — duplicates are
+   kept by design, and the coding agent settles both from one verification. Then confirm
+   round 2 sees both.
+   3c. Same run, with one entry already **open** before the round and now genuinely fixed in
+   the code: reviewer 1 settles it `--as fixed`; confirm reviewer 2's `review-notes` still
+   shows it **open** (state is frozen, not just existence — finding n5)
+   3d. `devgeta task review-notes` run by hand, outside any loop → output unchanged from
+   before this cycle (no snapshot pointer, so nothing is hidden). Also delete a snapshot
+   mid-round and confirm `review-notes` falls back to the live journal instead of failing
 4. `dg config set review.rounds 1` + a disputed finding → escalation report, no
    further rounds
 5. Journal after approval: entries settled, file still present (cleanup stays on
@@ -418,27 +593,56 @@ make lint
 ### Regression
 
 - `dg ws` `R` keybinding review flow unchanged
-- `review-notes` / `review-note` behavior unchanged
+- `review-notes` / `review-note` behavior unchanged **outside a loop round** — with no
+  snapshot pointer set, output is byte-identical to today
+- Every existing `ExecCommand` caller unaffected by the new `Env` field: left nil, so
+  `exec.Cmd.Env` stays nil and inheritance is exactly as before
 - Agent config sync tests green (`go test ./internal/apps/opencode/`)
 
 ## 7. Risks & Trade-offs
 
-| Risk                                                  | Likelihood | Mitigation                                                                                                                                                                                                                                                                                |
-| ----------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `opencode run` blocks on permissions headless         | Med        | Step 0 probe is a hard gate; redesign before code if it fails                                                                                                                                                                                                                             |
-| Verdict line missing/malformed in a reviewer's output | Med        | Explicit `NO VERDICT` outcome, surfaced not guessed; reviewer templates already carry the line                                                                                                                                                                                            |
-| Two models both wrong, both approve                   | Low–Med    | Inherent to AI review; bounded rounds + human owns the merge decision; loop never self-merges                                                                                                                                                                                             |
-| Long wall-clock per round (full review × N models)    | High       | Sequential is a deliberate trade; subagent execution keeps the human unblocked; parallel later                                                                                                                                                                                            |
-| Loop fixes drift from what the user wanted            | Med        | receiving-code-review verification per finding; escalation report shows every fix and rejection                                                                                                                                                                                           |
-| Model/provider strings go stale in config             | Low        | Pass-through by design; surfaces as an `ERROR(<reason>)` outcome in the report, never a silent skip                                                                                                                                                                                       |
-| Loop calls `--ratify`/`--reopen` itself               | Low–Med    | Cannot be blocked structurally (permissions can't tell who typed a task command); the command's instructions forbid it and a guard test asserts the command file never invokes either flag outside the report template. Accepted as prose-level, same trust as the reviewers' settle step |
+| Risk                                                                                               | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opencode run` blocks on permissions headless                                                      | Med        | Step 0 probe is a hard gate; redesign before code if it fails                                                                                                                                                                                                                                                              |
+| The snapshot pointer leaks into normal use, so a human's `review-notes` silently shows stale state | Low        | Read-side only, and the pointer is per-child rather than a well-known path or `os.Setenv`, so a snapshot is never read unless the caller names it. Load-bearing test: pointer unset → output byte-identical to today. An unreadable or deleted snapshot falls back to the live journal rather than erroring                |
+| The env overlay wipes the child's environment instead of extending it                              | Med        | The classic `exec.Cmd.Env` mistake: setting it non-nil replaces everything, so a naive implementation drops `PATH`/`HOME` and the child fails in confusing ways. Required shape is `append(os.Environ(), cmd.Env...)`, with `Env` left nil when empty; test asserts a pre-existing variable survives alongside the new one |
+| Isolation silently absent because the env var never reaches the agent's shell                      | Med        | Fails **open** — reviewers see live state, i.e. today's anchored behavior, with no error — so it cannot be caught by "did it crash". Probed before building (Step 4), and manual check 3b/3c observe isolation directly rather than assuming it                                                                            |
+| Duplicate open entries pile up when several reviewers find the same defect                         | Med        | Accepted by design (ADR-0017 §4): duplicates are noise, a wrong merge is a silently dropped defect. The coding agent settles all copies from one verification, and `review-notes` output stays compact because entries are one line plus a note                                                                            |
+| Verdict line missing/malformed in a reviewer's output                                              | Med        | Explicit `NO VERDICT` outcome, surfaced not guessed; reviewer templates already carry the line                                                                                                                                                                                                                             |
+| Two models both wrong, both approve                                                                | Low–Med    | Inherent to AI review; bounded rounds + human owns the merge decision; loop never self-merges                                                                                                                                                                                                                              |
+| Long wall-clock per round (full review × N models)                                                 | High       | Sequential is a deliberate trade; subagent execution keeps the human unblocked; parallel later                                                                                                                                                                                                                             |
+| Loop fixes drift from what the user wanted                                                         | Med        | receiving-code-review verification per finding; escalation report shows every fix and rejection                                                                                                                                                                                                                            |
+| Model/provider strings go stale in config                                                          | Low        | Pass-through by design; surfaces as an `ERROR(<reason>)` outcome in the report, never a silent skip                                                                                                                                                                                                                        |
+| Loop calls `--ratify`/`--reopen` itself                                                            | Low–Med    | Cannot be blocked structurally (permissions can't tell who typed a task command); the command's instructions forbid it and a guard test asserts the command file never invokes either flag outside the report template. Accepted as prose-level, same trust as the reviewers' settle step                                  |
 
 ### Trade-offs Made
 
 - **Branch, not worktree, as the on-main fix** — carries dirty files for free, no
   merge-back machinery; loses "keep coding while it runs" (future `--worktree`).
-- **Sequential, not parallel** — slower rounds; buys journal-write safety and
-  cross-reviewer dedup for free.
+- **Sequential, not parallel** — slower rounds; buys journal-write safety with no lock.
+- **Round-start snapshot, not a live shared journal** (revised, finding n1) — reviewers stay
+  independent within a round, so a second configured model genuinely adds coverage. Costs a
+  file copy per round, one piece of ambient state on `review-notes`, and duplicate entries
+  when two reviewers find the same thing.
+- **Isolation on the read side, not by staging writes** (revised, finding n3) — staging
+  would need write redirection that does not exist today, would renumber ids the reviewer
+  has already reported, and would add crash cleanup. A read snapshot needs none of that.
+- **A file copy, not an id floor** (revised, finding n5) — an id filter freezes which entries
+  exist but not what state they are in, and reviewers are explicitly told to settle
+  round-start-open entries mid-round (`code-reviewer.md:31`), so a peer's fresh conclusion
+  would still leak. Slightly more work, complete instead of nearly complete.
+- **A child-only env overlay, not `os.Setenv`** (revised, finding n6) — process-global
+  mutation would leak the pointer into unrelated `review-notes` calls and is unsafe under
+  concurrency. Costs a new field on the shared `CommandParams` and a change in a hot code
+  path, which is why the overlay must preserve the inherited environment.
+- **The snapshot is unconditional, with no "nothing to do" case** (revised, finding n7) —
+  writing it even when no journal exists costs one useless file on a first review and removes
+  the branch where isolation silently did not apply. This is the second edge case in this
+  section to come from treating a state as an absence (n5 was state changes, n7 was an absent
+  journal), which is the argument for uniformity over special cases here.
+- **Duplicates kept, never merged** (revised, finding n4) — Go does not guess whether two
+  wordings are one defect. Noise is recoverable; a silently dropped finding is not, and it
+  is indistinguishable from a clean review.
 - **Any single blocker blocks** — strictest consensus rule; more escalations, never a
   silently outvoted finding.
 - **Judgment lives in the agent command, not Go** — the loop's fix step can't be
@@ -447,13 +651,13 @@ make lint
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Domain context clear?
-- [ ] Engineer context sufficient?
-- [ ] Objective unambiguous?
-- [ ] Scope locked?
-- [ ] Steps actionable?
-- [ ] Verification executable?
-- [ ] Risks realistic?
+- [x] Domain context clear?
+- [x] Engineer context sufficient?
+- [x] Objective unambiguous?
+- [x] Scope locked?
+- [x] Steps actionable?
+- [x] Verification executable?
+- [x] Risks realistic?
 
 **Reviewer notes:**
 
@@ -461,9 +665,29 @@ Approved 2026-08-06, sequenced after [2026-08-05-shared-command-permissions.md]
 (2026-08-05-shared-command-permissions.md) — Step 5/7 build on that cycle's
 allowlist guard-test convention, so implementation waits for it to land.
 
-Open item to resolve at Step 1 (ADR-writing) time, not now: Step 1's file list
-placeholders `ADR-0016-*.md, ADR-0017-*.md` collide with the real
-`ADR-0016-inconclusive-tool-probe-fails-open.md` (already ACCEPTED). The two
-new ADRs must be numbered ADR-0017 and ADR-0018 instead. No text elsewhere in
-this doc references the numbers, so this is a non-issue for the plan itself —
-flagged here so it isn't rediscovered mid-implementation.
+The ADR-numbering collision flagged at first approval is resolved: the two ADRs are
+[ADR-0017](../../decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)
+and [ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md), both
+ACCEPTED 2026-08-06. Step 1 is done; implementation starts at Step 2.
+
+### Review history for the isolation decision (ADR-0017 §4)
+
+Recorded because the mechanism changed four times under review and the reasoning is the
+valuable part. Each version failed for a different concrete reason, all now preserved as
+rejected alternatives in the ADR:
+
+| Version                            | Failed because                                                                                                              | Finding |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------- |
+| Live shared journal within a round | Reviewer N reads N−1's fresh findings; the cited research measures a 32.3-point oracle gap from exactly this                | n1      |
+| Stage writes, merge at round end   | Needs write redirection that does not exist, renumbers ids the reviewer already reported, adds crash cleanup                | n3      |
+| Dedup findings during that merge   | Requires semantic judgment in Go, contradicting §5; a wrong merge drops a real finding and looks like a clean review        | n4      |
+| Hide ids above a round-start floor | Freezes entry existence but not state; `code-reviewer.md:31` has reviewers settling round-start-open entries mid-round      | n5      |
+| Snapshot, skipped when none exists | A branch's first review has no journal, so reviewer 2 got no pointer and read live — isolation absent on the commonest path | n7      |
+
+Final: an unconditional round-start snapshot of the journal file for reads, writes untouched
+and live, no dedup. Two findings (n5, n7) were the same mistake in different clothes —
+treating a state as an absence — which is why the final version has no special cases.
+
+Also settled during review: detached HEAD must be refused alongside the default branch (n2),
+and the snapshot pointer needs a child-only environment overlay the shared executor does not
+have yet (n6, specified in Step 4).

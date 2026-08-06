@@ -67,6 +67,23 @@ type mockTaskRunner struct {
 	reviewNoteSettleRet       string
 	reviewNoteSettleErr       error
 
+	reviewNoteRatifyBranchArg string
+	reviewNoteRatifyIDArg     string
+	reviewNoteRatifyCalled    bool
+	reviewNoteRatifyRet       string
+	reviewNoteRatifyErr       error
+
+	reviewNoteReopenBranchArg string
+	reviewNoteReopenIDArg     string
+	reviewNoteReopenCalled    bool
+	reviewNoteReopenRet       string
+	reviewNoteReopenErr       error
+
+	reviewRunReviewerArg string
+	reviewRunCalled      bool
+	reviewRunRet         string
+	reviewRunErr         error
+
 	worktreeStartNameArg string
 	worktreeStartBaseArg string
 	worktreeStartCalled  bool
@@ -171,6 +188,26 @@ func (m *mockTaskRunner) ReviewNoteSettle(
 	m.reviewNoteSettleAtArg = cite
 	m.reviewNoteSettleNoteArg = note
 	return m.reviewNoteSettleRet, m.reviewNoteSettleErr
+}
+
+func (m *mockTaskRunner) ReviewNoteRatify(branch, id string) (string, error) {
+	m.reviewNoteRatifyCalled = true
+	m.reviewNoteRatifyBranchArg = branch
+	m.reviewNoteRatifyIDArg = id
+	return m.reviewNoteRatifyRet, m.reviewNoteRatifyErr
+}
+
+func (m *mockTaskRunner) ReviewNoteReopen(branch, id string) (string, error) {
+	m.reviewNoteReopenCalled = true
+	m.reviewNoteReopenBranchArg = branch
+	m.reviewNoteReopenIDArg = id
+	return m.reviewNoteReopenRet, m.reviewNoteReopenErr
+}
+
+func (m *mockTaskRunner) ReviewRun(reviewer string) (string, error) {
+	m.reviewRunCalled = true
+	m.reviewRunReviewerArg = reviewer
+	return m.reviewRunRet, m.reviewRunErr
 }
 
 func (m *mockTaskRunner) WorktreeStart(name, base string) (string, error) {
@@ -566,6 +603,7 @@ func resetReviewNoteFlags(t *testing.T) {
 	reset := func() {
 		taskReviewNotesBranchFlag, taskReviewNotesPathFlag, taskReviewNotesPruneFlag = "", false, false
 		taskReviewNoteBranchFlag, taskReviewNoteOpenFlag, taskReviewNoteSettleFlag = "", false, false
+		taskReviewNoteRatifyFlag, taskReviewNoteReopenFlag = false, false
 		taskReviewNoteIDFlag, taskReviewNoteAsFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag = "", "", "", ""
 	}
 	reset()
@@ -721,19 +759,164 @@ func TestTask_ReviewNote(t *testing.T) {
 		}
 	})
 
-	// --open/--settle must be exclusive and one required, declared on the
-	// command so cobra enforces it during parsing (RunE never sees the bad
-	// combination).
-	t.Run("open and settle are exclusive and one is required", func(t *testing.T) {
+	// --open/--settle/--ratify/--reopen must be exclusive and one required,
+	// declared on the command so cobra enforces it during parsing (RunE never
+	// sees the bad combination). --note is deliberately NOT cobra-required:
+	// --ratify and --reopen take no note at all, so requiring it globally
+	// would make those modes unusable. --open and --settle enforce a
+	// non-empty note themselves (see reviewnotes_test.go).
+	t.Run("open/settle/ratify/reopen are exclusive and one is required", func(t *testing.T) {
 		openAnn := taskReviewNoteCmd.Flags().Lookup("open").Annotations
 		if _, ok := openAnn["cobra_annotation_mutually_exclusive"]; !ok {
-			t.Error("--open must be declared mutually exclusive with --settle")
+			t.Error("--open must be declared mutually exclusive with --settle/--ratify/--reopen")
 		}
 		if _, ok := openAnn["cobra_annotation_one_required"]; !ok {
-			t.Error("one of --open/--settle must be declared required")
+			t.Error("one of --open/--settle/--ratify/--reopen must be declared required")
 		}
-		if ann := taskReviewNoteCmd.Flags().Lookup("note").Annotations; ann == nil {
-			t.Error("--note must be marked required")
+	})
+
+	t.Run("--ratify passes branch and id", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteRatifyRet: "Ratified n7"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteRatifyFlag = true
+		taskReviewNoteIDFlag = "n7"
+		taskReviewNoteBranchFlag = "fix/retry"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewNoteRatifyCalled {
+			t.Fatal("expected ReviewNoteRatify to be called")
+		}
+		if mock.reviewNoteRatifyBranchArg != "fix/retry" || mock.reviewNoteRatifyIDArg != "n7" {
+			t.Errorf("args not passed through: %+v", mock)
+		}
+		if mock.reviewNoteOpenCalled || mock.reviewNoteSettleCalled || mock.reviewNoteReopenCalled {
+			t.Error("--ratify must not call any other mode")
+		}
+	})
+
+	t.Run("--reopen passes branch and id", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteReopenRet: "Reopened n7"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteReopenFlag = true
+		taskReviewNoteIDFlag = "n7"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewNoteReopenCalled {
+			t.Fatal("expected ReviewNoteReopen to be called")
+		}
+		if mock.reviewNoteReopenIDArg != "n7" {
+			t.Errorf("expected id n7, got %q", mock.reviewNoteReopenIDArg)
+		}
+		if mock.reviewNoteOpenCalled || mock.reviewNoteSettleCalled || mock.reviewNoteRatifyCalled {
+			t.Error("--reopen must not call any other mode")
+		}
+	})
+
+	// Both new modes require --id — unlike --open/--settle, there is no
+	// direct form.
+	t.Run("--ratify without --id errors before calling the manager", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteRatifyFlag = true
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err == nil {
+			t.Fatal("expected an error for --ratify without --id")
+		}
+		if mock.reviewNoteRatifyCalled {
+			t.Error("the manager should not have been called")
+		}
+	})
+
+	t.Run("--reopen without --id errors before calling the manager", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteReopenFlag = true
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err == nil {
+			t.Fatal("expected an error for --reopen without --id")
+		}
+		if mock.reviewNoteReopenCalled {
+			t.Error("the manager should not have been called")
+		}
+	})
+
+	t.Run("--ratify propagates the manager's error", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{
+			reviewNoteRatifyErr: fmt.Errorf("entry n7 is already an ordinary rejection"),
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteRatifyFlag = true
+		taskReviewNoteIDFlag = "n7"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestTask_ReviewRun(t *testing.T) {
+	// setReviewRunReviewer sets the flag var and restores it, so a leaked
+	// value cannot make a later case pass for the wrong reason.
+	setReviewRunReviewer := func(t *testing.T, value string) {
+		t.Helper()
+		orig := taskReviewRunReviewerFlag
+		taskReviewRunReviewerFlag = value
+		t.Cleanup(func() { taskReviewRunReviewerFlag = orig })
+	}
+
+	t.Run("passes the reviewer flag through", func(t *testing.T) {
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE\nopen: none"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunReviewer(t, "document")
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewRunCalled {
+			t.Fatal("expected ReviewRun to be called")
+		}
+		if mock.reviewRunReviewerArg != "document" {
+			t.Errorf("expected reviewer 'document', got %q", mock.reviewRunReviewerArg)
+		}
+	})
+
+	// The default is declared on the flag, not restated in the command body,
+	// so `dg task review-run` with no flags runs the code reviewer.
+	t.Run("--reviewer defaults to code", func(t *testing.T) {
+		got := taskReviewRunCmd.Flags().Lookup("reviewer")
+		if got == nil {
+			t.Fatal("expected a --reviewer flag")
+		}
+		if got.DefValue != "code" {
+			t.Errorf("expected --reviewer to default to 'code', got %q", got.DefValue)
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		mock := &mockTaskRunner{
+			reviewRunErr: fmt.Errorf("review-run: HEAD is detached"),
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunReviewer(t, "code")
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err == nil {
+			t.Fatal("expected error")
 		}
 	})
 }

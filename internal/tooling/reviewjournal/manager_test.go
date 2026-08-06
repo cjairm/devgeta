@@ -331,6 +331,200 @@ func TestSettleByIDRejectsUnknownAndAlreadySettled(t *testing.T) {
 	}
 }
 
+// --- ratify / reopen (ADR-0017 §6) ---
+
+// Ratify on an agent-rejected entry strips the prefix, leaving an ordinary
+// human rejection: same resolution, same reason minus the provenance marker.
+//
+// The prefix lives in the settle note (Answer), which only SettleByID
+// populates — SettleDirect has no separate open-time question, so its text
+// lands in Note instead. The realistic path this transition guards is always
+// "reviewer opens a finding, agent settles it by id as rejected", so the
+// fixture is built the same way.
+func TestRatifyStripsAgentPrefixFromRejectedEntry(t *testing.T) {
+	fr := newFakeRepo(t)
+	id, err := fr.mgr.Open(fr.repoDir, "feat", "", "N+1 query")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", id, ResolutionRejected, AgentNotePrefix+"disagree, capped by config",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", id); err != nil {
+		t.Fatalf("Ratify: %v", err)
+	}
+
+	j, _ := fr.mgr.Load(fr.repoDir, "feat")
+	e := j.find(id)
+	if e.Resolution != ResolutionRejected {
+		t.Errorf("resolution should stay rejected, got %q", e.Resolution)
+	}
+	if e.Answer != "disagree, capped by config" {
+		t.Errorf("expected the prefix stripped, got %q", e.Answer)
+	}
+}
+
+// Ratify refuses every state that is not an agent-prefixed rejection, naming
+// the actual state in each case so the caller can see why.
+func TestRatifyRejectsEveryStateThatIsNotAnAgentRejection(t *testing.T) {
+	fr := newFakeRepo(t)
+
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", "n9"); err == nil {
+		t.Error("expected an error for an unknown id")
+	}
+
+	openID, err := fr.mgr.Open(fr.repoDir, "feat", "", "still open")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", openID); err == nil {
+		t.Error("expected an error ratifying an open entry")
+	}
+
+	fixedID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-fixed")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(fr.repoDir, "feat", fixedID, ResolutionFixed, "done"); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", fixedID); err == nil {
+		t.Error("expected an error ratifying a fixed entry")
+	}
+
+	answeredID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-answered")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir,
+		"feat",
+		answeredID,
+		ResolutionAnswered,
+		"yes",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", answeredID); err == nil {
+		t.Error("expected an error ratifying an answered entry")
+	}
+
+	humanRejectedID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-rejected")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", humanRejectedID, ResolutionRejected, "intentional, no agent involved",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", humanRejectedID); err == nil {
+		t.Error("expected an error ratifying an already-ordinary (unprefixed) rejection")
+	}
+}
+
+// Reopen returns a settled entry to open under the SAME id — no new entry is
+// created, so the total entry count is unchanged — with its original finding
+// text intact and the resolution note dropped.
+// Ratify must accept an agent note whether or not a space follows the colon.
+//
+// The writer of that note is prose — configs/shared/commands/review-loop.md
+// tells the loop to settle with `--note "agent: <evidence>"` — so nothing
+// mechanically guarantees the space arrives. When the marker constant carried
+// the space, a note written as "agent:<evidence>" was still shown as an agent
+// rejection by renderNotes and still carried into the terminal report with a
+// --ratify command, which Ratify then refused: the human's only exit was
+// --reopen, re-raising a finding that was already disproved.
+func TestRatifyAcceptsAnAgentNoteWithOrWithoutASpaceAfterTheColon(t *testing.T) {
+	// Built from the marker with its own spacing removed, deliberately: this
+	// test is ABOUT the spacing, so it must not inherit whatever spacing the
+	// constant happens to carry — otherwise "without a space" silently becomes
+	// "with a space" the moment the constant grows one again.
+	marker := strings.TrimSpace(AgentNotePrefix)
+	for name, note := range map[string]string{
+		"with a space":    marker + " capped by config",
+		"without a space": marker + "capped by config",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fr := newFakeRepo(t)
+			id, err := fr.mgr.Open(fr.repoDir, "feat", "", "N+1 query")
+			if err != nil {
+				t.Fatalf("Open: %v", err)
+			}
+			if err := fr.mgr.SettleByID(
+				fr.repoDir, "feat", id, ResolutionRejected, note,
+			); err != nil {
+				t.Fatalf("SettleByID: %v", err)
+			}
+
+			if err := fr.mgr.Ratify(fr.repoDir, "feat", id); err != nil {
+				t.Fatalf("Ratify must accept %q: %v", note, err)
+			}
+
+			j, _ := fr.mgr.Load(fr.repoDir, "feat")
+			if got := j.find(id).Answer; got != "capped by config" {
+				t.Errorf("expected the marker and its spacing stripped, got %q", got)
+			}
+		})
+	}
+}
+
+func TestReopenReturnsSameIDToOpenWithEntryCountUnchanged(t *testing.T) {
+	fr := newFakeRepo(t)
+	id, err := fr.mgr.Open(fr.repoDir, "feat", "", "N+1 query")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", id, ResolutionRejected, AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	before, _ := fr.mgr.Load(fr.repoDir, "feat")
+	countBefore := len(before.Entries)
+
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", id); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	after, _ := fr.mgr.Load(fr.repoDir, "feat")
+	if len(after.Entries) != countBefore {
+		t.Fatalf("entry count changed: before %d, after %d", countBefore, len(after.Entries))
+	}
+	e := after.find(id)
+	if e == nil {
+		t.Fatalf("entry %s must still exist under the same id", id)
+	}
+	if !e.Open() {
+		t.Errorf("entry should be open again, got resolution %q", e.Resolution)
+	}
+	if e.Note != "N+1 query" {
+		t.Errorf("original finding text must survive, got %q", e.Note)
+	}
+	if e.Answer != "" {
+		t.Errorf("resolution note must be dropped, got %q", e.Answer)
+	}
+}
+
+func TestReopenRejectsNonexistentOrAlreadyOpenID(t *testing.T) {
+	fr := newFakeRepo(t)
+
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", "n9"); err == nil {
+		t.Error("expected an error for an unknown id")
+	}
+
+	openID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", openID); err == nil {
+		t.Error("expected an error reopening an already-open entry")
+	}
+}
+
 func TestIDsAreStableAcrossWrites(t *testing.T) {
 	fr := newFakeRepo(t)
 	first, _ := fr.mgr.Open(fr.repoDir, "feat", "", "q1")
@@ -402,12 +596,42 @@ func TestWritesAreAtomicAndLeaveNoTempFiles(t *testing.T) {
 		t.Fatalf("ReadDir: %v", err)
 	}
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".journal-") {
+		// Any dotfile sibling is a leaked staging file, whatever the
+		// atomic writer happens to name its temp file today.
+		if strings.HasPrefix(e.Name(), ".") {
 			t.Errorf("leftover temp file %s", e.Name())
 		}
 	}
 	if len(entries) != 1 {
 		t.Errorf("expected exactly the journal file, got %d entries", len(entries))
+	}
+}
+
+// TestJournalAndSnapshotAreOwnerOnly pins the mode of both files the review
+// directory holds. A journal quotes findings verbatim out of the branch's
+// source, so it carries more of the repo's content than a settings file does
+// and stays owner-only. This is a regression guard rather than a style
+// preference: the journal and the snapshot share one atomic writer, and that
+// writer takes the mode as an argument, so passing files.FilePermission
+// (0644) at either call site would silently widen both.
+func TestJournalAndSnapshotAreOwnerOnly(t *testing.T) {
+	fr := newFakeRepo(t)
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "q1"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	snapshotPath, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+
+	for _, path := range []string{fr.journalPath("feat"), snapshotPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != journalPermission {
+			t.Errorf("%s has mode %#o, want %#o", filepath.Base(path), got, journalPermission)
+		}
 	}
 }
 
@@ -435,6 +659,36 @@ func TestDeleteRemovesJournalAndIsIdempotent(t *testing.T) {
 	}
 	if err := fr.mgr.Delete(fr.repoDir, "feat"); err != nil {
 		t.Errorf("deleting a missing journal should succeed, got %v", err)
+	}
+}
+
+// Delete must also remove the branch's round-start snapshot. review-run
+// deletes its own snapshot on every exit path, but a hard-killed run leaves
+// one behind, and Prune only ever looks at "*.md" — so without this the
+// orphan would outlive the branch forever, contradicting docs/spec.md's
+// promise that removing a worktree leaves no review memory behind.
+func TestDeleteRemovesTheRoundStartSnapshotToo(t *testing.T) {
+	fr := newFakeRepo(t)
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "q"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	snapshot, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+	if _, err := os.Stat(snapshot); err != nil {
+		t.Fatalf("setup: the snapshot must exist before Delete: %v", err)
+	}
+
+	if err := fr.mgr.Delete(fr.repoDir, "feat"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, err := os.Stat(snapshot); !os.IsNotExist(err) {
+		t.Errorf("the round-start snapshot must be gone with the journal, stat err: %v", err)
+	}
+	if _, err := os.Stat(fr.journalPath("feat")); !os.IsNotExist(err) {
+		t.Error("journal should be gone")
 	}
 }
 

@@ -17,7 +17,17 @@ import (
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/pkg/files"
 )
+
+// journalPermission is the mode for both the journal and its round-start
+// snapshot. It is deliberately tighter than files.FilePermission (0644, what
+// devgeta uses for configs): a journal quotes findings verbatim out of the
+// branch's own source, so on a shared machine it carries more of the repo's
+// content than a settings file does. The journal was already owner-only
+// before these two writes shared one helper, and staying 0600 keeps that
+// rather than widening it as a side effect of the deduplication.
+const journalPermission = 0o600
 
 // Manager reads and writes review journals through the git app wrapper.
 // NowFn is injectable for tests; it stamps last_review.
@@ -76,34 +86,81 @@ func (m *Manager) Load(repoDir, branch string) (*Journal, error) {
 	return Parse(branch, data), nil
 }
 
+// snapshotSuffix names the round-start snapshot `dg task review-run` writes
+// beside a branch's journal. It deliberately does NOT end in ".md": Prune
+// owns every "*.md" file in the review directory and decides from the
+// filename alone whether a branch still exists, so a snapshot called
+// "<encoded>.snapshot.md" could be decoded as a branch nobody has and
+// deleted in the middle of a round. Keeping the suffix outside Prune's
+// filter makes that collision impossible instead of relying on DecodeBranch
+// happening to fail.
+const snapshotSuffix = ".snapshot"
+
+// SnapshotPathFor returns the path of branch's round-start snapshot: one
+// deterministic name per branch, in the same directory as the journal.
+//
+// There is no round number in the name. review-run writes the snapshot when
+// a round starts and removes it when that round ends — including on its
+// failure paths — relying on the invariant that only one `review-run`
+// invocation runs against a given branch at a time. A per-round name would
+// not help two overlapping invocations either, since both could be round 1;
+// avoiding that requires not running review-run twice on the same branch at
+// once, not a naming scheme here.
+func (m *Manager) SnapshotPathFor(repoDir, branch string) (string, error) {
+	path, err := m.PathFor(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	return snapshotPathOf(path), nil
+}
+
+// snapshotPathOf derives a journal's snapshot path from the journal path
+// itself, so a caller that already resolved one (Delete) does not pay a second
+// git call to resolve the other, and the two paths cannot be derived by two
+// different rules.
+func snapshotPathOf(journalPath string) string {
+	return strings.TrimSuffix(journalPath, ".md") + snapshotSuffix
+}
+
+// WriteSnapshot serializes branch's journal as it stands right now to the
+// snapshot path, and returns that path.
+//
+// A branch with no journal file yet is not a special case here, deliberately:
+// Load already reports a missing file as an empty journal, and that empty
+// journal is written out like any other. "Empty at round start" is exactly
+// what the second reviewer of a first-ever review must see — skipping the
+// write there would leave it reading the live journal, i.e. the first
+// reviewer's brand-new findings (ADR-0017 §4).
+func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	path, err := m.SnapshotPathFor(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
+		return "", fmt.Errorf("failed to write the round-start review snapshot: %w", err)
+	}
+	return path, nil
+}
+
 // save writes the journal atomically: temp file in the same directory, then
 // rename — the same write-to-temp-then-rename rule CLAUDE.md §7 mandates for
 // the global config. A crash mid-write leaves the previous journal intact.
+//
+// It delegates to files.WriteFileAtomic, which is that rule's one
+// implementation and is what WriteSnapshot above already uses; a second
+// hand-rolled MkdirAll + CreateTemp + rename here would be the same logic
+// twice, differing only in which of the two could grow a bug.
 func (m *Manager) save(repoDir string, j *Journal) error {
 	path, err := m.PathFor(repoDir, j.Branch)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("failed to create the review directory: %w", err)
-	}
 	j.LastReview = m.NowFn().Format("2006-01-02")
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".journal-*")
-	if err != nil {
-		return fmt.Errorf("failed to stage the review journal: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.WriteString(j.Render()); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to write the review journal: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
-		return fmt.Errorf("failed to write the review journal: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		_ = os.Remove(tmpName)
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
 		return fmt.Errorf("failed to save the review journal: %w", err)
 	}
 	return nil
@@ -178,9 +235,9 @@ func (m *Manager) SettleByID(repoDir, branch, id, resolution, answer string) err
 	if err != nil {
 		return err
 	}
-	e := j.find(id)
-	if e == nil {
-		return fmt.Errorf("no entry %s in the journal for branch %s", id, branch)
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
 	}
 	if !e.Open() {
 		return fmt.Errorf("entry %s is already settled (%s)", id, e.Resolution)
@@ -205,6 +262,76 @@ func (m *Manager) restamp(repoDir string, e *Entry) error {
 		}
 	}
 	return m.stamp(repoDir, e)
+}
+
+// Ratify accepts an agent's provisional rejection as a human decision
+// (ADR-0017 §6): it strips AgentNotePrefix from the settle note in place,
+// leaving an ordinary human rejection under ADR-0012 semantics. Nothing else
+// about the entry changes — the blob/head stamp is deliberately left alone,
+// because ratifying forms no new judgment about the cited code; it only
+// confirms who the existing rejection belongs to.
+//
+// Valid only on an entry settled as rejected whose note still carries the
+// prefix. Every other state is refused with the actual state named, so the
+// caller sees why: open (nothing settled to ratify yet), settled fixed or
+// answered (ratify only concerns rejections), or a rejected entry with no
+// prefix (already ratified once).
+func (m *Manager) Ratify(repoDir, branch, id string) error {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return err
+	}
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
+	}
+	if e.Open() {
+		return fmt.Errorf("entry %s is open, not settled — nothing to ratify", id)
+	}
+	if e.Resolution != ResolutionRejected {
+		return fmt.Errorf(
+			"entry %s is settled as %s, not rejected — ratify only applies to a rejected entry",
+			id, e.Resolution,
+		)
+	}
+	if !HasAgentNote(e.Answer) {
+		return fmt.Errorf(
+			"entry %s is already an ordinary rejection (no %s prefix to strip)",
+			id, AgentNotePrefix,
+		)
+	}
+	e.Answer = StripAgentNote(e.Answer)
+	return m.save(repoDir, j)
+}
+
+// Reopen returns a settled entry to open under the same id, keeping its
+// original finding text and dropping the resolution note — ADR-0012 already
+// specifies that an open entry is re-raised, never duplicated, so the next
+// round asks it again exactly as it was first asked, not as a new entry.
+//
+// The blob/head stamp is left untouched, not refreshed: reopening undoes a
+// settlement, it does not re-judge the cited code, so the stamp keeps
+// answering the question it always has — has the cited code changed since it
+// was last actually judged, which was the settle now being undone. Stamping
+// here would falsely claim a fresh look was just taken.
+//
+// Valid on any settled entry, regardless of resolution. An already-open entry
+// or an unknown id is refused with the actual state named.
+func (m *Manager) Reopen(repoDir, branch, id string) error {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return err
+	}
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
+	}
+	if e.Open() {
+		return fmt.Errorf("entry %s is already open", id)
+	}
+	e.Resolution = ""
+	e.Answer = ""
+	return m.save(repoDir, j)
 }
 
 // SettleDirect records an exchange that was never open — asked and answered in
@@ -255,15 +382,25 @@ func (m *Manager) Verdict(repoDir string, e Entry) string {
 	return FreshnessFresh
 }
 
-// Delete removes branch's journal. A journal that never existed is success —
-// callers (the worktree teardown) only care that no journal remains.
+// Delete removes branch's journal AND its round-start snapshot. A file that
+// never existed is success — callers (the worktree teardown) only care that
+// nothing of the branch's review memory remains.
+//
+// The snapshot is deleted here rather than left to Prune because Prune only
+// looks at "*.md" and would never see it: review-run removes its own snapshot
+// on every exit path, but a hard-killed run leaves one behind, and without
+// this that orphan would outlive the branch forever — making the promise that
+// removing a worktree deletes the journal "so memory does not accumulate for
+// work that no longer exists" (docs/spec.md) quietly false.
 func (m *Manager) Delete(repoDir, branch string) error {
 	path, err := m.PathFor(repoDir, branch)
 	if err != nil {
 		return err
 	}
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove the review journal: %w", err)
+	for _, p := range []string{path, snapshotPathOf(path)} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove the review journal: %w", err)
+		}
 	}
 	return nil
 }

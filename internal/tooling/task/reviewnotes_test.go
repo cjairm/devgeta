@@ -11,16 +11,37 @@ import (
 	"testing"
 
 	gitapp "github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
-// newJournalSetup builds a TaskManager whose git calls are answered against a
+// newJournalSetup is newRepoSetup on the branch these journal tests use.
+func newJournalSetup(t *testing.T) (*TaskManager, string) {
+	t.Helper()
+	tm, root, _ := newRepoSetup(t, "feat")
+	return tm, root
+}
+
+// newRepoSetup builds a TaskManager whose git calls are answered against a
 // real temp directory, so these tests exercise the actual journal file the
 // commands write — not a stubbed manager. The process cwd is moved into the
 // fake repo because the task layer deliberately passes "" as the repo dir
 // (every task runs in the caller's repo).
-func newJournalSetup(t *testing.T) (*TaskManager, string) {
+//
+// branch is what `git branch --show-current` reports; pass "" for a detached
+// HEAD, which prints nothing and exits 0. The default branch always resolves
+// to "main".
+//
+// The third return is the mock base the OpenCode wrapper runs through, so a
+// review-run test can script `opencode run`'s output and inspect the exact
+// command line and environment the wrapper assembled. tm.Base is a separate
+// mock that nothing under test should ever touch.
+func newRepoSetup(
+	t *testing.T,
+	branch string,
+) (*TaskManager, string, *commands.MockBaseCommand) {
 	t.Helper()
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
@@ -29,7 +50,6 @@ func newJournalSetup(t *testing.T) (*TaskManager, string) {
 	}
 	t.Chdir(root)
 
-	branch := "feat"
 	gitBase := commands.NewMockBaseCommand()
 	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
 		args := c.Args
@@ -45,17 +65,25 @@ func newJournalSetup(t *testing.T) (*TaskManager, string) {
 			}
 			sum := sha1.Sum(data)
 			return hex.EncodeToString(sum[:])[:7] + "\n", "", nil
+		// Ahead of the "--short" case below on purpose: the default-branch
+		// query is `symbolic-ref --short refs/remotes/origin/HEAD`, so
+		// matching on "--short" first would answer it with HEAD's SHA and
+		// make the repo's default branch look like a commit.
+		case slices.Contains(args, "symbolic-ref"):
+			return "origin/main\n", "", nil
 		case slices.Contains(args, "--short"):
 			return "abc1234\n", "", nil
 		}
 		return "", "", nil
 	}
 
+	openCodeBase := commands.NewMockBaseCommand()
 	tm := &TaskManager{
-		Git:  &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
-		Base: commands.NewMockBaseCommand(),
+		Git:      &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
+		Base:     commands.NewMockBaseCommand(),
+		OpenCode: &opencode.OpenCode{Cmd: commands.NewMockCommand(), Base: openCodeBase},
 	}
-	return tm, root
+	return tm, root, openCodeBase
 }
 
 func TestReviewNotesSentinelWhenEmpty(t *testing.T) {
@@ -324,5 +352,283 @@ func TestReviewNotesPruneSentinelWhenNothingToDo(t *testing.T) {
 	}
 	if out != "No review journals to prune." {
 		t.Fatalf("expected the prune sentinel, got %q", out)
+	}
+}
+
+// --- ratify / reopen (ADR-0017 §6) ---
+
+func TestReviewNoteRatifyStripsAgentPrefixAndEchoesID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "N+1 query"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "n1", "rejected", "", reviewjournal.AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	out, err := tm.ReviewNoteRatify("", "n1")
+	if err != nil {
+		t.Fatalf("ReviewNoteRatify: %v", err)
+	}
+	if out != "Ratified n1" {
+		t.Fatalf("expected 'Ratified n1', got %q", out)
+	}
+
+	notes, _ := tm.ReviewNotes("", false, false)
+	if !strings.Contains(notes, "looks intentional") {
+		t.Errorf("the reason must survive: %s", notes)
+	}
+	if strings.Contains(notes, reviewjournal.AgentNotePrefix) {
+		t.Errorf("the agent prefix must be gone after ratifying:\n%s", notes)
+	}
+}
+
+func TestReviewNoteRatifyOnAnythingElseErrors(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "still open"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	if _, err := tm.ReviewNoteRatify("", "n1"); err == nil {
+		t.Error("expected an error ratifying an open entry")
+	}
+	if _, err := tm.ReviewNoteRatify("", "n9"); err == nil {
+		t.Error("expected an error ratifying an unknown id")
+	}
+
+	if _, err := tm.ReviewNoteSettle("", "n1", "fixed", "", "done"); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+	if _, err := tm.ReviewNoteRatify("", "n1"); err == nil {
+		t.Error("expected an error ratifying a fixed (non-rejected) entry")
+	}
+}
+
+func TestReviewNoteRatifyRequiresID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteRatify("", ""); err == nil {
+		t.Error("expected an error for --ratify without an id")
+	}
+}
+
+func TestReviewNoteReopenReturnsSameIDToOpenWithCountUnchanged(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "N+1 query"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "n1", "rejected", "", reviewjournal.AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	out, err := tm.ReviewNoteReopen("", "n1")
+	if err != nil {
+		t.Fatalf("ReviewNoteReopen: %v", err)
+	}
+	if out != "Reopened n1" {
+		t.Fatalf("expected 'Reopened n1', got %q", out)
+	}
+
+	notes, _ := tm.ReviewNotes("", false, false)
+	if !strings.Contains(notes, "open:") || strings.Contains(notes, "settled:") {
+		t.Errorf("entry should be open again, nothing settled:\n%s", notes)
+	}
+	if !strings.Contains(notes, "N+1 query") {
+		t.Errorf("original finding text must survive:\n%s", notes)
+	}
+	if strings.Contains(notes, "looks intentional") {
+		t.Errorf("the resolution note must be dropped:\n%s", notes)
+	}
+}
+
+func TestReviewNoteReopenOfNonexistentOrOpenIDErrors(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteReopen("", "n9"); err == nil {
+		t.Error("expected an error reopening an unknown id")
+	}
+
+	if _, err := tm.ReviewNoteOpen("", "", "q"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteReopen("", "n1"); err == nil {
+		t.Error("expected an error reopening an already-open entry")
+	}
+}
+
+func TestReviewNoteReopenRequiresID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteReopen("", ""); err == nil {
+		t.Error("expected an error for --reopen without an id")
+	}
+}
+
+// --- round-start snapshot read (ADR-0017 §4) ---
+//
+// review-run's snapshot writer and the executor's env overlay belong to other
+// tasks. These tests only cover the read side: review-notes consults
+// ReviewJournalSnapshotEnvVar and falls back to the live journal on any
+// failure to resolve it.
+
+// The regression that matters most: with the pointer unset (today's world),
+// review-notes must produce byte-identical output to reading the live
+// journal directly, since review-notes is used by hand and by every agent
+// outside the review loop, not just inside a round.
+func TestReviewNotesSnapshotPointerUnsetMatchesLiveJournal(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "first finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle("", "n1", "answered", "", "resolved"); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	viaTask, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+
+	jm := reviewjournal.New(tm.Git)
+	j, err := jm.Load("", "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	viaLive := renderNotes(jm, j)
+
+	if viaTask != viaLive {
+		t.Fatalf(
+			"pointer-unset output diverged from the live journal:\ngot:  %q\nwant: %q",
+			viaTask,
+			viaLive,
+		)
+	}
+}
+
+// Pointer set to the empty string is explicitly the same as unset, not "an
+// empty snapshot" — the empty string never names a file.
+func TestReviewNotesSnapshotPointerEmptyStringUsesLiveJournal(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, "")
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// The isolation case: a reviewer pointed at a snapshot taken before a
+// second, later entry was opened must not see that later entry, even though
+// it is sitting in the live journal file right next to it.
+func TestReviewNotesSnapshotPointerReadsSnapshotNotLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "round-start finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	jm := reviewjournal.New(tm.Git)
+	journalPath, err := jm.PathFor("", "feat")
+	if err != nil {
+		t.Fatalf("PathFor: %v", err)
+	}
+	snapshotData, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatalf("reading the live journal to build the snapshot: %v", err)
+	}
+	snapshotPath := filepath.Join(root, "feat.round-1.snapshot.md")
+	if err := os.WriteFile(snapshotPath, snapshotData, 0o644); err != nil {
+		t.Fatalf("writing snapshot: %v", err)
+	}
+
+	// Diverge the live journal after the snapshot was taken.
+	if _, err := tm.ReviewNoteOpen("", "", "same-round finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	t.Setenv(ReviewJournalSnapshotEnvVar, snapshotPath)
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(out, "round-start finding") {
+		t.Errorf("expected the snapshot's entry in output:\n%s", out)
+	}
+	if strings.Contains(out, "same-round finding") {
+		t.Errorf("a same-round live entry must be invisible when reading the snapshot:\n%s", out)
+	}
+}
+
+// A missing snapshot is an anomaly (step 1 always writes one before a round
+// starts), not the normal path — but review-notes must never fail because of
+// it; it falls back to the live journal.
+func TestReviewNotesSnapshotPointerMissingFileFallsBackToLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, filepath.Join(root, "no-such-snapshot.md"))
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("expected no error falling back to the live journal, got: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// An unreadable snapshot (here: the pointer names a directory, so
+// os.ReadFile fails) falls back the same way a missing one does.
+func TestReviewNotesSnapshotPointerUnreadableFileFallsBackToLive(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "live finding"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	dirAsPointer := filepath.Join(root, "not-a-file")
+	if err := os.MkdirAll(dirAsPointer, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Setenv(ReviewJournalSnapshotEnvVar, dirAsPointer)
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("expected no error falling back to the live journal, got: %v", err)
+	}
+	if !strings.Contains(out, "live finding") {
+		t.Fatalf("expected the live journal's entry, got:\n%s", out)
+	}
+}
+
+// Writes must keep hitting the live journal regardless of the pointer: the
+// snapshot is a read-side illusion, not a second store.
+func TestReviewNoteWritesStillHitLiveJournalWhileSnapshotPointerSet(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	t.Setenv(ReviewJournalSnapshotEnvVar, filepath.Join(root, "no-such-snapshot.md"))
+
+	out, err := tm.ReviewNoteOpen("", "", "written while pointer is set")
+	if err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if out != "Noted n1" {
+		t.Fatalf("expected 'Noted n1', got %q", out)
+	}
+
+	// Read the live file directly (bypassing loadJournalForDisplay) to prove
+	// the write landed in the live journal, not somewhere the pointer
+	// redirected it.
+	jm := reviewjournal.New(tm.Git)
+	j, err := jm.Load("", "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(j.Entries) != 1 || j.Entries[0].Note != "written while pointer is set" {
+		t.Fatalf("expected the write in the live journal, got entries: %+v", j.Entries)
 	}
 }

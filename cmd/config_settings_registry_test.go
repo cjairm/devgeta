@@ -579,3 +579,259 @@ func TestSettingsNotifySound_Unset(t *testing.T) {
 	_, isSet := s.Get(gc)
 	assert.False(t, isSet)
 }
+
+// --- review.reviewers ---
+
+func TestSettingsReviewers_Default(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	assert.Equal(t, "", s.Default())
+}
+
+func TestSettingsReviewers_GetUnset(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	value, isSet := s.Get(gc)
+
+	assert.False(t, isSet)
+	assert.Equal(t, "", value)
+}
+
+func TestSettingsReviewers_SetSingle(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"anthropic/claude-opus-4-6"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"anthropic/claude-opus-4-6"}, gc.Review.Reviewers)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, "anthropic/claude-opus-4-6", value)
+}
+
+func TestSettingsReviewers_SetMultiple(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"anthropic/claude-opus-4-6", "openai/gpt-5"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"anthropic/claude-opus-4-6", "openai/gpt-5"}, gc.Review.Reviewers)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, "anthropic/claude-opus-4-6, openai/gpt-5", value)
+}
+
+func TestSettingsReviewers_SetMultiSlugAccepted(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	// Only the first "/" is required; anything after it (including further
+	// slashes) is passed through untouched - no offline model-name
+	// validation, by design.
+	err := s.Set(gc, []string{"openrouter/anthropic/claude-3-opus"})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"openrouter/anthropic/claude-3-opus"}, gc.Review.Reviewers)
+}
+
+func TestSettingsReviewers_SetEmptyRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "requires at least one reviewer")
+	assert.Contains(t, err.Error(), "dg config unset review.reviewers")
+}
+
+func TestSettingsReviewers_SetMissingSlashRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"claude-opus"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider/model")
+	assert.Nil(t, gc.Review.Reviewers)
+}
+
+func TestSettingsReviewers_SetEmptyProviderRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"/claude-opus"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider/model")
+}
+
+func TestSettingsReviewers_SetEmptyModelRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"anthropic/"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider/model")
+}
+
+func TestSettingsReviewers_SetOneInvalidAmongValidRejectsAll(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"anthropic/claude-opus-4-6", "bad-entry"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "provider/model")
+	assert.Nil(t, gc.Review.Reviewers)
+}
+
+func TestSettingsReviewers_Unset(t *testing.T) {
+	s := findSettingForTest(t, "review.reviewers")
+	gc := &config.GlobalConfig{
+		Review: config.ReviewConfig{Reviewers: []string{"anthropic/claude-opus-4-6"}},
+	}
+
+	s.Unset(gc)
+
+	assert.Nil(t, gc.Review.Reviewers)
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+}
+
+// --- review.rounds ---
+
+func TestSettingsRounds_Default(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	assert.Equal(t, "3", s.Default())
+	assert.Equal(t, 3, config.DefaultReviewRounds)
+}
+
+func TestSettingsRounds_GetUnset(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	value, isSet := s.Get(gc)
+
+	assert.False(t, isSet)
+	assert.Equal(t, "0", value)
+}
+
+func TestSettingsRounds_SetValid(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"2"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 2, gc.Review.Rounds)
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, "2", value)
+}
+
+func TestSettingsRounds_SetMinBoundary(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"1"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, gc.Review.Rounds)
+}
+
+func TestSettingsRounds_SetMaxBoundary(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"5"})
+
+	require.NoError(t, err)
+	assert.Equal(t, 5, gc.Review.Rounds)
+}
+
+func TestSettingsRounds_SetBelowRangeRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"0"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be between 1 and 5")
+	assert.Equal(t, 0, gc.Review.Rounds)
+}
+
+func TestSettingsRounds_SetAboveRangeRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"6"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be between 1 and 5")
+	assert.Equal(t, 0, gc.Review.Rounds)
+}
+
+func TestSettingsRounds_SetNegativeRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"-1"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be between 1 and 5")
+}
+
+func TestSettingsRounds_SetNonIntegerRejected(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"three"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be an integer")
+}
+
+func TestSettingsRounds_SetTooManyValues(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"1", "2"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "accepts exactly one value")
+}
+
+// TestSettingsRounds_SetZeroRejectedButGetStaysUnset mirrors
+// TestSettingsScanDepth_SetZeroRoundTripsToUnset: 0 is outside review.rounds'
+// valid range, so Set already rejects it - unlike scan_depth, there is no
+// valid input that round-trips back to isSet=false, since rounds' zero value
+// (0) is never itself an accepted Set value. This test documents that
+// difference rather than assuming it holds without checking.
+func TestSettingsRounds_SetZeroRejectedButGetStaysUnset(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"0"})
+	require.Error(t, err, "0 is below review.rounds' valid range and must be rejected")
+
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+}
+
+func TestSettingsRounds_Unset(t *testing.T) {
+	s := findSettingForTest(t, "review.rounds")
+	gc := &config.GlobalConfig{Review: config.ReviewConfig{Rounds: 4}}
+
+	s.Unset(gc)
+
+	assert.Equal(t, 0, gc.Review.Rounds)
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+}

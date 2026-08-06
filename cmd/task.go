@@ -41,6 +41,9 @@ type taskRunner interface {
 	ReviewNotes(branch string, showPath, prune bool) (string, error)
 	ReviewNoteOpen(branch, cite, note string) (string, error)
 	ReviewNoteSettle(branch, id, resolution, cite, note string) (string, error)
+	ReviewNoteRatify(branch, id string) (string, error)
+	ReviewNoteReopen(branch, id string) (string, error)
+	ReviewRun(reviewer string) (string, error)
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
@@ -241,6 +244,8 @@ var (
 	taskReviewNoteBranchFlag string
 	taskReviewNoteOpenFlag   bool
 	taskReviewNoteSettleFlag bool
+	taskReviewNoteRatifyFlag bool
+	taskReviewNoteReopenFlag bool
 	taskReviewNoteIDFlag     string
 	taskReviewNoteAsFlag     string
 	taskReviewNoteAtFlag     string
@@ -287,10 +292,10 @@ committed and never appears in a diff, and it is deleted with the branch by
 }
 
 var taskReviewNoteCmd = &cobra.Command{
-	Use:   "review-note --open|--settle --note <text>",
-	Short: "Record or settle one review exchange in the branch's journal (for agents)",
-	Long: `Write one entry to the branch's review journal. Exactly one of --open or
---settle is required.
+	Use:   "review-note (--open|--settle) --note <text> | (--ratify|--reopen) --id <id>",
+	Short: "Record, settle, ratify, or reopen one review exchange (for agents and humans)",
+	Long: `Write one entry to the branch's review journal. Exactly one of --open,
+--settle, --ratify, or --reopen is required.
 
   --open --note "<text>" [--at <path[:line]>]
       Record a question or finding that is still awaiting an answer. Prints its
@@ -304,6 +309,22 @@ var taskReviewNoteCmd = &cobra.Command{
       Record an exchange that was never open — asked and answered in one
       conversation — straight into the settled section.
 
+  --ratify --id <id>
+      A human accepts an agent's provisional rejection: when the review loop's
+      coding agent decides a finding is wrong, it settles the entry "rejected"
+      with a note prefixed to mark that the agent — not a human — made the
+      call. --ratify strips that prefix, turning it into an ordinary rejection.
+      Only a human should run this; it fails on anything that is not a
+      rejected entry still carrying the agent's prefix, naming the actual
+      state so you can see why.
+
+  --reopen --id <id>
+      A human refuses an agent's provisional rejection: the entry returns to
+      open under the same id, with its original finding text intact and the
+      settle note dropped, so the next review round asks it again rather than
+      leaving it settled on the agent's say-so. Works on any settled entry,
+      not only agent rejections.
+
 --at is optional in both entry-creating forms: a design-level question ("should
 this be an ADR?") cites no file and never goes stale mechanically. When --at is
 given, the path must exist in the working tree — the command stamps the file's
@@ -313,26 +334,90 @@ cite code but could never be checked against it.
 --branch targets another branch; omit it for the current one.`,
 	Example: `  dg task review-note --open --at store.go:12 --note "write is not atomic"
   dg task review-note --settle --id n4 --as fixed --note "atomic rename added"
-  dg task review-note --settle --as answered --note "yes, ctx is threaded through"`,
+  dg task review-note --settle --as answered --note "yes, ctx is threaded through"
+  dg task review-note --ratify --id n7
+  dg task review-note --reopen --id n7`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if taskReviewNoteIDFlag != "" && !taskReviewNoteSettleFlag {
-			return fmt.Errorf("--id only applies to --settle")
+		if taskReviewNoteIDFlag != "" &&
+			!(taskReviewNoteSettleFlag || taskReviewNoteRatifyFlag || taskReviewNoteReopenFlag) {
+			return fmt.Errorf("--id only applies to --settle, --ratify, or --reopen")
+		}
+		if (taskReviewNoteRatifyFlag || taskReviewNoteReopenFlag) && taskReviewNoteIDFlag == "" {
+			return fmt.Errorf("--ratify and --reopen require --id")
 		}
 		tm := newTaskManager()
-		if taskReviewNoteOpenFlag {
+		switch {
+		case taskReviewNoteOpenFlag:
 			out, err := tm.ReviewNoteOpen(
 				taskReviewNoteBranchFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag,
 			)
 			return emitPRResult(cmd, out, err)
+		case taskReviewNoteRatifyFlag:
+			out, err := tm.ReviewNoteRatify(taskReviewNoteBranchFlag, taskReviewNoteIDFlag)
+			return emitPRResult(cmd, out, err)
+		case taskReviewNoteReopenFlag:
+			out, err := tm.ReviewNoteReopen(taskReviewNoteBranchFlag, taskReviewNoteIDFlag)
+			return emitPRResult(cmd, out, err)
+		case taskReviewNoteSettleFlag:
+			out, err := tm.ReviewNoteSettle(
+				taskReviewNoteBranchFlag,
+				taskReviewNoteIDFlag,
+				taskReviewNoteAsFlag,
+				taskReviewNoteAtFlag,
+				taskReviewNoteNoteFlag,
+			)
+			return emitPRResult(cmd, out, err)
+		default:
+			// Cobra's MarkFlagsOneRequired already rejects this in production,
+			// but RunE is also called directly by tests. Making --settle an
+			// explicit case rather than the default means "no mode flag" can
+			// never quietly settle an entry if that flag rule is ever relaxed.
+			return fmt.Errorf("one of --open, --settle, --ratify, or --reopen is required")
 		}
-		out, err := tm.ReviewNoteSettle(
-			taskReviewNoteBranchFlag,
-			taskReviewNoteIDFlag,
-			taskReviewNoteAsFlag,
-			taskReviewNoteAtFlag,
-			taskReviewNoteNoteFlag,
-		)
+	},
+}
+
+// taskReviewRunReviewerFlag is review-run's --reviewer flag.
+var taskReviewRunReviewerFlag string
+
+var taskReviewRunCmd = &cobra.Command{
+	Use:   "review-run [--reviewer code|document|skill]",
+	Short: "Run one round of headless AI review and print each reviewer's verdict (for agents)",
+	Long: `Run every reviewer model configured in "review.reviewers" against the current
+branch, one after another, headless, and print what each concluded.
+
+One invocation is one round. Rounds are not repeated here — the caller decides
+whether another round is worth it.
+
+--reviewer picks which reviewer agent runs (the same choices the "dg ws" R
+keybinding offers): code (default), document, or skill. Every configured model
+runs that same reviewer; with "review.reviewers" unset, one run uses OpenCode's
+default model.
+
+Refuses to run on the default branch or a detached HEAD — both before any
+reviewer starts — because a review compares a branch against the default one,
+and a review journal is keyed by branch name.
+
+Each reviewer reads the journal as it stood when the round began, so no
+reviewer sees what another raised or settled in the same round. Their entries
+still go to the live journal immediately and keep their real ids.
+
+Output is one line per reviewer, then the ids still open:
+
+  openai/gpt-5.2 → REQUEST CHANGES
+  google/gemini-3-pro → APPROVE
+  open: n4 n7
+
+An outcome is APPROVE, REQUEST CHANGES, NEEDS DISCUSSION, NO VERDICT (the run
+finished but stated no verdict), or ERROR(<reason>) (the run itself failed).
+NO VERDICT and ERROR are never approval. One reviewer failing does not stop
+the others.`,
+	Example: `  dg task review-run
+  dg task review-run --reviewer document`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newTaskManager().ReviewRun(taskReviewRunReviewerFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -479,6 +564,7 @@ func init() {
 	taskCmd.AddCommand(taskReviewPackageCmd)
 	taskCmd.AddCommand(taskReviewNotesCmd)
 	taskCmd.AddCommand(taskReviewNoteCmd)
+	taskCmd.AddCommand(taskReviewRunCmd)
 	taskCmd.AddCommand(taskWorktreeStartCmd)
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
@@ -513,16 +599,22 @@ func init() {
 	taskReviewNoteCmd.Flags().
 		BoolVar(&taskReviewNoteSettleFlag, "settle", false, "Settle an entry (with --id closes that open entry; without it records an exchange that was never open)")
 	taskReviewNoteCmd.Flags().
-		StringVar(&taskReviewNoteIDFlag, "id", "", "Entry id to settle, as printed by --open (e.g. n4)")
+		BoolVar(&taskReviewNoteRatifyFlag, "ratify", false, "Human-only: accept an agent's provisional rejection, stripping its provenance (requires --id)")
+	taskReviewNoteCmd.Flags().
+		BoolVar(&taskReviewNoteReopenFlag, "reopen", false, "Human-only: return a settled entry to open under the same id (requires --id)")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteIDFlag, "id", "", "Entry id to act on, as printed by --open (e.g. n4); required by --ratify and --reopen")
 	taskReviewNoteCmd.Flags().
 		StringVar(&taskReviewNoteAsFlag, "as", "", "Resolution for --settle: rejected, answered, or fixed")
 	taskReviewNoteCmd.Flags().
 		StringVar(&taskReviewNoteAtFlag, "at", "", "Cited location, path[:line] (optional; a design-level entry cites nothing)")
 	taskReviewNoteCmd.Flags().
-		StringVar(&taskReviewNoteNoteFlag, "note", "", "The question, finding, or answer text (required)")
-	taskReviewNoteCmd.MarkFlagsMutuallyExclusive("open", "settle")
-	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle")
-	_ = taskReviewNoteCmd.MarkFlagRequired("note")
+		StringVar(&taskReviewNoteNoteFlag, "note", "", "The question, finding, or answer text (required for --open and --settle)")
+	taskReviewNoteCmd.MarkFlagsMutuallyExclusive("open", "settle", "ratify", "reopen")
+	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle", "ratify", "reopen")
+
+	taskReviewRunCmd.Flags().
+		StringVar(&taskReviewRunReviewerFlag, "reviewer", task.DefaultReviewerKey, "Reviewer agent to run: code, document, or skill")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")

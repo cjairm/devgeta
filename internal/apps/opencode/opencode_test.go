@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
@@ -655,4 +657,128 @@ func TestForceConfigurePartsRtkRefusesRealExecInTests(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
 		t.Fatalf("expected test-guard refusal, got: %v", err)
 	}
+}
+
+func TestRun(t *testing.T) {
+	t.Run("WithModelAndEnv", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
+
+		out, err := app.Run(RunOptions{
+			Agent:   "code-reviewer",
+			Model:   "openai/gpt-5.2",
+			Prompt:  "review this branch",
+			Dir:     "/tmp/some-worktree",
+			Timeout: 30 * time.Minute,
+			Env:     []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"},
+		})
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+		if out != `{"type":"text"}` {
+			t.Fatalf("expected stdout to be returned, got %q", out)
+		}
+
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("expected ExecCommand to be called")
+		}
+		if lastCall.Command != constants.OpenCode {
+			t.Fatalf("expected command %q, got %q", constants.OpenCode, lastCall.Command)
+		}
+		wantArgs := []string{
+			"run", "--agent", "code-reviewer", "--format", "json",
+			"-m", "openai/gpt-5.2", "review this branch",
+		}
+		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
+			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
+		}
+		if lastCall.Dir != "/tmp/some-worktree" {
+			t.Fatalf("expected Dir to land on params, got %q", lastCall.Dir)
+		}
+		if lastCall.Timeout != 30*time.Minute {
+			t.Fatalf("expected Timeout to land on params, got %v", lastCall.Timeout)
+		}
+		wantEnv := []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"}
+		if !reflect.DeepEqual(lastCall.Env, wantEnv) {
+			t.Fatalf("expected Env %v, got %v", wantEnv, lastCall.Env)
+		}
+
+		// Exactly one call, and it went through the mock — never a real
+		// binary invocation.
+		if mockApp.Base.GetExecCommandCallCount() != 1 {
+			t.Fatalf(
+				"expected exactly 1 ExecCommand call, got %d",
+				mockApp.Base.GetExecCommandCallCount(),
+			)
+		}
+	})
+
+	t.Run("WithoutModelWithoutEnv", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
+
+		out, err := app.Run(RunOptions{
+			Agent:   "code-reviewer",
+			Prompt:  "review this branch",
+			Dir:     "/tmp/some-worktree",
+			Timeout: 30 * time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("Run returned error: %v", err)
+		}
+		if out != `{"type":"text"}` {
+			t.Fatalf("expected stdout to be returned, got %q", out)
+		}
+
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("expected ExecCommand to be called")
+		}
+		// No -m flag when Model is empty.
+		wantArgs := []string{
+			"run", "--agent", "code-reviewer", "--format", "json", "review this branch",
+		}
+		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
+			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
+		}
+		// Env left nil (not empty-non-nil) so ExecCommand's overlay stays
+		// off and the child keeps today's full inheritance — see
+		// CommandParams.Env's doc comment.
+		if len(lastCall.Env) != 0 {
+			t.Fatalf("expected no Env overlay, got %v", lastCall.Env)
+		}
+
+		if mockApp.Base.GetExecCommandCallCount() != 1 {
+			t.Fatalf(
+				"expected exactly 1 ExecCommand call, got %d",
+				mockApp.Base.GetExecCommandCallCount(),
+			)
+		}
+	})
+
+	t.Run("PropagatesErrorButStillReturnsStdout", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		mockApp.Base.SetExecCommandResult(
+			`{"type":"error"}`,
+			"stderr noise",
+			fmt.Errorf("exit status 1"),
+		)
+
+		out, err := app.Run(RunOptions{Agent: "code-reviewer", Prompt: "review"})
+		if err == nil {
+			t.Fatal("expected Run to return an error")
+		}
+		if !strings.Contains(err.Error(), "opencode run failed") {
+			t.Fatalf("expected wrapped error, got: %v", err)
+		}
+		// Partial/diagnostic output must still be handed back to the caller
+		// even on failure — a nonzero exit can still carry an error event.
+		if out != `{"type":"error"}` {
+			t.Fatalf("expected stdout on error path, got %q", out)
+		}
+	})
 }

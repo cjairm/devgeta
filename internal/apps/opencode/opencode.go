@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
@@ -276,6 +277,72 @@ func (o *OpenCode) ExecuteCommand(args ...string) error {
 		return fmt.Errorf("opencode command execution failed: %w", err)
 	}
 	return nil
+}
+
+// RunOptions configures a headless `opencode run` invocation (see (*OpenCode).Run).
+type RunOptions struct {
+	// Agent selects the OpenCode agent to run as (`--agent <name>`), e.g. a
+	// reviewer agent's name.
+	Agent string
+	// Model, when non-empty, pins the run to a specific `provider/model`
+	// (`-m provider/model`). Empty lets OpenCode use its configured default.
+	Model string
+	// Prompt is the run's message argument.
+	Prompt string
+	// Dir sets the command's working directory (e.g. a worktree path), so the
+	// agent operates against a specific checkout rather than devgeta's own cwd.
+	//
+	// Every production caller today (`dg task review-run`) deliberately leaves
+	// it empty: a review is always of the checkout the command was run from,
+	// so inheriting the process's cwd is the correct behavior there, not an
+	// oversight. The field stays because the working directory is part of this
+	// wrapper's contract — a caller that runs an agent against a different
+	// checkout must be able to say so here rather than reach around the
+	// wrapper (CLAUDE.md §6).
+	Dir string
+	// Timeout bounds the run. Headless review runs can take a long time, so
+	// callers are expected to pass a generous value rather than leave this
+	// zero (unbounded).
+	Timeout time.Duration
+	// Env adds child-only environment variables on top of devgeta's own
+	// environment (e.g. a review-round snapshot pointer) — see
+	// CommandParams.Env for the overlay semantics.
+	Env []string
+}
+
+// Run executes `opencode run` headlessly and returns its captured stdout.
+//
+// This is the only place in devgeta that assembles the `opencode run` command
+// line (CLAUDE.md §6): every caller that needs a headless agent run — e.g.
+// `dg task review-run` spawning reviewer agents — goes through here rather
+// than building its own CommandParams. `--format json` is always requested:
+// a headless run's whole point is to be machine-read, and every caller of
+// this method needs that, so it is not a caller-chosen option. Interpreting
+// the resulting NDJSON events and the `**Status:**` verdict line stays out of
+// this method and belongs to the caller. Unlike ExecuteCommand, which
+// discards output, Run returns stdout because the caller's whole job is to
+// read what the agent produced — stdout is returned even when err is
+// non-nil, since a non-zero exit can still carry a partial or diagnostic
+// event stream worth inspecting.
+func (o *OpenCode) Run(opts RunOptions) (string, error) {
+	args := []string{"run", "--agent", opts.Agent, "--format", "json"}
+	if opts.Model != "" {
+		args = append(args, "-m", opts.Model)
+	}
+	args = append(args, opts.Prompt)
+
+	params := cmd.CommandParams{
+		Command: constants.OpenCode,
+		Args:    args,
+		Dir:     opts.Dir,
+		Timeout: opts.Timeout,
+		Env:     opts.Env,
+	}
+	stdout, _, err := o.Base.ExecCommand(params)
+	if err != nil {
+		return stdout, fmt.Errorf("opencode run failed: %w", err)
+	}
+	return stdout, nil
 }
 
 func (o *OpenCode) Update() error {

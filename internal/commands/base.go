@@ -84,6 +84,19 @@ type CommandParams struct {
 	// can run a tool that has no directory flag (e.g. gh) against a specific
 	// repo or worktree. Empty preserves the process's current directory.
 	Dir string
+	// Env, when non-empty, adds child-only environment variables on top of
+	// devgeta's own environment (an overlay, not a replacement) — so a caller
+	// can pass one variable to a single spawned process without disturbing
+	// anything else. Empty leaves exec.Cmd.Env nil, preserving today's
+	// behavior of full inheritance from the current process.
+	//
+	// Combining it with IsSudo does NOT reliably deliver the overlay: real
+	// sudo resets the environment it passes to the child unless it is invoked
+	// with -E or the variable is listed in the sudoers env_keep, so the child
+	// can silently run without it. No caller pairs the two today; a caller
+	// that needs to must arrange for sudo to preserve the variable rather than
+	// assume this field is enough.
+	Env []string
 }
 
 func NewBaseCommand() *BaseCommand {
@@ -247,6 +260,15 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	execCommand := exec.CommandContext(ctx, command, args...)
 	if cmd.Dir != "" {
 		execCommand.Dir = cmd.Dir
+	}
+	// Overlay, not a replacement: append onto the inherited environment so the
+	// child still gets PATH/HOME/etc. Leaving Env nil when cmd.Env is empty
+	// preserves today's behavior of full inheritance from the current
+	// process — exec.Cmd.Env replaces rather than extends when set, so
+	// assigning only the extra variables here would silently drop everything
+	// else the child needs.
+	if len(cmd.Env) > 0 {
+		execCommand.Env = append(os.Environ(), cmd.Env...)
 	}
 	execCommand.Stdin = os.Stdin
 
