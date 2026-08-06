@@ -44,6 +44,8 @@ type taskRunner interface {
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
+	Scratch() (string, error)
+	ScratchClean(target string) error
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
@@ -432,6 +434,35 @@ origin main --tags".`,
 	},
 }
 
+// taskScratchCleanFlag is scratch's --clean flag.
+var taskScratchCleanFlag string
+
+var taskScratchCmd = &cobra.Command{
+	Use:   "scratch [--clean <path>]",
+	Short: "Allocate or remove a devgeta-owned scratch directory (for agents)",
+	Long: `Bare "dg task scratch" allocates a fresh, uniquely-named directory under
+devgeta's scratch root (~/.cache/devgeta/scratch, ADR-0015) and prints its
+absolute path — the destination for a command's working files instead of
+/tmp, which both agents prompt on when written to directly.
+
+--clean <path> removes a directory this command allocated. Pass it the exact
+path scratch printed: cleanup only accepts a direct child of the scratch
+root whose name carries the allocation prefix, so a reconstructed or parent
+path is refused rather than silently widened.`,
+	Example: `  SCRATCH=$(dg task scratch)
+  ... write files under "$SCRATCH" ...
+  dg task scratch --clean "$SCRATCH"`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tm := newTaskManager()
+		if taskScratchCleanFlag != "" {
+			return tm.ScratchClean(taskScratchCleanFlag)
+		}
+		out, err := tm.Scratch()
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(taskCmd)
 	// Standard Cobra help for the whole task subtree (overrides the branded
@@ -451,6 +482,10 @@ func init() {
 	taskCmd.AddCommand(taskWorktreeStartCmd)
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
+	taskCmd.AddCommand(taskScratchCmd)
+
+	taskScratchCmd.Flags().
+		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
 
 	taskBranchDiffCmd.Flags().
 		StringVar(&taskBranchDiffFileFlag, "file", "", "Diff only this file, bypassing exclusions")

@@ -87,6 +87,14 @@ type mockTaskRunner struct {
 	releaseCalled         bool
 	releaseRet            string
 	releaseErr            error
+
+	scratchCalled bool
+	scratchRet    string
+	scratchErr    error
+
+	scratchCleanArg    string
+	scratchCleanCalled bool
+	scratchCleanErr    error
 }
 
 func (m *mockTaskRunner) RefreshBranch(target string) error {
@@ -187,6 +195,17 @@ func (m *mockTaskRunner) Release(version, messageFile string, push bool) (string
 	m.releaseMessageFileArg = messageFile
 	m.releasePushArg = push
 	return m.releaseRet, m.releaseErr
+}
+
+func (m *mockTaskRunner) Scratch() (string, error) {
+	m.scratchCalled = true
+	return m.scratchRet, m.scratchErr
+}
+
+func (m *mockTaskRunner) ScratchClean(target string) error {
+	m.scratchCleanCalled = true
+	m.scratchCleanArg = target
+	return m.scratchCleanErr
 }
 
 func setupTaskMock(t *testing.T, mock taskRunner) func() {
@@ -892,6 +911,77 @@ func TestTask_Release(t *testing.T) {
 		defer func() { taskReleaseMessageFileFlag = "" }()
 
 		err := taskReleaseCmd.RunE(taskReleaseCmd, []string{"v0.12.0"})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestTask_Scratch(t *testing.T) {
+	t.Run("bare call allocates", func(t *testing.T) {
+		mock := &mockTaskRunner{scratchRet: "/home/user/.cache/devgeta/scratch/task-abc123"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskScratchCleanFlag = ""
+
+		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.scratchCalled {
+			t.Error("expected Scratch to be called")
+		}
+		if mock.scratchCleanCalled {
+			t.Error("expected ScratchClean NOT to be called")
+		}
+	})
+
+	t.Run("bare call propagates error", func(t *testing.T) {
+		mock := &mockTaskRunner{scratchErr: fmt.Errorf("failed to ensure scratch dir")}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskScratchCleanFlag = ""
+
+		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
+		if err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("--clean calls ScratchClean with the flag value, not Scratch", func(t *testing.T) {
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskScratchCleanFlag = "/home/user/.cache/devgeta/scratch/task-abc123"
+		defer func() { taskScratchCleanFlag = "" }()
+
+		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.scratchCleanCalled {
+			t.Error("expected ScratchClean to be called")
+		}
+		if mock.scratchCalled {
+			t.Error("expected Scratch NOT to be called")
+		}
+		if mock.scratchCleanArg != taskScratchCleanFlag {
+			t.Errorf(
+				"expected ScratchClean arg %q, got %q",
+				taskScratchCleanFlag,
+				mock.scratchCleanArg,
+			)
+		}
+	})
+
+	t.Run("--clean propagates error", func(t *testing.T) {
+		mock := &mockTaskRunner{scratchCleanErr: fmt.Errorf("not under the scratch root")}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskScratchCleanFlag = "/etc"
+		defer func() { taskScratchCleanFlag = "" }()
+
+		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
 		if err == nil {
 			t.Fatal("expected error")
 		}

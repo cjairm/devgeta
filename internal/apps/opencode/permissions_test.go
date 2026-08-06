@@ -39,7 +39,10 @@ func renderedOpenCodeConfig(t *testing.T) []byte {
 	if err := files.GenerateFromTemplate(
 		tmplPath,
 		out,
-		map[string]string{"Theme": DEFAULT_THEME_NAME},
+		map[string]string{
+			"Theme":          DEFAULT_THEME_NAME,
+			"ScratchDirGlob": `"/tmp/placeholder-scratch/**"`,
+		},
 	); err != nil {
 		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
 	}
@@ -193,9 +196,15 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			"./secrets/**": "deny",
 		},
 		"edit": {
-			".git/**":      "deny",
-			".claude/**":   "deny",
-			".opencode/**": "deny",
+			".git/**":                        "deny",
+			"**/.claude/settings.json":       "deny",
+			"**/.claude/settings.local.json": "deny",
+			"**/.claude/hooks/**":            "deny",
+			"**/.opencode/opencode.json":     "deny",
+			"**/.opencode/plugin/**":         "deny",
+			"**/.mcp.json":                   "deny",
+			"~/.claude/**":                   "deny",
+			"~/.config/opencode/**":          "deny",
 		},
 	}
 
@@ -399,7 +408,14 @@ func claudePermissions(t *testing.T) map[string]map[string]string {
 	t.Helper()
 	tmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
 	out := filepath.Join(t.TempDir(), "settings.json")
-	if err := files.GenerateFromTemplate(tmplPath, out, config.IntegrationsConfig{}); err != nil {
+	// Mirrors claude.settingsTemplateData's shape (unexported, different
+	// package) rather than importing it: the template only needs a
+	// ScratchDir field alongside the promoted IntegrationsConfig fields.
+	renderData := struct {
+		config.IntegrationsConfig
+		ScratchDir string
+	}{ScratchDir: `"/tmp/placeholder-scratch"`}
+	if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 		t.Fatalf("failed to render settings.json.tmpl: %v", err)
 	}
 	data, err := os.ReadFile(out)
@@ -541,4 +557,205 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestScratchDirGrantParity is the guard against ADR-0015's scratch grant
+// drifting to one agent only. The two configs express it in different
+// shapes — Claude's permissions.additionalDirectories is a bare directory
+// (no glob), OpenCode's permission.external_directory is a gitignore-style
+// pattern map that needs a "/**" suffix to cover nested paths — so a plain
+// string-equality check across the two files (the way
+// TestClaudeAndOpenCodePermissionParity compares read/bash/edit) would be
+// wrong here. This strips OpenCode's suffix back off and compares the
+// underlying root instead.
+func TestScratchDirGrantParity(t *testing.T) {
+	const wantRoot = "/tmp/dg-grant-parity-scratch"
+
+	claudeTmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
+	claudeOut := filepath.Join(t.TempDir(), "settings.json")
+	claudeRenderData := struct {
+		config.IntegrationsConfig
+		ScratchDir string
+	}{ScratchDir: mustJSONString(t, wantRoot)}
+	if err := files.GenerateFromTemplate(claudeTmplPath, claudeOut, claudeRenderData); err != nil {
+		t.Fatalf("failed to render settings.json.tmpl: %v", err)
+	}
+	claudeData, err := os.ReadFile(claudeOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claudeCfg struct {
+		Permissions struct {
+			AdditionalDirectories []string `json:"additionalDirectories"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(claudeData, &claudeCfg); err != nil {
+		t.Fatalf("rendered settings.json is not valid JSON: %v\n%s", err, claudeData)
+	}
+	if len(claudeCfg.Permissions.AdditionalDirectories) != 1 ||
+		claudeCfg.Permissions.AdditionalDirectories[0] != wantRoot {
+		t.Fatalf(
+			"expected additionalDirectories == [%q], got %v",
+			wantRoot,
+			claudeCfg.Permissions.AdditionalDirectories,
+		)
+	}
+
+	openCodeTmplPath := filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl")
+	openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
+	if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
+		"Theme":          DEFAULT_THEME_NAME,
+		"ScratchDirGlob": mustJSONString(t, wantRoot+"/**"),
+	}); err != nil {
+		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
+	}
+	openCodeData, err := os.ReadFile(openCodeOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openCodeCfg struct {
+		Permission struct {
+			ExternalDirectory map[string]string `json:"external_directory"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal(openCodeData, &openCodeCfg); err != nil {
+		t.Fatalf("rendered opencode.json is not valid JSON: %v\n%s", err, openCodeData)
+	}
+	if len(openCodeCfg.Permission.ExternalDirectory) != 1 {
+		t.Fatalf(
+			"expected exactly one external_directory grant, got %v",
+			openCodeCfg.Permission.ExternalDirectory,
+		)
+	}
+	for pattern, action := range openCodeCfg.Permission.ExternalDirectory {
+		if action != "allow" {
+			t.Errorf("external_directory[%q] = %q, want %q", pattern, action, "allow")
+		}
+		gotRoot := strings.TrimSuffix(pattern, "/**")
+		if gotRoot != wantRoot {
+			t.Errorf(
+				"external_directory grants %q, which strips to root %q — want %q (parity with additionalDirectories)",
+				pattern,
+				gotRoot,
+				wantRoot,
+			)
+		}
+	}
+}
+
+// TestScratchDirGrantRendersValidJSONForHostilePaths is the regression test
+// for the class of bug ADR-0015 §2 exists to prevent: text/template does no
+// JSON escaping, and ScratchDir/ScratchDirGlob were the first
+// user-influenced (XDG_CACHE_HOME-derived) values either template ever
+// interpolated. Renders both templates with a raw (unescaped) hostile root
+// and asserts the OUTPUT is still valid JSON — proving the production code
+// path (json.Marshal before templating, not the template itself) is what
+// carries the escaping.
+func TestScratchDirGrantRendersValidJSONForHostilePaths(t *testing.T) {
+	hostileRoots := []string{
+		"/tmp/dg cache/scratch",   // space
+		`/tmp/dg"cache/scratch`,   // double quote
+		`/tmp/dg\cache/scratch`,   // backslash
+		"/tmp/dg\"ca\\pe/scratch", // quote and backslash together
+	}
+
+	claudeTmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
+	openCodeTmplPath := filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl")
+
+	for _, root := range hostileRoots {
+		t.Run(root, func(t *testing.T) {
+			claudeOut := filepath.Join(t.TempDir(), "settings.json")
+			claudeRenderData := struct {
+				config.IntegrationsConfig
+				ScratchDir string
+			}{ScratchDir: mustJSONString(t, root)}
+			if err := files.GenerateFromTemplate(
+				claudeTmplPath,
+				claudeOut,
+				claudeRenderData,
+			); err != nil {
+				t.Fatalf("failed to render settings.json.tmpl: %v", err)
+			}
+			claudeData, err := os.ReadFile(claudeOut)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(claudeData) {
+				t.Errorf(
+					"rendered settings.json is not valid JSON for root %q:\n%s",
+					root,
+					claudeData,
+				)
+			}
+
+			openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
+			if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
+				"Theme":          DEFAULT_THEME_NAME,
+				"ScratchDirGlob": mustJSONString(t, root+"/**"),
+			}); err != nil {
+				t.Fatalf("failed to render opencode.json.tmpl: %v", err)
+			}
+			openCodeData, err := os.ReadFile(openCodeOut)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(openCodeData) {
+				t.Errorf(
+					"rendered opencode.json is not valid JSON for root %q:\n%s",
+					root,
+					openCodeData,
+				)
+			}
+		})
+	}
+}
+
+// mustJSONString renders v as a JSON-encoded value (e.g. a Go string ->
+// `"..."` with quotes) — the pre-escaped form settings.json.tmpl and
+// opencode.json.tmpl interpolate directly, since text/template does no
+// JSON escaping of its own (ADR-0015 §2).
+func mustJSONString(t *testing.T, v string) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal %q: %v", v, err)
+	}
+	return string(b)
+}
+
+// TestSharedCommandsNeverReferenceTmp is ADR-0015's constraint that
+// devgeta-authored commands use the scratch directory (`devgeta task
+// scratch`) rather than /tmp — enforced against the embedded configs
+// themselves (CLAUDE.md §12), since a comment alone will not survive future
+// edits. Only commands/ is checked: skills/ vendors upstream Superpowers
+// content with its own /tmp paths, deliberately excluded (ADR-0015 §7).
+func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
+	dir := filepath.Join("..", "..", "..", "configs", "shared", "commands")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatalf("failed to read %s: %v", e.Name(), err)
+			}
+			if strings.Contains(string(data), "/tmp/") {
+				t.Errorf(
+					"%s references /tmp/ — use `devgeta task scratch` instead (ADR-0015)",
+					e.Name(),
+				)
+			}
+		})
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no command files found in %s", dir)
+	}
 }

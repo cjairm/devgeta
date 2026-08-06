@@ -494,13 +494,15 @@ Where to find and add code:
 Devgeta configures two AI coding agents, and they must behave the same. Every
 policy change goes into **both** files, expressed in each one's own format:
 
-| Concern              | Claude Code                         | OpenCode                                   |
-| -------------------- | ----------------------------------- | ------------------------------------------ |
-| Permissions          | `configs/claude/settings.json.tmpl` | `configs/opencode/opencode.json.tmpl`      |
-| Formatting on save   | `configs/claude/format.sh`          | `formatter` block in `opencode.json.tmpl`  |
-| Command redirects    | `configs/claude/task-redirect.sh`   | `configs/opencode/plugin/task-redirect.js` |
-| Agent activity state | `configs/claude/agent-state.sh`     | `configs/opencode/plugin/notify.js`        |
-| Agents / commands    | `configs/shared/` (synced to both)  | `configs/shared/` (synced to both)         |
+| Concern                 | Claude Code                                                       | OpenCode                                                                   |
+| ----------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Permissions             | `configs/claude/settings.json.tmpl`                               | `configs/opencode/opencode.json.tmpl`                                      |
+| Formatting on save      | `configs/claude/format.sh`                                        | `formatter` block in `opencode.json.tmpl`                                  |
+| Command redirects       | `configs/claude/task-redirect.sh`                                 | `configs/opencode/plugin/task-redirect.js`                                 |
+| Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                        |
+| Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor |
+| Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                               |
+| Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                         |
 
 Rules:
 

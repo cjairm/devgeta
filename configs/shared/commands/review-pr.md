@@ -97,7 +97,13 @@ Findings that point at a specific line become **inline comments** anchored to th
 
 **Write plainly.** Everything posted must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler. Each comment says what's wrong, why it matters, and the fix — nothing more.
 
-**Body** — GitHub-Flavored Markdown, written to a scratch file (`/tmp/review.md`); pass it with `--body-file` so backticks and apostrophes survive:
+Allocate a scratch directory for this review's files — one call, reused for both:
+
+```bash
+SCRATCH=$(devgeta task scratch)
+```
+
+**Body** — GitHub-Flavored Markdown, written to a scratch file (`"$SCRATCH/review.md"`); pass it with `--body-file` so backticks and apostrophes survive:
 
 ```markdown
 ## Summary
@@ -121,7 +127,7 @@ Findings that point at a specific line become **inline comments** anchored to th
 <!-- footer when applicable: "Skipped N finding(s) already addressed (resolved threads, author replies, review summaries, or conversation comments)." -->
 ```
 
-**Inline comments** — write a JSON array to a scratch file (`/tmp/comments.json`). Each entry anchors to a diff line; only lines present in the diff can carry one. Lead the body with the severity tag:
+**Inline comments** — write a JSON array to a scratch file (`"$SCRATCH/comments.json"`). Each entry anchors to a diff line; only lines present in the diff can carry one. Lead the body with the severity tag:
 
 ```json
 [
@@ -161,11 +167,21 @@ When approving **with** comments the author should look at before merging (non-b
 ```bash
 devgeta task submit-review \
   --event request-changes \
-  --body-file /tmp/review.md \
-  --comments-file /tmp/comments.json      # omit when there are no inline findings
+  --body-file "$SCRATCH/review.md" \
+  --comments-file "$SCRATCH/comments.json"      # omit when there are no inline findings
 ```
 
 Add `--pr PR_NUMBER` when you resolved a number in step 1. The review posts atomically — one notification, all inline comments grouped under it.
+
+**Clean up on every exit path, not just the happy one:**
+
+```bash
+devgeta task scratch --clean "$SCRATCH"
+```
+
+Run this once you are done with the directory — after a successful submit, and equally after a failed one or any early exit (you abandon the review, the PR turns out to be already handled, submit errors out). `--clean` is idempotent, so running it twice is safe and running it after a partial failure is safe.
+
+If submit failed, **print the review body and any inline comments into your reply before cleaning up**, so nothing is lost and the user can post it by hand. Do not leave the directory behind as the backup — a stale scratch directory is only swept during `dg configure --force`, so "I'll leave it there just in case" means it sits around indefinitely.
 
 **Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies, **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
 

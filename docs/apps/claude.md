@@ -20,6 +20,7 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 | `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                 |
 | `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                 |
 | `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                 |
+| `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                 |
 | `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                 |
 | `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly       |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                              |
@@ -44,21 +45,33 @@ override the broad allow:
 - **deny** — never allowed: network exfiltration tools, credential file reads
   (SSH keys, cloud CLI configs, token files, shell history), privilege
   escalation, persistence mechanisms (crontab/launchctl), destructive disk ops,
-  and file edits to `.git/`, `.claude/`, and shell rc files. `Edit(path)` rules
-  cover all file-editing tools (Edit, Write, NotebookEdit); `Write(path)` rules
-  are not matched by file permission checks, so they must not be used.
+  and file edits to `.git/` and shell rc files. `Edit(path)` rules cover all
+  file-editing tools (Edit, Write, NotebookEdit); `Write(path)` rules are not
+  matched by file permission checks, so they must not be used.
 
 Deny and ask rules apply in **every** permission mode, including
 `bypassPermissions` (`claude --dangerously-skip-permissions`), so the guardrails
 survive YOLO sessions.
 
+**`permissions.additionalDirectories` grants one scratch directory** —
+`paths.EnsureScratchDir()`'s path (`~/.cache/devgeta/scratch` by default,
+honoring `XDG_CACHE_HOME`), rendered into `settings.json` at configure time.
+`devgeta task scratch` allocates a unique subdirectory under it for commands
+that need a working file outside the project directory (`/review-pr`,
+`/create-pr`) instead of writing to `/tmp`, which this agent would otherwise
+prompt on. See [ADR-0015](../decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md).
+
 **Known limits:** Bash deny rules are prefix matchers — interpreter one-liners
 (`python -c`, `node -e`) and shell wrappers (`sh -c "..."`) can evade them, so
-the deny list is friction and defense-in-depth, not a security boundary. For a
-real boundary on high-autonomy work, enable Claude Code's built-in OS sandbox
-(`/sandbox`; Seatbelt on macOS) which enforces filesystem and network limits at
-the kernel level, and keep Claude Code up to date (deny-list bypass bugs have
-been patched in past releases).
+the deny list is friction and defense-in-depth, not a security boundary. The
+same limit applies to the agent-config guard below: it only intercepts
+Edit/Write, so `echo … > .claude/settings.json` or a `python3 -c` one-liner
+reaches the same files through Bash untouched — a limit that already existed
+in the blanket `Edit(.claude/**)` deny this guard replaced, not one this
+change introduces. For a real boundary on high-autonomy work, enable Claude
+Code's built-in OS sandbox (`/sandbox`; Seatbelt on macOS) which enforces
+filesystem and network limits at the kernel level, and keep Claude Code up to
+date (deny-list bypass bugs have been patched in past releases).
 
 ## Formatting & linting (PostToolUse hook)
 
@@ -282,13 +295,102 @@ The OpenCode plugin equivalent
 (`~/.config/opencode/plugin/suppression-guard.js`) mirrors the same pattern
 list and bypass variable, importing `isDevgetaRepo` from `task-redirect.js`.
 
+## Agent-config guard (PreToolUse hook)
+
+`settings.json` registers `~/.claude/agent-config-guard.sh` under the same
+`Edit|Write` matcher as suppression-guard.sh. It denies an edit that would
+modify an agent's own configuration — permissions, hooks, agent/command/skill
+definitions, or plugins — rather than the source code it was asked to work
+on: an agent that can rewrite its own permissions can grant itself any
+permission the deny list withholds.
+
+It replaces the blanket `Edit(.claude/**)` / `Edit(.opencode/**)` denies that
+used to carry this rule. Those matched a directory of that name **at any
+depth**, so every source file inside an in-repo worktree
+(`<repo>/.claude/worktrees/<name>/` — `claude --worktree`, or devgeta's own
+`worktree.location=in-repo`) was wrongly denied too, and deny always wins over
+a same-scope allow with no specificity tiebreak, so a `.claude/worktrees/**`
+allow carve-out could not fix it. A hook can express the exception a
+permission rule cannot:
+
+1. a `.claude` path segment **not** immediately followed by `worktrees`;
+2. **any** `.opencode` path segment — no exception, since nothing creates
+   `.opencode/worktrees/`;
+3. a path under OpenCode's resolved global config root
+   (`${XDG_CONFIG_HOME:-$HOME/.config}/opencode`) or under
+   `$OPENCODE_CONFIG_DIR` when set — both verified additive, not relocating,
+   against the installed OpenCode binary (`opencode debug paths`), so this
+   guard (deployed to the default root) still loads and can enforce them;
+4. the file named by `$OPENCODE_CONFIG` when set, resolved against every
+   candidate base — OpenCode's own resolution base for a relative value could
+   not be established from outside the binary, so the guard checks all of
+   them rather than guessing one.
+
+`$CLAUDE_CONFIG_DIR` is **not** handled: devgeta deploys this very hook to a
+fixed `~/.claude/`, and `settings.json.tmpl`'s hook commands are themselves
+literal `~/.claude/*.sh` paths, so under a relocated Claude root this hook —
+along with every other Claude integration devgeta ships — simply does not
+run. That is a devgeta-deployment limit, not something a clause here could
+fix.
+
+**Canonicalization is the guard's load-bearing step.** The target path is
+made absolute against the payload's `cwd`, lexically cleaned of `.`/`..`
+(always succeeds), then symlinks are resolved on the deepest **existing**
+ancestor with the not-yet-existing tail re-appended — a `Write` target
+usually doesn't exist yet. Without this, `.claude/worktrees/../agents/x.md`
+would pass a naive segment walk, and a symlink under `worktrees/` pointing at
+`.claude/agents/` would put a denied directory behind an allowed-looking
+path. Symlink resolution is bounded (16 hops) against a self-referential
+loop; on any resolution failure the guard falls back to the lexically
+cleaned path rather than skipping the check — the one place this guard
+family's fail-open stance does not apply, so a `..` escape is closed
+unconditionally regardless of filesystem state.
+
+A settings-level floor backs this up for when the guard itself cannot run
+(missing `jq`, malformed payload):
+
+```
+Edit(**/.claude/settings.json)        Edit(**/.opencode/opencode.json)
+Edit(**/.claude/settings.local.json)  Edit(**/.opencode/plugin/**)
+Edit(**/.claude/hooks/**)             Edit(**/.mcp.json)
+Edit(~/.claude/**)                    Edit(~/.config/opencode/**)
+```
+
+These are the paths that are never legitimately agent-edited in any repo or
+worktree, so they need no `worktrees` exception and can be expressed as plain
+deny rules. The floor and the guard are deliberately asymmetric in coverage —
+the floor covers only this enumerable never-edit set (and survives the guard
+failing open); the guard covers everything else under `.claude/`/`.opencode/`,
+including surface the tools have not shipped yet.
+
+**Scope:** GLOBAL — it replaces a rule that was already global, and gating it
+to the devgeta repo would silently remove escalation protection from every
+other project on the machine.
+
+**Bypass:** export `DEVGETA_SKIP_AGENT_CONFIG_GUARD=1` in the shell that
+launches this agent (e.g. the repo's `.envrc`), BEFORE invoking the agent —
+not inside the command — because the hook reads its own environment.
+
+The OpenCode plugin equivalent (`~/.config/opencode/plugin/agent-config-guard.js`)
+mirrors the same four-clause rule and the same bypass variable. It does not
+hand-roll the bounded symlink chase the bash version needs: `fs.realpathSync`
+already resolves an existing path's full symlink chain (with the OS's own
+loop detection) in one call, so only the "resolve as much of a not-yet-existing
+path as exists" step is written by hand, matching the bash version's shape.
+
+See [ADR-0014](../decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)
+for the full design and the table of canonicalization test cases.
+
 **Shared hook code:** `task-redirect.sh`, `secret-guard.sh`, and
 `suppression-guard.sh` all source small helper files from `~/.claude/lib/`
 (command segmentation, the devgeta-repo gate) instead of duplicating that
-logic — safe on the Claude side since nothing auto-executes files there. The
-OpenCode side deliberately does **not** mirror this with a standalone helper
-file under `plugin/`: see ADR-0006 for why (OpenCode's plugin loader invokes
-every export of every file in that directory as if it were a plugin).
+logic — safe on the Claude side since nothing auto-executes files there.
+`agent-config-guard.sh` does **not** source these: it has no devgeta-repo
+scoping (it is global) and no command-segment splitting to do, so it has
+nothing in `lib/` to share. The OpenCode side deliberately does **not**
+mirror the sharing pattern with a standalone helper file under `plugin/`: see
+ADR-0006 for why (OpenCode's plugin loader invokes every export of every file
+in that directory as if it were a plugin).
 
 ## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
 

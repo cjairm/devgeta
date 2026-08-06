@@ -849,6 +849,42 @@ A failure partway through a mutation (reset, commit, tag, or push) reports the e
 state left behind and the raw git command to finish or undo it by hand, since these
 steps are hard to reverse once they run.
 
+**Scratch directory subcommand** (a devgeta-owned working directory instead of
+`/tmp` — see [ADR-0015](decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md)):
+
+| Subcommand | Args / Flags     | Description                                                                                                                  |
+| ---------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `scratch`  | `--clean <path>` | Bare call allocates a fresh directory under the scratch root and prints its path; `--clean` removes one previously allocated |
+
+Bare `dg task scratch` calls `paths.EnsureScratchDir()` — creating
+`~/.cache/devgeta/scratch` (honoring `XDG_CACHE_HOME`) at mode `0700` if
+absent, rather than assuming a prior `dg configure` did — then
+`os.MkdirTemp`s a `task-*`-prefixed subdirectory under it and prints its
+absolute path on one line.
+
+`--clean <path>` accepts only a real directory that is a direct child of the
+scratch root and carries the `task-` prefix: the root itself, a grandchild, a
+directory beside the root, an unprefixed child, a relative path, a `..`
+escape, and **any** symlink (resolvable or not) are all refused rather than
+silently widening what gets deleted. Bounds are checked lexically first, so
+an out-of-bounds path is an error whether or not it exists, then re-checked
+after symlink resolution to catch a symlinked ancestor. It is idempotent — an
+in-bounds path that is already gone succeeds — so a command's cleanup can run
+on failure paths and retries. Pass it the exact path `scratch` printed; a
+reconstructed or parent path is refused by design. Not enforced: a session
+cleaning a sibling session's directory by guessing its random suffix — the
+only parties able to do that are the same user's own agent sessions, so
+ownership isolation stops there deliberately.
+
+The same `task-` ownership rule bounds the stale-directory prune that
+`dg configure --force` runs: anything a user keeps under the granted scratch
+root is left alone regardless of age.
+
+This is what `/review-pr` and `/create-pr` allocate their scratch files
+under instead of `/tmp` — see
+[docs/apps/claude.md](apps/claude.md#permissions-model) for why `/tmp` would
+otherwise prompt on every run.
+
 **Redirect hook** (steers agents from raw git to the task equivalents above):
 a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to
 `~/.claude/task-redirect.sh` and registered on the `Bash` tool in

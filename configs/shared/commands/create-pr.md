@@ -93,13 +93,15 @@ Prefer `--body-file` over inline `--body`: a body with fenced code blocks or bac
 
 ```bash
 git push -u origin $(git branch --show-current)
-# write the assembled Markdown body to /tmp/pr-body.md, then:
-devgeta task create-pr --title "<title>" --body-file /tmp/pr-body.md   # add --base <branch> for a non-default target
+SCRATCH=$(devgeta task scratch)
+# write the assembled Markdown body to "$SCRATCH/pr-body.md", then:
+devgeta task create-pr --title "<title>" --body-file "$SCRATCH/pr-body.md"   # add --base <branch> for a non-default target
+devgeta task scratch --clean "$SCRATCH"
 ```
 
 Inline `--body "<text>"` is fine only for a trivial one-line body with no backticks or apostrophes.
 
-`devgeta task create-pr` prints the new PR's URL. If it fails, output the title + body so the user can open the PR manually.
+`devgeta task create-pr` prints the new PR's URL. If it fails, output the title + body in your reply so the user can open the PR manually, then still run `--clean` — the body is preserved in the reply, and a scratch directory left behind is only swept during `dg configure --force`, so skipping cleanup means it lingers indefinitely. `--clean` is idempotent, so it is safe on every exit path.
 
 ## Rules
 

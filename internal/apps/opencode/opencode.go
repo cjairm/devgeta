@@ -10,6 +10,7 @@
 package opencode
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -120,8 +121,24 @@ func (o *OpenCode) ForceConfigure() error {
 			return fmt.Errorf("failed to copy opencode config theme: %w", err)
 		}
 	}
+	scratchDir, err := paths.EnsureScratchDir()
+	if err != nil {
+		return fmt.Errorf("failed to ensure scratch dir: %w", err)
+	}
+	// external_directory keys use gitignore-style patterns (like the
+	// read/edit blocks above), so the grant needs a "/**" suffix to cover
+	// nested paths — unlike Claude's additionalDirectories, which grants a
+	// bare directory. Marshal the FULL key (suffix included) in one call:
+	// concatenating a literal suffix onto an already-escaped string would
+	// corrupt the JSON if the path itself needed any escaping.
+	scratchDirGlobJSON, err := json.Marshal(scratchDir + "/**")
+	if err != nil {
+		return fmt.Errorf("failed to encode scratch dir: %w", err)
+	}
+
 	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
-		"Theme": theme,
+		"Theme":          theme,
+		"ScratchDirGlob": string(scratchDirGlobJSON),
 	}); err != nil {
 		return fmt.Errorf("failed to generate opencode configuration: %w", err)
 	}
@@ -147,6 +164,10 @@ func (o *OpenCode) ForceConfigure() error {
 		pluginDst,
 	); err != nil {
 		return fmt.Errorf("failed to copy opencode plugins: %w", err)
+	}
+
+	if err := baseapp.MaintainScratchDir(); err != nil {
+		return fmt.Errorf("failed to maintain scratch dir: %w", err)
 	}
 
 	gc.ReconcileShellFeatures()

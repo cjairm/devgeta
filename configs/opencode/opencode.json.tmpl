@@ -92,12 +92,22 @@
       "*": "allow",
 
       ".git/**": "deny",
-      ".claude/**": "deny",
-      ".opencode/**": "deny",
+      "**/.claude/settings.json": "deny",
+      "**/.claude/settings.local.json": "deny",
+      "**/.claude/hooks/**": "deny",
+      "**/.opencode/opencode.json": "deny",
+      "**/.opencode/plugin/**": "deny",
+      "**/.mcp.json": "deny",
+      "~/.claude/**": "deny",
+      "~/.config/opencode/**": "deny",
 
       "~/.zshrc": "deny",
       "~/.bashrc": "deny",
       "~/.profile": "deny"
+    },
+
+    "external_directory": {
+      {{.ScratchDirGlob}}: "allow"
     }
   },
   "formatter": {
