@@ -193,8 +193,8 @@ var configSetCmd = &cobra.Command{
 exits non-zero with the validator's error - the same error a user would hit
 triggering the same validation elsewhere (e.g. "dg wt create --ai <bad>").
 
-worktree.search_paths is the one setting that accepts multiple values; every
-other key accepts exactly one.
+Settings of kind stringlist (e.g. worktree.search_paths, review.reviewers)
+accept multiple values; every other key accepts exactly one.
 
 On success, prints the previous value (or its default) and the new value.`,
 	Example: `  dg config set worktree.scan_depth 6

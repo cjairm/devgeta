@@ -808,13 +808,13 @@ func TestSettingsRounds_SetTooManyValues(t *testing.T) {
 	assert.Contains(t, err.Error(), "accepts exactly one value")
 }
 
-// TestSettingsRounds_SetZeroRoundTripsToUnset mirrors
+// TestSettingsRounds_SetZeroRejectedButGetStaysUnset mirrors
 // TestSettingsScanDepth_SetZeroRoundTripsToUnset: 0 is outside review.rounds'
 // valid range, so Set already rejects it - unlike scan_depth, there is no
 // valid input that round-trips back to isSet=false, since rounds' zero value
 // (0) is never itself an accepted Set value. This test documents that
 // difference rather than assuming it holds without checking.
-func TestSettingsRounds_SetZeroRoundTripsToUnset(t *testing.T) {
+func TestSettingsRounds_SetZeroRejectedButGetStaysUnset(t *testing.T) {
 	s := findSettingForTest(t, "review.rounds")
 	gc := &config.GlobalConfig{}
 

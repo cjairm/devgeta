@@ -13,7 +13,6 @@ package cmd
 // the only place this registry can compile.
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -75,12 +74,26 @@ func (s *Setting) EffectiveDefault(gc *config.GlobalConfig) string {
 }
 
 // requireExactlyOne rejects a Set call with anything but a single value, for
-// every setting except worktree.search_paths (the one variadic entry).
+// every setting whose Kind is not "stringlist".
 func requireExactlyOne(key string, raw []string) (string, error) {
 	if len(raw) != 1 {
 		return "", fmt.Errorf("%s accepts exactly one value, got %d", key, len(raw))
 	}
 	return raw[0], nil
+}
+
+// requireAtLeastOne rejects a Set call with zero values, for a "stringlist"
+// setting whose empty state is reached through `dg config unset` instead of
+// `dg config set` with no values. noun names one entry of the list in the
+// error message (e.g. "path", "reviewer").
+func requireAtLeastOne(key, noun string, raw []string) error {
+	if len(raw) == 0 {
+		return fmt.Errorf(
+			"%s requires at least one %s; use `dg config unset %s` to clear it",
+			key, noun, key,
+		)
+	}
+	return nil
 }
 
 // resolvedAIFallbackName returns the layout/AI name worktree.ResolveLayout
@@ -135,11 +148,8 @@ var Settings = []Setting{
 			return strings.Join(gc.Worktree.SearchPaths, ", "), len(gc.Worktree.SearchPaths) > 0
 		},
 		Set: func(gc *config.GlobalConfig, raw []string) error {
-			if len(raw) == 0 {
-				return errors.New(
-					"worktree.search_paths requires at least one path; " +
-						"use `dg config unset worktree.search_paths` to clear it",
-				)
+			if err := requireAtLeastOne("worktree.search_paths", "path", raw); err != nil {
+				return err
 			}
 			paths := make([]string, len(raw))
 			copy(paths, raw)
@@ -329,11 +339,8 @@ var Settings = []Setting{
 			return strings.Join(gc.Review.Reviewers, ", "), len(gc.Review.Reviewers) > 0
 		},
 		Set: func(gc *config.GlobalConfig, raw []string) error {
-			if len(raw) == 0 {
-				return errors.New(
-					"review.reviewers requires at least one reviewer; " +
-						"use `dg config unset review.reviewers` to clear it",
-				)
+			if err := requireAtLeastOne("review.reviewers", "reviewer", raw); err != nil {
+				return err
 			}
 			reviewers := make([]string, len(raw))
 			for i, r := range raw {
