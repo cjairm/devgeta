@@ -11,17 +11,37 @@ import (
 	"testing"
 
 	gitapp "github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
-// newJournalSetup builds a TaskManager whose git calls are answered against a
+// newJournalSetup is newRepoSetup on the branch these journal tests use.
+func newJournalSetup(t *testing.T) (*TaskManager, string) {
+	t.Helper()
+	tm, root, _ := newRepoSetup(t, "feat")
+	return tm, root
+}
+
+// newRepoSetup builds a TaskManager whose git calls are answered against a
 // real temp directory, so these tests exercise the actual journal file the
 // commands write — not a stubbed manager. The process cwd is moved into the
 // fake repo because the task layer deliberately passes "" as the repo dir
 // (every task runs in the caller's repo).
-func newJournalSetup(t *testing.T) (*TaskManager, string) {
+//
+// branch is what `git branch --show-current` reports; pass "" for a detached
+// HEAD, which prints nothing and exits 0. The default branch always resolves
+// to "main".
+//
+// The third return is the mock base the OpenCode wrapper runs through, so a
+// review-run test can script `opencode run`'s output and inspect the exact
+// command line and environment the wrapper assembled. tm.Base is a separate
+// mock that nothing under test should ever touch.
+func newRepoSetup(
+	t *testing.T,
+	branch string,
+) (*TaskManager, string, *commands.MockBaseCommand) {
 	t.Helper()
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
@@ -30,7 +50,6 @@ func newJournalSetup(t *testing.T) (*TaskManager, string) {
 	}
 	t.Chdir(root)
 
-	branch := "feat"
 	gitBase := commands.NewMockBaseCommand()
 	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
 		args := c.Args
@@ -46,17 +65,25 @@ func newJournalSetup(t *testing.T) (*TaskManager, string) {
 			}
 			sum := sha1.Sum(data)
 			return hex.EncodeToString(sum[:])[:7] + "\n", "", nil
+		// Ahead of the "--short" case below on purpose: the default-branch
+		// query is `symbolic-ref --short refs/remotes/origin/HEAD`, so
+		// matching on "--short" first would answer it with HEAD's SHA and
+		// make the repo's default branch look like a commit.
+		case slices.Contains(args, "symbolic-ref"):
+			return "origin/main\n", "", nil
 		case slices.Contains(args, "--short"):
 			return "abc1234\n", "", nil
 		}
 		return "", "", nil
 	}
 
+	openCodeBase := commands.NewMockBaseCommand()
 	tm := &TaskManager{
-		Git:  &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
-		Base: commands.NewMockBaseCommand(),
+		Git:      &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
+		Base:     commands.NewMockBaseCommand(),
+		OpenCode: &opencode.OpenCode{Cmd: commands.NewMockCommand(), Base: openCodeBase},
 	}
-	return tm, root
+	return tm, root, openCodeBase
 }
 
 func TestReviewNotesSentinelWhenEmpty(t *testing.T) {

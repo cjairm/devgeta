@@ -350,8 +350,10 @@ func ReviewerAgentNames() []string {
 	return names
 }
 
-// reviewPrompt is the single fixed opening prompt sent to every reviewer
-// agent, regardless of which one (code/document/skill) was picked. It's
+// ReviewPrompt is the single fixed opening prompt sent to every reviewer
+// agent, regardless of which one (code/document/skill) was picked, and
+// regardless of how it is launched — the `dg ws` R keybinding's tmux pane or
+// `dg task review-run`'s headless run both send exactly this. It's
 // deliberately short and generic: each reviewer agent's own instructions
 // already run `devgeta task review-scope` and `devgeta task branch-diff` to
 // scope itself (see configs/shared/agents/*.md), so this prompt only needs
@@ -359,7 +361,7 @@ func ReviewerAgentNames() []string {
 // free of shell metacharacters, even though shellSingleQuote below makes the
 // command safe either way - keeping the shipped prompt simple means the
 // common case never depends on the escaping path being exercised.
-const reviewPrompt = "Review this branch against the default branch."
+const ReviewPrompt = "Review this branch against the default branch."
 
 // shellSingleQuote wraps s in single quotes so it is safe to embed as one
 // literal word in a POSIX shell command line, escaping any embedded single
@@ -379,21 +381,30 @@ func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// ReviewerChoice is one entry for the R-keybinding picker: the short key
-// passed to LaunchReviewInRepo, and the reviewer's human label.
+// ReviewerChoice is one entry of the reviewer registry as callers outside
+// this package see it: the short key passed to LaunchReviewInRepo (and to
+// `dg task review-run --reviewer`), the reviewer's human label for a picker,
+// and the OpenCode agent name a headless run passes to `--agent`.
 type ReviewerChoice struct {
 	Key   string
 	Label string
+	Agent string
 }
 
-// BuiltinReviewerChoices returns the reviewer picker's choices in
-// reviewerKeys order ("code" first, the common case), so the TUI can build
-// its picker without duplicating this package's registry.
+// BuiltinReviewerChoices returns the reviewer registry in reviewerKeys order
+// ("code" first, the common case), so callers can validate a key and resolve
+// its agent without duplicating this package's registry — the TUI's R picker
+// builds its item list from it, and `dg task review-run` validates
+// --reviewer against it.
 func BuiltinReviewerChoices() []ReviewerChoice {
 	reviewers := builtinReviewers()
 	choices := make([]ReviewerChoice, 0, len(reviewerKeys))
 	for _, key := range reviewerKeys {
-		choices = append(choices, ReviewerChoice{Key: key, Label: reviewers[key].Label})
+		choices = append(choices, ReviewerChoice{
+			Key:   key,
+			Label: reviewers[key].Label,
+			Agent: reviewers[key].Agent,
+		})
 	}
 	return choices
 }
@@ -427,7 +438,7 @@ func ReviewCommand(key string) (string, error) {
 	}
 
 	opencode := &OpenCodeCoder{}
-	return opencode.promptCommandWithAgent(reviewer.Agent, reviewPrompt), nil
+	return opencode.promptCommandWithAgent(reviewer.Agent, ReviewPrompt), nil
 }
 
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable

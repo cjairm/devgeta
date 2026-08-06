@@ -43,6 +43,7 @@ type taskRunner interface {
 	ReviewNoteSettle(branch, id, resolution, cite, note string) (string, error)
 	ReviewNoteRatify(branch, id string) (string, error)
 	ReviewNoteReopen(branch, id string) (string, error)
+	ReviewRun(reviewer string) (string, error)
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
@@ -371,6 +372,50 @@ cite code but could never be checked against it.
 	},
 }
 
+// taskReviewRunReviewerFlag is review-run's --reviewer flag.
+var taskReviewRunReviewerFlag string
+
+var taskReviewRunCmd = &cobra.Command{
+	Use:   "review-run [--reviewer code|document|skill]",
+	Short: "Run one round of headless AI review and print each reviewer's verdict (for agents)",
+	Long: `Run every reviewer model configured in "review.reviewers" against the current
+branch, one after another, headless, and print what each concluded.
+
+One invocation is one round. Rounds are not repeated here — the caller decides
+whether another round is worth it.
+
+--reviewer picks which reviewer agent runs (the same choices the "dg ws" R
+keybinding offers): code (default), document, or skill. Every configured model
+runs that same reviewer; with "review.reviewers" unset, one run uses OpenCode's
+default model.
+
+Refuses to run on the default branch or a detached HEAD — both before any
+reviewer starts — because a review compares a branch against the default one,
+and a review journal is keyed by branch name.
+
+Each reviewer reads the journal as it stood when the round began, so no
+reviewer sees what another raised or settled in the same round. Their entries
+still go to the live journal immediately and keep their real ids.
+
+Output is one line per reviewer, then the ids still open:
+
+  openai/gpt-5.2 → REQUEST CHANGES
+  google/gemini-3-pro → APPROVE
+  open: n4 n7
+
+An outcome is APPROVE, REQUEST CHANGES, NEEDS DISCUSSION, NO VERDICT (the run
+finished but stated no verdict), or ERROR(<reason>) (the run itself failed).
+NO VERDICT and ERROR are never approval. One reviewer failing does not stop
+the others.`,
+	Example: `  dg task review-run
+  dg task review-run --reviewer document`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newTaskManager().ReviewRun(taskReviewRunReviewerFlag)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 // taskWorktreeStartBaseFlag is worktree-start's --base flag.
 var taskWorktreeStartBaseFlag string
 
@@ -513,6 +558,7 @@ func init() {
 	taskCmd.AddCommand(taskReviewPackageCmd)
 	taskCmd.AddCommand(taskReviewNotesCmd)
 	taskCmd.AddCommand(taskReviewNoteCmd)
+	taskCmd.AddCommand(taskReviewRunCmd)
 	taskCmd.AddCommand(taskWorktreeStartCmd)
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
@@ -560,6 +606,9 @@ func init() {
 		StringVar(&taskReviewNoteNoteFlag, "note", "", "The question, finding, or answer text (required for --open and --settle)")
 	taskReviewNoteCmd.MarkFlagsMutuallyExclusive("open", "settle", "ratify", "reopen")
 	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle", "ratify", "reopen")
+
+	taskReviewRunCmd.Flags().
+		StringVar(&taskReviewRunReviewerFlag, "reviewer", "code", "Reviewer agent to run: code, document, or skill")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")

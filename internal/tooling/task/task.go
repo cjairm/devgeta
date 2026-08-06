@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	git_app "github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/opencode"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/fzf"
 )
@@ -19,6 +20,10 @@ type TaskManager struct {
 	Git  *git_app.Git
 	Base cmd.BaseCommandExecutor
 	Fzf  *fzf.Fzf
+	// OpenCode runs headless reviewer agents for review-run. It is the app
+	// wrapper, not a raw executor, because CLAUDE.md §6 keeps the
+	// `opencode run` command line assembled in exactly one place.
+	OpenCode *opencode.OpenCode
 }
 
 // New creates a TaskManager with real executors. Git output is streamed so
@@ -27,10 +32,27 @@ func New() *TaskManager {
 	git := git_app.New()
 	git.Stream = true
 	return &TaskManager{
-		Git:  git,
-		Base: cmd.NewBaseCommand(),
-		Fzf:  fzf.New(),
+		Git:      git,
+		Base:     cmd.NewBaseCommand(),
+		Fzf:      fzf.New(),
+		OpenCode: opencode.New(),
 	}
+}
+
+// resolveHead resolves HEAD once for every guard that cares which branch is
+// checked out: release's "must be ON the default branch" and review-run's
+// "must NOT be" both read the answer from here rather than each calling git
+// and each deciding for itself what an empty branch name means.
+//
+// current is "" when HEAD is detached — `git branch --show-current` prints
+// nothing and exits 0, so a guard written only as `current != defaultBranch`
+// silently lets a detached HEAD through. Callers must test for "" explicitly.
+func (tm *TaskManager) resolveHead() (current, defaultBranch string, err error) {
+	current, err = tm.Git.CurrentBranch()
+	if err != nil {
+		return "", "", err
+	}
+	return current, tm.Git.DefaultBranch(), nil
 }
 
 // RefreshBranch checks out target (default "main"), pulls, returns to the previous

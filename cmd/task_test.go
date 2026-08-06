@@ -79,6 +79,11 @@ type mockTaskRunner struct {
 	reviewNoteReopenRet       string
 	reviewNoteReopenErr       error
 
+	reviewRunReviewerArg string
+	reviewRunCalled      bool
+	reviewRunRet         string
+	reviewRunErr         error
+
 	worktreeStartNameArg string
 	worktreeStartBaseArg string
 	worktreeStartCalled  bool
@@ -197,6 +202,12 @@ func (m *mockTaskRunner) ReviewNoteReopen(branch, id string) (string, error) {
 	m.reviewNoteReopenBranchArg = branch
 	m.reviewNoteReopenIDArg = id
 	return m.reviewNoteReopenRet, m.reviewNoteReopenErr
+}
+
+func (m *mockTaskRunner) ReviewRun(reviewer string) (string, error) {
+	m.reviewRunCalled = true
+	m.reviewRunReviewerArg = reviewer
+	return m.reviewRunRet, m.reviewRunErr
 }
 
 func (m *mockTaskRunner) WorktreeStart(name, base string) (string, error) {
@@ -852,6 +863,59 @@ func TestTask_ReviewNote(t *testing.T) {
 		taskReviewNoteIDFlag = "n7"
 
 		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestTask_ReviewRun(t *testing.T) {
+	// setReviewRunReviewer sets the flag var and restores it, so a leaked
+	// value cannot make a later case pass for the wrong reason.
+	setReviewRunReviewer := func(t *testing.T, value string) {
+		t.Helper()
+		orig := taskReviewRunReviewerFlag
+		taskReviewRunReviewerFlag = value
+		t.Cleanup(func() { taskReviewRunReviewerFlag = orig })
+	}
+
+	t.Run("passes the reviewer flag through", func(t *testing.T) {
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE\nopen: none"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunReviewer(t, "document")
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewRunCalled {
+			t.Fatal("expected ReviewRun to be called")
+		}
+		if mock.reviewRunReviewerArg != "document" {
+			t.Errorf("expected reviewer 'document', got %q", mock.reviewRunReviewerArg)
+		}
+	})
+
+	// The default is declared on the flag, not restated in the command body,
+	// so `dg task review-run` with no flags runs the code reviewer.
+	t.Run("--reviewer defaults to code", func(t *testing.T) {
+		got := taskReviewRunCmd.Flags().Lookup("reviewer")
+		if got == nil {
+			t.Fatal("expected a --reviewer flag")
+		}
+		if got.DefValue != "code" {
+			t.Errorf("expected --reviewer to default to 'code', got %q", got.DefValue)
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		mock := &mockTaskRunner{
+			reviewRunErr: fmt.Errorf("review-run: HEAD is detached"),
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunReviewer(t, "code")
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err == nil {
 			t.Fatal("expected error")
 		}
 	})

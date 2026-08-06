@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/pkg/files"
 )
 
 // Manager reads and writes review journals through the git app wrapper.
@@ -74,6 +75,55 @@ func (m *Manager) Load(repoDir, branch string) (*Journal, error) {
 		return nil, fmt.Errorf("failed to read the review journal: %w", err)
 	}
 	return Parse(branch, data), nil
+}
+
+// snapshotSuffix names the round-start snapshot `dg task review-run` writes
+// beside a branch's journal. It deliberately does NOT end in ".md": Prune
+// owns every "*.md" file in the review directory and decides from the
+// filename alone whether a branch still exists, so a snapshot called
+// "<encoded>.snapshot.md" could be decoded as a branch nobody has and
+// deleted in the middle of a round. Keeping the suffix outside Prune's
+// filter makes that collision impossible instead of relying on DecodeBranch
+// happening to fail.
+const snapshotSuffix = ".snapshot"
+
+// SnapshotPathFor returns the path of branch's round-start snapshot: one
+// deterministic name per branch, in the same directory as the journal.
+//
+// There is no round number in the name. review-run writes the snapshot when
+// a round starts and removes it when that round ends — including on its
+// failure paths — so at most one snapshot ever exists for a branch, and a
+// per-round name would only add ways to leave a stale one behind.
+func (m *Manager) SnapshotPathFor(repoDir, branch string) (string, error) {
+	path, err := m.PathFor(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSuffix(path, ".md") + snapshotSuffix, nil
+}
+
+// WriteSnapshot serializes branch's journal as it stands right now to the
+// snapshot path, and returns that path.
+//
+// A branch with no journal file yet is not a special case here, deliberately:
+// Load already reports a missing file as an empty journal, and that empty
+// journal is written out like any other. "Empty at round start" is exactly
+// what the second reviewer of a first-ever review must see — skipping the
+// write there would leave it reading the live journal, i.e. the first
+// reviewer's brand-new findings (ADR-0017 §4).
+func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	path, err := m.SnapshotPathFor(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), files.FilePermission); err != nil {
+		return "", fmt.Errorf("failed to write the round-start review snapshot: %w", err)
+	}
+	return path, nil
 }
 
 // save writes the journal atomically: temp file in the same directory, then
