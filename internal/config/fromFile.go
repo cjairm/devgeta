@@ -165,9 +165,13 @@ const (
 
 // DefaultReviewRounds is the number of review rounds used when Rounds is
 // unset (its zero value, 0). cmd/config_settings.go's review.rounds Default
-// reports this constant rather than restating "3" as a literal, and the
-// review-run command this cycle is building (a later task, not this one)
-// reads it the same way as the fallback when GlobalConfig.Review.Rounds == 0.
+// reports this constant rather than restating "3" as a literal, and it is the
+// only place in Go that reads the round cap at all: the cap is enforced by
+// the agent-side /review-loop command
+// (configs/shared/commands/review-loop.md), which reads it back with
+// `devgeta config get review.rounds` and falls back to this default when the
+// key is unset. `dg task review-run` never reads Rounds — one invocation is
+// exactly one round, by design (ADR-0017 §5).
 const DefaultReviewRounds = 3
 
 // ReviewConfig stores settings for `dg task review-run`, which runs
@@ -182,13 +186,20 @@ type ReviewConfig struct {
 	// shape - one "/" minimum, non-empty text on both sides - is validated
 	// here; the model name itself is passed through without offline
 	// verification (out of scope for this cycle - see the cycle doc's
-	// Explicitly Out of Scope section). Empty means no reviewers are
-	// configured, so review-run has nothing to run until this is set.
+	// Explicitly Out of Scope section). Empty is not "nothing to run": it
+	// means one reviewer run on OpenCode's own default model, with no -m
+	// flag at all (resolveReviewerRuns in
+	// internal/tooling/task/reviewrun.go), so review-run works before this
+	// key is ever set.
 	Reviewers []string `yaml:"reviewers,omitempty"`
 
-	// Rounds caps how many review rounds review-run performs before settling
-	// on a verdict. 0 (unset) means DefaultReviewRounds; a configured value
-	// must be within [ReviewRoundsMin, ReviewRoundsMax].
+	// Rounds caps how many review rounds the agent-side /review-loop command
+	// performs before it reports to the human. 0 (unset) means
+	// DefaultReviewRounds; a configured value must be within
+	// [ReviewRoundsMin, ReviewRoundsMax]. Nothing in Go reads this field to
+	// decide anything: `dg task review-run` runs exactly one round per
+	// invocation and never consults it, and /review-loop reads the value back
+	// through `devgeta config get review.rounds`.
 	Rounds int `yaml:"rounds,omitempty"`
 }
 

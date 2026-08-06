@@ -58,7 +58,7 @@ These citations are supporting evidence for a design already chosen on other gro
 of them is about code review specifically, and none was replicated here.
 
 One more constraint comes from ADR-0012 itself, and it is the sharp one. Its journal is
-deliberately **settled-means-settled**: `manager.go:186` refuses to settle an
+deliberately **settled-means-settled**: `manager.go:238` refuses to settle an
 already-settled entry, and nothing reopens one. Reviewers are instructed to treat a
 settled entry as closed. That is exactly what stops the re-raise circle — and it means
 that if the coding agent settles a finding as `rejected`, the reviewer has no way to
@@ -111,7 +111,7 @@ what makes concurrent writes a non-problem.
 
 **Isolation is achieved by narrowing what a reviewer READS, never by deferring what it
 writes.** Writes stay exactly as they are today: `review-note --open` appends to the live
-journal and saves immediately (`manager.go:143`). What changes is that during a round,
+journal and saves immediately (`manager.go:205-206`). What changes is that during a round,
 `review-notes` hides entries created in that same round.
 
 The reason for isolation is the oracle gap in the Context. Every reviewer is required to
@@ -150,7 +150,7 @@ closes that path, because the snapshot still shows the entry open.
 
 Writes are deliberately **not** snapshotted, which is what keeps this cheap: ids continue to
 come from `nextID()` on the live journal (`max+1`, never reused —
-`journal.go:69-81`, pinned by `TestNextIDNeverReusesAfterDeletion`), so two reviewers reading
+`journal.go:109-118`, pinned by `TestNextIDNeverReusesAfterDeletion`), so two reviewers reading
 the same snapshot still get distinct, final ids.
 
 How the snapshot is pointed at needs one real capability that does not exist yet — a
@@ -269,8 +269,8 @@ guard test asserts the command file never mentions them outside the report templ
   with no pointer set, output is byte-identical to today.
 - **The shared executor has to grow an environment overlay.** `CommandParams` today carries
   `Args`, `Timeout`, `Dir`, `Stream` and no environment, and `ExecCommand` never sets
-  `exec.Cmd.Env` (`internal/commands/base.go:247-251`), so there is currently no way to add
-  a variable for one child process. That capability has to be added to the executor and
+  `exec.Cmd.Env` (`internal/commands/base.go`, as of this decision), so there is currently
+  no way to add a variable for one child process. That capability has to be added to the executor and
   exposed through the OpenCode wrapper — the sanctioned direction per CLAUDE.md §6, but real
   work in a shared, widely-used code path, and it must be an overlay on the inherited
   environment rather than a replacement.

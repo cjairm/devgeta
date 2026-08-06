@@ -291,6 +291,14 @@ type RunOptions struct {
 	Prompt string
 	// Dir sets the command's working directory (e.g. a worktree path), so the
 	// agent operates against a specific checkout rather than devgeta's own cwd.
+	//
+	// Every production caller today (`dg task review-run`) deliberately leaves
+	// it empty: a review is always of the checkout the command was run from,
+	// so inheriting the process's cwd is the correct behavior there, not an
+	// oversight. The field stays because the working directory is part of this
+	// wrapper's contract — a caller that runs an agent against a different
+	// checkout must be able to say so here rather than reach around the
+	// wrapper (CLAUDE.md §6).
 	Dir string
 	// Timeout bounds the run. Headless review runs can take a long time, so
 	// callers are expected to pass a generous value rather than leave this

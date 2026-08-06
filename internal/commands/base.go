@@ -89,6 +89,13 @@ type CommandParams struct {
 	// can pass one variable to a single spawned process without disturbing
 	// anything else. Empty leaves exec.Cmd.Env nil, preserving today's
 	// behavior of full inheritance from the current process.
+	//
+	// Combining it with IsSudo does NOT reliably deliver the overlay: real
+	// sudo resets the environment it passes to the child unless it is invoked
+	// with -E or the variable is listed in the sudoers env_keep, so the child
+	// can silently run without it. No caller pairs the two today; a caller
+	// that needs to must arrange for sudo to preserve the variable rather than
+	// assume this field is enough.
 	Env []string
 }
 

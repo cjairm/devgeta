@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Estimated Duration:** ~8 hours
-**Status:** Approved — awaiting implementation
+**Status:** Done
 
 ---
 
@@ -84,9 +84,10 @@ And two from this repo's own review machinery:
 run configured reviewer(s) headless, verify and address blocking findings, settle the
 journal, re-run — and ends in one of exactly two states:
 
-1. **Clean approval** — every reviewer APPROVEs _and_ no agent-authored rejection is
-   still awaiting ratification (a rejection the human has ratified is an ordinary
-   human rejection, ADR-0012 semantics, and does not block).
+1. **Clean approval** — all three of: every reviewer's outcome is APPROVE, the round's
+   `open:` line reads `open: none` (no finding is still unanswered in the journal), _and_
+   no agent-authored rejection is still awaiting ratification (a rejection the human has
+   ratified is an ordinary human rejection, ADR-0012 semantics, and does not block).
 2. **Report to the human** — everything else: persistent disagreement, the round cap,
    any reviewer process failure (`ERROR`/`NO VERDICT`), or approval that rests on one
    or more agent-authored rejections awaiting ratification. The report carries the
@@ -258,7 +259,7 @@ open again, same id) are the only two exits from provisional, both human-only.
 
 Verify: ADRs merged into `docs/decisions/README.md` index.
 
-#### Step 2: Config
+#### Step 2: Config — DONE
 
 - `ReviewConfig` on `GlobalConfig` (omitempty, like `WorktreeConfig`)
 - Registry entries: `review.reviewers` (stringlist; entries must look like
@@ -268,7 +269,7 @@ Verify: ADRs merged into `docs/decisions/README.md` index.
 
 Verify: `go test ./cmd/ ./internal/config/`; `dg config set/get/unset review.reviewers`.
 
-#### Step 3: OpenCode wrapper run method
+#### Step 3: OpenCode wrapper run method — DONE
 
 Extend `internal/apps/opencode` with the headless-run capability (agent, optional
 model, prompt, working dir, generous timeout, **and extra environment**). Per §6, this is
@@ -281,7 +282,7 @@ executor bullet. Build that first; this step just exposes it.
 
 Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
 
-#### Step 4: `dg task review-run`
+#### Step 4: `dg task review-run` — DONE
 
 - Resolve reviewer list: `review.reviewers`, or one entry "OpenCode default model"
   when unset; `--reviewer` picks the agent (default `code`), validated against the
@@ -447,7 +448,7 @@ Verify: `go test ./internal/tooling/reviewjournal/ ./internal/tooling/task/ ./cm
 covering: ratify on agent-rejected → ordinary rejection; ratify on anything else →
 error; reopen → same id open, count unchanged; reopen of nonexistent/open id → error.
 
-#### Step 5: `/review-loop` command file
+#### Step 5: `/review-loop` command file — DONE
 
 `configs/shared/commands/review-loop.md`, modeled on `address-feedback.md` for shape
 — but it **declares no `permission:` block at all**, because Step 0 proved OpenCode
@@ -491,7 +492,10 @@ the rule stays prose-level (see the risk table).
 The flow it encodes:
 
 1. `devgeta task review-run` (round 1)
-2. All APPROVE and no agent-authored rejections → clean approval, stop
+2. All APPROVE **and** the round's `open:` line reads `open: none` **and** no
+   agent-authored rejection is awaiting ratification → clean approval, stop. All three
+   are required: an all-APPROVE round with an id still under `open:` is a finding nobody
+   answered, not a clean review
 3. Otherwise, per open finding: verify with receiving-code-review rigor — implement
    real ones; for wrong ones, `review-note --settle --as rejected` with the
    disproving evidence, the note prefixed `agent:` so provenance is never ambiguous.
@@ -516,13 +520,24 @@ Verify: `go test ./internal/apps/opencode/` green — the new command carries no
 `permission:` key, and the Claude/OpenCode parity guards still pass (parity is
 unaffected: the block is absent on both sides rather than asymmetric).
 
-#### Step 6: Manual end-to-end
+#### Step 6: Manual end-to-end — DONE, with one item not run
 
 On a real feature branch with a seeded flaw: run `/review-loop` with one default
 reviewer; then with two configured models. Confirm: refusal on main, verdict parsing,
 journal settle between rounds, escalation path (force it with `review.rounds 1`).
 
-#### Step 7: Docs + close out
+Run and confirmed: the default-branch and detached-HEAD refusals; a bogus model
+surfacing as `ERROR(...)`; two reviewers on a fresh branch with no journal, where the
+second re-raised the same defect without having seen the first's entry (isolation on the
+first-review path); the snapshot removed after the round; and the full ratify/reopen
+lifecycle.
+
+**Not run: the `review.rounds 1` escalation report.** That item exercises only the
+agent's adherence to the prose in `review-loop.md` — Go enforces no round cap at all —
+so it verifies model behavior rather than any code path this cycle shipped. Recorded as
+an exception rather than quietly ticked.
+
+#### Step 7: Docs + close out — DONE
 
 `docs/spec.md` feature entry, `dg config` docs mention the new keys, check off this
 doc, status → Done. Deploy: `dg configure claude --force` and

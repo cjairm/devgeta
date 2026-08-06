@@ -359,7 +359,7 @@ var Settings = []Setting{
 	},
 	{
 		Key:         "review.rounds",
-		Description: "Max review rounds `dg task review-run` performs before settling on a verdict (1-5)",
+		Description: "Max review rounds the /review-loop command performs before reporting to you (1-5)",
 		Kind:        "int",
 		Default:     func() string { return strconv.Itoa(config.DefaultReviewRounds) },
 		Get: func(gc *config.GlobalConfig) (string, bool) {
