@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/testutil"
@@ -124,4 +125,138 @@ func TestSyncSharedParts(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dst, "commands")); !os.IsNotExist(err) {
 		t.Fatal("unselected part 'commands' should not be synced")
 	}
+}
+
+func TestMaintainScratchDir(t *testing.T) {
+	t.Run("creates the scratch dir when absent", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		want := filepath.Join(home, ".cache", "devgeta", "scratch")
+		info, err := os.Stat(want)
+		if err != nil || !info.IsDir() {
+			t.Fatalf("expected %q to exist as a directory: %v", want, err)
+		}
+	})
+
+	t.Run("prunes a stale subdirectory but keeps a fresh one", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		root := filepath.Join(home, ".cache", "devgeta", "scratch")
+		stale := filepath.Join(root, "task-stale")
+		fresh := filepath.Join(root, "task-fresh")
+		writeFileTree(t, filepath.Join(stale, "x.txt"), "old")
+		writeFileTree(t, filepath.Join(fresh, "x.txt"), "new")
+
+		old := time.Now().Add(-25 * time.Hour)
+		if err := os.Chtimes(stale, old, old); err != nil {
+			t.Fatalf("failed to backdate %s: %v", stale, err)
+		}
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(stale); !os.IsNotExist(err) {
+			t.Errorf("expected stale scratch dir to be pruned, stat err=%v", err)
+		}
+		if _, err := os.Stat(fresh); err != nil {
+			t.Errorf("expected fresh scratch dir to survive, stat err=%v", err)
+		}
+	})
+
+	// The scratch root is granted to the agent, so a user may keep something
+	// of their own in there. Pruning is bounded by the same ownership rule
+	// --clean enforces: only paths.ScratchAllocPrefix directories are ours
+	// to delete, however old anything else is.
+	t.Run("leaves an old directory that devgeta did not allocate", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		root := filepath.Join(home, ".cache", "devgeta", "scratch")
+		theirs := filepath.Join(root, "my-own-notes")
+		staleOurs := filepath.Join(root, "task-stale")
+		writeFileTree(t, filepath.Join(theirs, "keep.txt"), "user data")
+		writeFileTree(t, filepath.Join(staleOurs, "x.txt"), "ours")
+
+		old := time.Now().Add(-72 * time.Hour)
+		for _, d := range []string{theirs, staleOurs} {
+			if err := os.Chtimes(d, old, old); err != nil {
+				t.Fatalf("failed to backdate %s: %v", d, err)
+			}
+		}
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(theirs, "keep.txt")); err != nil {
+			t.Errorf(
+				"expected an unprefixed user directory to survive pruning, stat err=%v — "+
+					"pruning must not exceed what devgeta allocated",
+				err,
+			)
+		}
+		if _, err := os.Stat(staleOurs); !os.IsNotExist(err) {
+			t.Errorf("expected the stale task-* dir to be pruned, stat err=%v", err)
+		}
+	})
+
+	t.Run("leaves an old symlink in the root alone", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		root := filepath.Join(home, ".cache", "devgeta", "scratch")
+		outside := filepath.Join(home, "outside")
+		writeFileTree(t, filepath.Join(outside, "precious.txt"), "data")
+		if err := os.MkdirAll(root, 0o700); err != nil {
+			t.Fatalf("failed to create scratch root: %v", err)
+		}
+		link := filepath.Join(root, "task-link")
+		if err := os.Symlink(outside, link); err != nil {
+			t.Fatalf("failed to create symlink: %v", err)
+		}
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Lstat(link); err != nil {
+			t.Errorf("expected the symlink to survive pruning, lstat err=%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(outside, "precious.txt")); err != nil {
+			t.Errorf("expected the symlink target to be untouched, stat err=%v", err)
+		}
+	})
+
+	t.Run("leaves plain files in the root alone", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		root := filepath.Join(home, ".cache", "devgeta", "scratch")
+		stray := filepath.Join(root, "not-a-dir.txt")
+		writeFileTree(t, stray, "leftover")
+		old := time.Now().Add(-48 * time.Hour)
+		if err := os.Chtimes(stray, old, old); err != nil {
+			t.Fatalf("failed to backdate %s: %v", stray, err)
+		}
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(stray); err != nil {
+			t.Errorf("expected a stray file (not a directory) to survive pruning, stat err=%v", err)
+		}
+	})
 }

@@ -23,6 +23,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/fzf"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -2271,6 +2272,15 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 	// exists - in other words, it manufactures exactly the ghost this whole
 	// change exists to eliminate - so the prune below stops being defensive
 	// and becomes the step that must succeed.
+	// The review journal is keyed by the real BRANCH, which is not `name`:
+	// `name` is the flattened row/directory name (FlattenName strips "/"), so
+	// branch "feat/login" arrives here as "feat-login". Resolved before the
+	// removal, because afterwards there is no worktree left to ask. On failure
+	// the journal is simply left for `review-notes --prune` — guessing from
+	// `name` could delete a DIFFERENT branch's journal (a real branch named
+	// "feat-login" alongside "feat/login").
+	journalBranch, journalBranchErr := w.Git.BranchForWorktree(wtPath)
+
 	removedByFallback := false
 	if state.WtExists {
 		if err := w.Git.RemoveWorktree(wtPath, true, name); err != nil {
@@ -2321,7 +2331,42 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 		)
 	}
 
+	w.dropReviewJournal(repoRoot, journalBranch, journalBranchErr)
 	return nil
+}
+
+// dropReviewJournal deletes the removed branch's review journal (ADR-0012).
+// This is the cleanup the journal's location was chosen for: the branch has
+// just been deleted by RemoveWorktree above, so its remembered review
+// exchanges describe work that no longer exists, and deleting them here is
+// mechanical Go in the same operation rather than an instruction an agent has
+// to remember.
+//
+// branchErr carries the outcome of resolving the branch before the removal.
+// When it failed there is no safe key to delete by — the flattened row name is
+// NOT the branch, and using it could destroy a different branch's journal — so
+// the journal is left for `review-notes --prune`, which keys off branch
+// existence and will collect it.
+//
+// Best-effort by design: the worktree and branch are already gone by now, so
+// failing the removal over a leftover text file would report failure for an
+// operation that succeeded.
+func (w *WorktreeManager) dropReviewJournal(repoRoot, branch string, branchErr error) {
+	if branchErr != nil || strings.TrimSpace(branch) == "" {
+		logger.L().Debugw(
+			"worktree: skipping review-journal cleanup, branch unresolved",
+			"repo", repoRoot,
+			"error", branchErr,
+		)
+		return
+	}
+	if err := reviewjournal.New(w.Git).Delete(repoRoot, branch); err != nil {
+		w.warn(fmt.Sprintf(
+			"worktree removed, but its review notes could not be deleted (%v); "+
+				"run `devgeta task review-notes --prune` to clear them",
+			err,
+		))
+	}
 }
 
 // confirmFromTTY reads a y/n answer directly from /dev/tty so it works even

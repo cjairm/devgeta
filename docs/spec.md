@@ -726,6 +726,29 @@ dg t <subcommand> [args]   # alias
 | `branch-diff`    | `--file <path>`                  | Diff against the merge-base with the default branch, same default exclusions applied in one `git diff` call. Does **not** fetch (reuses `review-scope`'s comparison base within the same review session). `--file` bypasses exclusions for that one file.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `review-package` | `<base> <head>`, `--file <path>` | Verify both refs resolve (`rev-parse --verify`, an actionable error names whichever ref failed), then in one call print `range: <base>..<head>`, the commit list (short SHA, date, subject), a noise-filtered per-file stat table with exclusion receipts, and the full `-U10`-context diff of the included files as a fenced ` ```diff ` block. Unlike `review-scope`/`branch-diff`, base and head are not tied to the current branch's default-branch merge-base — this is for reviewing an arbitrary historical range or a PR that isn't checked out. `--file` bypasses exclusions and returns just that file's `-U10` diff. Sentinels: `No commits in range.` when the commit list is empty, `No file changes in range.` when the stat table is empty. Replaces a 6-call raw dance (`rev-parse --verify` x2, `log --oneline`, `diff --stat`, `diff -U10`, `rev-list --count`) that measured 793,426 bytes on a representative 10-commit range (`b0e98fd..main` in this repo); the one-call equivalent on the same range measured 792,704 bytes — the byte savings come from applying the same default lockfile exclusions as `review-scope`/`branch-diff`, not from compressing the diff itself (which review-package still prints in full); the real win is collapsing 6 round-trips into 1, per the "collapse round-trips" justification in `docs/guides/task-design.md`. |
 
+**Review journal subcommands** (per-branch review memory, so a re-review does not re-ask
+what was already answered — see
+[ADR-0012](decisions/ADR-0012-review-knowledge-in-a-local-journal.md)):
+
+| Subcommand     | Args / Flags                                                                                                                | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `review-notes` | `--branch <b>`, `--path`, `--prune`                                                                                         | Print the branch's journal: settled entries (answered / rejected-with-reason / fixed) and still-open ones, each with its id and a resolved `[fresh]` or `[STALE: …]` marker. Staleness compares the **content** of the cited file (`git hash-object`), not a commit, so an uncommitted edit correctly invalidates an entry — a commit-based check cannot see one. `--path` prints the journal file's location for hand correction; `--prune` deletes journals whose branch no longer exists locally or on the remote. Sentinels: `No review notes for branch <b>.`, `No branch — review notes are keyed by branch.` (detached HEAD), `No review journals to prune.` |
+| `review-note`  | `--open` \| `--settle`, `--id <n>`, `--as rejected\|answered\|fixed`, `--at <path[:line]>`, `--note <text>`, `--branch <b>` | Write one entry. `--open` records something awaiting an answer and echoes its new id (`Noted n4`); `--settle --id n4 --as …` closes that entry, carrying its cited path over so an answer can never retarget the question it closes (`--at` is refused there); `--settle` without an id records an exchange that was never open. `--at` is optional — a design-level entry cites no file and never goes stale — but when given, the path must exist, because an entry that claims to cite code with no content stamp could never be checked. Echoes `Settled n4 (fixed)`.                                                                                           |
+
+The journal lives at `<git common dir>/devgeta/review/<encoded-branch>.md` — the **common**
+git directory, so the same branch shares one journal across the main checkout and every
+linked worktree. Nothing there is ever committed or appears in a diff (which is also why no
+`.gitignore` handling exists — ADR-0010 forbids editing one), and `dg wt remove` deletes the
+journal in the same teardown that deletes the branch, so memory does not accumulate for work
+that no longer exists.
+
+What gets written is bound to severity, not to agent judgment: each reviewer opens an entry
+for every `[CRITICAL]` and `[IMPORTANT]` finding as it writes its report, prints the returned
+id inline beside that finding, and ends the report with the `--settle` line that closes them.
+`[MINOR]`/`[Nit]` findings never enter the journal, and a finding already listed as open
+keeps its id rather than gaining a duplicate. The earlier rule — open only what the reviewer
+could not answer itself — recorded nothing in practice; see ADR-0012's amendment.
+
 **Worktree lifecycle subcommands** (start/finish a git worktree in one call each —
 same base path `dg wt` uses, `~/.local/share/devgeta/worktrees/<repo-slug>/<flat-name>`,
 so `dg wt list` and worktrees created here are the same population, never two parallel
@@ -825,6 +848,42 @@ e.g. `Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin m
 A failure partway through a mutation (reset, commit, tag, or push) reports the exact
 state left behind and the raw git command to finish or undo it by hand, since these
 steps are hard to reverse once they run.
+
+**Scratch directory subcommand** (a devgeta-owned working directory instead of
+`/tmp` — see [ADR-0015](decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md)):
+
+| Subcommand | Args / Flags     | Description                                                                                                                  |
+| ---------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `scratch`  | `--clean <path>` | Bare call allocates a fresh directory under the scratch root and prints its path; `--clean` removes one previously allocated |
+
+Bare `dg task scratch` calls `paths.EnsureScratchDir()` — creating
+`~/.cache/devgeta/scratch` (honoring `XDG_CACHE_HOME`) at mode `0700` if
+absent, rather than assuming a prior `dg configure` did — then
+`os.MkdirTemp`s a `task-*`-prefixed subdirectory under it and prints its
+absolute path on one line.
+
+`--clean <path>` accepts only a real directory that is a direct child of the
+scratch root and carries the `task-` prefix: the root itself, a grandchild, a
+directory beside the root, an unprefixed child, a relative path, a `..`
+escape, and **any** symlink (resolvable or not) are all refused rather than
+silently widening what gets deleted. Bounds are checked lexically first, so
+an out-of-bounds path is an error whether or not it exists, then re-checked
+after symlink resolution to catch a symlinked ancestor. It is idempotent — an
+in-bounds path that is already gone succeeds — so a command's cleanup can run
+on failure paths and retries. Pass it the exact path `scratch` printed; a
+reconstructed or parent path is refused by design. Not enforced: a session
+cleaning a sibling session's directory by guessing its random suffix — the
+only parties able to do that are the same user's own agent sessions, so
+ownership isolation stops there deliberately.
+
+The same `task-` ownership rule bounds the stale-directory prune that
+`dg configure --force` runs: anything a user keeps under the granted scratch
+root is left alone regardless of age.
+
+This is what `/review-pr` and `/create-pr` allocate their scratch files
+under instead of `/tmp` — see
+[docs/apps/claude.md](apps/claude.md#permissions-model) for why `/tmp` would
+otherwise prompt on every run.
 
 **Redirect hook** (steers agents from raw git to the task equivalents above):
 a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to

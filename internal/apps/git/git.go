@@ -366,12 +366,77 @@ func (g *Git) CurrentBranchIn(dir string) (string, error) {
 
 // ShortHead returns HEAD's short commit SHA (mirrors `git rev-parse --short HEAD`).
 func (g *Git) ShortHead() (string, error) {
+	return g.ShortHeadIn("")
+}
+
+// ShortHeadIn is ShortHead evaluated against the repository at dir
+// ("" = current directory).
+func (g *Git) ShortHeadIn(dir string) (string, error) {
 	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{
 		Command: constants.Git,
-		Args:    []string{"rev-parse", "--short", "HEAD"},
+		Args:    dirArgs(dir, "rev-parse", "--short", "HEAD"),
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to resolve HEAD: %w", err)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// CommonDirIn returns the repository's COMMON git directory as an absolute
+// path — the main checkout's .git — from any checkout of the repo, main or
+// linked worktree alike ("" = current directory).
+//
+// --path-format=absolute is load-bearing, not cosmetic: in the main checkout
+// git answers the bare query with a RELATIVE ".git", which would silently
+// anchor anything joined onto it to the caller's cwd instead of the repo
+// (verified against git 2.x during ADR-0012's probes). And it must be
+// --git-common-dir, never --git-dir: the latter resolves to the per-worktree
+// directory (".git/worktrees/<name>"), which would split per-branch state
+// (e.g. the ADR-0012 review journal) into one copy per checkout.
+func (g *Git) CommonDirIn(dir string) (string, error) {
+	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "rev-parse", "--path-format=absolute", "--git-common-dir"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve the common git directory: %w", err)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// BranchForWorktree returns the branch checked out in the worktree at path.
+//
+// This is NOT the same as the worktree's directory name: devgeta flattens "/"
+// out of a name to build the directory and tmux window (worktree.FlattenName),
+// so branch "feat/login" lives in a directory called "feat-login". Anything
+// keyed by the real branch — the ADR-0012 review journal, `branch -D` — must
+// ask git rather than reuse the row/directory name.
+func (g *Git) BranchForWorktree(path string) (string, error) {
+	worktrees, err := g.ListWorktreesAt(path)
+	if err != nil {
+		return "", err
+	}
+	for _, wt := range worktrees {
+		if wt.Path == path {
+			return wt.Branch, nil
+		}
+	}
+	return "", fmt.Errorf("could not determine branch for worktree %s", path)
+}
+
+// HashObjectIn returns the git blob hash of path's CURRENT working-tree
+// content in the repository at dir ("" = current directory). Unlike anything
+// keyed on HEAD, this identity moves with dirty and staged edits too — two
+// different uncommitted versions of a file get two different hashes — which
+// is exactly what ADR-0012's per-entry staleness needs: `git diff <sha>..HEAD`
+// cannot see an uncommitted change, `git hash-object` cannot miss one.
+func (g *Git) HashObjectIn(dir, path string) (string, error) {
+	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "hash-object", "--", path),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to hash %s: %w", path, err)
 	}
 	return strings.TrimSpace(stdout), nil
 }

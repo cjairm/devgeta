@@ -1,16 +1,5 @@
 ---
 description: Review a PR and post one cohesive review with inline comments — apply findings already in context (from a code/doc reviewer agent or another model) or review directly, dedup against existing threads, and submit a single verdict. Use for "review this PR", code review, or doc review.
-temperature: 0.1
-permission:
-  write: allow
-  edit: deny
-  bash:
-    "*": deny
-    "devgeta task *": allow
-    "git diff*": allow
-    "git fetch*": allow
-    "git log*": allow
-    "git branch*": allow
 ---
 
 Post review feedback to a PR as **one cohesive review**. Findings often already sit in the conversation — produced by a `code-reviewer`/`document-reviewer`/`skill-reviewer` agent or another model (gpt, qwen, kimi, …). Use those; if context is thin, review directly with the lens below. The repo is the current working directory.
@@ -54,12 +43,21 @@ This returns three surfaces: inline review threads (resolved and unresolved), a 
 Drop a finding when ANY of these hold:
 
 - An existing thread or prior review already makes substantially the same point AND is **resolved** — resolved means handled; re-raising it is noise.
+- An existing **OPEN** thread already makes substantially the same point AND the code now does what that thread asked — a thread staying open means nobody clicked "Resolve", not that the concern is live. Check the current file (locate the code by the thread's diff hunk, not its line number) and drop the finding if it's already fixed.
 - An existing **OPEN** thread already makes substantially the same point AND the author **replied rejecting it or explaining why it doesn't apply** — treat that as settled and drop it, UNLESS the code has changed since that reply in a way that makes their reasoning no longer hold (only then re-raise it, and say why in the finding). Judge "changed since" primarily from the thread header's `(outdated)` marker (GitHub's own signal that the anchored code has since changed); `review-scope`'s commit lines already carry each commit's date, so for the branch's own commits you can compare the reply timestamp against those directly — no need for a separate git call. Its dates cover the whole branch, not one path, though, so when a thread isn't marked outdated but you suspect only the surrounding code (not the branch as a whole) moved, fall back to `git log <path>` for a path-scoped timestamp.
 - The same point already appears in a review summary body or a conversation comment.
 
 Match on the finding's **identity, not its location**: the file plus the specific code construct plus the concern being raised, using the diff hunk shown in the thread — NOT the line number. Line numbers shift when new commits are pushed, so a `path:line` match misses the same finding after it moves to a new line. Two findings are "the same point" when they flag the same problem in the same code, regardless of the current line number or exact wording.
 
 Keep a count of what you skipped for the summary.
+
+A finding produced by a reviewer agent carries a journal id — `(n4)` next to its location — because the reviewer opens one for every blocking finding. When you drop such a finding here, settle its entry with the reason you dropped it:
+
+```bash
+devgeta task review-note --settle --id n4 --as answered --note "already handled in a resolved thread on PR #123"
+```
+
+Otherwise the journal keeps an entry the PR has already closed, and the next review raises it again — the exact loop the journal exists to break. Findings you do post stay open; `/address-feedback` settles them when the author responds.
 
 ### 4. The review lens (high-leverage first — order matters)
 
@@ -88,7 +86,13 @@ Findings that point at a specific line become **inline comments** anchored to th
 
 **Write plainly.** Everything posted must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler. Each comment says what's wrong, why it matters, and the fix — nothing more.
 
-**Body** — GitHub-Flavored Markdown, written to a scratch file (`/tmp/review.md`); pass it with `--body-file` so backticks and apostrophes survive:
+Allocate a scratch directory for this review's files — one call, reused for both:
+
+```bash
+SCRATCH=$(devgeta task scratch)
+```
+
+**Body** — GitHub-Flavored Markdown, written to a scratch file (`"$SCRATCH/review.md"`); pass it with `--body-file` so backticks and apostrophes survive:
 
 ```markdown
 ## Summary
@@ -112,7 +116,7 @@ Findings that point at a specific line become **inline comments** anchored to th
 <!-- footer when applicable: "Skipped N finding(s) already addressed (resolved threads, author replies, review summaries, or conversation comments)." -->
 ```
 
-**Inline comments** — write a JSON array to a scratch file (`/tmp/comments.json`). Each entry anchors to a diff line; only lines present in the diff can carry one. Lead the body with the severity tag:
+**Inline comments** — write a JSON array to a scratch file (`"$SCRATCH/comments.json"`). Each entry anchors to a diff line; only lines present in the diff can carry one. Lead the body with the severity tag:
 
 ```json
 [
@@ -152,16 +156,26 @@ When approving **with** comments the author should look at before merging (non-b
 ```bash
 devgeta task submit-review \
   --event request-changes \
-  --body-file /tmp/review.md \
-  --comments-file /tmp/comments.json      # omit when there are no inline findings
+  --body-file "$SCRATCH/review.md" \
+  --comments-file "$SCRATCH/comments.json"      # omit when there are no inline findings
 ```
 
 Add `--pr PR_NUMBER` when you resolved a number in step 1. The review posts atomically — one notification, all inline comments grouped under it.
 
-**Re-review with nothing new to add** — split by whether prior feedback is actually settled:
+**Clean up on every exit path, not just the happy one:**
 
-- **Every prior thread was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
-- **Unresolved threads remain unaddressed and that's the main issue → don't approve.** Flag it in one brief `comment-pr` rather than re-listing each thread.
+```bash
+devgeta task scratch --clean "$SCRATCH"
+```
+
+Run this once you are done with the directory — after a successful submit, and equally after a failed one or any early exit (you abandon the review, the PR turns out to be already handled, submit errors out). `--clean` is idempotent, so running it twice is safe and running it after a partial failure is safe.
+
+If submit failed, **print the review body and any inline comments into your reply before cleaning up**, so nothing is lost and the user can post it by hand. Do not leave the directory behind as the backup — a stale scratch directory is only swept during `dg configure --force`, so "I'll leave it there just in case" means it sits around indefinitely.
+
+**Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies, **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
+
+- **Every prior thread's concern was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Don't ask the author to resolve threads either. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
+- **A prior concern is still live in the code and that's the main issue → don't approve.** Flag the concern itself in one brief `comment-pr` rather than re-listing each thread or asking for resolutions.
 
 ## Output
 
@@ -180,7 +194,7 @@ Return a terse summary to the user:
 
 - This command never edits code. It reads, then posts exactly one review.
 - Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the installed binary is available in this environment.
-- **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern.
+- **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the code does what it asked, or the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern. A thread being open only means nobody clicked "Resolve".
 - A line that isn't part of the diff can't take an inline comment — move that finding to the body's "General notes" instead.
 
 ## References

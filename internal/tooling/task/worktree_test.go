@@ -315,9 +315,15 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
-			), // RemoveWorktree -> GetMainWorktree
+			), // GetMainWorktree, resolved BEFORE removal (wtPath is gone after)
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // RemoveWorktree -> its own GetMainWorktree
 			commands.ExecCommandResult("", "", nil), // worktree remove
 			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
 		out, err := tm.WorktreeFinish("add-retry", false, true, false)
@@ -390,9 +396,15 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			), // IsWorktreeDirty(tmpDir) -> clean (discard path)
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
-			), // RemoveWorktree -> GetMainWorktree
+			), // GetMainWorktree, resolved BEFORE removal (wtPath is gone after)
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // RemoveWorktree -> its own GetMainWorktree
 			commands.ExecCommandResult("", "", nil), // worktree remove
 			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
 		out, err := tm.WorktreeFinish("", false, true, false)
@@ -450,9 +462,15 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 			), // ListWorktreesAt
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
-			), // RemoveWorktree -> GetMainWorktree
+			), // GetMainWorktree, resolved BEFORE removal (wtPath is gone after)
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // RemoveWorktree -> its own GetMainWorktree
 			commands.ExecCommandResult("", "", nil), // worktree remove
 			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
 		out, err := tm.WorktreeFinish("spike", false, true, true)
@@ -488,17 +506,23 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 				), // ListWorktreesAt
 				commands.ExecCommandResult(
 					"worktree "+mainWorktree+"\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
-				), // RemoveWorktree -> GetMainWorktree
+				), // GetMainWorktree, resolved BEFORE removal (wtPath is gone after)
+				commands.ExecCommandResult(
+					"worktree "+mainWorktree+"\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				), // RemoveWorktree -> its own GetMainWorktree
 				commands.ExecCommandResult(
 					"",
 					"contains modified or untracked files, use --force to delete it",
 					fmt.Errorf("exit 1"),
-				), // worktree remove fails
+				), // worktree remove fails — the refusal this test exists for
 				commands.ExecCommandResult(
 					"worktree "+mainWorktree+"\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 				), // forceDiscardFallback -> GetMainWorktree
 				commands.ExecCommandResult("", "", nil), // worktree prune
 				commands.ExecCommandResult("", "", nil), // branch -D
+				commands.ExecCommandResult(
+					"/main/.git\n", "", nil,
+				), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 			)
 
 			out, err := tm.WorktreeFinish("spike", false, true, true)
@@ -513,8 +537,8 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 			}
 
 			calls := gitBase.ExecCommandCalls
-			assertCmd(t, calls[4], "git", "-C", mainWorktree, "worktree", "prune")
-			assertCmd(t, calls[5], "git", "-C", mainWorktree, "branch", "-D", "spike")
+			assertCmd(t, calls[5], "git", "-C", mainWorktree, "worktree", "prune")
+			assertCmd(t, calls[6], "git", "-C", mainWorktree, "branch", "-D", "spike")
 		},
 	)
 
@@ -624,6 +648,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // RemoveWorktree -> GetMainWorktree
 			commands.ExecCommandResult("", "", nil), // worktree remove
 			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
 		out, err := tm.WorktreeFinish("add-retry", true, false, false)
@@ -634,9 +661,11 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("unexpected confirmation: %q", out)
 		}
 
-		// The rebase must NOT have been called: only 9 calls total, no extra rebase call.
-		if len(gitBase.ExecCommandCalls) != 9 {
-			t.Fatalf("expected 9 git calls (no rebase), got %d: %+v",
+		// The rebase must NOT have been called: 10 calls total, no extra rebase
+		// call. The 10th is the review journal's location lookup — the branch
+		// was just deleted, so its remembered review exchanges go with it.
+		if len(gitBase.ExecCommandCalls) != 10 {
+			t.Fatalf("expected 10 git calls (no rebase), got %d: %+v",
 				len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls)
 		}
 	})
@@ -673,6 +702,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // RemoveWorktree -> GetMainWorktree
 			commands.ExecCommandResult("", "", nil), // worktree remove
 			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
 		out, err := tm.WorktreeFinish("add-retry", true, false, false)
@@ -684,8 +716,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 		}
 
 		calls := gitBase.ExecCommandCalls
-		if len(calls) != 10 {
-			t.Fatalf("expected 10 git calls (with rebase), got %d: %+v", len(calls), calls)
+		// 11 = the 10 merge-path calls plus the review journal's location lookup.
+		if len(calls) != 11 {
+			t.Fatalf("expected 11 git calls (with rebase), got %d: %+v", len(calls), calls)
 		}
 		assertCmd(t, calls[5], "git", "-C", wtPath, "rebase", "main")
 	})

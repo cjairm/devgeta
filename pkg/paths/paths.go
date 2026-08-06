@@ -323,6 +323,43 @@ func GetCacheDir(subPath ...string) string {
 	return filepath.Join(append([]string{base}, subPath...)...)
 }
 
+// ScratchAllocPrefix is the name prefix every scratch allocation carries
+// (`devgeta task scratch` creates `<scratch root>/task-*` via os.MkdirTemp).
+// It is the ownership boundary for everything that deletes inside the
+// scratch root — both `--clean` and configure's stale-directory prune refuse
+// to touch an entry without it, so anything a user parks under the root is
+// left alone (ADR-0015 §3).
+//
+// It lives here rather than beside the allocator because both sides need it
+// and internal/apps/baseapp cannot import internal/tooling/task —
+// baseapp → tooling/task → apps/git → baseapp is an import cycle.
+const ScratchAllocPrefix = "task-"
+
+// EnsureScratchDir creates (if absent) and tightens devgeta's scratch
+// directory — a disposable, per-user location under the cache root
+// (ADR-0015) that shipped commands use instead of `/tmp` for working files.
+// It is called both by scratch allocation itself (so a wiped `~/.cache`
+// self-heals on the very next allocation, matching ADR-0015 §1's own
+// argument for choosing the cache root — anything may empty it) and by
+// configure's maintenance helper (which additionally prunes stale
+// subdirectories, a job allocation has no reason to do).
+//
+// MkdirAll alone is not sufficient to guarantee 0700: it only applies its
+// mode to a directory it actually creates, and even then the mode is masked
+// by the process umask. An unconditional Chmod follows to fix a directory
+// left more permissive by an older devgeta or by anything else — only the
+// leaf needs it, since traversing into it already requires being its owner.
+func EnsureScratchDir() (string, error) {
+	dir := GetCacheDir("devgeta", "scratch")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 // Returns user-level applications dir
 func GetUserApplicationsDir(isMac bool, subPath ...string) string {
 	if isMac {

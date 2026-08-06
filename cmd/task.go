@@ -4,6 +4,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/spf13/cobra"
 )
@@ -36,9 +38,14 @@ type taskRunner interface {
 	ReviewScope(bodies bool) (string, error)
 	BranchDiff(file string) (string, error)
 	ReviewPackage(base, head, file string) (string, error)
+	ReviewNotes(branch string, showPath, prune bool) (string, error)
+	ReviewNoteOpen(branch, cite, note string) (string, error)
+	ReviewNoteSettle(branch, id, resolution, cite, note string) (string, error)
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
+	Scratch() (string, error)
+	ScratchClean(target string) error
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
@@ -225,6 +232,111 @@ an otherwise-excluded file.`,
 	},
 }
 
+// review-notes / review-note flags (ADR-0012's review journal).
+var (
+	taskReviewNotesBranchFlag string
+	taskReviewNotesPathFlag   bool
+	taskReviewNotesPruneFlag  bool
+
+	taskReviewNoteBranchFlag string
+	taskReviewNoteOpenFlag   bool
+	taskReviewNoteSettleFlag bool
+	taskReviewNoteIDFlag     string
+	taskReviewNoteAsFlag     string
+	taskReviewNoteAtFlag     string
+	taskReviewNoteNoteFlag   string
+)
+
+var taskReviewNotesCmd = &cobra.Command{
+	Use:   "review-notes",
+	Short: "Show this branch's remembered review exchanges, with staleness resolved (for agents)",
+	Long: `Print the review journal for a branch: questions already answered, findings
+already rejected with the author's reason, and findings already fixed — so a
+re-review does not ask what has been asked and answered before.
+
+Each entry is marked [fresh] or [STALE]. Staleness is decided by the content of
+the cited file, not by a commit, so an uncommitted edit to that file correctly
+invalidates the entry (a commit-based check cannot see one). A STALE entry is
+still shown, never hidden: you learn both that it was settled and that the
+answer may no longer hold.
+
+Entries carry ids (n1, n2, ...). Pass an id to "review-note --settle" to record
+the answer against the exact question it closes.
+
+--branch targets another branch; omit it for the current one. A detached HEAD
+has no branch and therefore no journal.
+--path prints the journal file's location, for hand-correcting a wrong entry.
+--prune deletes journals whose branch no longer exists locally or on the remote.
+
+The journal lives under the repo's common git directory, so it is never
+committed and never appears in a diff, and it is deleted with the branch by
+"dg wt remove".`,
+	Example: `  dg task review-notes
+  dg task review-notes --branch fix/retry-context
+  dg task review-notes --path
+  dg task review-notes --prune`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newTaskManager().ReviewNotes(
+			taskReviewNotesBranchFlag,
+			taskReviewNotesPathFlag,
+			taskReviewNotesPruneFlag,
+		)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
+var taskReviewNoteCmd = &cobra.Command{
+	Use:   "review-note --open|--settle --note <text>",
+	Short: "Record or settle one review exchange in the branch's journal (for agents)",
+	Long: `Write one entry to the branch's review journal. Exactly one of --open or
+--settle is required.
+
+  --open --note "<text>" [--at <path[:line]>]
+      Record a question or finding that is still awaiting an answer. Prints its
+      new id ("Noted n4"); use that id to settle it later.
+
+  --settle --id <id> --as answered|rejected|fixed --note "<answer>"
+      Close an open entry. The cited path carries over from the open entry, so
+      --at is refused here: a settle can never retarget the question it closes.
+
+  --settle --as answered|rejected|fixed --note "<text>" [--at <path[:line]>]
+      Record an exchange that was never open — asked and answered in one
+      conversation — straight into the settled section.
+
+--at is optional in both entry-creating forms: a design-level question ("should
+this be an ADR?") cites no file and never goes stale mechanically. When --at is
+given, the path must exist in the working tree — the command stamps the file's
+content hash itself, and refuses rather than writing an entry that claims to
+cite code but could never be checked against it.
+
+--branch targets another branch; omit it for the current one.`,
+	Example: `  dg task review-note --open --at store.go:12 --note "write is not atomic"
+  dg task review-note --settle --id n4 --as fixed --note "atomic rename added"
+  dg task review-note --settle --as answered --note "yes, ctx is threaded through"`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if taskReviewNoteIDFlag != "" && !taskReviewNoteSettleFlag {
+			return fmt.Errorf("--id only applies to --settle")
+		}
+		tm := newTaskManager()
+		if taskReviewNoteOpenFlag {
+			out, err := tm.ReviewNoteOpen(
+				taskReviewNoteBranchFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag,
+			)
+			return emitPRResult(cmd, out, err)
+		}
+		out, err := tm.ReviewNoteSettle(
+			taskReviewNoteBranchFlag,
+			taskReviewNoteIDFlag,
+			taskReviewNoteAsFlag,
+			taskReviewNoteAtFlag,
+			taskReviewNoteNoteFlag,
+		)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 // taskWorktreeStartBaseFlag is worktree-start's --base flag.
 var taskWorktreeStartBaseFlag string
 
@@ -322,6 +434,35 @@ origin main --tags".`,
 	},
 }
 
+// taskScratchCleanFlag is scratch's --clean flag.
+var taskScratchCleanFlag string
+
+var taskScratchCmd = &cobra.Command{
+	Use:   "scratch [--clean <path>]",
+	Short: "Allocate or remove a devgeta-owned scratch directory (for agents)",
+	Long: `Bare "dg task scratch" allocates a fresh, uniquely-named directory under
+devgeta's scratch root (~/.cache/devgeta/scratch, ADR-0015) and prints its
+absolute path — the destination for a command's working files instead of
+/tmp, which both agents prompt on when written to directly.
+
+--clean <path> removes a directory this command allocated. Pass it the exact
+path scratch printed: cleanup only accepts a direct child of the scratch
+root whose name carries the allocation prefix, so a reconstructed or parent
+path is refused rather than silently widened.`,
+	Example: `  SCRATCH=$(dg task scratch)
+  ... write files under "$SCRATCH" ...
+  dg task scratch --clean "$SCRATCH"`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		tm := newTaskManager()
+		if taskScratchCleanFlag != "" {
+			return tm.ScratchClean(taskScratchCleanFlag)
+		}
+		out, err := tm.Scratch()
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(taskCmd)
 	// Standard Cobra help for the whole task subtree (overrides the branded
@@ -336,9 +477,15 @@ func init() {
 	taskCmd.AddCommand(taskReviewScopeCmd)
 	taskCmd.AddCommand(taskBranchDiffCmd)
 	taskCmd.AddCommand(taskReviewPackageCmd)
+	taskCmd.AddCommand(taskReviewNotesCmd)
+	taskCmd.AddCommand(taskReviewNoteCmd)
 	taskCmd.AddCommand(taskWorktreeStartCmd)
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
+	taskCmd.AddCommand(taskScratchCmd)
+
+	taskScratchCmd.Flags().
+		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
 
 	taskBranchDiffCmd.Flags().
 		StringVar(&taskBranchDiffFileFlag, "file", "", "Diff only this file, bypassing exclusions")
@@ -346,6 +493,36 @@ func init() {
 		StringVar(&taskReviewPackageFileFlag, "file", "", "Diff only this file, bypassing exclusions")
 	taskReviewScopeCmd.Flags().
 		BoolVar(&taskReviewScopeBodiesFlag, "bodies", false, "Append each commit's body beneath its subject")
+
+	taskReviewNotesCmd.Flags().
+		StringVar(&taskReviewNotesBranchFlag, "branch", "", "Branch to read (default: current)")
+	taskReviewNotesCmd.Flags().
+		BoolVar(&taskReviewNotesPathFlag, "path", false, "Print the journal file's location instead of its contents")
+	taskReviewNotesCmd.Flags().
+		BoolVar(&taskReviewNotesPruneFlag, "prune", false, "Delete journals whose branch no longer exists locally or on the remote")
+	taskReviewNotesCmd.MarkFlagsMutuallyExclusive("path", "prune")
+
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteBranchFlag, "branch", "", "Branch to write to (default: current)")
+	taskReviewNoteCmd.Flags().
+		BoolVar(&taskReviewNoteOpenFlag, "open", false, "Record an entry that is still awaiting an answer")
+	// --settle is a bool with a separate --id rather than "--settle [id]" with an
+	// optional value: pflag's NoOptDefVal would make the natural `--settle n4`
+	// parse as a bare flag plus a stray positional, which cobra.NoArgs then
+	// rejects with an error naming the id instead of the mistake.
+	taskReviewNoteCmd.Flags().
+		BoolVar(&taskReviewNoteSettleFlag, "settle", false, "Settle an entry (with --id closes that open entry; without it records an exchange that was never open)")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteIDFlag, "id", "", "Entry id to settle, as printed by --open (e.g. n4)")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteAsFlag, "as", "", "Resolution for --settle: rejected, answered, or fixed")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteAtFlag, "at", "", "Cited location, path[:line] (optional; a design-level entry cites nothing)")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteNoteFlag, "note", "", "The question, finding, or answer text (required)")
+	taskReviewNoteCmd.MarkFlagsMutuallyExclusive("open", "settle")
+	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle")
+	_ = taskReviewNoteCmd.MarkFlagRequired("note")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")

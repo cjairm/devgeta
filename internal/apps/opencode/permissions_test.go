@@ -39,7 +39,10 @@ func renderedOpenCodeConfig(t *testing.T) []byte {
 	if err := files.GenerateFromTemplate(
 		tmplPath,
 		out,
-		map[string]string{"Theme": DEFAULT_THEME_NAME},
+		map[string]string{
+			"Theme":          DEFAULT_THEME_NAME,
+			"ScratchDirGlob": `"/tmp/placeholder-scratch/**"`,
+		},
 	); err != nil {
 		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
 	}
@@ -193,9 +196,15 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			"./secrets/**": "deny",
 		},
 		"edit": {
-			".git/**":      "deny",
-			".claude/**":   "deny",
-			".opencode/**": "deny",
+			".git/**":                        "deny",
+			"**/.claude/settings.json":       "deny",
+			"**/.claude/settings.local.json": "deny",
+			"**/.claude/hooks/**":            "deny",
+			"**/.opencode/opencode.json":     "deny",
+			"**/.opencode/plugin/**":         "deny",
+			"**/.mcp.json":                   "deny",
+			"~/.claude/**":                   "deny",
+			"~/.config/opencode/**":          "deny",
 		},
 	}
 
@@ -263,6 +272,200 @@ func TestSharedAgentsInheritGlobalBashPolicy(t *testing.T) {
 	}
 }
 
+// TestReviewerAgentsReadTheJournalAndCanApprove guards the two properties that
+// decide whether a review can ever converge (ADR-0012). Both were missing from
+// document-reviewer while its siblings had one of them, and the result was a
+// reviewer that asked the same questions every run and could not approve
+// anything:
+//
+//  1. Every reviewer reads the branch's review journal FIRST. Without it a
+//     fresh session re-asks what was already answered, because a reviewer has
+//     no memory of its own and the answers live in the journal.
+//  2. Every reviewer ends on a verdict it can actually reach.
+//     document-reviewer's output contract used to stop at a risk rating and a
+//     questions section — there was no APPROVE anywhere in it, so "never
+//     approves" was encoded in the template rather than being drift.
+//  3. Every reviewer writes its blocking findings back, bound to severity, and
+//     shows the settle command that closes them (ADR-0012's amendment). The
+//     first version gated the write on "what you could not answer yourself",
+//     which a competent reviewer never hits: three consecutive reviews of one
+//     branch left the journal empty and re-raised the same findings.
+//
+// Asserted across all three rather than left to each prompt's own review: this
+// asymmetry is invisible in any single file, since each agent reads fine alone
+// and only a check over the set catches one of them missing a section.
+func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
+	agentDir := filepath.Join("..", "..", "..", "configs", "shared", "agents")
+	entries, err := os.ReadDir(agentDir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", agentDir, err)
+	}
+
+	// Substrings, not whole lines: the surrounding prose differs per agent by
+	// design (each names its own subject), so this pins the contract each must
+	// carry without freezing how it is worded.
+	required := []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "devgeta task review-notes",
+			why: "the agent never reads the branch's settled exchanges, so answered " +
+				"questions come back on every re-review",
+		},
+		{
+			substr: "devgeta task review-note --open",
+			why: "the agent has no way to record an unanswered question, so nothing " +
+				"the next run reads will contain it",
+		},
+		{
+			substr: "devgeta task review-note --settle --id",
+			why: "the agent never shows how its findings get closed, so they stay " +
+				"open forever and every re-review raises them again (ADR-0012 " +
+				"amendment: the settle line ends every report, because in a chat " +
+				"review with no PR nothing downstream will print it)",
+		},
+		{
+			substr: "[CRITICAL]` and `[IMPORTANT]",
+			why: "the journal write is not bound to severity, so what gets recorded " +
+				"is left to the agent's judgment — which produced empty journals " +
+				"across three consecutive reviews (ADR-0012 amendment)",
+		},
+		{
+			substr: "[STALE]",
+			why: "without honoring the staleness marker the agent either trusts an " +
+				"entry judged against code that has since changed, or ignores the " +
+				"journal wholesale",
+		},
+		{
+			substr: "**Status:** APPROVE",
+			why: "the agent has no reachable verdict, so it can report findings " +
+				"forever without ever approving",
+		},
+	}
+
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "-reviewer.md") {
+			continue
+		}
+		t.Run(e.Name(), func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join(agentDir, e.Name()))
+			if err != nil {
+				t.Fatalf("failed to read agent: %v", err)
+			}
+			body := string(data)
+			for _, req := range required {
+				if !strings.Contains(body, req.substr) {
+					t.Errorf("missing %q — %s", req.substr, req.why)
+				}
+			}
+		})
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no *-reviewer.md agents found in %s", agentDir)
+	}
+}
+
+// commandFrontmatterAllowlist is OpenCode's real command-object schema
+// (https://opencode.ai/config.json) — the only frontmatter keys a command
+// file is allowed to set. "template" is the schema's name for the command
+// body/prompt content; none of these files set it explicitly in frontmatter,
+// but it stays in the allowlist because it is a valid schema key.
+//
+// This must stay an allowlist, not a denylist of "known bad keys": the cycle
+// documented in docs/plans/cycles/2026-08-05-shared-command-permissions.md
+// removed `permission`, `tools`, and `temperature` from every shared command
+// file because OpenCode silently ignores keys outside this schema — they
+// looked enforced but did nothing. A denylist of those three names would
+// never have caught `temperature` before someone noticed by hand; only
+// rejecting everything not on the real schema catches the next one too.
+var commandFrontmatterAllowlist = map[string]bool{
+	"template":    true,
+	"description": true,
+	"agent":       true,
+	"model":       true,
+	"variant":     true,
+	"subtask":     true,
+}
+
+// forEachSharedCommand runs fn as a subtest for every
+// configs/shared/commands/*.md file.
+func forEachSharedCommand(t *testing.T, fn func(t *testing.T, name, path string)) {
+	t.Helper()
+	dir := filepath.Join("..", "..", "..", "configs", "shared", "commands")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", dir, err)
+	}
+
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		t.Run(e.Name(), func(t *testing.T) {
+			fn(t, e.Name(), path)
+		})
+		checked++
+	}
+	if checked == 0 {
+		t.Fatalf("no command files found in %s", dir)
+	}
+}
+
+// TestSharedCommandsFrontmatterMatchesSchema guards against dead frontmatter
+// keys creeping back into configs/shared/commands/*.md. OpenCode's command
+// schema (https://opencode.ai/config.json) only recognizes template,
+// description, agent, model, variant, and subtask — any other key is parsed
+// but silently dropped at runtime, so it looks enforced in the file while
+// doing nothing. That is exactly how `permission`, `tools`, and `temperature`
+// went unnoticed until the cycle in
+// docs/plans/cycles/2026-08-05-shared-command-permissions.md removed them.
+func TestSharedCommandsFrontmatterMatchesSchema(t *testing.T) {
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		// OpenCode's command schema only requires `template` (the body) — a
+		// command file with no frontmatter block at all is legal, so there is
+		// nothing here for the allowlist to check.
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
+		}
+		if !strings.HasPrefix(strings.TrimSpace(string(data)), "---") {
+			return
+		}
+
+		fm := frontmatter(t, path)
+
+		var parsed map[string]any
+		if err := yaml.Unmarshal(fm, &parsed); err != nil {
+			t.Fatalf("frontmatter is not valid YAML: %v", err)
+		}
+		for key := range parsed {
+			if !commandFrontmatterAllowlist[key] {
+				t.Errorf(
+					"%s frontmatter declares %q, which is outside OpenCode's real "+
+						"command schema (https://opencode.ai/config.json: template, "+
+						"description, agent, model, variant, subtask). OpenCode silently "+
+						"drops unknown frontmatter keys at runtime, so %q is not merely "+
+						"unused — it looks enforced but does nothing. Remove it or add it "+
+						"to the schema allowlist if OpenCode has genuinely added it. This "+
+						"also deliberately rejects Claude-Code-only keys (e.g. "+
+						"allowed-tools, argument-hint): per-command restriction on the "+
+						"Claude side is a separate decision that hasn't been made, not a "+
+						"frontmatter edit — see "+
+						"docs/plans/cycles/2026-08-05-shared-command-permissions.md.",
+					name,
+					key,
+					key,
+				)
+			}
+		}
+	})
+}
+
 // frontmatter returns the YAML block delimited by the leading and next "---".
 func frontmatter(t *testing.T, path string) []byte {
 	t.Helper()
@@ -303,7 +506,14 @@ func claudePermissions(t *testing.T) map[string]map[string]string {
 	t.Helper()
 	tmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
 	out := filepath.Join(t.TempDir(), "settings.json")
-	if err := files.GenerateFromTemplate(tmplPath, out, config.IntegrationsConfig{}); err != nil {
+	// Mirrors claude.settingsTemplateData's shape (unexported, different
+	// package) rather than importing it: the template only needs a
+	// ScratchDir field alongside the promoted IntegrationsConfig fields.
+	renderData := struct {
+		config.IntegrationsConfig
+		ScratchDir string
+	}{ScratchDir: `"/tmp/placeholder-scratch"`}
+	if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 		t.Fatalf("failed to render settings.json.tmpl: %v", err)
 	}
 	data, err := os.ReadFile(out)
@@ -445,4 +655,189 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestScratchDirGrantParity is the guard against ADR-0015's scratch grant
+// drifting to one agent only. The two configs express it in different
+// shapes — Claude's permissions.additionalDirectories is a bare directory
+// (no glob), OpenCode's permission.external_directory is a gitignore-style
+// pattern map that needs a "/**" suffix to cover nested paths — so a plain
+// string-equality check across the two files (the way
+// TestClaudeAndOpenCodePermissionParity compares read/bash/edit) would be
+// wrong here. This strips OpenCode's suffix back off and compares the
+// underlying root instead.
+func TestScratchDirGrantParity(t *testing.T) {
+	const wantRoot = "/tmp/dg-grant-parity-scratch"
+
+	claudeTmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
+	claudeOut := filepath.Join(t.TempDir(), "settings.json")
+	claudeRenderData := struct {
+		config.IntegrationsConfig
+		ScratchDir string
+	}{ScratchDir: mustJSONString(t, wantRoot)}
+	if err := files.GenerateFromTemplate(claudeTmplPath, claudeOut, claudeRenderData); err != nil {
+		t.Fatalf("failed to render settings.json.tmpl: %v", err)
+	}
+	claudeData, err := os.ReadFile(claudeOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var claudeCfg struct {
+		Permissions struct {
+			AdditionalDirectories []string `json:"additionalDirectories"`
+		} `json:"permissions"`
+	}
+	if err := json.Unmarshal(claudeData, &claudeCfg); err != nil {
+		t.Fatalf("rendered settings.json is not valid JSON: %v\n%s", err, claudeData)
+	}
+	if len(claudeCfg.Permissions.AdditionalDirectories) != 1 ||
+		claudeCfg.Permissions.AdditionalDirectories[0] != wantRoot {
+		t.Fatalf(
+			"expected additionalDirectories == [%q], got %v",
+			wantRoot,
+			claudeCfg.Permissions.AdditionalDirectories,
+		)
+	}
+
+	openCodeTmplPath := filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl")
+	openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
+	if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
+		"Theme":          DEFAULT_THEME_NAME,
+		"ScratchDirGlob": mustJSONString(t, wantRoot+"/**"),
+	}); err != nil {
+		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
+	}
+	openCodeData, err := os.ReadFile(openCodeOut)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var openCodeCfg struct {
+		Permission struct {
+			ExternalDirectory map[string]string `json:"external_directory"`
+		} `json:"permission"`
+	}
+	if err := json.Unmarshal(openCodeData, &openCodeCfg); err != nil {
+		t.Fatalf("rendered opencode.json is not valid JSON: %v\n%s", err, openCodeData)
+	}
+	if len(openCodeCfg.Permission.ExternalDirectory) != 1 {
+		t.Fatalf(
+			"expected exactly one external_directory grant, got %v",
+			openCodeCfg.Permission.ExternalDirectory,
+		)
+	}
+	for pattern, action := range openCodeCfg.Permission.ExternalDirectory {
+		if action != "allow" {
+			t.Errorf("external_directory[%q] = %q, want %q", pattern, action, "allow")
+		}
+		gotRoot := strings.TrimSuffix(pattern, "/**")
+		if gotRoot != wantRoot {
+			t.Errorf(
+				"external_directory grants %q, which strips to root %q — want %q (parity with additionalDirectories)",
+				pattern,
+				gotRoot,
+				wantRoot,
+			)
+		}
+	}
+}
+
+// TestScratchDirGrantRendersValidJSONForHostilePaths is the regression test
+// for the class of bug ADR-0015 §2 exists to prevent: text/template does no
+// JSON escaping, and ScratchDir/ScratchDirGlob were the first
+// user-influenced (XDG_CACHE_HOME-derived) values either template ever
+// interpolated. Renders both templates with a raw (unescaped) hostile root
+// and asserts the OUTPUT is still valid JSON — proving the production code
+// path (json.Marshal before templating, not the template itself) is what
+// carries the escaping.
+func TestScratchDirGrantRendersValidJSONForHostilePaths(t *testing.T) {
+	hostileRoots := []string{
+		"/tmp/dg cache/scratch",   // space
+		`/tmp/dg"cache/scratch`,   // double quote
+		`/tmp/dg\cache/scratch`,   // backslash
+		"/tmp/dg\"ca\\pe/scratch", // quote and backslash together
+	}
+
+	claudeTmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
+	openCodeTmplPath := filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl")
+
+	for _, root := range hostileRoots {
+		t.Run(root, func(t *testing.T) {
+			claudeOut := filepath.Join(t.TempDir(), "settings.json")
+			claudeRenderData := struct {
+				config.IntegrationsConfig
+				ScratchDir string
+			}{ScratchDir: mustJSONString(t, root)}
+			if err := files.GenerateFromTemplate(
+				claudeTmplPath,
+				claudeOut,
+				claudeRenderData,
+			); err != nil {
+				t.Fatalf("failed to render settings.json.tmpl: %v", err)
+			}
+			claudeData, err := os.ReadFile(claudeOut)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(claudeData) {
+				t.Errorf(
+					"rendered settings.json is not valid JSON for root %q:\n%s",
+					root,
+					claudeData,
+				)
+			}
+
+			openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
+			if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
+				"Theme":          DEFAULT_THEME_NAME,
+				"ScratchDirGlob": mustJSONString(t, root+"/**"),
+			}); err != nil {
+				t.Fatalf("failed to render opencode.json.tmpl: %v", err)
+			}
+			openCodeData, err := os.ReadFile(openCodeOut)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !json.Valid(openCodeData) {
+				t.Errorf(
+					"rendered opencode.json is not valid JSON for root %q:\n%s",
+					root,
+					openCodeData,
+				)
+			}
+		})
+	}
+}
+
+// mustJSONString renders v as a JSON-encoded value (e.g. a Go string ->
+// `"..."` with quotes) — the pre-escaped form settings.json.tmpl and
+// opencode.json.tmpl interpolate directly, since text/template does no
+// JSON escaping of its own (ADR-0015 §2).
+func mustJSONString(t *testing.T, v string) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("failed to marshal %q: %v", v, err)
+	}
+	return string(b)
+}
+
+// TestSharedCommandsNeverReferenceTmp is ADR-0015's constraint that
+// devgeta-authored commands use the scratch directory (`devgeta task
+// scratch`) rather than /tmp — enforced against the embedded configs
+// themselves (CLAUDE.md §12), since a comment alone will not survive future
+// edits. Only commands/ is checked: skills/ vendors upstream Superpowers
+// content with its own /tmp paths, deliberately excluded (ADR-0015 §7).
+func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
+		}
+		if strings.Contains(string(data), "/tmp/") {
+			t.Errorf(
+				"%s references /tmp/ — use `devgeta task scratch` instead (ADR-0015)",
+				name,
+			)
+		}
+	})
 }

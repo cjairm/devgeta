@@ -1,23 +1,5 @@
 ---
 description: Address PR review feedback — implement suggestions, reply to reviewers, and resolve threads on the current branch's PR
-temperature: 0.2
-permission:
-  write: allow
-  edit: allow
-  bash:
-    "*": deny
-    "devgeta task *": allow
-    "git add *": allow
-    "git commit *": allow
-    "git push*": allow
-    "git status": allow
-    "git diff*": allow
-    "go *": allow
-    "npm *": allow
-    "npx *": allow
-    "pnpm *": allow
-    "yarn *": allow
-    "make *": allow
 ---
 
 Address PR review feedback: implement the requested changes, reply to each reviewer thread, and resolve the ones you handled.
@@ -111,6 +93,17 @@ Reply to every thread, even trivial ones, so the reviewer never has to guess whe
 
 Good: `Done in a1b2c3d — moved the check before the loop so we don't hit the API on every item.`
 Bad: `Per your astute observation, I have refactored the aforementioned logic to preemptively short-circuit redundant invocations.`
+
+**Also record it in the branch's review journal**, so the next review — which may be a fresh session with no memory of this one — inherits the outcome instead of raising the same point again:
+
+```bash
+devgeta task review-notes                       # ids of anything already open
+devgeta task review-note --settle --id n4 --as fixed --note "atomic rename added in a1b2c3d"
+```
+
+Use `--as fixed` for a fix, `--as answered` for a question you answered, and `--as rejected` when you pushed back — for a rejection, the note must carry **why**, because that reason is what a later reviewer re-reads before overriding it. For a point that was never opened as an entry, drop `--id` and the note is recorded directly.
+
+This is the step that makes reviews converge. A thread resolved on GitHub only helps while the PR exists; the journal is what a reviewer reads on a branch with no PR, and in a session that never saw this conversation.
 
 ### 7. Re-request review
 

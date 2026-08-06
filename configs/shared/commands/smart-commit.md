@@ -1,15 +1,6 @@
 ---
 description: Create focused commits from staged changes
-temperature: 0.1
 model: haiku
-tools:
-  write: false
-  edit: false
-  bash:
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git commit*": allow
 ---
 
 Create small, reviewable commits. Commits are granular steps; PRs show the complete picture.

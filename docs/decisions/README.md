@@ -31,4 +31,8 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0009](ADR-0009-audible-agent-notifications.md) — An agent that wants you makes a sound, from the hook that already knows
 - [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md) — Worktree layout is a setting, and git is the worktree index
 - [ADR-0011](ADR-0011-agent-prompt-as-launch-argument.md) — An opening prompt is a launch argument, not keystrokes
+- [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md) — Review knowledge lives in a local journal devgeta owns
 - [ADR-0013](ADR-0013-normalize-the-worktree-gitfile.md) — Normalize the worktree gitfile instead of warning about it
+- [ADR-0014](ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md) — Agent-config protection is a capability guard, not a path deny
+- [ADR-0015](ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md) — Agent scratch files get a devgeta-owned directory, not `/tmp`
+- [ADR-0016](ADR-0016-inconclusive-tool-probe-fails-open.md) — An inconclusive tool probe must not block worktree creation

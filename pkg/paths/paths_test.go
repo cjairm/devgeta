@@ -5,12 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
-
-var cmd = commands.NewBaseCommand()
 
 func TestConfigDir(t *testing.T) {
 	t.Run("no subdirs", func(t *testing.T) {
@@ -177,11 +174,11 @@ func TestApplicationsDirs(t *testing.T) {
 
 func createFile(t *testing.T, path string) {
 	t.Helper()
-	err := os.MkdirAll(filepath.Dir(path), 0755)
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	if err != nil {
 		t.Fatalf("failed to create directory: %v", err)
 	}
-	err = os.WriteFile(path, []byte("test content"), 0644)
+	err = os.WriteFile(path, []byte("test content"), 0o644)
 	if err != nil {
 		t.Fatalf("failed to create file %q: %v", path, err)
 	}
@@ -213,7 +210,7 @@ func TestGetShellConfigFile(t *testing.T) {
 	t.Run("returns fish config if only it exists", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		fishDir := filepath.Join(tmpDir, ".config", "fish")
-		if err := os.MkdirAll(fishDir, 0755); err != nil {
+		if err := os.MkdirAll(fishDir, 0o755); err != nil {
 			t.Fatalf("failed to create fish config dir: %v", err)
 		}
 
@@ -316,6 +313,94 @@ func TestExpandHome(t *testing.T) {
 			if got := paths.ExpandHome(p); got != p {
 				t.Errorf("expected %q unchanged, got %q", p, got)
 			}
+		}
+	})
+}
+
+func TestEnsureScratchDir(t *testing.T) {
+	t.Run("creates the dir when absent", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		got, err := paths.EnsureScratchDir()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(tmpDir, ".cache", "devgeta", "scratch")
+		if got != want {
+			t.Errorf("expected %q, got %q", want, got)
+		}
+		info, err := os.Stat(got)
+		if err != nil {
+			t.Fatalf("expected dir to exist: %v", err)
+		}
+		if !info.IsDir() {
+			t.Fatalf("expected %q to be a directory", got)
+		}
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Errorf("expected mode 0700, got %o", perm)
+		}
+	})
+
+	t.Run("tightens a pre-existing directory left at a broader mode", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		preexisting := filepath.Join(tmpDir, ".cache", "devgeta", "scratch")
+		if err := os.MkdirAll(preexisting, 0o755); err != nil {
+			t.Fatalf("failed to pre-create scratch dir: %v", err)
+		}
+
+		got, err := paths.EnsureScratchDir()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		info, err := os.Stat(got)
+		if err != nil {
+			t.Fatalf("expected dir to exist: %v", err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Errorf(
+				"expected MkdirAll(existing dir) + Chmod to tighten to 0700, got %o — "+
+					"MkdirAll alone skips a directory it didn't create",
+				perm,
+			)
+		}
+	})
+
+	t.Run("is idempotent across repeated calls", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		t.Setenv("HOME", tmpDir)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		first, err := paths.EnsureScratchDir()
+		if err != nil {
+			t.Fatalf("unexpected error on first call: %v", err)
+		}
+		second, err := paths.EnsureScratchDir()
+		if err != nil {
+			t.Fatalf("unexpected error on second call: %v", err)
+		}
+		if first != second {
+			t.Errorf("expected the same path across calls, got %q then %q", first, second)
+		}
+	})
+
+	t.Run("honors XDG_CACHE_HOME", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		customCache := filepath.Join(tmpDir, "custom-cache")
+		t.Setenv("HOME", tmpDir)
+		t.Setenv("XDG_CACHE_HOME", customCache)
+
+		got, err := paths.EnsureScratchDir()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := filepath.Join(customCache, "devgeta", "scratch")
+		if got != want {
+			t.Errorf("expected %q, got %q", want, got)
 		}
 	})
 }

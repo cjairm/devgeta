@@ -60,13 +60,20 @@
       "Read(~/.zsh_history)",
       "Read(~/.bash_history)",
       "Edit(.git/**)",
-      "Edit(.claude/**)",
-      "Edit(.opencode/**)",
+      "Edit(**/.claude/settings.json)",
+      "Edit(**/.claude/settings.local.json)",
+      "Edit(**/.claude/hooks/**)",
+      "Edit(**/.opencode/opencode.json)",
+      "Edit(**/.opencode/plugin/**)",
+      "Edit(**/.mcp.json)",
+      "Edit(~/.claude/**)",
+      "Edit(~/.config/opencode/**)",
       "Edit(~/.zshrc)",
       "Edit(~/.bashrc)",
       "Edit(~/.profile)"
     ],
-    "defaultMode": "acceptEdits"
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": [{{.ScratchDir}}]
   },
   "env": {
     "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
@@ -114,6 +121,10 @@
       {
         "matcher": "Edit|Write",
         "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-config-guard.sh"
+          },
           {
             "type": "command",
             "command": "~/.claude/suppression-guard.sh"

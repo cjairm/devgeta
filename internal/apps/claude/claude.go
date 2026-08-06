@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -17,6 +18,23 @@ import (
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
+
+// settingsTemplateData is settings.json.tmpl's render data. It embeds
+// config.IntegrationsConfig anonymously so field promotion keeps
+// `{{if .RtkClaudeHook}}` working unchanged, and adds ScratchDir — the
+// scratch directory granted through permissions.additionalDirectories
+// (ADR-0015 §2).
+//
+// ScratchDir must already be JSON-encoded (quotes included, via
+// json.Marshal) by the time it reaches the template: text/template does no
+// escaping of its own, and this is the first user-influenced value
+// (XDG_CACHE_HOME-derived) this template has ever interpolated — a quote or
+// backslash in an unescaped path would emit a settings.json Claude Code
+// cannot parse at all.
+type settingsTemplateData struct {
+	config.IntegrationsConfig
+	ScratchDir string
+}
 
 var (
 	_ apps.App                 = (*Claude)(nil)
@@ -96,12 +114,24 @@ func (c *Claude) ForceConfigure() error {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
 
+	scratchDir, err := paths.EnsureScratchDir()
+	if err != nil {
+		return fmt.Errorf("failed to ensure scratch dir: %w", err)
+	}
+	scratchDirJSON, err := json.Marshal(scratchDir)
+	if err != nil {
+		return fmt.Errorf("failed to encode scratch dir: %w", err)
+	}
+
 	// settings.json is rendered from a template so tracked opt-ins (the rtk
 	// hook — ADR-0004) survive a --force re-render instead of being wiped.
 	if err := files.GenerateFromTemplate(
 		filepath.Join(paths.Paths.App.Configs.Claude, "settings.json.tmpl"),
 		filepath.Join(paths.Paths.Config.Claude, "settings.json"),
-		gc.Integrations,
+		settingsTemplateData{
+			IntegrationsConfig: gc.Integrations,
+			ScratchDir:         string(scratchDirJSON),
+		},
 	); err != nil {
 		return fmt.Errorf("failed to render claude settings: %w", err)
 	}
@@ -112,6 +142,7 @@ func (c *Claude) ForceConfigure() error {
 		"task-redirect.sh",
 		"secret-guard.sh",
 		"suppression-guard.sh",
+		"agent-config-guard.sh",
 		"agent-state.sh",
 	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
@@ -148,6 +179,10 @@ func (c *Claude) ForceConfigure() error {
 		baseapp.SharedConfigParts,
 	); err != nil {
 		return fmt.Errorf("failed to copy claude shared config: %w", err)
+	}
+
+	if err := baseapp.MaintainScratchDir(); err != nil {
+		return fmt.Errorf("failed to maintain scratch dir: %w", err)
 	}
 
 	gc.ReconcileShellFeatures()

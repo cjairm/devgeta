@@ -239,7 +239,11 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "settings.json")
-			if err := files.GenerateFromTemplate(tmplPath, out, tt.flags); err != nil {
+			renderData := settingsTemplateData{
+				IntegrationsConfig: tt.flags,
+				ScratchDir:         `"/tmp/placeholder-scratch"`,
+			}
+			if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 				t.Fatalf("failed to render template: %v", err)
 			}
 			data, err := os.ReadFile(out)
@@ -258,6 +262,7 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 				"task-redirect.sh",
 				"secret-guard.sh",
 				"suppression-guard.sh",
+				"agent-config-guard.sh",
 				"format.sh",
 				"agent-state.sh",
 			} {
@@ -466,6 +471,13 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "agent-config-guard.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "agent-state.sh"),
 		[]byte(`#!/bin/bash`),
 		0o644,
@@ -525,13 +537,15 @@ func TestForceConfigure(t *testing.T) {
 	}
 
 	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
-	// suppression-guard.sh, and agent-state.sh deployed and executable
+	// suppression-guard.sh, agent-config-guard.sh, and agent-state.sh
+	// deployed and executable
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
 		"task-redirect.sh",
 		"secret-guard.sh",
 		"suppression-guard.sh",
+		"agent-config-guard.sh",
 		"agent-state.sh",
 	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))

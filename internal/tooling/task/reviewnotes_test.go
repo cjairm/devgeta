@@ -1,0 +1,328 @@
+package task
+
+import (
+	"crypto/sha1"
+	"encoding/hex"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	gitapp "github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
+)
+
+// newJournalSetup builds a TaskManager whose git calls are answered against a
+// real temp directory, so these tests exercise the actual journal file the
+// commands write — not a stubbed manager. The process cwd is moved into the
+// fake repo because the task layer deliberately passes "" as the repo dir
+// (every task runs in the caller's repo).
+func newJournalSetup(t *testing.T) (*TaskManager, string) {
+	t.Helper()
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	if err := os.MkdirAll(gitDir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Chdir(root)
+
+	branch := "feat"
+	gitBase := commands.NewMockBaseCommand()
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		args := c.Args
+		switch {
+		case slices.Contains(args, "--git-common-dir"):
+			return gitDir + "\n", "", nil
+		case slices.Contains(args, "--show-current"):
+			return branch + "\n", "", nil
+		case slices.Contains(args, "hash-object"):
+			data, err := os.ReadFile(filepath.Join(root, args[len(args)-1]))
+			if err != nil {
+				return "", "fatal: Cannot open", errors.New("exit 128")
+			}
+			sum := sha1.Sum(data)
+			return hex.EncodeToString(sum[:])[:7] + "\n", "", nil
+		case slices.Contains(args, "--short"):
+			return "abc1234\n", "", nil
+		}
+		return "", "", nil
+	}
+
+	tm := &TaskManager{
+		Git:  &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+	return tm, root
+}
+
+func TestReviewNotesSentinelWhenEmpty(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// An empty result must be a fixed sentence, never empty stdout: an agent
+	// cannot tell empty output from a crash (task-design.md output rule 4).
+	if out != "No review notes for branch feat." {
+		t.Fatalf("expected the empty sentinel, got %q", out)
+	}
+}
+
+func TestReviewNoteOpenThenNotesShowsEntry(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if err := os.WriteFile(filepath.Join(root, "store.go"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	out, err := tm.ReviewNoteOpen("", "store.go:12", "write is not atomic")
+	if err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	// Mutations echo verb + target so the caller can reuse the id without
+	// re-reading the journal.
+	if out != "Noted n1" {
+		t.Fatalf("expected 'Noted n1', got %q", out)
+	}
+
+	notes, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	for _, want := range []string{"branch: feat", "open:", "n1", "store.go:12", "[fresh]", "write is not atomic"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("expected %q in output:\n%s", want, notes)
+		}
+	}
+}
+
+// The central behavior: after an uncommitted edit to the cited file, the entry
+// reads STALE — and the reader is told to re-check rather than left to work it
+// out.
+func TestReviewNotesMarksStaleAfterDirtyEdit(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	path := filepath.Join(root, "store.go")
+	if err := os.WriteFile(path, []byte("v1\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := tm.ReviewNoteOpen("", "store.go:12", "not atomic"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("v2-dirty\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	notes, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(notes, "STALE") {
+		t.Fatalf("expected a STALE marker after a dirty edit:\n%s", notes)
+	}
+	if !strings.Contains(notes, "re-check") {
+		t.Errorf("the stale marker should tell the reader what to do:\n%s", notes)
+	}
+}
+
+func TestReviewNoteSettleByIDMovesEntryAndEchoesID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "Does retry reuse the outer context?"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	out, err := tm.ReviewNoteSettle("", "n1", "answered", "", "yes, ctx is threaded through")
+	if err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+	if out != "Settled n1 (answered)" {
+		t.Fatalf("expected 'Settled n1 (answered)', got %q", out)
+	}
+
+	notes, _ := tm.ReviewNotes("", false, false)
+	if !strings.Contains(notes, "settled:") || !strings.Contains(notes, "answered") {
+		t.Errorf("entry should appear as settled:\n%s", notes)
+	}
+	if strings.Contains(notes, "open:") {
+		t.Errorf("nothing should remain open:\n%s", notes)
+	}
+}
+
+// --at alongside --settle <id> is refused: the cite carries over from the open
+// entry, so accepting a second path would let an answer silently retarget the
+// question it closes.
+func TestReviewNoteSettleByIDRejectsAt(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "q"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	_, err := tm.ReviewNoteSettle("", "n1", "answered", "other.go:1", "a")
+	if err == nil {
+		t.Fatal("expected an error when --at accompanies --settle <id>")
+	}
+	if !strings.Contains(err.Error(), "carries over") {
+		t.Errorf("error should explain why, got %v", err)
+	}
+}
+
+func TestReviewNoteSettleDirectWithoutID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+
+	out, err := tm.ReviewNoteSettle("", "", "rejected", "", "intentional, capped by config")
+	if err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+	if out != "Settled n1 (rejected)" {
+		t.Fatalf("expected 'Settled n1 (rejected)', got %q", out)
+	}
+}
+
+func TestReviewNoteRejectsBadInput(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+
+	if _, err := tm.ReviewNoteOpen("", "", "   "); err == nil {
+		t.Error("expected an error for an empty --note")
+	}
+	if _, err := tm.ReviewNoteSettle("", "", "maybe", "", "x"); err == nil {
+		t.Error("expected an error for an invalid --as")
+	}
+	if _, err := tm.ReviewNoteOpen("", "missing.go:1", "x"); err == nil {
+		t.Error("expected an error for a cited path that does not exist")
+	}
+}
+
+func TestReviewNotesPathPrintsJournalLocation(t *testing.T) {
+	tm, root := newJournalSetup(t)
+
+	out, err := tm.ReviewNotes("", true, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes --path: %v", err)
+	}
+	want := filepath.Join(root, ".git", "devgeta", "review", "feat.md")
+	if out != want {
+		t.Fatalf("expected %q, got %q", want, out)
+	}
+}
+
+// A detached HEAD has no branch, so there is no journal — reported as a fixed
+// sentinel rather than inventing a key from the SHA.
+func TestReviewNotesDetachedHeadSentinel(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	tm.Git.Base.(*commands.MockBaseCommand).ExecCommandFn = func(
+		c commands.CommandParams,
+	) (string, string, error) {
+		if slices.Contains(c.Args, "--show-current") {
+			return "\n", "", nil // detached: empty branch name
+		}
+		return "", "", nil
+	}
+
+	out, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "No branch — review notes are keyed by branch." {
+		t.Fatalf("expected the no-branch sentinel, got %q", out)
+	}
+}
+
+func TestReviewNoteRefusesToWriteOnDetachedHead(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	tm.Git.Base.(*commands.MockBaseCommand).ExecCommandFn = func(
+		c commands.CommandParams,
+	) (string, string, error) {
+		if slices.Contains(c.Args, "--show-current") {
+			return "\n", "", nil
+		}
+		return "", "", nil
+	}
+
+	if _, err := tm.ReviewNoteOpen("", "", "q"); err == nil {
+		t.Fatal("expected an error writing with no branch")
+	}
+}
+
+// worktree-finish deletes the branch through Git.RemoveWorktree directly, not
+// through WorktreeManager.removeByRepo, so it does not inherit that path's
+// cleanup — it needs its own, or a finished branch's journal outlives the work
+// it describes. This asserts the whole path, not just the helper.
+func TestWorktreeFinishDeletesTheBranchsJournal(t *testing.T) {
+	root := t.TempDir()
+	mainWorktree := filepath.Join(root, "main")
+	gitDir := filepath.Join(mainWorktree, ".git")
+	reviewDir := filepath.Join(gitDir, "devgeta", "review")
+	if err := os.MkdirAll(reviewDir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	journal := filepath.Join(reviewDir, "spike.md")
+	sibling := filepath.Join(reviewDir, "keep-me.md")
+	for _, p := range []string{journal, sibling} {
+		if err := os.WriteFile(p, []byte("---\n---\n"), 0o644); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+	}
+
+	wtPath := filepath.Join(worktree.GetWorktreeBasePath(), uniqueRepoSlug(t), "spike")
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Dir(wtPath))
+	})
+
+	porcelainWt := "worktree " + wtPath + "\nHEAD abc123\nbranch refs/heads/spike\n\n"
+	porcelainMain := "worktree " + mainWorktree + "\nHEAD def456\nbranch refs/heads/main\n\n"
+
+	gitBase := commands.NewMockBaseCommand()
+	calls := 0
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		calls++
+		switch {
+		case slices.Contains(c.Args, "--git-common-dir"):
+			return gitDir + "\n", "", nil
+		case slices.Contains(c.Args, "status"):
+			// Empty status = clean, so the discard path proceeds without --force.
+			// Matched before the porcelain case below, since `status --porcelain`
+			// carries that flag too.
+			return "", "", nil
+		case slices.Contains(c.Args, "worktree"):
+			// The first `worktree list --porcelain` resolves the target worktree;
+			// later ones resolve the main checkout.
+			if calls == 1 {
+				return porcelainWt, "", nil
+			}
+			return porcelainMain, "", nil
+		}
+		return "", "", nil
+	}
+	tm := &TaskManager{
+		Git:  &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+
+	if _, err := tm.WorktreeFinish("spike", false, true, false); err != nil {
+		t.Fatalf("WorktreeFinish: %v", err)
+	}
+
+	if _, err := os.Stat(journal); !os.IsNotExist(err) {
+		t.Error("the finished branch's review journal should be gone")
+	}
+	if _, err := os.Stat(sibling); err != nil {
+		t.Errorf("another branch's journal must survive: %v", err)
+	}
+}
+
+func TestReviewNotesPruneSentinelWhenNothingToDo(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+
+	out, err := tm.ReviewNotes("", false, true)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if out != "No review journals to prune." {
+		t.Fatalf("expected the prune sentinel, got %q", out)
+	}
+}
