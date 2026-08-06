@@ -42,7 +42,7 @@ away from the obvious answer:
   ([Minority Sentinel](https://arxiv.org/pdf/2606.29270)). Multiple reviewers are therefore
   worth having as independent samples, not as voters whose majority is the verdict.
 
-**A caution the same literature raises against part of this design.**
+**The sharpest finding in that literature is what shapes §4.**
 [The Cost of Consensus](https://arxiv.org/html/2605.00914) reports that "isolated
 self-correction consistently offers a more favorable cost-accuracy tradeoff" than unguided
 homogeneous debate, and — most pointedly here — that "teams systematically generate, but
@@ -51,9 +51,8 @@ an _oracle gap_: in one reported configuration a correct answer appeared somewhe
 team 53.0% of the time while final team accuracy was 20.7%, a 32.3-point gap of correct
 answers found and then thrown away.
 
-That is a direct argument for keeping reviewers **isolated from each other's in-progress
-findings**, which §4 below does not do. It is recorded as an open question rather than
-silently resolved.
+A reviewer that reads a peer's in-progress findings is in exactly that position. So
+**isolation within a round is a requirement, not a nicety** — see §4.
 
 These citations are supporting evidence for a design already chosen on other grounds; none
 of them is about code review specifically, and none was replicated here.
@@ -99,40 +98,42 @@ process failure (`ERROR` / `NO VERDICT`), and approval that rests on an unratifi
 rejection. A process failure can therefore never be mistaken for approval, and there is no
 third, undocumented outcome. `ERROR` and `NO VERDICT` are not retried in v1.
 
-### 4. Reviewers run sequentially — and see each other's findings within a round
+### 4. Reviewers run sequentially, but each reads the round's opening state
 
-The execution order is settled: sequential, because the journal has no write lock and
-serialized execution is what makes concurrent writes a non-problem.
+Two separate properties, decided separately, because conflating them is what made an
+earlier draft of this ADR incoherent.
 
-**What reviewers can see is a separate question, and it is deliberately stated rather than
-left implicit.** Every reviewer is required to read the journal first — the guard test
-`TestReviewerAgentsReadTheJournalAndCanApprove` pins `devgeta task review-notes` into all
-three reviewer agents — and reviewer N−1's findings are written to that same journal as
-open entries during the round. So **reviewer N does read reviewer N−1's findings from the
-same round.** This is structural, not incidental: given the read-first rule and a shared
-journal, it cannot be avoided without changing one of the two.
+**Execution is sequential.** The journal has no write lock, and serialized execution is
+what makes concurrent writes a non-problem.
 
-That buys cross-reviewer dedup for free. It also costs within-round independence, which is
-the property the multi-model configuration exists to provide, and the literature cited in
-the Context is specifically unfriendly to it. The honest accounting:
+**Visibility is frozen at the start of each round.** Every reviewer in round R reads the
+journal as it stood when round R began. Findings raised during round R become visible to
+reviewers only in round R+1, after an end-of-round merge that deduplicates entries the
+reviewers raised independently.
 
-- **Cross-round independence is unaffected.** A later round _should_ see earlier findings —
-  that is ADR-0012 working as intended.
-- **Within-round independence is given up.** Reviewer 2 may search less thoroughly in
-  ground reviewer 1 appears to have covered, which directly erodes the non-overlapping
-  blind spots that justify a second model.
-- **The conformity failure mode is narrower here than in the debate literature**, because
-  this design never treats agreement as evidence. Verdicts are not journaled, so reviewer 2
-  never sees reviewer 1's verdict, and §2's any-single-blocker rule aggregates nothing. The
-  residual risk is reduced _discovery_, not a manufactured consensus.
+The reason is the oracle gap in the Context. Every reviewer is required to read the journal
+first — the guard test `TestReviewerAgentsReadTheJournalAndCanApprove` pins
+`devgeta task review-notes` into all three reviewer agents — so without a frozen view,
+reviewer N would necessarily read reviewer N−1's fresh findings and be placed in exactly
+the position the literature measures a 32.3-point loss in: primed to treat covered ground
+as settled, and to abandon its own correct-but-divergent finding. That erodes the
+non-overlapping blind spots which are the entire reason for configuring a second model.
 
-**Open question, flagged not resolved:** whether each reviewer should instead read a
-snapshot of the journal taken at the start of the round, with a dedup pass afterward. That
-preserves within-round independence and still needs no write lock (execution stays
-sequential), at the cost of the dedup pass — which the cycle already lists as one of the two
-prerequisites for parallel reviewers. Not adopted here because sequential-with-shared-journal
-is the recorded decision; revisit before the multi-model path is relied on for coverage
-rather than for a second opinion.
+What this does and does not change:
+
+- **Cross-round visibility is unaffected**, and must be. A later round _should_ see earlier
+  findings — that is ADR-0012 working as intended, and it is what stops the re-raise circle.
+- **Within-round isolation is now preserved**, so N reviewers are N independent samples of
+  the same diff rather than one sample plus N−1 anchored follow-ups.
+- **Reviewer agents need no change.** They keep calling `review-notes` and
+  `review-note --open` exactly as today; what moves is when their writes become visible to
+  a peer. This matters because their read-first contract is pinned by a guard test, so a
+  design requiring new reviewer-side commands would have to fight that test.
+
+The merge is where cross-reviewer deduplication happens. It is real work that
+sequential-with-a-shared-journal got for free, and it is the honest price of this decision
+— see Consequences. It is also the larger half of what parallel reviewers need, so it is
+not throwaway.
 
 ### 5. Go does the mechanism, the agent does the judgment
 
@@ -176,8 +177,9 @@ guard test asserts the command file never mentions them outside the report templ
   fixed or in front of the human.
 - **The two terminal states are exhaustive and auditable.** "It approved" always means the
   same thing. A crashed reviewer reports as a crashed reviewer.
-- **Sequential order buys journal safety and cross-reviewer dedup without any new
-  machinery** — no lock, no post-fan-out merge pass. See §4 for what it costs.
+- **Sequential execution keeps journal writes safe with no lock**, and the frozen read view
+  means adding a reviewer adds an independent sample rather than an anchored one — so
+  `review.reviewers` can be trusted for _coverage_, not just for a second opinion.
 - **The escalation report is the product.** Verdict table per reviewer per round, every
   agent rejection with its evidence, and the exact ratify/reopen command with the id
   filled in — so the human's remaining work is a decision, not an investigation.
@@ -189,13 +191,19 @@ guard test asserts the command file never mentions them outside the report templ
   glance, a silently outvoted finding costs a defect.
 - **Wall-clock per round is the sum of the reviewers, not the max.** Sequential execution
   is a real cost on a multi-model configuration; subagent execution keeps the human
-  unblocked in the meantime, and parallelism is left as future work with a known
-  checklist (a journal write lock plus a dedup pass).
-- **Within-round reviewer independence is given up to get dedup.** See §4. This is the one
-  negative that partly contradicts the Context's own justification for multi-model review,
-  and it is the reason §4 carries an open question instead of a settled rationale. It
-  matters most if `review.reviewers` is ever configured for _coverage_ — trusting two models
-  to find different things — rather than for a second opinion.
+  unblocked in the meantime, and parallelism is left as future work — now needing only a
+  journal write lock, since §4's merge already covers the dedup half.
+- **An end-of-round merge with deduplication is now required work, in v1.** This is the
+  direct price of §4: the shared-journal design got cross-reviewer dedup for free, and
+  freezing the read view means two reviewers can independently raise the same finding with
+  no chance to notice. The merge has to decide what "the same finding" means (same path and
+  line is the obvious key, but two reviewers will word the same defect differently), and a
+  merge that is too aggressive silently drops a real finding. It is the highest-risk piece
+  this decision introduces and needs its own tests.
+- **A crash mid-round is messier than before.** With writes deferred to a merge, a loop
+  killed partway through a round can lose that round's findings rather than having them
+  already durably journaled. The merge must therefore be the only writer, and it must write
+  atomically the way ADR-0012's writes already do.
 - **The human-only rule is prose-level.** See §6. A guard test narrows it; it does not
   close it.
 - **The loop's judgment step cannot be unit-tested in Go.** That is the direct cost of
@@ -245,5 +253,21 @@ nothing reliable to decide on. Failures surface by name instead.
 
 ### Parallel reviewers
 
-Deferred, not rejected. It needs exactly two additions — a file lock on journal writes and
-a post-fan-out dedup pass — recorded here so the future flag has its checklist.
+Deferred, not rejected — and §4 makes it materially cheaper than it was. Parallelism needed
+two additions: a file lock on journal writes, and a post-fan-out dedup pass. The dedup pass
+is now built as part of §4's end-of-round merge, so **only the write lock remains**.
+
+Note the two decisions also point the same way now, where before they conflicted:
+§4 already forbids a reviewer from seeing a peer's in-round findings, which is exactly the
+property parallel execution would impose anyway. Sequential-vs-parallel becomes purely a
+question of write safety and wall-clock, not of what reviewers can observe.
+
+### Keep a shared live journal within a round (the earlier draft of §4)
+
+Let reviewer N read reviewer N−1's fresh findings, taking cross-reviewer dedup for free.
+
+Rejected on the Context's oracle-gap evidence, after being the recorded decision earlier in
+this cycle. It buys a convenience (no merge pass) by spending the property that justifies
+multi-model review at all, and it does so silently — the loop would still print two reviewer
+names and look like two opinions. The merge pass is the price of the second opinion being
+real.
