@@ -607,6 +607,34 @@ func TestWritesAreAtomicAndLeaveNoTempFiles(t *testing.T) {
 	}
 }
 
+// TestJournalAndSnapshotAreOwnerOnly pins the mode of both files the review
+// directory holds. A journal quotes findings verbatim out of the branch's
+// source, so it carries more of the repo's content than a settings file does
+// and stays owner-only. This is a regression guard rather than a style
+// preference: the journal and the snapshot share one atomic writer, and that
+// writer takes the mode as an argument, so passing files.FilePermission
+// (0644) at either call site would silently widen both.
+func TestJournalAndSnapshotAreOwnerOnly(t *testing.T) {
+	fr := newFakeRepo(t)
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "q1"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	snapshotPath, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+
+	for _, path := range []string{fr.journalPath("feat"), snapshotPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("Stat %s: %v", path, err)
+		}
+		if got := info.Mode().Perm(); got != journalPermission {
+			t.Errorf("%s has mode %#o, want %#o", filepath.Base(path), got, journalPermission)
+		}
+	}
+}
+
 func TestLoadMissingJournalIsEmptyNotAnError(t *testing.T) {
 	fr := newFakeRepo(t)
 	j, err := fr.mgr.Load(fr.repoDir, "never-reviewed")

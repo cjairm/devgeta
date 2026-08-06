@@ -20,6 +20,15 @@ import (
 	"github.com/cjairm/devgeta/pkg/files"
 )
 
+// journalPermission is the mode for both the journal and its round-start
+// snapshot. It is deliberately tighter than files.FilePermission (0644, what
+// devgeta uses for configs): a journal quotes findings verbatim out of the
+// branch's own source, so on a shared machine it carries more of the repo's
+// content than a settings file does. The journal was already owner-only
+// before these two writes shared one helper, and staying 0600 keeps that
+// rather than widening it as a side effect of the deduplication.
+const journalPermission = 0o600
+
 // Manager reads and writes review journals through the git app wrapper.
 // NowFn is injectable for tests; it stamps last_review.
 type Manager struct {
@@ -131,7 +140,7 @@ func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := files.WriteFileAtomic(path, []byte(j.Render()), files.FilePermission); err != nil {
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
 		return "", fmt.Errorf("failed to write the round-start review snapshot: %w", err)
 	}
 	return path, nil
@@ -144,18 +153,14 @@ func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
 // It delegates to files.WriteFileAtomic, which is that rule's one
 // implementation and is what WriteSnapshot above already uses; a second
 // hand-rolled MkdirAll + CreateTemp + rename here would be the same logic
-// twice, differing only in which of the two could grow a bug. One consequence
-// is deliberate: the journal is now created with files.FilePermission (0644)
-// like every other file devgeta writes, instead of the 0600 os.CreateTemp
-// happened to give it — that mode was never a decision, and it disagreed with
-// the 0644 snapshot sitting beside it in the same directory.
+// twice, differing only in which of the two could grow a bug.
 func (m *Manager) save(repoDir string, j *Journal) error {
 	path, err := m.PathFor(repoDir, j.Branch)
 	if err != nil {
 		return err
 	}
 	j.LastReview = m.NowFn().Format("2006-01-02")
-	if err := files.WriteFileAtomic(path, []byte(j.Render()), files.FilePermission); err != nil {
+	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
 		return fmt.Errorf("failed to save the review journal: %w", err)
 	}
 	return nil
