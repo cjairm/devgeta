@@ -153,6 +153,45 @@ type WorktreeConfig struct {
 	NotifySound bool `yaml:"notify_sound,omitempty"`
 }
 
+// ReviewRoundsMin and ReviewRoundsMax are the valid inclusive range for
+// ReviewConfig.Rounds. cmd/config_settings.go's review.rounds Setting rejects
+// anything outside this range before it ever reaches GlobalConfig, so these
+// constants - not a restated literal in the registry or its tests - are the
+// one place the range is defined.
+const (
+	ReviewRoundsMin = 1
+	ReviewRoundsMax = 5
+)
+
+// DefaultReviewRounds is the number of review rounds used when Rounds is
+// unset (its zero value, 0). cmd/config_settings.go's review.rounds Default
+// reports this constant rather than restating "3" as a literal, and the
+// review-run command this cycle is building (a later task, not this one)
+// reads it the same way as the fallback when GlobalConfig.Review.Rounds == 0.
+const DefaultReviewRounds = 3
+
+// ReviewConfig stores settings for `dg task review-run`, which runs
+// configured AI reviewer agents headless and collects their verdicts. Both
+// fields are omitempty: an empty/zero ReviewConfig is indistinguishable from
+// one that was never touched, which is what lets an existing
+// global_config.yaml load unchanged before this cycle's config plumbing ever
+// ran.
+type ReviewConfig struct {
+	// Reviewers lists the AI reviewer agents review-run runs, each in
+	// "provider/model" form (e.g. "anthropic/claude-opus-4-6"). Only the
+	// shape - one "/" minimum, non-empty text on both sides - is validated
+	// here; the model name itself is passed through without offline
+	// verification (out of scope for this cycle - see the cycle doc's
+	// Explicitly Out of Scope section). Empty means no reviewers are
+	// configured, so review-run has nothing to run until this is set.
+	Reviewers []string `yaml:"reviewers,omitempty"`
+
+	// Rounds caps how many review rounds review-run performs before settling
+	// on a verdict. 0 (unset) means DefaultReviewRounds; a configured value
+	// must be within [ReviewRoundsMin, ReviewRoundsMax].
+	Rounds int `yaml:"rounds,omitempty"`
+}
+
 // ShouldAttachAfterCreate reports whether a successful `dg ws` create should
 // attach into the new window. It is the only place the "unset means attach"
 // default lives, so no caller has to remember that a nil AttachAfterCreate is
@@ -237,6 +276,7 @@ type GlobalConfig struct {
 	FailedInstallations []FailedInstallation   `yaml:"failed_installations,omitempty"`
 	Worktree            WorktreeConfig         `yaml:"worktree"`
 	Integrations        IntegrationsConfig     `yaml:"integrations,omitempty"`
+	Review              ReviewConfig           `yaml:"review,omitempty"`
 }
 
 func getGlobalConfigFilePath() string {

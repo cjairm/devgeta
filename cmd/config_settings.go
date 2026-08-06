@@ -316,6 +316,78 @@ var Settings = []Setting{
 		},
 		Unset: func(gc *config.GlobalConfig) { gc.Worktree.Location = "" },
 	},
+	{
+		Key:         "review.reviewers",
+		Description: "AI reviewer agents `dg task review-run` runs headless, each as provider/model (e.g. anthropic/claude-opus-4-6)",
+		Kind:        "stringlist",
+		// The true default is the zero value itself (an empty list, "no
+		// reviewers configured") - there is no owner function to call
+		// because nothing computes this default, it's simply "unset",
+		// same reasoning as worktree.search_paths above.
+		Default: func() string { return "" },
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			return strings.Join(gc.Review.Reviewers, ", "), len(gc.Review.Reviewers) > 0
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			if len(raw) == 0 {
+				return errors.New(
+					"review.reviewers requires at least one reviewer; " +
+						"use `dg config unset review.reviewers` to clear it",
+				)
+			}
+			reviewers := make([]string, len(raw))
+			for i, r := range raw {
+				if !isProviderModelShaped(r) {
+					return fmt.Errorf(
+						"review.reviewers entries must look like provider/model, got %q",
+						r,
+					)
+				}
+				reviewers[i] = r
+			}
+			gc.Review.Reviewers = reviewers
+			return nil
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Review.Reviewers = nil },
+	},
+	{
+		Key:         "review.rounds",
+		Description: "Max review rounds `dg task review-run` performs before settling on a verdict (1-5)",
+		Kind:        "int",
+		Default:     func() string { return strconv.Itoa(config.DefaultReviewRounds) },
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			return strconv.Itoa(gc.Review.Rounds), gc.Review.Rounds != 0
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			value, err := requireExactlyOne("review.rounds", raw)
+			if err != nil {
+				return err
+			}
+			rounds, err := strconv.Atoi(value)
+			if err != nil {
+				return fmt.Errorf("review.rounds must be an integer, got %q: %w", value, err)
+			}
+			if rounds < config.ReviewRoundsMin || rounds > config.ReviewRoundsMax {
+				return fmt.Errorf(
+					"review.rounds must be between %d and %d, got %d",
+					config.ReviewRoundsMin, config.ReviewRoundsMax, rounds,
+				)
+			}
+			gc.Review.Rounds = rounds
+			return nil
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Review.Rounds = 0 },
+	},
+}
+
+// isProviderModelShaped reports whether spec looks like "provider/model": at
+// least one "/" with non-empty text on both sides of the first one. Anything
+// after that first "/" is accepted as-is (e.g. "openrouter/anthropic/opus"
+// stays valid) - no other offline validation is performed, since model names
+// are passed through by design (cycle doc's Explicitly Out of Scope section).
+func isProviderModelShaped(spec string) bool {
+	idx := strings.IndexByte(spec, '/')
+	return idx > 0 && idx < len(spec)-1
 }
 
 // FindSetting looks up a registered setting by its dotted key.

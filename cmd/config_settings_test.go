@@ -42,6 +42,7 @@ var settingsBearingStructs = []struct {
 }{
 	{"worktree", config.WorktreeConfig{}},
 	{"integrations", config.IntegrationsConfig{}},
+	{"review", config.ReviewConfig{}},
 }
 
 // yamlKeyFromTag extracts the field name a yaml tag serializes as, stripping
@@ -180,6 +181,7 @@ func TestSettingsRegistry_EveryEntryHasADescription(t *testing.T) {
 // silent addition.
 var settingsWithEmptyDefaultAllowed = map[string]bool{
 	"worktree.search_paths": true,
+	"review.reviewers":      true,
 }
 
 // TestSettingsRegistry_EveryDefaultIsNonEmpty guards against a Default that
