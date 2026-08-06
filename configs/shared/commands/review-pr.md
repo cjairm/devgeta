@@ -145,13 +145,22 @@ SCRATCH=$(devgeta task scratch)
 
 Post the body and the inline comments together as a single review, choosing the verdict:
 
-| Verdict         | When                                       | `--event`         |
-| --------------- | ------------------------------------------ | ----------------- |
-| Request changes | Any `[CRITICAL]` / blocking issue          | `request-changes` |
-| Approve         | No blockers; leaves the codebase healthier | `approve`         |
-| Comment         | Suggestions only, nothing blocking         | `comment`         |
+| Verdict         | When                                                                                    | `--event`         |
+| --------------- | --------------------------------------------------------------------------------------- | ----------------- |
+| Request changes | Any `[CRITICAL]` / blocking issue                                                       | `request-changes` |
+| Approve         | No blockers; leaves the codebase healthier — including when non-blocking comments stand | `approve`         |
+| Comment         | Suggestions only, and you are deliberately not casting a verdict                        | `comment`         |
 
 When approving **with** comments the author should look at before merging (non-blocking, but worth addressing), open the body's Summary with `LGWC; <one short clause>`. A clean approve with no comments opens with `LGTM.` instead.
+
+**Someone else's open comments don't change the verdict — only their severity does.** Copilot, another bot, or a human reviewer will often have left suggestions nobody acted on. Untouched is not the same as blocking: if none of them break correctness, security, or data integrity, approve anyway and name who left them, so the author knows whose feedback to go read:
+
+```
+LGWC; Copilot left some comments worth addressing — I don't see anything blocking.
+LGWC; Copilot and @maria left a few suggestions — worth a look, but nothing blocking.
+```
+
+Withhold approval only for a concern that is a blocker and still live in the code.
 
 ```bash
 devgeta task submit-review \
@@ -175,7 +184,8 @@ If submit failed, **print the review body and any inline comments into your repl
 **Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies, **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
 
 - **Every prior thread's concern was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Don't ask the author to resolve threads either. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
-- **A prior concern is still live in the code and that's the main issue → don't approve.** Flag the concern itself in one brief `comment-pr` rather than re-listing each thread or asking for resolutions.
+- **A prior concern is still live in the code but doesn't block → approve with `LGWC`, naming who raised it.** An open suggestion or nit from a bot or another reviewer is worth passing along, not worth holding the PR over.
+- **A prior concern is still live in the code and is a real blocker → don't approve.** Flag the concern itself in one brief `comment-pr` rather than re-listing each thread or asking for resolutions.
 
 ## Output
 
