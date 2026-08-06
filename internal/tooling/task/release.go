@@ -142,12 +142,20 @@ func (tm *TaskManager) checkCleanTree() error {
 
 // checkOnDefaultBranch refuses when HEAD isn't the repository's default
 // branch, and returns that branch name for the rest of the flow. A detached
-// HEAD resolves to an empty current branch, which is not the default branch
-// either, so it is refused by the same comparison.
+// HEAD resolves to an empty current branch, which is refused with its own
+// message naming the detachment — "" is not a branch that exists, so telling
+// the user to check it out would be wrong.
 func (tm *TaskManager) checkOnDefaultBranch() (string, error) {
 	current, defaultBranch, err := tm.resolveHead()
 	if err != nil {
 		return "", fmt.Errorf("release: %w", err)
+	}
+	if current == "" {
+		return "", fmt.Errorf(
+			"release: HEAD is detached, must be on the default branch %q — run 'git checkout %s' first",
+			defaultBranch,
+			defaultBranch,
+		)
 	}
 	if current != defaultBranch {
 		return "", fmt.Errorf(

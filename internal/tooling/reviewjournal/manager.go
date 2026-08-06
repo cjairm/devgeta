@@ -92,8 +92,11 @@ const snapshotSuffix = ".snapshot"
 //
 // There is no round number in the name. review-run writes the snapshot when
 // a round starts and removes it when that round ends — including on its
-// failure paths — so at most one snapshot ever exists for a branch, and a
-// per-round name would only add ways to leave a stale one behind.
+// failure paths — relying on the invariant that only one `review-run`
+// invocation runs against a given branch at a time. A per-round name would
+// not help two overlapping invocations either, since both could be round 1;
+// avoiding that requires not running review-run twice on the same branch at
+// once, not a naming scheme here.
 func (m *Manager) SnapshotPathFor(repoDir, branch string) (string, error) {
 	path, err := m.PathFor(repoDir, branch)
 	if err != nil {

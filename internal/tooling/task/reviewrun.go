@@ -26,11 +26,13 @@ import (
 	"github.com/cjairm/devgeta/pkg/logger"
 )
 
-// defaultReviewerKey is the reviewer --reviewer selects when it is not
+// DefaultReviewerKey is the reviewer --reviewer selects when it is not
 // passed: the code reviewer, the common case. The key is validated against
 // worktree.BuiltinReviewerChoices() like any other, so it cannot drift from
-// the registry.
-const defaultReviewerKey = "code"
+// the registry. Exported so cmd/task.go can use it as the flag's own
+// default instead of restating the literal "code" — a change to this
+// constant would otherwise leave the flag silently offering the old value.
+const DefaultReviewerKey = "code"
 
 // defaultModelLabel labels the reviewer line when review.reviewers is unset.
 // That case runs one reviewer with no -m flag at all, so there is no model
@@ -153,7 +155,7 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 func reviewerAgentFor(key string) (string, error) {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		key = defaultReviewerKey
+		key = DefaultReviewerKey
 	}
 	choices := worktree.BuiltinReviewerChoices()
 	valid := make([]string, 0, len(choices))
@@ -356,9 +358,27 @@ func errorEventReason(raw json.RawMessage) string {
 // template from erasing a real verdict above it — and a line still offering
 // the choices ("APPROVE | REQUEST CHANGES | ...") is exactly that quote,
 // not a decision, so the "|" check refuses it.
+//
+// A status line inside a fenced code block is skipped outright, even when it
+// names a real verdict: a report that quotes a concrete example — e.g. a
+// fence showing what "**Status:** APPROVE" looks like — sits below its own
+// real verdict, and the unsafe direction is toward APPROVE, so a quoted
+// example must never be able to overwrite a decision already made.
 func lastStatusVerdict(text string) string {
 	verdict := ""
-	for _, match := range statusLinePattern.FindAllStringSubmatch(text, -1) {
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		if isFenceDelimiter(line) {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		match := statusLinePattern.FindStringSubmatch(line)
+		if match == nil {
+			continue
+		}
 		value := normalizeStatusValue(match[1])
 		if strings.Contains(value, "|") {
 			continue
@@ -373,6 +393,14 @@ func lastStatusVerdict(text string) string {
 	return verdict
 }
 
+// isFenceDelimiter reports whether line opens or closes a fenced code block
+// (``` or ~~~, optionally followed by a language tag) — Markdown's two fence
+// styles, either of which can wrap a quoted example in a reviewer's report.
+func isFenceDelimiter(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
+}
+
 // normalizeStatusValue strips the markdown a status line can carry and
 // collapses its spacing, so "`Approve`" and "**APPROVE**" read the same as
 // "APPROVE".
@@ -384,12 +412,17 @@ func normalizeStatusValue(s string) string {
 // truncateReason folds a reason onto one line and cuts it to maxReasonLen,
 // marking the cut with an ellipsis so a truncated message is never mistaken
 // for the whole of what OpenCode said.
+//
+// The cut is by rune, not by byte: a provider message is free-form text and
+// can carry multi-byte runes, and slicing at a byte offset that lands inside
+// one would emit an invalid UTF-8 fragment into output an agent parses.
 func truncateReason(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) <= maxReasonLen {
+	runes := []rune(s)
+	if len(runes) <= maxReasonLen {
 		return s
 	}
-	return strings.TrimSpace(s[:maxReasonLen]) + "…"
+	return strings.TrimSpace(string(runes[:maxReasonLen])) + "…"
 }
 
 // firstNonBlankLine returns the first line with content, for the case where

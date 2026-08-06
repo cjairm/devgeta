@@ -608,7 +608,7 @@ func init() {
 	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle", "ratify", "reopen")
 
 	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunReviewerFlag, "reviewer", "code", "Reviewer agent to run: code, document, or skill")
+		StringVar(&taskReviewRunReviewerFlag, "reviewer", task.DefaultReviewerKey, "Reviewer agent to run: code, document, or skill")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")

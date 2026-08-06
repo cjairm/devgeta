@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
@@ -170,6 +171,18 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"REQUEST CHANGES",
 		},
+		{
+			// A report can quote a concrete example inside a fenced code
+			// block, below its own real verdict. The unsafe direction is
+			// toward APPROVE, so a fenced "**Status:** APPROVE" must never
+			// overwrite the real "REQUEST CHANGES" verdict above it.
+			"a status line inside a fenced code block is not a verdict",
+			textEvent(
+				"**Status:** REQUEST CHANGES\n\nExample of the format:\n```\n**Status:** APPROVE\n```\n",
+			),
+			nil,
+			"REQUEST CHANGES",
+		},
 	}
 
 	for _, tt := range tests {
@@ -259,6 +272,32 @@ func TestReviewRunErrorReasonIsTruncatedNotReworded(t *testing.T) {
 		"\nopen: none",
 	) {
 		t.Errorf("a reviewer's outcome must stay on one line:\n%s", out)
+	}
+}
+
+// A multi-byte provider message must be cut on a rune boundary, never a byte
+// offset: maxReasonLen runes of a 2-byte character puts the naive byte cut
+// squarely inside the last rune, which would emit invalid UTF-8 into output
+// an agent parses.
+func TestReviewRunErrorReasonTruncationIsRuneSafe(t *testing.T) {
+	long := strings.Repeat("é", maxReasonLen+10)
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if !utf8.ValidString(out) {
+		t.Fatalf("ReviewRun produced invalid UTF-8:\n%s", out)
+	}
+	reason := strings.TrimSuffix(strings.TrimPrefix(
+		strings.Split(out, "\n")[0], "OpenCode default model → ERROR(",
+	), ")")
+	trimmed := strings.TrimSuffix(reason, "…")
+	if got := utf8.RuneCountInString(trimmed); got != maxReasonLen {
+		t.Errorf("expected %d runes before the ellipsis, got %d in %q", maxReasonLen, got, trimmed)
 	}
 }
 
@@ -527,22 +566,52 @@ func assertNoReviewFilesWritten(t *testing.T, root string) {
 // --- the round-start snapshot ---------------------------------------------
 
 // The first-review path, and the one most easily skipped: with no journal on
-// disk, the snapshot is still written — "empty at round start" is a real
-// state a later reviewer must be able to read.
+// disk at round start, the snapshot is still written — "empty at round
+// start" is a real state a later reviewer must be able to read — AND a
+// reviewer reading that snapshot does not see an entry a peer opened this
+// same round. That second half is the exact bug this test guards against: an
+// implementation that skips the snapshot write when Load returns an empty
+// journal would still pass if only existence/removal were checked, because
+// the live journal and a (never-written) snapshot would look identical to
+// reviewer 2 in that case.
 func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
-	withReviewers(t)
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
 
 	var seenPath string
-	scriptOpenCode(t, ocBase, scriptedRun{
-		stdout: statusReport("APPROVE"),
-		onCall: func(t *testing.T, c commands.CommandParams) {
-			seenPath = snapshotPointer(t, c)
-			if _, err := os.Stat(seenPath); err != nil {
-				t.Errorf("the snapshot must exist while a reviewer runs: %v", err)
-			}
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{
+			stdout: statusReport("REQUEST CHANGES"),
+			onCall: func(t *testing.T, c commands.CommandParams) {
+				seenPath = snapshotPointer(t, c)
+				if _, err := os.Stat(seenPath); err != nil {
+					t.Errorf("the snapshot must exist while a reviewer runs: %v", err)
+				}
+				// Stand in for reviewer 1's own `review-note --open` process,
+				// which writes to the LIVE journal.
+				if _, err := tm.ReviewNoteOpen("", "", "reviewer-1 finding"); err != nil {
+					t.Fatalf("reviewer 1's write: %v", err)
+				}
+			},
 		},
-	})
+		scriptedRun{
+			stdout: statusReport("APPROVE"),
+			onCall: func(t *testing.T, c commands.CommandParams) {
+				data, err := os.ReadFile(snapshotPointer(t, c))
+				if err != nil {
+					t.Fatalf("reading the snapshot reviewer 2 was pointed at: %v", err)
+				}
+				if strings.Contains(string(data), "reviewer-1 finding") {
+					t.Errorf(
+						"a peer's same-round entry must not be in the snapshot, "+
+							"even when the round started with no journal on disk:\n%s",
+						data,
+					)
+				}
+			},
+		},
+	)
 
 	if _, err := tm.ReviewRun(""); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
