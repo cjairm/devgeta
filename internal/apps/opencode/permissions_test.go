@@ -841,3 +841,56 @@ func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
 		}
 	})
 }
+
+// reviewLoopReportHeading is the stable anchor
+// TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport checks against. It must
+// stay exactly this string in configs/shared/commands/review-loop.md, above
+// the report template and nowhere else.
+const reviewLoopReportHeading = "## Terminal report"
+
+// TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport guards ADR-0017 §6's
+// human-only rule the only way prose can be guarded: `--ratify` and
+// `--reopen` retire an agent's provisional rejection, and that decision
+// belongs to a human, never to the loop itself. The permission model cannot
+// enforce this — it has no way to tell who typed a `devgeta task` command —
+// so the only thing standing between "the loop reports a rejection" and "the
+// loop quietly ratifies its own rejection" is review-loop.md's wording. This
+// test pins the one structural check available: every occurrence of either
+// flag must fall after the report template's heading, so an instruction
+// earlier in the file telling the loop to run one itself fails the build
+// instead of shipping silently.
+func TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	headingAt := strings.Index(body, reviewLoopReportHeading)
+	if headingAt < 0 {
+		t.Fatalf(
+			"%s has no %q heading — that heading is the anchor this test uses to "+
+				"confirm --ratify/--reopen only appear in the human-facing report",
+			path, reviewLoopReportHeading,
+		)
+	}
+
+	for _, flag := range []string{"--ratify", "--reopen"} {
+		for i := 0; i+len(flag) <= len(body); i++ {
+			if body[i:i+len(flag)] != flag {
+				continue
+			}
+			if i < headingAt {
+				t.Errorf(
+					"%s mentions %q at byte %d, before the %q heading at byte %d — "+
+						"ratification is a human decision, and review-loop.md must never "+
+						"instruct the loop to run %s itself; the only place it may appear "+
+						"is inside the report template this loop prints for the human to "+
+						"act on",
+					path, flag, i, reviewLoopReportHeading, headingAt, flag,
+				)
+			}
+		}
+	}
+}
