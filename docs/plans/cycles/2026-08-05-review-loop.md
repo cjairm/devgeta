@@ -125,7 +125,7 @@ A process failure or an unratified pushback can therefore never masquerade as st
 - [ ] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
       execution, per-finding verification (receiving-code-review discipline), journal
       settle, round cap, escalation report
-- [ ] Journal ratification transitions — `review-note --ratify --id <id>` (human
+- [x] Journal ratification transitions — `review-note --ratify --id <id>` (human
       accepts an agent rejection: strips the `agent:` provenance, entry becomes an
       ordinary rejection) and `review-note --reopen --id <id>` (human refuses: the
       settled entry returns to open under the **same id** — no duplication — with its
@@ -426,7 +426,7 @@ Verify: `go test ./internal/apps/opencode/ ./internal/commands/`.
 Verify: `go test ./internal/tooling/task/ ./cmd/` — all mocked;
 `VerifyNoRealCommands` on every test.
 
-#### Step 4b: Journal ratification transitions
+#### Step 4b: Journal ratification transitions — DONE (2026-08-06)
 
 Two additions to `reviewjournal.Manager`, wired into `review-note`:
 

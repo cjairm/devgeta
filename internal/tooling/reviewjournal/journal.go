@@ -29,6 +29,14 @@ func ValidResolution(s string) bool {
 	return s == ResolutionRejected || s == ResolutionAnswered || s == ResolutionFixed
 }
 
+// AgentNotePrefix marks a settle note as the coding agent's own provisional
+// rejection, never a human's (ADR-0017 §6). It is the single source of truth
+// for the literal — code, tests, and docs must reference this constant
+// rather than restate it, so the prefix cannot drift between the writer
+// (the loop settling `rejected`) and the reader (Manager.Ratify stripping
+// it).
+const AgentNotePrefix = "agent: "
+
 // Entry is one remembered exchange. Open entries have no Resolution; settled
 // ones carry it plus the answer text. Cite is the human-facing location
 // ("store.go:12" or empty for a design-level question); Blob is the hash of
@@ -89,6 +97,17 @@ func (j *Journal) find(id string) *Entry {
 		}
 	}
 	return nil
+}
+
+// findOrErr is find with the "no such entry" error every settle/ratify/reopen
+// refusal starts from, so the three write paths that look an id up don't
+// each restate the message.
+func (j *Journal) findOrErr(id string) (*Entry, error) {
+	e := j.find(id)
+	if e == nil {
+		return nil, fmt.Errorf("no entry %s in the journal for branch %s", id, j.Branch)
+	}
+	return e, nil
 }
 
 // --- rendering ---

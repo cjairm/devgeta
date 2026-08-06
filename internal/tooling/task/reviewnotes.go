@@ -201,3 +201,46 @@ func (tm *TaskManager) ReviewNoteSettle(
 	}
 	return fmt.Sprintf("Settled %s (%s)", newID, resolution), nil
 }
+
+// ReviewNoteRatify accepts an agent's provisional rejection as a human
+// decision (ADR-0017 §6): it strips the agent's provenance prefix from the
+// entry's settle note, leaving an ordinary human rejection. The manager
+// refuses every other state — open, settled fixed/answered, or an
+// already-ratified rejection — with the actual state named.
+func (tm *TaskManager) ReviewNoteRatify(branch, id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", fmt.Errorf("--ratify requires --id")
+	}
+	target, err := tm.journalBranch(branch)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		return "", fmt.Errorf("%s", noBranchSentinel)
+	}
+	if err := reviewjournal.New(tm.Git).Ratify("", target, id); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Ratified %s", id), nil
+}
+
+// ReviewNoteReopen returns a settled entry to open under the same id
+// (ADR-0012: an open entry is re-raised, never duplicated), dropping the
+// resolution note but keeping the original finding text so the next round
+// asks it again exactly as it was first asked.
+func (tm *TaskManager) ReviewNoteReopen(branch, id string) (string, error) {
+	if strings.TrimSpace(id) == "" {
+		return "", fmt.Errorf("--reopen requires --id")
+	}
+	target, err := tm.journalBranch(branch)
+	if err != nil {
+		return "", err
+	}
+	if target == "" {
+		return "", fmt.Errorf("%s", noBranchSentinel)
+	}
+	if err := reviewjournal.New(tm.Git).Reopen("", target, id); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("Reopened %s", id), nil
+}

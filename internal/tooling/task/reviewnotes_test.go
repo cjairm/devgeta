@@ -12,6 +12,7 @@ import (
 
 	gitapp "github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
@@ -324,5 +325,115 @@ func TestReviewNotesPruneSentinelWhenNothingToDo(t *testing.T) {
 	}
 	if out != "No review journals to prune." {
 		t.Fatalf("expected the prune sentinel, got %q", out)
+	}
+}
+
+// --- ratify / reopen (ADR-0017 §6) ---
+
+func TestReviewNoteRatifyStripsAgentPrefixAndEchoesID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "N+1 query"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "n1", "rejected", "", reviewjournal.AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	out, err := tm.ReviewNoteRatify("", "n1")
+	if err != nil {
+		t.Fatalf("ReviewNoteRatify: %v", err)
+	}
+	if out != "Ratified n1" {
+		t.Fatalf("expected 'Ratified n1', got %q", out)
+	}
+
+	notes, _ := tm.ReviewNotes("", false, false)
+	if !strings.Contains(notes, "looks intentional") {
+		t.Errorf("the reason must survive: %s", notes)
+	}
+	if strings.Contains(notes, reviewjournal.AgentNotePrefix) {
+		t.Errorf("the agent prefix must be gone after ratifying:\n%s", notes)
+	}
+}
+
+func TestReviewNoteRatifyOnAnythingElseErrors(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "still open"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+
+	if _, err := tm.ReviewNoteRatify("", "n1"); err == nil {
+		t.Error("expected an error ratifying an open entry")
+	}
+	if _, err := tm.ReviewNoteRatify("", "n9"); err == nil {
+		t.Error("expected an error ratifying an unknown id")
+	}
+
+	if _, err := tm.ReviewNoteSettle("", "n1", "fixed", "", "done"); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+	if _, err := tm.ReviewNoteRatify("", "n1"); err == nil {
+		t.Error("expected an error ratifying a fixed (non-rejected) entry")
+	}
+}
+
+func TestReviewNoteRatifyRequiresID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteRatify("", ""); err == nil {
+		t.Error("expected an error for --ratify without an id")
+	}
+}
+
+func TestReviewNoteReopenReturnsSameIDToOpenWithCountUnchanged(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteOpen("", "", "N+1 query"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "n1", "rejected", "", reviewjournal.AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	out, err := tm.ReviewNoteReopen("", "n1")
+	if err != nil {
+		t.Fatalf("ReviewNoteReopen: %v", err)
+	}
+	if out != "Reopened n1" {
+		t.Fatalf("expected 'Reopened n1', got %q", out)
+	}
+
+	notes, _ := tm.ReviewNotes("", false, false)
+	if !strings.Contains(notes, "open:") || strings.Contains(notes, "settled:") {
+		t.Errorf("entry should be open again, nothing settled:\n%s", notes)
+	}
+	if !strings.Contains(notes, "N+1 query") {
+		t.Errorf("original finding text must survive:\n%s", notes)
+	}
+	if strings.Contains(notes, "looks intentional") {
+		t.Errorf("the resolution note must be dropped:\n%s", notes)
+	}
+}
+
+func TestReviewNoteReopenOfNonexistentOrOpenIDErrors(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteReopen("", "n9"); err == nil {
+		t.Error("expected an error reopening an unknown id")
+	}
+
+	if _, err := tm.ReviewNoteOpen("", "", "q"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteReopen("", "n1"); err == nil {
+		t.Error("expected an error reopening an already-open entry")
+	}
+}
+
+func TestReviewNoteReopenRequiresID(t *testing.T) {
+	tm, _ := newJournalSetup(t)
+	if _, err := tm.ReviewNoteReopen("", ""); err == nil {
+		t.Error("expected an error for --reopen without an id")
 	}
 }

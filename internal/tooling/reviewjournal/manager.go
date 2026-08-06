@@ -178,9 +178,9 @@ func (m *Manager) SettleByID(repoDir, branch, id, resolution, answer string) err
 	if err != nil {
 		return err
 	}
-	e := j.find(id)
-	if e == nil {
-		return fmt.Errorf("no entry %s in the journal for branch %s", id, branch)
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
 	}
 	if !e.Open() {
 		return fmt.Errorf("entry %s is already settled (%s)", id, e.Resolution)
@@ -205,6 +205,76 @@ func (m *Manager) restamp(repoDir string, e *Entry) error {
 		}
 	}
 	return m.stamp(repoDir, e)
+}
+
+// Ratify accepts an agent's provisional rejection as a human decision
+// (ADR-0017 §6): it strips AgentNotePrefix from the settle note in place,
+// leaving an ordinary human rejection under ADR-0012 semantics. Nothing else
+// about the entry changes — the blob/head stamp is deliberately left alone,
+// because ratifying forms no new judgment about the cited code; it only
+// confirms who the existing rejection belongs to.
+//
+// Valid only on an entry settled as rejected whose note still carries the
+// prefix. Every other state is refused with the actual state named, so the
+// caller sees why: open (nothing settled to ratify yet), settled fixed or
+// answered (ratify only concerns rejections), or a rejected entry with no
+// prefix (already ratified once).
+func (m *Manager) Ratify(repoDir, branch, id string) error {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return err
+	}
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
+	}
+	if e.Open() {
+		return fmt.Errorf("entry %s is open, not settled — nothing to ratify", id)
+	}
+	if e.Resolution != ResolutionRejected {
+		return fmt.Errorf(
+			"entry %s is settled as %s, not rejected — ratify only applies to a rejected entry",
+			id, e.Resolution,
+		)
+	}
+	if !strings.HasPrefix(e.Answer, AgentNotePrefix) {
+		return fmt.Errorf(
+			"entry %s is already an ordinary rejection (no %s prefix to strip)",
+			id, strings.TrimSpace(AgentNotePrefix),
+		)
+	}
+	e.Answer = strings.TrimPrefix(e.Answer, AgentNotePrefix)
+	return m.save(repoDir, j)
+}
+
+// Reopen returns a settled entry to open under the same id, keeping its
+// original finding text and dropping the resolution note — ADR-0012 already
+// specifies that an open entry is re-raised, never duplicated, so the next
+// round asks it again exactly as it was first asked, not as a new entry.
+//
+// The blob/head stamp is left untouched, not refreshed: reopening undoes a
+// settlement, it does not re-judge the cited code, so the stamp keeps
+// answering the question it always has — has the cited code changed since it
+// was last actually judged, which was the settle now being undone. Stamping
+// here would falsely claim a fresh look was just taken.
+//
+// Valid on any settled entry, regardless of resolution. An already-open entry
+// or an unknown id is refused with the actual state named.
+func (m *Manager) Reopen(repoDir, branch, id string) error {
+	j, err := m.Load(repoDir, branch)
+	if err != nil {
+		return err
+	}
+	e, err := j.findOrErr(id)
+	if err != nil {
+		return err
+	}
+	if e.Open() {
+		return fmt.Errorf("entry %s is already open", id)
+	}
+	e.Resolution = ""
+	e.Answer = ""
+	return m.save(repoDir, j)
 }
 
 // SettleDirect records an exchange that was never open — asked and answered in

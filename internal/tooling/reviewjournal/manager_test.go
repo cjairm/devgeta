@@ -331,6 +331,157 @@ func TestSettleByIDRejectsUnknownAndAlreadySettled(t *testing.T) {
 	}
 }
 
+// --- ratify / reopen (ADR-0017 §6) ---
+
+// Ratify on an agent-rejected entry strips the prefix, leaving an ordinary
+// human rejection: same resolution, same reason minus the provenance marker.
+//
+// The prefix lives in the settle note (Answer), which only SettleByID
+// populates — SettleDirect has no separate open-time question, so its text
+// lands in Note instead. The realistic path this transition guards is always
+// "reviewer opens a finding, agent settles it by id as rejected", so the
+// fixture is built the same way.
+func TestRatifyStripsAgentPrefixFromRejectedEntry(t *testing.T) {
+	fr := newFakeRepo(t)
+	id, err := fr.mgr.Open(fr.repoDir, "feat", "", "N+1 query")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", id, ResolutionRejected, AgentNotePrefix+"disagree, capped by config",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", id); err != nil {
+		t.Fatalf("Ratify: %v", err)
+	}
+
+	j, _ := fr.mgr.Load(fr.repoDir, "feat")
+	e := j.find(id)
+	if e.Resolution != ResolutionRejected {
+		t.Errorf("resolution should stay rejected, got %q", e.Resolution)
+	}
+	if e.Answer != "disagree, capped by config" {
+		t.Errorf("expected the prefix stripped, got %q", e.Answer)
+	}
+}
+
+// Ratify refuses every state that is not an agent-prefixed rejection, naming
+// the actual state in each case so the caller can see why.
+func TestRatifyRejectsEveryStateThatIsNotAnAgentRejection(t *testing.T) {
+	fr := newFakeRepo(t)
+
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", "n9"); err == nil {
+		t.Error("expected an error for an unknown id")
+	}
+
+	openID, err := fr.mgr.Open(fr.repoDir, "feat", "", "still open")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", openID); err == nil {
+		t.Error("expected an error ratifying an open entry")
+	}
+
+	fixedID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-fixed")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(fr.repoDir, "feat", fixedID, ResolutionFixed, "done"); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", fixedID); err == nil {
+		t.Error("expected an error ratifying a fixed entry")
+	}
+
+	answeredID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-answered")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir,
+		"feat",
+		answeredID,
+		ResolutionAnswered,
+		"yes",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", answeredID); err == nil {
+		t.Error("expected an error ratifying an answered entry")
+	}
+
+	humanRejectedID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q-rejected")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", humanRejectedID, ResolutionRejected, "intentional, no agent involved",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	if err := fr.mgr.Ratify(fr.repoDir, "feat", humanRejectedID); err == nil {
+		t.Error("expected an error ratifying an already-ordinary (unprefixed) rejection")
+	}
+}
+
+// Reopen returns a settled entry to open under the SAME id — no new entry is
+// created, so the total entry count is unchanged — with its original finding
+// text intact and the resolution note dropped.
+func TestReopenReturnsSameIDToOpenWithEntryCountUnchanged(t *testing.T) {
+	fr := newFakeRepo(t)
+	id, err := fr.mgr.Open(fr.repoDir, "feat", "", "N+1 query")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", id, ResolutionRejected, AgentNotePrefix+"looks intentional",
+	); err != nil {
+		t.Fatalf("SettleByID: %v", err)
+	}
+	before, _ := fr.mgr.Load(fr.repoDir, "feat")
+	countBefore := len(before.Entries)
+
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", id); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+
+	after, _ := fr.mgr.Load(fr.repoDir, "feat")
+	if len(after.Entries) != countBefore {
+		t.Fatalf("entry count changed: before %d, after %d", countBefore, len(after.Entries))
+	}
+	e := after.find(id)
+	if e == nil {
+		t.Fatalf("entry %s must still exist under the same id", id)
+	}
+	if !e.Open() {
+		t.Errorf("entry should be open again, got resolution %q", e.Resolution)
+	}
+	if e.Note != "N+1 query" {
+		t.Errorf("original finding text must survive, got %q", e.Note)
+	}
+	if e.Answer != "" {
+		t.Errorf("resolution note must be dropped, got %q", e.Answer)
+	}
+}
+
+func TestReopenRejectsNonexistentOrAlreadyOpenID(t *testing.T) {
+	fr := newFakeRepo(t)
+
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", "n9"); err == nil {
+		t.Error("expected an error for an unknown id")
+	}
+
+	openID, err := fr.mgr.Open(fr.repoDir, "feat", "", "q")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := fr.mgr.Reopen(fr.repoDir, "feat", openID); err == nil {
+		t.Error("expected an error reopening an already-open entry")
+	}
+}
+
 func TestIDsAreStableAcrossWrites(t *testing.T) {
 	fr := newFakeRepo(t)
 	first, _ := fr.mgr.Open(fr.repoDir, "feat", "", "q1")
