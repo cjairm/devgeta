@@ -108,21 +108,21 @@ A process failure or an unratified pushback can therefore never masquerade as st
       mechanism, worktree as opt-in (write before implementation, §11) →
       [ADR-0018](../../decisions/ADR-0018-review-loop-refuses-the-default-branch.md),
       ACCEPTED 2026-08-06
-- [ ] `ReviewConfig` in `GlobalConfig` + `review.reviewers` (stringlist) and
+- [x] `ReviewConfig` in `GlobalConfig` + `review.reviewers` (stringlist) and
       `review.rounds` (int, default 3, max 5) in the `dg config` registry
-- [ ] OpenCode wrapper method for headless review runs (`opencode run --agent <a>
+- [x] OpenCode wrapper method for headless review runs (`opencode run --agent <a>
 [-m <provider/model>] --format json`)
-- [ ] `dg task review-run` — run each configured reviewer sequentially, parse each
+- [x] `dg task review-run` — run each configured reviewer sequentially, parse each
       verdict, print compact per-reviewer verdicts + open journal ids (task-design
       output contract); refuses unless HEAD is a named non-default branch — both the
       default branch and a detached HEAD are refused, with an actionable error (ADR-0018)
-- [ ] Round-start journal snapshot that `review-notes` reads, so no reviewer is anchored by
+- [x] Round-start journal snapshot that `review-notes` reads, so no reviewer is anchored by
       a peer's in-round findings **or state changes** (ADR-0017 §4). Read-side only: writes
       are untouched, no staging, no id remapping, no dedup. Reviewer agents unchanged
-- [ ] Child-only environment overlay on `CommandParams`/`ExecCommand` (+ the OpenCode
+- [x] Child-only environment overlay on `CommandParams`/`ExecCommand` (+ the OpenCode
       wrapper), the prerequisite for pointing a reviewer at the snapshot — an overlay on the
       inherited environment, never `os.Setenv`
-- [ ] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
+- [x] `configs/shared/commands/review-loop.md` — the agent-side loop: subagent
       execution, per-finding verification (receiving-code-review discipline), journal
       settle, round cap, escalation report
 - [x] Journal ratification transitions — `review-note --ratify --id <id>` (human
@@ -132,8 +132,8 @@ A process failure or an unratified pushback can therefore never masquerade as st
       original finding text, the agent's rejection note dropped). Today neither move
       exists: `manager.go:186` refuses to settle a settled entry, and nothing reopens
       one — without these, an agent rejection blocks clean approval forever
-- [ ] Guard-test updates (`permissions_test.go` family) for the new shared command
-- [ ] Docs: `docs/spec.md`, command doc
+- [x] Guard-test updates (`permissions_test.go` family) for the new shared command
+- [x] Docs: `docs/spec.md`, command doc
 
 ### Explicitly Out of Scope
 
@@ -479,6 +479,15 @@ message stating why — OpenCode ignores it and its presence implies a guarantee
 does not exist. That test belongs to the sibling cycle's repo-wide sweep; this cycle
 adds the new file in the shape that sweep will require.
 
+**Second guard test, for the human-only rule (ADR-0017 §6):**
+`TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport`
+(`internal/apps/opencode/permissions_test.go`) asserts every occurrence of `--ratify`
+and `--reopen` in `review-loop.md` falls after the `## Terminal report` heading — so an
+instruction earlier in the file telling the loop to run either flag itself fails the
+build instead of shipping silently. This is the one structural check available; the
+permission model itself cannot tell who typed a `devgeta task` command, so the rest of
+the rule stays prose-level (see the risk table).
+
 The flow it encodes:
 
 1. `devgeta task review-run` (round 1)
@@ -583,7 +592,6 @@ make lint
 | The snapshot pointer leaks into normal use, so a human's `review-notes` silently shows stale state | Low        | Read-side only, and the pointer is per-child rather than a well-known path or `os.Setenv`, so a snapshot is never read unless the caller names it. Load-bearing test: pointer unset → output byte-identical to today. An unreadable or deleted snapshot falls back to the live journal rather than erroring                |
 | The env overlay wipes the child's environment instead of extending it                              | Med        | The classic `exec.Cmd.Env` mistake: setting it non-nil replaces everything, so a naive implementation drops `PATH`/`HOME` and the child fails in confusing ways. Required shape is `append(os.Environ(), cmd.Env...)`, with `Env` left nil when empty; test asserts a pre-existing variable survives alongside the new one |
 | Isolation silently absent because the env var never reaches the agent's shell                      | Med        | Fails **open** — reviewers see live state, i.e. today's anchored behavior, with no error — so it cannot be caught by "did it crash". Probed before building (Step 4), and manual check 3b/3c observe isolation directly rather than assuming it                                                                            |
-| Duplicate open entries pile up when several reviewers find the same defect                         | Med        | Accepted by design (ADR-0017 §4): duplicates are noise, a wrong merge is a silently dropped defect. The coding agent settles all copies from one verification, and `review-notes` output stays compact because entries are one line plus a note                                                                            |
 | Duplicate open entries pile up when several reviewers find the same defect                         | Med        | Accepted by design (ADR-0017 §4): duplicates are noise, a wrong merge is a silently dropped defect. The coding agent settles all copies from one verification, and `review-notes` output stays compact because entries are one line plus a note                                                                            |
 | Verdict line missing/malformed in a reviewer's output                                              | Med        | Explicit `NO VERDICT` outcome, surfaced not guessed; reviewer templates already carry the line                                                                                                                                                                                                                             |
 | Two models both wrong, both approve                                                                | Low–Med    | Inherent to AI review; bounded rounds + human owns the merge decision; loop never self-merges                                                                                                                                                                                                                              |
