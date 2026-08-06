@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Estimated Duration:** ~3 hours
-**Status:** Draft
+**Status:** Approved — awaiting implementation
 
 ---
 
@@ -260,4 +260,7 @@ make lint
 
 **Reviewer notes:**
 
-(fill in during review)
+Approved 2026-08-06. Disposition table and guard-test plan verified against the
+current repo state before approval: all 8 command files still carry the dead
+keys as described, and `permissions_test.go` has no existing test that reads
+command frontmatter. Implementation not yet started.

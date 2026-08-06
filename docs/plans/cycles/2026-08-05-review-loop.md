@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-05
 **Estimated Duration:** ~8 hours
-**Status:** Draft
+**Status:** Approved — awaiting implementation
 
 ---
 
@@ -457,4 +457,13 @@ make lint
 
 **Reviewer notes:**
 
-(fill in during review)
+Approved 2026-08-06, sequenced after [2026-08-05-shared-command-permissions.md]
+(2026-08-05-shared-command-permissions.md) — Step 5/7 build on that cycle's
+allowlist guard-test convention, so implementation waits for it to land.
+
+Open item to resolve at Step 1 (ADR-writing) time, not now: Step 1's file list
+placeholders `ADR-0016-*.md, ADR-0017-*.md` collide with the real
+`ADR-0016-inconclusive-tool-probe-fails-open.md` (already ACCEPTED). The two
+new ADRs must be numbered ADR-0017 and ADR-0018 instead. No text elsewhere in
+this doc references the numbers, so this is a non-issue for the plan itself —
+flagged here so it isn't rediscovered mid-implementation.
