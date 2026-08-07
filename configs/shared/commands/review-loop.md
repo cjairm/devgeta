@@ -27,7 +27,7 @@ makes — they are not just documentation here.
   the current branch. Prints exactly one line per reviewer (`<model label> → <outcome>`)
   and nothing else — no findings, no ids. An outcome is `APPROVE`, `REQUEST CHANGES`,
   `NEEDS DISCUSSION`, `NO VERDICT`, or `ERROR(<reason>)`. Progress goes to stderr while it
-  runs (a line per reviewer, a line per tool call it makes); none of that is part of the
+  runs, so a long round reads as working rather than stuck; none of that is part of the
   verdict — read the verdict lines only. The branch under review is everything it would
   merge, commits AND uncommitted work, so work in progress does not need committing
   first. It refuses to run on the default branch, a detached HEAD, or a branch that
@@ -77,8 +77,11 @@ Parse `$ARGUMENTS` once, before the first round.
 Run `devgeta task review-run`, passing `--reviewer <key>` and `--note <text>` when step 0
 resolved them — omit each flag entirely otherwise. Read its stdout exactly as printed: one
 verdict line per reviewer, nothing else. Never guess at, soften, or invent a verdict the
-line does not state. Its stderr progress lines (per reviewer, per tool call) are not
-verdicts and carry no findings — do not read anything into them.
+line does not state. Its stderr progress lines are not verdicts and carry no findings —
+do not read anything into them.
+
+Run this yourself, in the main session — not in a subagent. The verdict lines are the one
+thing this loop must never take second-hand, and stdout is two or three lines.
 
 Then run `devgeta task review-notes` to see what this round left open. `review-run` does
 not print ids, so this is how the loop learns them: every id under the journal's `open:`
@@ -135,50 +138,143 @@ begins with `agent:`.
   clean; go to the terminal report instead, carrying that entry into it.
 
 Otherwise — any reviewer's outcome is not `APPROVE`, or the journal's `open:` section names
-any ids even though every outcome was `APPROVE` — this round is not a clean approval.
-Continue to step 4. An id under `open:` is an unanswered finding regardless of what the
-verdicts say, and step 4 has not run yet at this point in the flow, so it must never be
-waved through because every outcome happened to say `APPROVE`.
+any ids even though every outcome was `APPROVE` — this round is not a clean approval. An id
+under `open:` is an unanswered finding regardless of what the verdicts say, and step 4 has
+not run yet at this point in the flow, so it must never be waved through because every
+outcome happened to say `APPROVE`.
 
-### 4. Otherwise, verify and settle each open finding
+Where a round that is not a clean approval goes next depends on whether it left the loop
+anything to work on:
+
+- **The journal's `open:` section names at least one id:** continue to step 4.
+- **Nothing under `open:`, and some outcome was not `APPROVE`:** stop here and go to the
+  terminal report, naming that reviewer and its verdict and stating that the round recorded
+  no finding. A reviewer can withhold approval without opening one — `NEEDS DISCUSSION` asks
+  for a conversation, and only a reviewer's blocking findings ever reach the journal — so
+  there is nothing for step 4 to triage and nothing for a subagent to fix.
+  Do not run another round: the loop would change nothing in between, so the next round
+  re-runs the same reviewers against the same tree and buys the same verdict.
+
+### 4. Otherwise, triage each open finding, then settle it
 
 For every id under the journal's `open:` section, read its text from `devgeta task
-review-notes` and verify it with the rigor of the `receiving-code-review` skill — restate what it claims, check it
-against the actual code, don't take it at face value just because a reviewer wrote it.
+review-notes` and sort it into one of two piles. This triage is a cheap filter, not a
+verdict — the verifying happens in step 6.
 
-- **The finding is real:** implement the fix. Do this work in a subagent whenever the
-  host agent you're running under supports launching one (see step 6). Then settle it:
-  `devgeta task review-note --settle --id <id> --as fixed --note "<what changed and
-where>"`.
-- **The finding is wrong:** do not implement it, and do not leave it open — an open
-  finding just comes back next round. Settle it rejected, with the evidence that
-  disproves it, and mark it as an agent call:
-  `devgeta task review-note --settle --id <id> --as rejected --note "agent: <the
+- **It needs a human, not this loop.** The finding is real but resolving it lies outside
+  the branch's code, or asks for a call this loop has no standing to make: a failing or
+  missing CI job, infrastructure or environment, a credential, a scope or product
+  decision, a release or versioning policy. Do not dispatch a subagent for it and do not
+  settle it. Leave it open, and carry it into the terminal report — step 5 stops the loop
+  once anything is in this pile.
+
+  Escalating is not an escape hatch. "I would have to read more code", "I'm not sure", or
+  "this looks like a big change" are reasons to dispatch a subagent, not reasons to hand
+  the finding back. The test is whether the work is outside the branch or outside the
+  loop's authority — not whether it is hard.
+
+- **Everything else** goes to the round's fix subagent (step 6), which verifies each
+  finding it is given with the rigor of the `receiving-code-review` skill — restate what
+  the finding claims, check it against the actual code, don't take it at face value just
+  because a reviewer wrote it — and then settles it one of two ways:
+
+  - **The finding is real:** implement the fix, then settle it:
+    `devgeta task review-note --settle --id <id> --as fixed --note "<what changed and
+where, plus the test command you ran and its result>"`.
+  - **The finding is wrong:** do not implement it, and do not leave it open — an open
+    finding just comes back next round. Settle it rejected, with the evidence that
+    disproves it, and mark it as an agent call:
+    `devgeta task review-note --settle --id <id> --as rejected --note "agent: <the
 disproving evidence>"`. The `agent:` prefix is mandatory and belongs at the very
-  start of the `--note` value, so it lands at the start of the entry's `answer:` line —
-  the one line step 3 reads. It is the only thing that tells a later reader — human or
-  reviewer — that this rejection is provisional rather than final. Never settle a finding
-  rejected without real evidence, and never omit the evidence to save time: the human's
-  decision at the end rests on being able to check your reasoning, not just your
-  conclusion.
+    start of the `--note` value, so it lands at the start of the entry's `answer:` line —
+    the one line step 3 reads. It is the only thing that tells a later reader — human or
+    reviewer — that this rejection is provisional rather than final. Never settle a
+    finding rejected without real evidence, and never omit the evidence to save time: the
+    human's decision at the end rests on being able to check your reasoning, not just
+    your conclusion.
+
+  A subagent that discovers, while verifying, that a finding belongs in the first pile
+  after all leaves it open and says so in its report instead of forcing it into one of
+  these two.
 
 Never use a rejection to make a disagreement disappear because re-litigating it is
 inconvenient. It does not remove the finding from anyone's view — it turns into a
 pushback the human sees, and can undo, in the terminal report.
 
-### 5. Enforce the round cap
+When a subagent ran, whatever it reports, the journal is what counts: after it returns,
+re-read `devgeta task review-notes` yourself and treat that as the state of the round. A
+finding the subagent says it settled but the journal still lists under `open:` is not
+settled.
 
-After this round's findings are handled, read `devgeta config get review.rounds`. If this
-was that many rounds, stop — go to the terminal report regardless of what the branch's
-state is at that point. Otherwise return to step 1 and run another round.
+### 5. Stop for anything escalated, then enforce the round cap
 
-### 6. Run fix work in a subagent
+After this round's findings are handled:
 
-Wherever the host agent supports launching one, do step 4's implementation and
-verification (build, test, confirm the fix) inside a subagent rather than the main
-session. The main session should only see the outcome of each round — verdicts, which
-findings were settled and how, and the eventual report — not the diffs and test runs a
-fix took getting there.
+- If anything is still open after this round — step 4's triage left it for a human, or the
+  fix subagent escalated it back while verifying — stop; go to the terminal report, even if
+  rounds remain. The journal you re-read at the end of step 4 decides this: any id still
+  under `open:` counts, whichever way it got there. Another round cannot clear it: the
+  finding is still open, so step 3 could never call the result a clean approval, and every
+  further round pays the reviewers to raise it again and waits on the same answer.
+- Otherwise read `devgeta config get review.rounds`. If this was that many rounds, stop —
+  go to the terminal report regardless of what the branch's state is at that point.
+- Otherwise return to step 1 and run another round.
+
+### 6. The fix subagent
+
+When step 4's second pile has anything in it, dispatch **one fresh subagent per round**,
+carrying all of that round's findings from that pile — never one subagent per finding.
+Per-finding subagents each rebuild the same branch context and re-run the same suites, and
+they cannot see each other's edits, so two fixes touching one file collide.
+
+When that pile is empty — step 4 sent every open finding of this round to a human —
+dispatch nothing and go straight to step 5, which stops the loop. A subagent with no
+findings has nothing to fix, and dispatching one anyway invites handing it the escalated
+finding step 4 just said not to dispatch a subagent for.
+
+The main session stays out of the fix work entirely: it never reads a diff, runs a test,
+or edits a file for a finding. It sees the verdict lines, what the subagent reports, and
+what `devgeta task review-notes` says afterwards — not the work in between. That is the
+whole point of the split, and it is also why the subagent is fresh: it starts on the
+findings with nothing else in its context.
+
+A fresh subagent inherits nothing from this session, so the dispatch must carry
+everything it cannot look up — and nothing it can. Include:
+
+1. One line on what this branch is changing and why. A diff shows what moved, never the
+   intent behind it.
+2. Every id you are handing it, with the finding's text and its `path:line` cite copied
+   **verbatim** from `devgeta task review-notes`.
+3. The human's `--note` from step 0, verbatim, if there was one. It exists only in this
+   session — drop it here and it is gone.
+4. The instruction to follow the repo's own contributor guide (`CLAUDE.md`, `AGENTS.md`,
+   `CONTRIBUTING.md` — whichever it has) for how code and tests are written here, and to
+   read it rather than guessing.
+5. The verification standard: the rigor of the `receiving-code-review` skill, as spelled
+   out in step 4.
+6. The two settle commands from step 4, verbatim, including the `agent:` prefix rule.
+7. The never-do list below.
+8. The return contract below.
+
+Do **not** paste the diff, file contents, test output, or a recap of earlier rounds. The
+subagent runs `git diff` and `devgeta task review-notes` itself and gets the current
+truth; a pasted copy is context you pay for twice and is stale the moment a fix lands.
+
+The never-do list, which every dispatch carries:
+
+- **Never move HEAD** — no `git switch`, no `git checkout <branch>`, no rebase or merge.
+  `devgeta task review-run` abandons a whole round whose HEAD moved, so this throws away
+  the round it is working on.
+- **Never commit, stage, or stash.** Uncommitted work is reviewable as it stands.
+- **Never open a new finding.** Reviewers do that; a fixer only settles what it was given.
+- **Never retire another agent's provisional rejection.** Those two journal transitions
+  are the human's alone and are named only in the terminal report below.
+- **Verify before settling `fixed`.** Run the tests covering the change and name the
+  command and its result in the `--note`, so the journal carries the evidence.
+
+The return contract: one line per id — `<id> — fixed | rejected | needs-human — <one
+clause>` — and nothing else. No diffs, no test output, no file contents, no summary of
+how the work went.
 
 ## Terminal report
 
@@ -194,8 +290,9 @@ Round <n> of <cap>. Every reviewer approved, the journal lists nothing under `op
 no settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
 ```
 
-**Report to the human** — everything else, including a reviewer failure (step 2) and
-hitting the round cap (step 5):
+**Report to the human** — everything else, including a reviewer failure (step 2), a round
+that withheld approval without recording a finding (step 3), a finding that needs a human
+(step 4), and hitting the round cap (step 5):
 
 ```
 ## Review loop — report
@@ -205,6 +302,18 @@ hitting the round cap (step 5):
 |-------|----------|---------|
 | 1     | <label>  | <verdict> |
 | ...   | ...      | ... |
+
+(If the loop stopped because a round withheld approval but left nothing under `open:`, say
+so in one line under this table, naming the reviewer and its verdict. The table shows what
+the verdict was, never why the loop stopped.)
+
+### Findings that need you
+| id  | Finding | Why the loop did not settle it | What it is waiting on |
+|-----|---------|--------------------------------|------------------------|
+| n5  | <the reviewer's finding> | <what puts it outside the branch's code or this loop's authority> | <the decision or action you need to take> |
+
+(These are still open in the journal, deliberately — nothing was settled on your behalf.
+Omit this table when nothing was escalated.)
 
 ### Agent rejections awaiting your decision
 | id  | Finding | Why the agent rejected it | Accept | Refuse |
