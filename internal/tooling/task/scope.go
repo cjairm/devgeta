@@ -63,6 +63,15 @@ type scopeData struct {
 
 	Files    []fileChange
 	Excluded []fileChange
+	// Uncommitted is the subset of the branch's changes that no commit
+	// carries yet (working tree against HEAD). Those files ARE in Files —
+	// the file table covers the whole branch state, committed or not — so this
+	// exists only to say which of them a reviewer will not find in the commit
+	// list above.
+	Uncommitted []fileChange
+	// Untracked is the files git does not track yet. They are NOT in Files:
+	// `git diff` cannot see them, so there are no counts to report, only names.
+	Untracked []string
 }
 
 // ReviewScope fetches origin (best-effort, bounded), resolves the comparison
@@ -70,6 +79,12 @@ type scopeData struct {
 // report: ahead/behind, commit subjects (with dates, and bodies when
 // requested), and a per-file stat table with lockfile-style noise pulled into
 // a separate excluded-files note.
+//
+// The file table covers everything the branch would merge — its commits AND
+// its uncommitted work (ADR-0019), the same as BranchDiff, whose diff a
+// reviewer reads right after this. Which of those files are not in any commit
+// yet, and which are untracked, are each called out on their own line: a file
+// the commit list above never mentions would otherwise look like a mistake.
 func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 	fetchFailed := tm.Git.FetchOriginTimeout(reviewScopeFetchTimeout) != nil
 
@@ -109,11 +124,23 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 		return "", fmt.Errorf("review-scope: %w", err)
 	}
 
-	files, err := tm.fileChanges(base + "...HEAD")
+	// Two dots, not three: `git diff <base>` compares the merge-base against
+	// the WORKING TREE, so staged and unstaged edits are counted alongside
+	// committed ones. `<base>...HEAD` would report only what is committed.
+	files, err := tm.fileChanges(base)
 	if err != nil {
 		return "", fmt.Errorf("review-scope: %w", err)
 	}
 	reviewable, excluded := partitionExcluded(files)
+
+	// HEAD against the working tree: what the branch changes that no commit
+	// carries yet. Excluded paths are dropped here too, so a lockfile nobody
+	// is reviewing does not show up as uncommitted work.
+	uncommitted, err := tm.fileChanges("HEAD")
+	if err != nil {
+		return "", fmt.Errorf("review-scope: %w", err)
+	}
+	uncommittedReviewable, _ := partitionExcluded(uncommitted)
 
 	return formatReviewScope(scopeData{
 		CurrentBranch: currentBranch,
@@ -125,6 +152,8 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 		Bodies:        bodies,
 		Files:         reviewable,
 		Excluded:      excluded,
+		Uncommitted:   uncommittedReviewable,
+		Untracked:     untrackedFiles(tm.Git, ""),
 	}), nil
 }
 
@@ -346,15 +375,47 @@ func formatExclusionNotes(excluded []fileChange, hint string) string {
 	if len(excluded) == 0 {
 		return ""
 	}
-	notes := make([]string, len(excluded))
-	for i, f := range excluded {
+	return fmt.Sprintf(
+		"excluded (see `%s` to inspect): %s",
+		hint, formatFileNotes(excluded),
+	)
+}
+
+// sameFileSet reports whether two file lists name exactly the same paths,
+// order and counts aside. Lengths alone are not enough: two lists of equal
+// length can name different files, and collapsing the uncommitted note on that
+// basis would claim the whole table is uncommitted when it is not.
+func sameFileSet(a, b []fileChange) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	paths := make(map[string]struct{}, len(a))
+	for _, f := range a {
+		paths[f.Path] = struct{}{}
+	}
+	for _, f := range b {
+		if _, ok := paths[f.Path]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+// formatFileNotes renders files as a comma-joined inline list, each with its
+// +added/-removed counts (or "binary"). Shared by every note line that names a
+// set of files without giving them their own table rows — the excluded-files
+// note and review-scope's uncommitted-files note — so the two can't drift into
+// two spellings of the same thing.
+func formatFileNotes(files []fileChange) string {
+	notes := make([]string, len(files))
+	for i, f := range files {
 		if f.Binary {
 			notes[i] = fmt.Sprintf("%s (binary)", f.Path)
 		} else {
 			notes[i] = fmt.Sprintf("%s (+%d/-%d)", f.Path, f.Added, f.Removed)
 		}
 	}
-	return fmt.Sprintf("excluded (see `%s` to inspect): %s", hint, strings.Join(notes, ", "))
+	return strings.Join(notes, ", ")
 }
 
 // formatReviewScope renders scopeData as the compact, LLM-oriented report
@@ -403,6 +464,31 @@ func formatReviewScope(s scopeData) string {
 
 	fmt.Fprintf(&b, "files (%d):\n", len(s.Files))
 	b.WriteString(formatFileStats(s.Files))
+
+	// Both notes name files the commit list above cannot account for, so they
+	// sit directly under the table those files appear in (or, for untracked
+	// files, do not).
+	if len(s.Uncommitted) > 0 {
+		// A branch of pure work-in-progress has every table row uncommitted, and
+		// there the per-file list is the table again, path for path — pure cost
+		// for a reader who already has it. Say it once instead.
+		if sameFileSet(s.Uncommitted, s.Files) {
+			fmt.Fprintf(&b, "\nuncommitted: every file above, in no commit yet")
+		} else {
+			fmt.Fprintf(
+				&b,
+				"\nuncommitted (in the table above, in no commit yet): %s",
+				formatFileNotes(s.Uncommitted),
+			)
+		}
+	}
+	if len(s.Untracked) > 0 {
+		fmt.Fprintf(
+			&b,
+			"\nuntracked (not in the table above, no diff — read them directly): %s",
+			strings.Join(s.Untracked, ", "),
+		)
+	}
 
 	if note := formatExclusionNotes(s.Excluded, "dg task branch-diff --file <path>"); note != "" {
 		b.WriteString("\n")

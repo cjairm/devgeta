@@ -308,6 +308,13 @@ type RunOptions struct {
 	// environment (e.g. a review-round snapshot pointer) — see
 	// CommandParams.Env for the overlay semantics.
 	Env []string
+	// OnStdoutLine, when non-nil, receives each stdout line as the run
+	// produces it, so a caller can report live progress during a run that
+	// takes minutes. The lines are the raw `--format json` event stream:
+	// interpreting them stays with the caller for the same reason reading the
+	// returned stdout does (see Run). Passed straight through to
+	// CommandParams.OnStdoutLine — its concurrency note applies here too.
+	OnStdoutLine func(string)
 }
 
 // Run executes `opencode run` headlessly and returns its captured stdout.
@@ -332,11 +339,12 @@ func (o *OpenCode) Run(opts RunOptions) (string, error) {
 	args = append(args, opts.Prompt)
 
 	params := cmd.CommandParams{
-		Command: constants.OpenCode,
-		Args:    args,
-		Dir:     opts.Dir,
-		Timeout: opts.Timeout,
-		Env:     opts.Env,
+		Command:      constants.OpenCode,
+		Args:         args,
+		Dir:          opts.Dir,
+		Timeout:      opts.Timeout,
+		Env:          opts.Env,
+		OnStdoutLine: opts.OnStdoutLine,
 	}
 	stdout, _, err := o.Base.ExecCommand(params)
 	if err != nil {

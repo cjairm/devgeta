@@ -97,6 +97,21 @@ type CommandParams struct {
 	// that needs to must arrange for sudo to preserve the variable rather than
 	// assume this field is enough.
 	Env []string
+	// OnStdoutLine, when non-nil, is called with each complete stdout line
+	// (newline trimmed) as it is read, BEFORE the command finishes — so a
+	// caller can report live progress from a long-running tool whose output it
+	// still wants captured and returned whole. Stream tees raw bytes to the
+	// terminal instead; this hands the caller lines it can interpret and
+	// summarize (e.g. `dg task review-run` turning an `opencode run --format
+	// json` event stream into one short progress line per tool call).
+	//
+	// It is called on the goroutine draining stdout, one line at a time, so it
+	// never runs concurrently with itself — but it DOES run while
+	// ExecCommand's own caller is blocked inside ExecCommand, so anything it
+	// writes to must not also be written by that caller until ExecCommand
+	// returns. It is ignored when Stream is true: that path copies bytes with
+	// no line framing at all, and no caller needs both.
+	OnStdoutLine func(string)
 }
 
 func NewBaseCommand() *BaseCommand {
@@ -299,7 +314,13 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	drain := func(pipe io.Reader, buf *strings.Builder, live io.Writer, label string) {
+	drain := func(
+		pipe io.Reader,
+		buf *strings.Builder,
+		live io.Writer,
+		label string,
+		onLine func(string),
+	) {
 		defer wg.Done()
 		if cmd.Stream {
 			_, _ = io.Copy(io.MultiWriter(buf, live), pipe)
@@ -317,7 +338,11 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 			line, err := reader.ReadString('\n')
 			if len(line) > 0 {
 				buf.WriteString(line)
-				logger.L().Debugw(label, "line", strings.TrimRight(line, "\n"))
+				trimmed := strings.TrimRight(line, "\n")
+				logger.L().Debugw(label, "line", trimmed)
+				if onLine != nil {
+					onLine(trimmed)
+				}
 			}
 			if err != nil {
 				return
@@ -325,8 +350,8 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 		}
 	}
 
-	go drain(stdoutPipe, &stdoutBuf, os.Stdout, "stdout")
-	go drain(stderrPipe, &stderrBuf, os.Stderr, "stderr")
+	go drain(stdoutPipe, &stdoutBuf, os.Stdout, "stdout", cmd.OnStdoutLine)
+	go drain(stderrPipe, &stderrBuf, os.Stderr, "stderr", nil)
 
 	// Wait for command to complete, then for the readers to flush.
 	err = execCommand.Wait()

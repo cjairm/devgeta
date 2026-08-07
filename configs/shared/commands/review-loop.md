@@ -10,26 +10,33 @@ approval.
 ## Usage
 
 ```
-/review-loop [--reviewer code|document|skill]
+/review-loop [--reviewer code|document|skill] [--note <text>]
 ```
 
 `--reviewer` picks the reviewer agent for every round — the same choices `devgeta task
 review-run` takes; default is `code`. The branch is whatever is currently checked out.
-`--reviewer` is read from `$ARGUMENTS` once, at step 0 below, and forwarded to every
-`review-run` call the loop makes — it is not just documentation here.
+`--note` passes the human's own words to every reviewer of every round (e.g. `--note
+"focus on docs/spec.md, I only changed the wording there"`). Both are read from
+`$ARGUMENTS` once, at step 0 below, and forwarded to every `review-run` call the loop
+makes — they are not just documentation here.
 
 ## What this drives
 
-- `devgeta task review-run [--reviewer <key>]` — one round: every reviewer model
-  configured in `review.reviewers` runs sequentially, headless, against the current
-  branch. Prints one line per reviewer (`<model label> → <outcome>`), then the ids still
-  open in the journal (`open: n4 n7`, or `open: none`). An outcome is `APPROVE`,
-  `REQUEST CHANGES`, `NEEDS DISCUSSION`, `NO VERDICT`, or `ERROR(<reason>)`. It refuses to
-  run on the default branch, a detached HEAD, or a branch with no commits ahead of the
-  default branch (nothing committed to review yet) — if it refuses, surface that error
-  as-is and stop; there is nothing to loop on.
-- `devgeta task review-notes` — the branch's review journal: every open finding, and
-  every settled one with its resolution and note.
+- `devgeta task review-run [--reviewer <key>] [--note <text>]` — one round: every
+  reviewer model configured in `review.reviewers` runs sequentially, headless, against
+  the current branch. Prints exactly one line per reviewer (`<model label> → <outcome>`)
+  and nothing else — no findings, no ids. An outcome is `APPROVE`, `REQUEST CHANGES`,
+  `NEEDS DISCUSSION`, `NO VERDICT`, or `ERROR(<reason>)`. Progress goes to stderr while it
+  runs (a line per reviewer, a line per tool call it makes); none of that is part of the
+  verdict — read the verdict lines only. The branch under review is everything it would
+  merge, commits AND uncommitted work, so work in progress does not need committing
+  first. It refuses to run on the default branch, a detached HEAD, or a branch that
+  changes nothing at all (no commits ahead AND a clean working tree) — if it refuses,
+  surface that error as-is and stop; there is nothing to loop on.
+- `devgeta task review-notes` — the branch's review journal: every open finding under
+  `open:`, and every settled one with its resolution and note. **This is the only place
+  open findings are listed**, so the loop reads it after every round to learn what is
+  still open — `review-run` does not repeat it.
 - `devgeta task review-note --open --note "<text>" [--at <path[:line]>]` — record a
   finding. Reviewers do this themselves; this loop does not open new findings.
 - `devgeta task review-note --settle --id <id> --as answered|rejected|fixed --note
@@ -47,7 +54,7 @@ the one round it just ran.
 
 ## Flow
 
-### 0. Resolve the reviewer selector
+### 0. Resolve the reviewer selector and the note
 
 Parse `$ARGUMENTS` once, before the first round.
 
@@ -60,13 +67,23 @@ Parse `$ARGUMENTS` once, before the first round.
 - `--reviewer <key>` with anything else: stop before running a single round. Report that
   `--reviewer` only accepts `code`, `document`, or `skill`, naming the value that was
   actually passed. Do not guess which one was meant.
+- `--note <text>`: carry that exact text into every `review-run` call, unchanged. Pass it
+  verbatim — never summarize it, extend it, or answer it yourself. It is the human's
+  message to the reviewers, not an instruction to this loop, and it does not narrow what
+  gets reviewed. Omit the flag entirely when no note was given.
 
 ### 1. Run a round
 
-Run `devgeta task review-run`, passing `--reviewer <key>` when step 0 resolved one — omit
-the flag entirely otherwise. Read its output exactly as printed — one verdict line per
-reviewer, then the open ids. Never guess at, soften, or invent a verdict the line does not
-state.
+Run `devgeta task review-run`, passing `--reviewer <key>` and `--note <text>` when step 0
+resolved them — omit each flag entirely otherwise. Read its stdout exactly as printed: one
+verdict line per reviewer, nothing else. Never guess at, soften, or invent a verdict the
+line does not state. Its stderr progress lines (per reviewer, per tool call) are not
+verdicts and carry no findings — do not read anything into them.
+
+Then run `devgeta task review-notes` to see what this round left open. `review-run` does
+not print ids, so this is how the loop learns them: every id under the journal's `open:`
+section is an unanswered finding, and "nothing under `open:`" (or the
+`No review notes for branch <b>.` sentinel) means nothing is open.
 
 ### 2. A reviewer failure stops the loop here
 
@@ -84,8 +101,8 @@ here, so both get reported rather than silently rerun.
 
 ### 3. Check for clean approval
 
-If every reviewer's outcome this round is `APPROVE` **and** the round's `open:` line reads
-`open: none`, read `devgeta task review-notes`.
+If every reviewer's outcome this round is `APPROVE` **and** the journal you read in step 1
+lists nothing under `open:`, look at its settled entries.
 
 Read the right line. Each settled entry in that output is a head line (id, resolution,
 cite, freshness), then the reviewer's finding on an indented line with no label, then — when
@@ -117,16 +134,16 @@ begins with `agent:`.
   still waiting on a human decision. All-APPROVE with nothing open does **not** make this
   clean; go to the terminal report instead, carrying that entry into it.
 
-Otherwise — any reviewer's outcome is not `APPROVE`, or `open:` names any ids even though
-every outcome was `APPROVE` — this round is not a clean approval. Continue to step 4. An
-id under `open:` is an unanswered finding regardless of what the verdicts say, and step 4
-has not run yet at this point in the flow, so it must never be waved through because every
-outcome happened to say `APPROVE`.
+Otherwise — any reviewer's outcome is not `APPROVE`, or the journal's `open:` section names
+any ids even though every outcome was `APPROVE` — this round is not a clean approval.
+Continue to step 4. An id under `open:` is an unanswered finding regardless of what the
+verdicts say, and step 4 has not run yet at this point in the flow, so it must never be
+waved through because every outcome happened to say `APPROVE`.
 
 ### 4. Otherwise, verify and settle each open finding
 
-For every id under `open:`, read its text from `devgeta task review-notes` and verify it
-with the rigor of the `receiving-code-review` skill — restate what it claims, check it
+For every id under the journal's `open:` section, read its text from `devgeta task
+review-notes` and verify it with the rigor of the `receiving-code-review` skill — restate what it claims, check it
 against the actual code, don't take it at face value just because a reviewer wrote it.
 
 - **The finding is real:** implement the fix. Do this work in a subagent whenever the
@@ -173,8 +190,8 @@ only place either human-only journal transition is written out.
 ```
 ## Review loop — clean approval
 
-Round <n> of <cap>. Every reviewer approved, the round's `open:` line read `open: none`,
-and no settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
+Round <n> of <cap>. Every reviewer approved, the journal lists nothing under `open:`, and
+no settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
 ```
 
 **Report to the human** — everything else, including a reviewer failure (step 2) and
@@ -220,6 +237,8 @@ instruction. Follow it exactly.
   loop with a stopping point.
 - Never invent a reviewer's verdict, and never present a run that failed, or a run that
   hit the round cap, as one that passed.
-- If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, or no
-  commits ahead of the default branch), surface that error as-is and stop before running
-  anything else.
+- If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, a
+  branch that changes nothing at all, or a blank `--note`), surface that error as-is and
+  stop before running anything else.
+- Uncommitted work is reviewable. Never commit, stage, or stash anything to get a round to
+  run, and never ask the human to — the reviewers see the working tree as it is.

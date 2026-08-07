@@ -80,6 +80,7 @@ type mockTaskRunner struct {
 	reviewNoteReopenErr       error
 
 	reviewRunReviewerArg string
+	reviewRunNoteArg     string
 	reviewRunCalled      bool
 	reviewRunRet         string
 	reviewRunErr         error
@@ -204,9 +205,10 @@ func (m *mockTaskRunner) ReviewNoteReopen(branch, id string) (string, error) {
 	return m.reviewNoteReopenRet, m.reviewNoteReopenErr
 }
 
-func (m *mockTaskRunner) ReviewRun(reviewer string) (string, error) {
+func (m *mockTaskRunner) ReviewRun(reviewer, note string) (string, error) {
 	m.reviewRunCalled = true
 	m.reviewRunReviewerArg = reviewer
+	m.reviewRunNoteArg = note
 	return m.reviewRunRet, m.reviewRunErr
 }
 
@@ -878,8 +880,16 @@ func TestTask_ReviewRun(t *testing.T) {
 		t.Cleanup(func() { taskReviewRunReviewerFlag = orig })
 	}
 
+	// setReviewRunNote does the same for --note.
+	setReviewRunNote := func(t *testing.T, value string) {
+		t.Helper()
+		orig := taskReviewRunNoteFlag
+		taskReviewRunNoteFlag = value
+		t.Cleanup(func() { taskReviewRunNoteFlag = orig })
+	}
+
 	t.Run("passes the reviewer flag through", func(t *testing.T) {
-		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE\nopen: none"}
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE"}
 		restore := setupTaskMock(t, mock)
 		defer restore()
 		setReviewRunReviewer(t, "document")
@@ -892,6 +902,42 @@ func TestTask_ReviewRun(t *testing.T) {
 		}
 		if mock.reviewRunReviewerArg != "document" {
 			t.Errorf("expected reviewer 'document', got %q", mock.reviewRunReviewerArg)
+		}
+	})
+
+	t.Run("passes the note flag through", func(t *testing.T) {
+		const note = "focus on docs/spec.md"
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunNote(t, note)
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewRunNoteArg != note {
+			t.Errorf("expected the note passed through, got %q", mock.reviewRunNoteArg)
+		}
+	})
+
+	// No --note means no note — an empty string, which review-run reads as
+	// "the flag was not used" rather than as a blank note to refuse.
+	t.Run("omitting --note passes an empty note", func(t *testing.T) {
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunNote(t, "")
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewRunNoteArg != "" {
+			t.Errorf("expected an empty note, got %q", mock.reviewRunNoteArg)
+		}
+		if flag := taskReviewRunCmd.Flags().Lookup("note"); flag == nil {
+			t.Error("expected a --note flag")
+		} else if flag.DefValue != "" {
+			t.Errorf("expected --note to default to empty, got %q", flag.DefValue)
 		}
 	})
 

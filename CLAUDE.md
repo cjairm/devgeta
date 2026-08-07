@@ -575,9 +575,25 @@ Quick reference to where things live:
 
 ## Recent Changes & Active Work
 
-**Last updated:** 2026-07-31
+**Last updated:** 2026-08-07
 
 **Recent changes:**
+
+- Review scope, output, and steering changed together (2026-08-07). A review now
+  covers the branch's **working state** — commits AND uncommitted work, untracked
+  files included — so `review-scope` and `branch-diff` diff `git diff <merge-base>`
+  (two dots, against the worktree) and `review-run` only refuses a branch with no
+  commits ahead **and** a clean tree. See
+  [ADR-0019](docs/decisions/ADR-0019-a-review-covers-the-branch-working-state.md);
+  `collectWorktreeDiff` is the single gather behind both `BranchDiff` and the
+  `dg ws` diff pane, so the two cannot drift. `review-run` also gained
+  `--note <text>` (the human's own emphasis for every reviewer of the round,
+  framed so it cannot narrow the review; forwarded by `/review-loop --note`),
+  dropped its trailing `open:` line (findings live in the journal — `review-notes`
+  is what lists them, and `/review-loop` reads its ids from there), and reports
+  progress **as it happens** — one line per tool call a reviewer makes — via the
+  new `CommandParams.OnStdoutLine`, which hands a caller each stdout line while
+  the child still runs.
 
 - `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
   (2026-07-31). `--prompt` starts the layout's AI coder already working on a

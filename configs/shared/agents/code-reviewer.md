@@ -1,5 +1,5 @@
 ---
-description: Reviews code for bugs, performance, security, and best practices
+description: Reviews code for bugs, performance, security, and repo-convention violations. Use whenever code needs checking before it merges — a feature branch, a PR, named files or a directory, or uncommitted work in progress.
 temperature: 0.1
 permission:
   # No `bash` key on purpose: the host's global bash policy applies (allow
@@ -52,12 +52,17 @@ The repo's own instructions take precedence over the default guidance below.
 Determine what to review, in priority order:
 
 1. User-specified files or a directory → audit scope: every named file (and every file in a named directory) is in scope, and the unit of review is the **whole file** — run every pass against the full contents, no diff filtering. Journal reconciliation still applies.
-2. "Uncommitted" → `git diff HEAD`
+2. "Uncommitted only" → `git diff HEAD`
 3. Feature branch → `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats) — this must run first, before `devgeta task branch-diff` for the full noise-filtered diff — or `devgeta task branch-diff --file <path>` per file on large branches. Both exclude lockfile-style noise by default and note what they excluded; fall back to raw `git diff` only if these commands are unavailable.
+
+   **Both cover the branch's whole state — its commits AND its uncommitted work**, staged or not, because that is what the branch would merge. So work in progress is in scope without being committed first. Each prints a note only when it has something to name, so a clean tree prints neither and that is normal: `review-scope`'s `uncommitted (...)` names the changed files no commit carries yet, and both commands name untracked files (`untracked (...)` in `review-scope`, `Untracked files` in `branch-diff`) — those have no diff, so read them directly. Never treat a file as out of scope just because no commit mentions it, and never tell the author to commit before you can review.
+
 4. Arbitrary range (a PR that isn't checked out, or any historical `<base>..<head>` not tied to the current branch's default-branch merge-base) → `devgeta task review-package <base> <head>` for the commit list, noise-filtered stat table, and full diff in one call, or `devgeta task review-package <base> <head> --file <path>` per file on large ranges.
 5. On the default branch with no instruction → ask for clarification
 
 Never pull or merge — either would mutate the branch under review and change what you're reviewing; the only remote sync allowed is `review-scope`'s read-only fetch of origin, which is why it must run before `branch-diff`. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
+
+**Never move HEAD or touch the working tree.** No `git switch`, `git checkout <branch>`, `git stash`, `git reset`, or `git restore` — not even to "check what the default branch looks like", and not even if you intend to switch back. The review journal is keyed by branch name, so moving HEAD sends your findings to a different branch's journal, and a headless round aborts the moment it notices (it has to: nothing after that point is a review of the branch you were asked about). If you need to know how something behaves on another ref, read it with `git show <ref>:<path>` or `git diff <ref>` — both answer without moving anything. Verify anything else in a throwaway repo under your own scratch directory, and write every scratch file there too: a file you leave in the repo becomes part of the very branch state the next round reviews.
 
 You can also be launched with no manual invocation at all: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `code` starts you here, in that worktree, with a fixed prompt — always case 3 above (feature branch). See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 

@@ -384,6 +384,69 @@ func TestFormatReviewScope(t *testing.T) {
 		}
 	})
 
+	// A branch of pure work-in-progress has every table row uncommitted, and
+	// repeating all of them under the table is the table again, path for path.
+	t.Run("all-uncommitted collapses to one line", func(t *testing.T) {
+		files := []fileChange{
+			{Path: "a.go", Status: "M", Added: 3, Removed: 1},
+			{Path: "b.go", Status: "A", Added: 9},
+		}
+		got := formatReviewScope(scopeData{
+			CurrentBranch: "feat/x",
+			DefaultBranch: "main",
+			Files:         files,
+			Uncommitted:   files,
+		})
+		if !strings.Contains(got, "uncommitted: every file above, in no commit yet") {
+			t.Fatalf("expected the collapsed note, got: %q", got)
+		}
+		if strings.Count(got, "a.go") != 1 {
+			t.Errorf("expected each path listed once, got: %q", got)
+		}
+	})
+
+	// Equal lengths are not the same set: collapsing on length alone would
+	// claim the whole table is uncommitted when half of it is committed.
+	t.Run("same-length but different files still lists them", func(t *testing.T) {
+		got := formatReviewScope(scopeData{
+			CurrentBranch: "feat/x",
+			DefaultBranch: "main",
+			Files: []fileChange{
+				{Path: "a.go", Status: "M", Added: 3, Removed: 1},
+				{Path: "b.go", Status: "A", Added: 9},
+			},
+			Uncommitted: []fileChange{
+				{Path: "b.go", Status: "A", Added: 9},
+				{Path: "c.go", Status: "M", Added: 1},
+			},
+		})
+		if strings.Contains(got, "every file above") {
+			t.Fatalf("a different file set must not collapse, got: %q", got)
+		}
+		if !strings.Contains(got, "uncommitted (in the table above, in no commit yet): "+
+			"b.go (+9/-0), c.go (+1/-0)") {
+			t.Errorf("expected the per-file uncommitted note, got: %q", got)
+		}
+	})
+
+	t.Run("untracked files are named, not counted in the table", func(t *testing.T) {
+		got := formatReviewScope(scopeData{
+			CurrentBranch: "feat/x",
+			DefaultBranch: "main",
+			Files:         []fileChange{{Path: "a.go", Status: "M", Added: 1}},
+			Untracked:     []string{"docs/new.md", "internal/x_test.go"},
+		})
+		if !strings.Contains(got, "untracked (not in the table above, no diff — "+
+			"read them directly): docs/new.md, internal/x_test.go") {
+			t.Fatalf("expected the untracked note, got: %q", got)
+		}
+		// The table's count covers rows only — untracked files have no counts to
+		// put in a row, so claiming them in "files (N)" would be a lie.
+		if !strings.Contains(got, "files (1):") {
+			t.Errorf("untracked files must not inflate the table count, got: %q", got)
+		}
+	})
+
 	t.Run("binary file renders without counts", func(t *testing.T) {
 		got := formatReviewScope(scopeData{
 			CurrentBranch: "feat/x",
@@ -424,6 +487,17 @@ func TestReviewScope(t *testing.T) {
 					"A\tinternal/tooling/task/scope.go\n"+
 					"M\tgo.sum\n", "", nil,
 			), // diff --name-status --no-renames
+			// The same two calls again, against HEAD instead of the merge-base:
+			// which of the files above no commit carries yet. Here, scope.go is
+			// still uncommitted (and go.sum is excluded, so it must not be
+			// reported as uncommitted work even though HEAD's diff lists it).
+			commands.ExecCommandResult(
+				"200\t0\tinternal/tooling/task/scope.go\n40\t12\tgo.sum\n", "", nil,
+			), // diff --numstat --no-renames HEAD
+			commands.ExecCommandResult(
+				"A\tinternal/tooling/task/scope.go\nM\tgo.sum\n", "", nil,
+			), // diff --name-status --no-renames HEAD
+			commands.ExecCommandResult("docs/draft.md\x00", "", nil), // ls-files --others -z
 		)
 
 		out, err := tm.ReviewScope(false)
@@ -439,7 +513,14 @@ func TestReviewScope(t *testing.T) {
 			"M  internal/tooling/task/task.go  +120/-30",
 			"A  internal/tooling/task/scope.go  +200/-0",
 			"total: +320/-30",
+			"uncommitted (in the table above, in no commit yet): " +
+				"internal/tooling/task/scope.go (+200/-0)",
+			"untracked (not in the table above, no diff — read them directly): docs/draft.md",
 			"excluded (see `dg task branch-diff --file <path>` to inspect): go.sum (+40/-12)",
+		}
+		if strings.Contains(out, "uncommitted (in the table above, in no commit yet): go.sum") ||
+			strings.Contains(out, "go.sum (+40/-12), ") {
+			t.Fatalf("an excluded file must not be reported as uncommitted work:\n%s", out)
 		}
 		for _, want := range wantLines {
 			if !strings.Contains(out, want) {

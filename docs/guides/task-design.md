@@ -78,6 +78,23 @@ threads.`, `On <default> — no branch to compare…`) are contracts with the sh
    per reviewer to stderr while its stdout return stays the `<label> → <outcome>`
    contract, unaffected.
 
+   **Progress is only progress if it arrives during the work.** Lines emitted
+   around a long call (before it, then after it) leave the same silence in the
+   middle that they were added to fix. When the tool itself reports what it is
+   doing, render that as it arrives: `CommandParams.OnStdoutLine` hands a caller
+   each stdout line while the child still runs, which is how `review-run` prints
+   one line per tool call a reviewer makes instead of nothing for four minutes.
+   Keep each line short and summarized — a tool name and what it was pointed at —
+   never the tool's raw output.
+
+7. **A payload states an outcome; it does not carry the record.** When a task's
+   result already lives somewhere a caller can read (the review journal, a config
+   file, a PR), the payload names the outcome and stops. `review-run` prints one
+   verdict line per reviewer and nothing else: the findings are journal entries,
+   and `review-notes` is the command that reads them. Reprinting the record in
+   every round costs tokens for output the caller must re-read anyway, and gives
+   the same fact two spellings that can disagree.
+
 ## Architecture: orchestrate, then format
 
 Mirror `PRManager` (`internal/tooling/task/pr.go`): the manager method

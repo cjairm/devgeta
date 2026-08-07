@@ -91,35 +91,45 @@ type reviewerRun struct {
 
 // ReviewRun runs one review round: every configured reviewer model, in
 // order, through the OpenCode wrapper, against the current branch — then
-// prints one line per reviewer and the ids still open in the journal.
+// returns one line per reviewer, and nothing else.
+//
+// note, when non-empty, is the human's own steering for this round (`--note`).
+// It is appended to the fixed review prompt as extra context, and deliberately
+// does not narrow the review — see reviewNoteHeader.
 //
 // Reviewers are isolated on the read side only (ADR-0017 §4): a snapshot of
 // the journal as it stood at round start is written first, and each reviewer
 // is pointed at it, so no reviewer sees what a peer opened or settled during
 // this same round. Their writes go straight to the live journal and get
-// real, final ids — which is why the open list at the end is read from the
-// live journal, not the snapshot.
+// real, final ids.
 //
-// While a reviewer runs, a start/finish progress line goes to
-// progressWriter() (stderr by default) — never to the returned string, which
-// stays the exact parseable contract docs/guides/task-design.md governs. A
-// multi-minute headless run against a real branch diff would otherwise leave
-// the caller watching silence with no way to tell working from stuck.
-func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
-	// Cheapest guard first: a bad --reviewer needs no git and no config.
+// While a reviewer runs, progress goes to progressWriter() (stderr by
+// default) as it happens — a start line, one line per tool call the reviewer
+// makes, and a closing line with the outcome — never to the returned string,
+// which stays the exact parseable contract docs/guides/task-design.md
+// governs. A multi-minute headless run against a real branch diff would
+// otherwise leave the caller watching silence with no way to tell working
+// from stuck.
+func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
+	// Cheapest guards first: a bad --reviewer or a blank --note needs no git
+	// and no config.
 	agent, err := reviewerAgentFor(reviewer)
+	if err != nil {
+		return "", err
+	}
+	prompt, err := reviewPromptWithNote(note)
 	if err != nil {
 		return "", err
 	}
 
 	// All three refusals happen here, before any reviewer is launched and
 	// before any file is written — a wrong branch, or a branch with nothing
-	// committed to review, must cost nothing.
+	// to review at all, must cost nothing.
 	branch, defaultBranch, err := tm.checkOnReviewableBranch()
 	if err != nil {
 		return "", err
 	}
-	if err := tm.checkBranchHasCommittedDiff(branch, defaultBranch); err != nil {
+	if err := tm.checkBranchHasReviewableChanges(branch, defaultBranch); err != nil {
 		return "", err
 	}
 
@@ -148,42 +158,91 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 	}()
 
 	progressOut := tm.progressWriter()
-	var out strings.Builder
+	lines := make([]string, 0, len(runs))
 	for i, run := range runs {
-		position := fmt.Sprintf("[%d/%d]", i+1, len(runs))
-		fmt.Fprintf(progressOut, "%s %s: running\n", position, run.label)
+		progress := newReviewerProgress(
+			progressOut,
+			fmt.Sprintf("[%d/%d]", i+1, len(runs)),
+			run.label,
+		)
+		progress.started()
 		start := tm.now()
 
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
 		// throw away work already paid for.
 		stdout, runErr := tm.OpenCode.Run(opencode.RunOptions{
-			Agent:   agent,
-			Model:   run.model,
-			Prompt:  worktree.ReviewPrompt,
-			Timeout: reviewRunTimeout,
-			Env:     []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
+			Agent:        agent,
+			Model:        run.model,
+			Prompt:       prompt,
+			Timeout:      reviewRunTimeout,
+			Env:          []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
+			OnStdoutLine: progress.line,
 		})
 		outcome := classifyReviewerRun(stdout, runErr)
-		elapsed := tm.now().Sub(start)
-		fmt.Fprintf(
-			progressOut,
-			"%s %s: %s (%s)\n",
-			position,
-			run.label,
-			outcome,
-			formatElapsed(elapsed),
-		)
+		progress.finished(outcome, tm.now().Sub(start))
 
-		fmt.Fprintf(&out, "%s → %s\n", run.label, outcome)
+		// The branch is a precondition of the whole round, not just of its
+		// first moment, so it is re-checked after every reviewer.
+		if err := tm.checkBranchStillCheckedOut(branch, run.label); err != nil {
+			return "", err
+		}
+
+		lines = append(lines, fmt.Sprintf("%s → %s", run.label, outcome))
 	}
+	return strings.Join(lines, "\n"), nil
+}
 
-	open, err := openEntryIDs(jm, branch)
+// checkBranchStillCheckedOut verifies HEAD is still on the branch the round
+// started against, and aborts the round when it is not.
+//
+// The branch decides two things for every reviewer: which tree gets reviewed,
+// and — because the journal is keyed by branch name (ADR-0012 §5) — which
+// journal their findings are written to. checkOnReviewableBranch establishes
+// both before the first reviewer launches, but a reviewer runs shell commands
+// for minutes, and one of them moving HEAD silently invalidates the round from
+// that point on. This is not hypothetical: HEAD was switched to the default
+// branch one minute into a real round, and that round's findings were written
+// to a `main` journal — the file ADR-0018 exists to prevent, since journal
+// cleanup rides on branch deletion and nobody deletes `main`.
+//
+// The round is aborted rather than continued with a warning: every verdict it
+// could still produce would be about an unknown tree, and "which branch was
+// reviewed" is exactly what a verdict means. The already-earned verdicts are
+// dropped with it, deliberately — there is no way to tell whether the switch
+// happened before, during, or after the reviewer that just finished, so
+// reporting its verdict would be asserting something this command cannot know.
+//
+// HEAD is NOT put back. devgeta never silently moves a user's HEAD (ADR-0018),
+// and the error names the branch to return to instead.
+func (tm *TaskManager) checkBranchStillCheckedOut(branch, lastReviewer string) error {
+	current, err := tm.Git.CurrentBranch()
 	if err != nil {
-		return "", fmt.Errorf("review-run: %w", err)
+		// Fail OPEN, unlike the mismatch case below: an unreadable HEAD is not
+		// evidence that anything moved, and aborting a paid-for round on
+		// "cannot tell" would throw away work to prevent a problem that may
+		// not exist. The mismatch itself is what must never be waved through.
+		logger.L().Debugw(
+			"review-run: could not re-check the current branch after a reviewer; "+
+				"continuing the round",
+			"branch", branch, "reviewer", lastReviewer, "error", err,
+		)
+		return nil
 	}
-	out.WriteString(open)
-	return out.String(), nil
+	if current == branch {
+		return nil
+	}
+	where := fmt.Sprintf("%q", current)
+	if current == "" {
+		where = "a detached HEAD"
+	}
+	return fmt.Errorf(
+		"review-run: HEAD moved from %q to %s while %s was running, so this round is "+
+			"abandoned — anything that reviewer recorded went to the journal for %s, not "+
+			"%q, and no verdict from this round can be trusted. Run 'git switch %s', "+
+			"check 'devgeta task review-notes' on both branches, then run review-run again",
+		branch, where, lastReviewer, where, branch, branch,
+	)
 }
 
 // progressWriter returns where ReviewRun writes its per-reviewer progress
@@ -275,21 +334,25 @@ func (tm *TaskManager) checkOnReviewableBranch() (current, defaultBranch string,
 	return current, defaultBranch, nil
 }
 
-// checkBranchHasCommittedDiff is review-run's third refusal: a branch with
-// no commits ahead of the default branch has nothing committed to review,
-// even though it is a real, named, non-default branch that the first two
-// refusals let through.
+// checkBranchHasReviewableChanges is review-run's third refusal: a branch
+// that changes nothing at all has nothing to review, even though it is a
+// real, named, non-default branch that the first two refusals let through.
+//
+// "Changes nothing" means BOTH no commits ahead of the default branch AND a
+// clean working tree. Either one alone is reviewable, because a review covers
+// the branch's whole working state, not just its committed history — the same
+// thing `dg ws`'s diff pane shows (see ADR-0019, and BranchDiff in
+// branchdiff.go, which produces the diff the reviewers actually read). This
+// is why uncommitted work no longer has to be committed just to get a review.
 //
 // It reuses aheadBehind (scope.go) — the same `git rev-list --left-right
 // --count` call review-scope already runs to answer "what does this branch
-// change against the default branch" — rather than a second git invocation
-// of its own.
-//
-// Only ahead is checked, deliberately: `git rev-list` only ever sees
-// committed history, so a user with dirty, uncommitted files but no commits
-// yet legitimately hits this refusal. The message says so explicitly so it
-// reads as "commit first", never as "your work vanished".
-func (tm *TaskManager) checkBranchHasCommittedDiff(branch, defaultBranch string) error {
+// change against the default branch" — and Git.IsWorktreeDirty, the same
+// `git status --porcelain` check release and worktree-start already use,
+// rather than new invocations of its own. `git status --porcelain` reports
+// untracked files too, so a branch whose only work is a brand-new file is
+// reviewable rather than refused.
+func (tm *TaskManager) checkBranchHasReviewableChanges(branch, defaultBranch string) error {
 	_, ahead, err := tm.aheadBehind(defaultBranch)
 	if err != nil {
 		// Fail OPEN, not closed. This guard exists only to save the cost of a
@@ -313,15 +376,34 @@ func (tm *TaskManager) checkBranchHasCommittedDiff(branch, defaultBranch string)
 		)
 		return nil
 	}
-	if ahead == 0 {
-		return fmt.Errorf(
-			"review-run: branch %q has no commits ahead of %q, so there is nothing committed "+
-				"to review yet — uncommitted changes don't count here; commit your work, then "+
-				"run review-run again",
-			branch, defaultBranch,
-		)
+	if ahead > 0 {
+		return nil
 	}
-	return nil
+
+	// No commits ahead, so the working tree is the only place a change could
+	// still be. It is checked ONLY in this branch: with commits ahead there is
+	// already something to review, and asking git a second question there
+	// would cost a call whose answer changes nothing.
+	dirty, err := tm.Git.IsWorktreeDirty("")
+	if err != nil {
+		// Fails open for the same reason the ahead count does: this guard saves
+		// cost, it does not protect correctness. "Cannot tell whether the tree
+		// is dirty" must not become "confirmed empty".
+		logger.L().Debugw(
+			"review-run: could not determine whether the working tree is dirty; "+
+				"proceeding without the nothing-to-review guard",
+			"branch", branch, "defaultBranch", defaultBranch, "error", err,
+		)
+		return nil
+	}
+	if dirty {
+		return nil
+	}
+	return fmt.Errorf(
+		"review-run: branch %q has no commits ahead of %q and no uncommitted changes, so "+
+			"there is nothing to review — make a change, then run review-run again",
+		branch, defaultBranch,
+	)
 }
 
 // resolveReviewerRuns turns review.reviewers into the runs for this round.
@@ -347,26 +429,33 @@ func resolveReviewerRuns() ([]reviewerRun, error) {
 	return runs, nil
 }
 
-// openEntryIDs renders the round's closing line from the LIVE journal, so it
-// includes what this round's reviewers just opened (the snapshot they read
-// from deliberately does not).
-func openEntryIDs(jm *reviewjournal.Manager, branch string) (string, error) {
-	j, err := jm.Load("", branch)
-	if err != nil {
-		return "", err
+// reviewNoteHeader introduces --note's text inside the reviewer's prompt. It
+// states plainly that the note adds emphasis rather than replacing the
+// reviewer's scope, so "focus on document A" cannot be read as "review only
+// document A" — the reviewer agent's own instructions still decide what is in
+// scope, and a note must never be able to shrink a review into a spot check
+// while still reporting a whole-branch verdict.
+const reviewNoteHeader = "Note from the person who asked for this review — extra context " +
+	"and emphasis, not a narrower scope; still review everything you normally would:\n"
+
+// reviewPromptWithNote builds the round's prompt: the fixed review prompt on
+// its own, or that prompt followed by the human's --note.
+//
+// A note that is present but blank is refused rather than dropped: the caller
+// meant to say something to the reviewers, and silently running a round
+// without it would look identical to a round that carried it.
+func reviewPromptWithNote(note string) (string, error) {
+	if note == "" {
+		return worktree.ReviewPrompt, nil
 	}
-	ids := make([]string, 0, len(j.Entries))
-	for _, e := range j.Entries {
-		if e.Open() {
-			ids = append(ids, e.ID)
-		}
+	trimmed := strings.TrimSpace(note)
+	if trimmed == "" {
+		return "", fmt.Errorf(
+			"review-run: --note is blank — pass the text to send the reviewers, " +
+				"or omit the flag entirely",
+		)
 	}
-	if len(ids) == 0 {
-		// A sentinel, never an empty tail: an agent cannot tell "no open
-		// findings" from truncated output (task-design.md output rule 4).
-		return "open: none", nil
-	}
-	return "open: " + strings.Join(ids, " "), nil
+	return worktree.ReviewPrompt + "\n\n" + reviewNoteHeader + trimmed, nil
 }
 
 // ocEvent is the slice of an `opencode run --format json` NDJSON event this
@@ -609,17 +698,27 @@ func normalizeStatusValue(s string) string {
 // truncateReason folds a reason onto one line and cuts it to maxReasonLen,
 // marking the cut with an ellipsis so a truncated message is never mistaken
 // for the whole of what OpenCode said.
-//
-// The cut is by rune, not by byte: a provider message is free-form text and
-// can carry multi-byte runes, and slicing at a byte offset that lands inside
-// one would emit an invalid UTF-8 fragment into output an agent parses.
 func truncateReason(s string) string {
+	return truncateOneLine(s, maxReasonLen)
+}
+
+// truncateOneLine folds s onto a single line (collapsing every run of
+// whitespace, including newlines, to one space) and cuts it to max runes,
+// marking the cut with an ellipsis. Shared by truncateReason and the
+// progress reporter's tool labels (reviewprogress.go): both take free-form
+// text from OpenCode — a provider message, a tool's own arguments — and both
+// must keep one reviewer to one line.
+//
+// The cut is by rune, not by byte: that text can carry multi-byte runes, and
+// slicing at a byte offset that lands inside one would emit an invalid UTF-8
+// fragment into output an agent parses.
+func truncateOneLine(s string, max int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	runes := []rune(s)
-	if len(runes) <= maxReasonLen {
+	if len(runes) <= max {
 		return s
 	}
-	return strings.TrimSpace(string(runes[:maxReasonLen])) + "…"
+	return strings.TrimSpace(string(runes[:max])) + "…"
 }
 
 // firstNonBlankLine returns the first line with content, for the case where

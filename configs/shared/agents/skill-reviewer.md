@@ -40,10 +40,10 @@ When the branch has a PR, `devgeta task review-threads --state all` is the same 
 Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its supporting files — wherever the repo keeps them (`.claude/`, a configs tree, a vendored skills library). Locate them by pattern, never by an assumed path. Determine what to review, in priority order:
 
 1. User-specified files or a directory → audit scope: every named file (and every prompt file in a named directory) is in scope, and the unit of review is the **whole file** — run every pass against the full contents, no diff filtering. Journal reconciliation still applies.
-2. "Uncommitted" → `git diff HEAD` filtered to prompt files
-3. Feature branch → `devgeta task review-scope` first, then `devgeta task branch-diff` filtered to prompt files; fall back to raw `git diff` against the default branch only if these commands are unavailable
+2. "Uncommitted only" → `git diff HEAD` filtered to prompt files
+3. Feature branch → `devgeta task review-scope` first, then `devgeta task branch-diff` filtered to prompt files; fall back to raw `git diff` against the default branch only if these commands are unavailable. Both cover the branch's whole state — commits AND uncommitted work, including untracked files, which they name separately because those carry no diff (read them directly). A prompt file is in scope even if no commit mentions it yet; never ask for a commit before reviewing.
 
-Never pull or merge. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build.
+Never pull or merge. **Never move HEAD or touch the working tree either** — no `git switch`, `git checkout <branch>`, `git stash`, `git reset`, or `git restore`, not even if you intend to switch back: the review journal is keyed by branch name, so moving HEAD sends your findings to another branch's journal and a headless round aborts as soon as it notices. Read other refs with `git show <ref>:<path>` or `git diff <ref>` instead, and keep every scratch file in your own scratch directory — a file left in the repo becomes part of the branch state the next round reviews. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build.
 
 You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 

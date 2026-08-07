@@ -881,23 +881,26 @@ func reviewLoopSection(t *testing.T, body, heading string) string {
 	return rest
 }
 
-// TestReviewLoopCleanApprovalRequiresOpenNone guards the fix that closed a
+// TestReviewLoopCleanApprovalRequiresNothingOpen guards the fix that closed a
 // real correctness bug (see the cycle history around commit 0b39f28): a round
 // where every reviewer said APPROVE but the journal still had open findings
-// (open: n4 n7) used to read as a clean approval. Step 3 must gate on BOTH
-// every verdict being APPROVE AND the round's `open:` line reading
-// `open: none` — drop the open: none half and the loop can declare victory
-// while a finding sits unanswered in the journal.
+// used to read as a clean approval. Step 3 must gate on BOTH every verdict
+// being APPROVE AND nothing being open — drop the second half and the loop can
+// declare victory while a finding sits unanswered in the journal.
 //
-// What this catches: the `open: none` condition (or the whole clause
-// requiring it) being deleted from step 3, which would silently reintroduce
-// the bug — an all-APPROVE round with unanswered findings reported as clean.
+// The open findings are read from the journal (`review-notes`, whose list is
+// headed `open:`), not from review-run, which prints only verdict lines — so
+// what this asserts is that step 3 still names the `open:` section and requires
+// it to be empty, however that emptiness is worded.
+//
+// What this catches: the nothing-open condition (or the whole clause requiring
+// it) being deleted from step 3, which would silently reintroduce the bug.
 // What this does NOT catch: an executing agent misreading a correctly-worded
-// instruction, or a reword that keeps the string "open: none" in the section
-// but no longer makes it a requirement (a substring match cannot distinguish
-// "requires open: none" from "ignores open: none" — it only proves the
-// concept is still named in the right place).
-func TestReviewLoopCleanApprovalRequiresOpenNone(t *testing.T) {
+// instruction, or a reword that keeps the words in the section but no longer
+// makes them a requirement (a substring match cannot distinguish "requires
+// nothing open" from "ignores what is open" — it only proves the concept is
+// still named in the right place).
+func TestReviewLoopCleanApprovalRequiresNothingOpen(t *testing.T) {
 	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -907,20 +910,27 @@ func TestReviewLoopCleanApprovalRequiresOpenNone(t *testing.T) {
 
 	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
 
-	if !strings.Contains(section, "open: none") {
+	if !strings.Contains(section, "open:") {
 		t.Errorf(
-			"%s step 3 no longer requires the round's `open:` line to read "+
-				"`open: none` for a clean approval — without this, an all-APPROVE "+
-				"round with findings still open in the journal (open: n4 n7) reads "+
-				"as clean when it is not",
+			"%s step 3 no longer refers to the journal's `open:` section — without "+
+				"it there is nothing tying clean approval to having no unanswered "+
+				"findings, and an all-APPROVE round with open findings reads as clean",
+			path,
+		)
+	}
+	if !strings.Contains(section, "nothing under") {
+		t.Errorf(
+			"%s step 3 no longer requires the `open:` section to be EMPTY for a "+
+				"clean approval (expected it to say nothing is listed under it) — "+
+				"naming the section without requiring it empty is not a gate",
 			path,
 		)
 	}
 	if !strings.Contains(section, "APPROVE") {
 		t.Errorf(
 			"%s step 3 no longer checks that every reviewer's outcome is APPROVE — "+
-				"the clean approval gate needs both conditions together, not "+
-				"open: none alone",
+				"the clean approval gate needs both conditions together, not the "+
+				"empty journal alone",
 			path,
 		)
 	}
@@ -964,6 +974,46 @@ func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
 				"review-run` — without this, --reviewer is parsed in step 0 but "+
 				"never passed through, so the documented selector silently does "+
 				"nothing",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopForwardsTheNote is the --note half of the same guard, for the
+// same failure: a flag documented in the Usage section but never parsed or
+// passed on does nothing, and the human's steering silently never reaches a
+// reviewer. Step 0 must resolve it and step 1 must forward it.
+//
+// What this catches: `--note` being dropped from either step while the Usage
+// section keeps advertising it.
+// What this does NOT catch: the loop summarizing or answering the note instead
+// of passing it verbatim — that is judgment, which the instruction states
+// plainly but no substring check can verify.
+func TestReviewLoopForwardsTheNote(t *testing.T) {
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	body := string(data)
+
+	if !strings.Contains(body, "--note <text>") {
+		t.Fatalf("%s no longer documents --note <text> at all", path)
+	}
+	parseSection := reviewLoopSection(t, body, "### 0. Resolve the reviewer selector")
+	if !strings.Contains(parseSection, "--note") {
+		t.Errorf(
+			"%s step 0 no longer resolves --note — a note that is never parsed "+
+				"never reaches a reviewer, so the flag is Usage-section text with "+
+				"no effect",
+			path,
+		)
+	}
+	runSection := reviewLoopSection(t, body, "### 1. Run a round")
+	if !strings.Contains(runSection, "--note <text>") {
+		t.Errorf(
+			"%s step 1 no longer forwards --note <text> to `devgeta task "+
+				"review-run` — without this the note is parsed and then dropped",
 			path,
 		)
 	}

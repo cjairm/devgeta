@@ -49,8 +49,8 @@ func withReviewers(t *testing.T, models ...string) {
 
 // withAheadCount overrides newRepoSetup's default ahead-of-default-branch
 // count (3) for the one test that needs a different value — chiefly 0, to
-// exercise checkBranchHasCommittedDiff's refusal. Every other git call keeps
-// answering exactly as newRepoSetup's fixture already does.
+// reach the working-tree half of checkBranchHasReviewableChanges. Every other
+// git call keeps answering exactly as newRepoSetup's fixture already does.
 func withAheadCount(t *testing.T, tm *TaskManager, ahead int) {
 	t.Helper()
 	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
@@ -69,7 +69,7 @@ func withAheadCount(t *testing.T, tm *TaskManager, ahead int) {
 // withRevListFailure makes the `rev-list` call aheadBehind runs fail exactly
 // as it does in a repo with no local refs/remotes/origin/<default> ref: no
 // remote, a shallow or --single-branch clone, or a default branch never
-// fetched. This is the case checkBranchHasCommittedDiff must fail OPEN on
+// fetched. This is the case checkBranchHasReviewableChanges must fail OPEN on
 // rather than surface — see the guard's own comment.
 func withRevListFailure(t *testing.T, tm *TaskManager) {
 	t.Helper()
@@ -82,6 +82,66 @@ func withRevListFailure(t *testing.T, tm *TaskManager) {
 		if slices.Contains(c.Args, "rev-list") {
 			return "", "fatal: ambiguous argument 'origin/main...HEAD': unknown revision or " +
 				"path not in the working tree.", errors.New("exit status 128")
+		}
+		return orig(c)
+	}
+}
+
+// withBranchSwitchAfter makes `git branch --show-current` answer `to` from the
+// nth answer onward, reproducing something moving HEAD mid-round — what a
+// reviewer's own shell command did in a real round. n counts every
+// --show-current call, and review-run makes one before the first reviewer
+// (checkOnReviewableBranch) and one after each, so n=2 means "HEAD moved while
+// reviewer 1 was running".
+func withBranchSwitchAfter(t *testing.T, tm *TaskManager, n int, to string) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	calls := 0
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "--show-current") {
+			calls++
+			if calls >= n {
+				return to + "\n", "", nil
+			}
+		}
+		return orig(c)
+	}
+}
+
+// withDirtyWorktree makes `git status --porcelain` report the given porcelain
+// output, so the working-tree half of checkBranchHasReviewableChanges sees a
+// dirty tree. newRepoSetup's fixture answers "" (clean) by default.
+func withDirtyWorktree(t *testing.T, tm *TaskManager, porcelain string) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "status") {
+			return porcelain, "", nil
+		}
+		return orig(c)
+	}
+}
+
+// withStatusFailure makes `git status --porcelain` fail, the case the guard's
+// second half must fail OPEN on.
+func withStatusFailure(t *testing.T, tm *TaskManager) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "status") {
+			return "", "fatal: not a git repository", errors.New("exit status 128")
 		}
 		return orig(c)
 	}
@@ -487,11 +547,11 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			withReviewers(t)
 			scriptOpenCode(t, ocBase, scriptedRun{stdout: tt.stdout, err: tt.err})
 
-			out, err := tm.ReviewRun("")
+			out, err := tm.ReviewRun("", "")
 			if err != nil {
 				t.Fatalf("ReviewRun: %v", err)
 			}
-			want := "OpenCode default model → " + tt.want + "\nopen: none"
+			want := "OpenCode default model → " + tt.want
 			if out != want {
 				t.Errorf("got:\n%s\nwant:\n%s", out, want)
 			}
@@ -535,11 +595,11 @@ func TestReviewRunClassifiesRealCodexDocumentReviewerCapture(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: capture})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "OpenCode default model → REQUEST CHANGES\nopen: none"
+	want := "OpenCode default model → REQUEST CHANGES"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -557,11 +617,11 @@ func TestReviewRunErrorOutcomeFromErrorEvent(t *testing.T) {
 		err:    errors.New("exit status 1"),
 	})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "openai/gpt-5.2 → ERROR(Unexpected server error. Check server logs.)\nopen: none"
+	want := "openai/gpt-5.2 → ERROR(Unexpected server error. Check server logs.)"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -575,11 +635,11 @@ func TestReviewRunErrorOutcomeFromNonzeroExitAlone(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{err: errors.New("exit status 127")})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "OpenCode default model → ERROR(opencode run failed: exit status 127)\nopen: none"
+	want := "OpenCode default model → ERROR(opencode run failed: exit status 127)"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -593,7 +653,7 @@ func TestReviewRunErrorReasonIsTruncatedNotReworded(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -611,7 +671,7 @@ func TestReviewRunErrorReasonIsTruncatedNotReworded(t *testing.T) {
 	) != len(
 		strings.ReplaceAll(strings.Split(out, "\n")[0], "\n", ""),
 	)+len(
-		"\nopen: none",
+		"",
 	) {
 		t.Errorf("a reviewer's outcome must stay on one line:\n%s", out)
 	}
@@ -627,7 +687,7 @@ func TestReviewRunErrorReasonTruncationIsRuneSafe(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -650,11 +710,11 @@ func TestReviewRunErrorOutcomeWhenNothingParses(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: "opencode: command not found\n"})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "OpenCode default model → ERROR(opencode: command not found)\nopen: none"
+	want := "OpenCode default model → ERROR(opencode: command not found)"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -669,11 +729,11 @@ func TestReviewRunIgnoresNonEventNoiseOnStdout(t *testing.T) {
 		stdout: "zoxide: detected a possible configuration issue.\n" + statusReport("APPROVE"),
 	})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "OpenCode default model → APPROVE\nopen: none"
+	want := "OpenCode default model → APPROVE"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -694,7 +754,7 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE")},
 	)
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -702,7 +762,6 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 		"openai/gpt-5.2 → REQUEST CHANGES",
 		"google/gemini-3-pro → ERROR(Unexpected server error.)",
 		"anthropic/claude-opus-4-6 → APPROVE",
-		"open: none",
 	}, "\n")
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
@@ -769,11 +828,11 @@ func TestReviewRunWritesProgressLinesPerReviewer(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), 1500*time.Millisecond)
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	wantOut := "openai/gpt-5.2 → REQUEST CHANGES\ngoogle/gemini-3-pro → APPROVE\nopen: none"
+	wantOut := "openai/gpt-5.2 → REQUEST CHANGES\ngoogle/gemini-3-pro → APPROVE"
 	if out != wantOut {
 		t.Errorf("stdout contract changed:\ngot:\n%s\nwant:\n%s", out, wantOut)
 	}
@@ -800,7 +859,7 @@ func TestReviewRunProgressUsesDefaultModelLabel(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
 
-	if _, err := tm.ReviewRun(""); err != nil {
+	if _, err := tm.ReviewRun("", ""); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	want := "[1/1] OpenCode default model: running\n[1/1] OpenCode default model: APPROVE (1s)\n"
@@ -825,7 +884,7 @@ func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
 	}
@@ -866,11 +925,11 @@ func TestReviewRunConfiguredReviewersPinTheirModels(t *testing.T) {
 		},
 	)
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "openai/gpt-5.2 → APPROVE\ngoogle/gemini-3-pro → APPROVE\nopen: none"
+	want := "openai/gpt-5.2 → APPROVE\ngoogle/gemini-3-pro → APPROVE"
 	if out != want {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
@@ -890,11 +949,11 @@ func TestReviewRunUnsetReviewersRunsOpenCodeDefaultModel(t *testing.T) {
 		},
 	})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	if out != "OpenCode default model → APPROVE\nopen: none" {
+	if out != "OpenCode default model → APPROVE" {
 		t.Errorf("unexpected output:\n%s", out)
 	}
 }
@@ -941,11 +1000,65 @@ func TestReviewRunLaunchesTheSelectedReviewerAgent(t *testing.T) {
 				},
 			})
 
-			if _, err := tm.ReviewRun(tt.flag); err != nil {
+			if _, err := tm.ReviewRun(tt.flag, ""); err != nil {
 				t.Fatalf("ReviewRun: %v", err)
 			}
 		})
 	}
+}
+
+// --- --note ---------------------------------------------------------------
+
+// --note reaches every reviewer, appended to the shared prompt rather than
+// replacing it, and the prompt still opens with the same fixed sentence — a
+// note must add to what the reviewer is asked, never substitute for it.
+func TestReviewRunNoteReachesEveryReviewer(t *testing.T) {
+	const note = "focus on docs/spec.md, I only changed wording there"
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+
+	check := func(t *testing.T, c commands.CommandParams) {
+		prompt := c.Args[len(c.Args)-1]
+		if !strings.HasPrefix(prompt, worktree.ReviewPrompt) {
+			t.Errorf("the note must be appended to the shared prompt, got %q", prompt)
+		}
+		if !strings.Contains(prompt, note) {
+			t.Errorf("expected the note in the prompt, got %q", prompt)
+		}
+		// The framing is what stops "focus on X" from being read as "review
+		// only X" — a narrowed review that still reports a whole-branch
+		// verdict is the failure this guards against.
+		if !strings.Contains(prompt, "not a narrower scope") {
+			t.Errorf("expected the note to be framed as emphasis, got %q", prompt)
+		}
+	}
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: statusReport("APPROVE"), onCall: check},
+		scriptedRun{stdout: statusReport("APPROVE"), onCall: check},
+	)
+
+	if _, err := tm.ReviewRun("", note); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+}
+
+// A whitespace-only --note is refused, not dropped: the caller meant to say
+// something to the reviewers, and a silently ignored note produces a round
+// that looks exactly like one that carried it.
+func TestReviewRunBlankNoteRefused(t *testing.T) {
+	tm, root, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase) // no run may happen
+
+	_, err := tm.ReviewRun("", "   \n\t")
+	if err == nil {
+		t.Fatal("expected a refusal for a blank --note")
+	}
+	if !strings.Contains(err.Error(), "--note") {
+		t.Errorf("expected the refusal to name the flag, got: %v", err)
+	}
+	assertNoReviewFilesWritten(t, root)
 }
 
 // An unknown reviewer is refused against the shared registry, before
@@ -955,7 +1068,7 @@ func TestReviewRunUnknownReviewerRefused(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase)
 
-	_, err := tm.ReviewRun("architecture")
+	_, err := tm.ReviewRun("architecture", "")
 	if err == nil {
 		t.Fatal("expected an error for an unregistered reviewer")
 	}
@@ -973,11 +1086,11 @@ func TestReviewRunProceedsOnANamedNonDefaultBranch(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun on a feature branch must proceed, got: %v", err)
 	}
-	if out != "OpenCode default model → APPROVE\nopen: none" {
+	if out != "OpenCode default model → APPROVE" {
 		t.Errorf("unexpected output:\n%s", out)
 	}
 }
@@ -987,7 +1100,7 @@ func TestReviewRunRefusesOnTheDefaultBranch(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("")
+	_, err := tm.ReviewRun("", "")
 	if err == nil {
 		t.Fatal("expected a refusal on the default branch")
 	}
@@ -1005,7 +1118,7 @@ func TestReviewRunRefusesOnDetachedHead(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("")
+	_, err := tm.ReviewRun("", "")
 	if err == nil {
 		t.Fatal("expected a refusal on a detached HEAD")
 	}
@@ -1018,29 +1131,205 @@ func TestReviewRunRefusesOnDetachedHead(t *testing.T) {
 	assertNoReviewFilesWritten(t, root)
 }
 
-// A named, non-default branch with no commits ahead of the default branch
-// still has nothing committed to review — the third refusal, distinct from
-// the other two: HEAD is fine, there is simply no diff yet.
-func TestReviewRunRefusesWhenBranchHasNoCommittedDiff(t *testing.T) {
+// A named, non-default branch that changes NOTHING — no commits ahead and a
+// clean working tree — has nothing to review: the third refusal, distinct
+// from the other two in that HEAD is perfectly fine.
+func TestReviewRunRefusesWhenBranchChangesNothing(t *testing.T) {
 	tm, root, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
 	withAheadCount(t, tm, 0)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("")
+	_, err := tm.ReviewRun("", "")
 	if err == nil {
-		t.Fatal("expected a refusal when the branch has no commits ahead of the default branch")
+		t.Fatal("expected a refusal when the branch has no commits and a clean tree")
 	}
 	if !strings.Contains(err.Error(), "feat") {
 		t.Errorf("expected the branch name in the refusal, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "uncommitted") {
-		t.Errorf(
-			"expected the refusal to distinguish uncommitted work from a vanished commit, got: %v",
-			err,
-		)
+	// The refusal must say BOTH halves were checked. "No commits ahead" alone
+	// reads as "commit your work" — which is exactly the dead end this change
+	// removed, since uncommitted work is now reviewable.
+	for _, want := range []string{"no commits ahead", "no uncommitted changes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected the refusal to state %q, got: %v", want, err)
+		}
 	}
 	assertNoReviewFilesWritten(t, root)
+}
+
+// Uncommitted work alone is enough to review: no commits ahead, but a dirty
+// working tree. This is the case that used to be refused, and refusing it
+// forced a commit just to get a review (ADR-0019).
+func TestReviewRunProceedsOnUncommittedWorkAlone(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 0)
+	withDirtyWorktree(t, tm, " M internal/x.go\n")
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("REQUEST CHANGES")})
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("a dirty tree with no commits must still be reviewable, got: %v", err)
+	}
+	if out != "OpenCode default model → REQUEST CHANGES" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
+// An untracked file is uncommitted work too: `git status --porcelain` reports
+// it as "??", so a branch whose only change is a brand-new file is reviewable.
+func TestReviewRunProceedsOnUntrackedWorkAlone(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 0)
+	withDirtyWorktree(t, tm, "?? docs/draft.md\n")
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	if _, err := tm.ReviewRun("", ""); err != nil {
+		t.Fatalf("an untracked-only branch must still be reviewable, got: %v", err)
+	}
+}
+
+// The dirty check fails open for the same reason the ahead count does: the
+// guard saves cost, it is not a safety property, so "cannot tell whether the
+// tree is dirty" must never be treated as "confirmed empty".
+func TestReviewRunProceedsWhenDirtinessCannotBeDetermined(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 0)
+	withStatusFailure(t, tm)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	if _, err := tm.ReviewRun("", ""); err != nil {
+		t.Fatalf("an unresolvable status check must fail open, not block the round: %v", err)
+	}
+}
+
+// --- the branch must stay put for the whole round ------------------------
+
+// The branch decides which tree is reviewed AND which journal the findings go
+// to, so it is a precondition of the whole round, not just its first moment.
+// This is a real incident, not a hypothetical: HEAD was switched to the default
+// branch one minute into a live round, and that round's findings landed in a
+// `main` journal — the file ADR-0018 exists to prevent.
+func TestReviewRunAbortsWhenHeadMovesMidRound(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	// Only ONE reviewer may run: the round must not launch the second one
+	// against a tree nobody asked it to review. scriptOpenCode fails the test
+	// if a second run happens.
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+	withBranchSwitchAfter(t, tm, 2, "main")
+
+	out, err := tm.ReviewRun("", "")
+	if err == nil {
+		t.Fatal("expected the round to abort when HEAD moved mid-round")
+	}
+	if out != "" {
+		t.Errorf("a round that cannot be trusted must report no verdicts, got:\n%s", out)
+	}
+	// The error has to carry everything needed to recover: both branches, which
+	// reviewer was running, and where the findings actually went.
+	for _, want := range []string{"feat", "main", "openai/gpt-5.2", "git switch feat", "review-notes"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected %q in the error, got: %v", want, err)
+		}
+	}
+}
+
+// A detached HEAD mid-round is the same failure and must read as one — "moved
+// to \"\"" would tell the reader nothing.
+func TestReviewRunAbortsWhenHeadDetachesMidRound(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+	withBranchSwitchAfter(t, tm, 2, "")
+
+	_, err := tm.ReviewRun("", "")
+	if err == nil {
+		t.Fatal("expected the round to abort when HEAD detached mid-round")
+	}
+	if !strings.Contains(err.Error(), "detached HEAD") {
+		t.Errorf("expected the detached case named plainly, got: %v", err)
+	}
+}
+
+// The check fails OPEN when git cannot answer: an unreadable HEAD is not
+// evidence that anything moved, and throwing away a paid-for round on "cannot
+// tell" would cost real money to prevent a problem that may not exist.
+func TestReviewRunContinuesWhenTheBranchRecheckFails(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	calls := 0
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "--show-current") {
+			calls++
+			if calls >= 2 { // the re-check, not the round's opening resolution
+				return "", "fatal: not a git repository", errors.New("exit status 128")
+			}
+		}
+		return orig(c)
+	}
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("an unreadable HEAD must not abort the round: %v", err)
+	}
+	if out != "OpenCode default model → APPROVE" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
+// A round where nothing moves must not pay any attention to this: every
+// configured reviewer still runs and every verdict is still reported.
+func TestReviewRunUnaffectedWhenTheBranchStaysPut(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: statusReport("REQUEST CHANGES")},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "openai/gpt-5.2 → REQUEST CHANGES\ngoogle/gemini-3-pro → APPROVE"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// With commits ahead, the guard is already satisfied and must not spend a
+// second git call asking about the working tree — the answer cannot change
+// the outcome.
+func TestReviewRunSkipsTheDirtyCheckWhenCommitsExist(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 2)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	if _, err := tm.ReviewRun("", ""); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	for _, call := range gitBase.ExecCommandCalls {
+		if slices.Contains(call.Args, "status") {
+			t.Errorf("the dirty check must be skipped when commits exist, got: %v", call.Args)
+		}
+	}
 }
 
 // A branch that does have commits ahead of the default branch proceeds,
@@ -1051,11 +1340,11 @@ func TestReviewRunProceedsWhenBranchHasCommittedDiff(t *testing.T) {
 	withAheadCount(t, tm, 1)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun on a branch with a committed diff must proceed, got: %v", err)
 	}
-	if out != "OpenCode default model → APPROVE\nopen: none" {
+	if out != "OpenCode default model → APPROVE" {
 		t.Errorf("unexpected output:\n%s", out)
 	}
 }
@@ -1073,14 +1362,14 @@ func TestReviewRunProceedsWhenAheadCountCannotBeDetermined(t *testing.T) {
 	withRevListFailure(t, tm)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf(
 			"an unresolvable ahead/behind comparison must fail open, not block the round: %v",
 			err,
 		)
 	}
-	if out != "OpenCode default model → APPROVE\nopen: none" {
+	if out != "OpenCode default model → APPROVE" {
 		t.Errorf("unexpected output:\n%s", out)
 	}
 }
@@ -1118,6 +1407,8 @@ func assertNoReviewFilesWritten(t *testing.T, root string) {
 // the live journal and a (never-written) snapshot would look identical to
 // reviewer 2 in that case.
 func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
+	t.Setenv(ReviewJournalSnapshotEnvVar, "")
+
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
 
@@ -1156,7 +1447,7 @@ func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
 		},
 	)
 
-	if _, err := tm.ReviewRun(""); err != nil {
+	if _, err := tm.ReviewRun("", ""); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if seenPath == "" {
@@ -1211,13 +1502,20 @@ func TestReviewRunSnapshotHidesWhatAPeerWroteThisRound(t *testing.T) {
 		},
 	)
 
-	out, err := tm.ReviewRun("")
-	if err != nil {
+	if _, err := tm.ReviewRun("", ""); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	// Ids keep advancing in the live journal while the reads stay frozen.
-	if !strings.HasSuffix(out, "\nopen: n1 n2") {
-		t.Errorf("expected both live entries listed as open, got:\n%s", out)
+	// Ids keep advancing in the LIVE journal while the reads stay frozen: the
+	// round-start entry and the one reviewer 1 wrote mid-round are both there,
+	// each with its own real id.
+	notes, err := tm.ReviewNotes("", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	for _, want := range []string{"n1", "n2", "round-start finding", "reviewer-1 finding"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("expected %q in the live journal, got:\n%s", want, notes)
+		}
 	}
 }
 
@@ -1237,7 +1535,7 @@ func TestReviewRunPointsEveryReviewerAtTheSameSnapshot(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE"), onCall: record},
 	)
 
-	if _, err := tm.ReviewRun(""); err != nil {
+	if _, err := tm.ReviewRun("", ""); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if len(pointers) != 2 || pointers[0] != pointers[1] {
@@ -1268,7 +1566,7 @@ func TestReviewRunRemovesSnapshotAfterAReviewerFails(t *testing.T) {
 		},
 	})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
 	}
@@ -1298,9 +1596,17 @@ func snapshotPointer(t *testing.T, c commands.CommandParams) string {
 	return ""
 }
 
-// --- the open-ids line ----------------------------------------------------
+// --- stdout carries verdicts and nothing else ------------------------------
 
-func TestReviewRunListsOpenJournalIDs(t *testing.T) {
+// review-run's stdout is one line per reviewer, full stop: no open ids, no
+// findings, no reviewer prose. The journal is where a finding lives, and
+// `review-notes` is what reads it — printing any of it here duplicated that
+// output into every round for a caller that has to re-read the journal anyway.
+//
+// The journal below is deliberately non-empty (two open entries and one
+// settled), so a regression that reintroduces a journal tail has something to
+// print and this test fails instead of passing vacuously.
+func TestReviewRunPrintsOnlyVerdictLines(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
 	for _, note := range []string{"first", "second", "third"} {
@@ -1308,18 +1614,23 @@ func TestReviewRunListsOpenJournalIDs(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 	}
-	// A settled entry is not open, so it must not be listed.
 	if _, err := tm.ReviewNoteSettle("", "n2", "fixed", "", "done"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("REQUEST CHANGES")})
 
-	out, err := tm.ReviewRun("")
+	out, err := tm.ReviewRun("", "")
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
-	want := "OpenCode default model → REQUEST CHANGES\nopen: n1 n3"
-	if out != want {
-		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	if out != "OpenCode default model → REQUEST CHANGES" {
+		t.Errorf("got:\n%s\nwant only the verdict line", out)
+	}
+	// Named explicitly rather than left to the equality check above, so a
+	// failure says WHICH journal content leaked back into stdout.
+	for _, unwanted := range []string{"open:", "n1", "n3", "first", "third"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("stdout must not carry journal content, found %q in:\n%s", unwanted, out)
+		}
 	}
 }

@@ -1,6 +1,9 @@
 package commands
 
-import "os/exec"
+import (
+	"os/exec"
+	"strings"
+)
 
 // MockCommand provides a mock implementation of the Command interface for testing
 type MockCommand struct {
@@ -274,8 +277,27 @@ func ExecCommandResult(stdout, stderr string, err error) execResult {
 
 // ExecCommand mocks the BaseCommand.ExecCommand method.
 // It records the call and returns the next canned result (or the fixed result).
+//
+// When the caller asked for line-by-line stdout (CommandParams.OnStdoutLine),
+// the canned stdout is replayed through that callback before being returned —
+// the same order the real executor produces (every line during the run, the
+// whole string after it). Without this, a test could script a tool's output
+// and still never exercise the caller's live-progress path.
 func (m *MockBaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	m.ExecCommandCalls = append(m.ExecCommandCalls, cmd)
+	stdout, stderr, err := m.execCommandResult(cmd)
+	if cmd.OnStdoutLine != nil {
+		for _, line := range strings.Split(stdout, "\n") {
+			cmd.OnStdoutLine(line)
+		}
+	}
+	return stdout, stderr, err
+}
+
+// execCommandResult resolves which canned answer this call gets, in the
+// documented precedence order: ExecCommandFn, then the per-call sequence, then
+// the fixed fields.
+func (m *MockBaseCommand) execCommandResult(cmd CommandParams) (string, string, error) {
 	if m.ExecCommandFn != nil {
 		return m.ExecCommandFn(cmd)
 	}

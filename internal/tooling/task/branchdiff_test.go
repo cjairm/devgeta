@@ -2,6 +2,7 @@ package task
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -58,6 +59,26 @@ func TestFormatBranchDiff(t *testing.T) {
 	})
 }
 
+// untrackedLookupCall returns the one `git ls-files` call branch-diff made to
+// find untracked files, failing the test if there wasn't exactly one — the
+// assertions about it only mean something if the call is unambiguous.
+func untrackedLookupCall(
+	t *testing.T,
+	gitBase *commands.MockBaseCommand,
+) commands.CommandParams {
+	t.Helper()
+	var found []commands.CommandParams
+	for _, call := range gitBase.ExecCommandCalls {
+		if slices.Contains(call.Args, "ls-files") {
+			found = append(found, call)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("expected exactly one untracked lookup, got %d: %v", len(found), found)
+	}
+	return found[0]
+}
+
 // --- Orchestration tests (mocked git.Base, no real commands) ---
 
 func TestBranchDiff(t *testing.T) {
@@ -80,6 +101,7 @@ func TestBranchDiff(t *testing.T) {
 				"",
 				nil,
 			), // numstat (unfiltered)
+			commands.ExecCommandResult("", "", nil), // status --porcelain (nothing untracked)
 		)
 
 		out, err := tm.BranchDiff("")
@@ -97,14 +119,44 @@ func TestBranchDiff(t *testing.T) {
 		}
 
 		// The filtered diff call must be a single invocation carrying "--", ".",
-		// and the exclusion pathspecs — not one diff per pattern.
+		// and the exclusion pathspecs — not one diff per pattern. The range is
+		// the bare merge-base, NOT "<base>...HEAD": two dots is what includes
+		// uncommitted work (ADR-0019).
 		diffCall := gitBase.ExecCommandCalls[2]
 		joined := strings.Join(diffCall.Args, " ")
-		if !strings.Contains(joined, "abc123...HEAD -- .") {
-			t.Fatalf("expected range and pathspec base, got: %v", diffCall.Args)
+		if !strings.Contains(joined, "diff abc123 -- .") {
+			t.Fatalf("expected a working-tree diff against the merge-base, got: %v", diffCall.Args)
+		}
+		if strings.Contains(joined, "abc123...HEAD") {
+			t.Fatalf("committed-only range leaked back in: %v", diffCall.Args)
 		}
 		if !strings.Contains(joined, ":(exclude,glob)**/go.sum") {
 			t.Fatalf("expected go.sum exclusion pathspec, got: %v", diffCall.Args)
+		}
+		// No dir was given, so nothing may carry an empty "-C".
+		for _, call := range gitBase.ExecCommandCalls {
+			if slices.Contains(call.Args, "-C") {
+				t.Errorf("expected no -C without a dir, got: %v", call.Args)
+			}
+		}
+	})
+
+	t.Run("no file: uncommitted and untracked work is part of the diff", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult("diff --git a/x b/x\n+hi\n", "", nil),
+			commands.ExecCommandResult("2\t0\tx\n", "", nil),
+			commands.ExecCommandResult("notes.txt\x00", "", nil), // ls-files --others -z
+		)
+
+		out, err := tm.BranchDiff("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "Untracked files (no diff — read them directly):\n  notes.txt") {
+			t.Fatalf("expected untracked files named, got: %q", out)
 		}
 	})
 
@@ -123,7 +175,7 @@ func TestBranchDiff(t *testing.T) {
 		}
 		if !strings.Contains(
 			out,
-			"No reviewable changes in abc123...HEAD (all changes excluded — see notes below).",
+			"No reviewable changes in main..worktree (all changes excluded — see notes below).",
 		) {
 			t.Fatalf("expected all-excluded sentinel, got: %q", out)
 		}
@@ -145,7 +197,7 @@ func TestBranchDiff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if out != "No changes in abc123...HEAD." {
+		if out != "No changes in main..worktree." {
 			t.Fatalf("unexpected output: %q", out)
 		}
 	})
@@ -184,8 +236,149 @@ func TestBranchDiff(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if out != "No changes for unrelated.go in abc123...HEAD." {
+		if out != "No changes for unrelated.go in main..worktree." {
 			t.Fatalf("unexpected output: %q", out)
+		}
+	})
+
+	// An untracked file has no diff for git to print, so the empty result must
+	// not be reported as "no changes" — that would tell a reviewer to skip a
+	// file that is entirely new work.
+	t.Run("--file on an untracked file says so instead of no-changes", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // empty diff
+			// -z output: NUL-terminated records, paths verbatim.
+			commands.ExecCommandResult("brand-new.go\x00", "", nil), // ls-files --others -z
+		)
+
+		out, err := tm.BranchDiff("brand-new.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "brand-new.go is untracked") ||
+			!strings.Contains(out, "read the file directly") {
+			t.Fatalf("expected the untracked answer, got: %q", out)
+		}
+	})
+
+	// Regression (journal n1, round 1): the untracked lookup must be read with
+	// `-z`. Without it git QUOTES and C-escapes any path with a space, quote,
+	// tab, or non-ASCII byte, so `docs/my draft.md` came back as
+	// `"docs/my draft.md"` — which never matched the caller's --file value,
+	// flipping the answer above to "No changes" for a file that is entirely new
+	// work. These are the exact paths git was observed to quote.
+	t.Run("--file on an untracked path with spaces or quotes still matches", func(t *testing.T) {
+		for _, path := range []string{"docs/my draft.md", `docs/quotes"odd.md`, "docs/tab\todd.md"} {
+			t.Run(path, func(t *testing.T) {
+				tm, gitBase, _ := newTaskSetup()
+				gitBase.SetExecCommandResults(
+					commands.ExecCommandResult("origin/main\n", "", nil),
+					commands.ExecCommandResult("abc123\n", "", nil),
+					commands.ExecCommandResult("", "", nil), // empty diff
+					// git echoes only what the pathspec matched.
+					commands.ExecCommandResult(path+"\x00", "", nil),
+				)
+
+				out, err := tm.BranchDiff(path)
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				if !strings.Contains(out, path+" is untracked") {
+					t.Errorf("expected %q reported as untracked, got: %q", path, out)
+				}
+				if strings.Contains(out, "No changes for") {
+					t.Errorf("an untracked path must never report no-changes, got: %q", out)
+				}
+			})
+		}
+	})
+
+	// The same parse feeds the untracked note, so a quoted path would also be
+	// shown to a reader in a form they cannot pass back to any command.
+	t.Run("the untracked note prints paths verbatim", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult("diff --git a/x b/x\n+hi\n", "", nil),
+			commands.ExecCommandResult("1\t0\tx\n", "", nil),
+			commands.ExecCommandResult("docs/my draft.md\x00", "", nil),
+		)
+
+		out, err := tm.BranchDiff("")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "\n  docs/my draft.md") {
+			t.Errorf("expected the path listed verbatim, got: %q", out)
+		}
+		if strings.Contains(out, `"docs/my draft.md"`) {
+			t.Errorf("expected no git quoting in the note, got: %q", out)
+		}
+	})
+
+	// The listing lookup: `ls-files --others --exclude-standard -z`, no
+	// pathspec. -z is what makes the verbatim paths above possible, and
+	// asserting the flag keeps a future edit from dropping it and reintroducing
+	// quoting that only shows up on paths a fixture might not cover.
+	t.Run("the untracked listing asks git for -z output", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		if _, err := tm.BranchDiff(""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		call := untrackedLookupCall(t, gitBase)
+		for _, want := range []string{"--others", "--exclude-standard", "-z"} {
+			if !slices.Contains(call.Args, want) {
+				t.Errorf("expected %s in the untracked lookup, got: %v", want, call.Args)
+			}
+		}
+		if slices.Contains(call.Args, "--") {
+			t.Errorf("the whole-branch listing must not be limited by a pathspec: %v", call.Args)
+		}
+	})
+
+	// Regression (journal n1, round 2): --file must ask GIT whether that one
+	// path is untracked, passing it as a pathspec, instead of string-matching
+	// the caller's spelling against a listing. Only git knows that
+	// `./docs/new.md`, an absolute path, and `new.md` from inside `docs/` are
+	// all the same file — matching strings answered "No changes" for every
+	// spelling but the one git happened to print.
+	t.Run("--file asks git about that one path", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // empty diff
+			// git resolved the caller's "./docs/new.md" to the file it tracks.
+			commands.ExecCommandResult("docs/new.md\x00", "", nil),
+		)
+
+		out, err := tm.BranchDiff("./docs/new.md")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "is untracked") {
+			t.Errorf("expected the untracked answer for an equivalent path form, got: %q", out)
+		}
+
+		call := untrackedLookupCall(t, gitBase)
+		sep := slices.Index(call.Args, "--")
+		if sep < 0 || sep != len(call.Args)-2 || call.Args[sep+1] != "./docs/new.md" {
+			t.Errorf(
+				"expected the caller's path forwarded as a pathspec after --, got: %v",
+				call.Args,
+			)
 		}
 	})
 
@@ -222,10 +415,10 @@ func TestBranchDiffAt(t *testing.T) {
 			commands.ExecCommandResult("diff --git a/x b/x\n+hi\n", "", nil),       // diff
 			commands.ExecCommandResult("5\t2\tmain.go\n40\t12\tgo.sum\n", "", nil), // numstat
 			commands.ExecCommandResult(
-				"?? notes.txt\n",
+				"notes.txt\x00",
 				"",
 				nil,
-			), // status --porcelain
+			), // ls-files --others -z
 		)
 
 		res, err := BranchDiffAt(tm.Git, "/tmp/wt")
@@ -239,7 +432,10 @@ func TestBranchDiffAt(t *testing.T) {
 		if !strings.Contains(res.Content, "go.sum (+40/-12)") {
 			t.Errorf("expected exclusion note for go.sum, got: %q", res.Content)
 		}
-		if !strings.Contains(res.Content, "Untracked files:\n  notes.txt") {
+		if !strings.Contains(
+			res.Content,
+			"Untracked files (no diff — read them directly):\n  notes.txt",
+		) {
 			t.Errorf("expected untracked file listing, got: %q", res.Content)
 		}
 		// main.go (included) + notes.txt (untracked); go.sum excluded from totals.

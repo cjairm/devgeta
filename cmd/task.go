@@ -43,7 +43,7 @@ type taskRunner interface {
 	ReviewNoteSettle(branch, id, resolution, cite, note string) (string, error)
 	ReviewNoteRatify(branch, id string) (string, error)
 	ReviewNoteReopen(branch, id string) (string, error)
-	ReviewRun(reviewer string) (string, error)
+	ReviewRun(reviewer, note string) (string, error)
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
@@ -378,11 +378,14 @@ cite code but could never be checked against it.
 	},
 }
 
-// taskReviewRunReviewerFlag is review-run's --reviewer flag.
-var taskReviewRunReviewerFlag string
+// taskReviewRunReviewerFlag/NoteFlag are review-run's flags.
+var (
+	taskReviewRunReviewerFlag string
+	taskReviewRunNoteFlag     string
+)
 
 var taskReviewRunCmd = &cobra.Command{
-	Use:   "review-run [--reviewer code|document|skill]",
+	Use:   "review-run [--reviewer code|document|skill] [--note <text>]",
 	Short: "Run one round of headless AI review and print each reviewer's verdict (for agents)",
 	Long: `Run every reviewer model configured in "review.reviewers" against the current
 branch, one after another, headless, and print what each concluded.
@@ -395,29 +398,48 @@ keybinding offers): code (default), document, or skill. Every configured model
 runs that same reviewer; with "review.reviewers" unset, one run uses OpenCode's
 default model.
 
+--note passes your own words to every reviewer this round, on top of the fixed
+review prompt — e.g. --note "focus on docs/spec.md, I only changed the wording
+there". It adds emphasis, it does not narrow the review: reviewers are told
+exactly that, and still review the whole branch. A blank --note is refused
+rather than dropped.
+
+The branch under review is everything the branch would merge: its commits AND
+whatever is still uncommitted in the working tree, including untracked files.
+So work in progress can be reviewed without committing it first.
+
 Refuses to run on the default branch or a detached HEAD — both before any
 reviewer starts — because a review compares a branch against the default one,
-and a review journal is keyed by branch name.
+and a review journal is keyed by branch name. Also refuses a branch that
+changes nothing at all: no commits ahead of the default branch AND a clean
+working tree.
 
 Each reviewer reads the journal as it stood when the round began, so no
 reviewer sees what another raised or settled in the same round. Their entries
 still go to the live journal immediately and keep their real ids.
 
-Output is one line per reviewer, then the ids still open:
+Output is exactly one line per reviewer:
 
   openai/gpt-5.2 → REQUEST CHANGES
   google/gemini-3-pro → APPROVE
-  open: n4 n7
+
+The findings themselves are not printed here — they are in the journal; read
+them with "dg task review-notes", which also lists what is still open.
 
 An outcome is APPROVE, REQUEST CHANGES, NEEDS DISCUSSION, NO VERDICT (the run
 finished but stated no verdict), or ERROR(<reason>) (the run itself failed).
 NO VERDICT and ERROR are never approval. One reviewer failing does not stop
-the others.`,
+the others.
+
+While a reviewer runs, progress goes to stderr as it happens — a line when it
+starts, one line per tool call it makes, and a closing line with the outcome,
+elapsed time, and cost. stdout stays exactly the contract above.`,
 	Example: `  dg task review-run
-  dg task review-run --reviewer document`,
+  dg task review-run --reviewer document
+  dg task review-run --note "focus on the retry path in internal/http"`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		out, err := newTaskManager().ReviewRun(taskReviewRunReviewerFlag)
+		out, err := newTaskManager().ReviewRun(taskReviewRunReviewerFlag, taskReviewRunNoteFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -615,6 +637,8 @@ func init() {
 
 	taskReviewRunCmd.Flags().
 		StringVar(&taskReviewRunReviewerFlag, "reviewer", task.DefaultReviewerKey, "Reviewer agent to run: code, document, or skill")
+	taskReviewRunCmd.Flags().
+		StringVar(&taskReviewRunNoteFlag, "note", "", "Extra context for every reviewer this round (adds emphasis; does not narrow the review)")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")
