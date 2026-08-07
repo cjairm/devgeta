@@ -178,7 +178,13 @@ no-third-undocumented-outcome rule as the sibling cycle.
       the agent judges the type(s) from the diff, the default decided earlier
 - [ ] `configs/shared/commands/pr-review-loop.md` — the agent-side tick: the §5
       decision table, then the two-step flow when triggered. Written **without** any
-      dead frontmatter key
+      dead frontmatter key, and **with** a standing-authorization section (running
+      the command authorizes the whole unattended watch, posting included)
+- [ ] `--note <text>` on the loop, forwarded verbatim to every `review-run` of every
+      tick — the same emphasis-not-narrowing contract `/review-loop --note` has
+- [ ] Guard tests for the new command in `internal/apps/opencode/permissions_test.go`,
+      mirroring the `/review-loop` family: unattended authorization present, types
+      forwarded as `--reviewer`, `--note` forwarded
 - [ ] Docs: `docs/spec.md` feature entry, command documented
 
 ### Explicitly Out of Scope
@@ -278,11 +284,44 @@ no-third-undocumented-outcome rule as the sibling cycle.
       _key_ alone is not enough; stamping and freshness must resolve against the
       reviewed head SHA (`git rev-parse <rev>:<path>` yields the blob directly, no
       hashing needed). This is the revision-aware mode in scope.
-- [x] **`review-run`'s output contract drops the reports.** The sibling's Step 4
-      output is per-model verdict lines + open journal ids only, and journal entries
-      are one-line blocking findings — so `/review-pr` would have nothing cohesive
-      to post (no `[MINOR]`/nit findings, no strengths, no evidence). Range mode
-      must persist the full per-run reports; hence `--report-dir`.
+- [x] **`review-run`'s output contract drops the reports.** As shipped, its stdout
+      is per-model verdict lines **only** — the trailing `open:` line was removed in
+      `bea40a9`, so open ids now come from `review-notes` — and journal entries are
+      one-line blocking findings. `/review-pr` would have nothing cohesive to post
+      (no `[MINOR]`/nit findings, no strengths, no evidence). Range mode must
+      persist the full per-run reports; hence `--report-dir`.
+
+### Step 0b: Re-probe against the sibling as shipped — DONE (2026-08-07)
+
+The sibling cycle landed with four changes made after this doc was approved. Each
+was checked against this plan; all four are additive here, none reopens a decision:
+
+- [x] **`review-run` gained `--note <text>`** (`reviewrun.go:113`,
+      `ReviewRun(reviewer, note string)`; `reviewNoteHeader` frames it as emphasis
+      that cannot narrow the review; a blank note is refused, not dropped).
+      **Applies:** `/pr-review-loop` takes `--note` and forwards it to every
+      `review-run` of every tick — Step 4b and Step 5.
+- [x] **A review now covers the branch's working state** (ADR-0019), and
+      `review-run`'s third refusal is "no commits ahead AND clean tree"
+      (`reviewrun.go:338-404`). **Applies:** range mode must skip that refusal too,
+      and must state that it reviews the immutable SHAs _only_ — Step 4b.
+- [x] **Progress is sampled to stderr by default** (`reviewprogress.go`, one
+      heartbeat per 30s), full stream behind the existing root `--verbose`, carried
+      by `CommandParams.OnStdoutLine`. **Applies:** range mode inherits both — it
+      adds no progress mechanism of its own, and `--report-dir` persists from the
+      same stdout capture the progress sampler already reads, not a second one.
+- [x] **Posting authority now lives in each command's prose**, enforced by
+      `TestPostingCommandsDeclareStandingAuthorization` (`## Authority to post`),
+      `TestCommittingCommandsDeclareStandingAuthorization`, and
+      `TestReviewLoopRunsUnattendedWithoutAsking`. **Applies:** `pr-review-loop.md`
+      ships with its own standing-authorization section and guard tests — Step 5.
+      Step 4c's `--target` edits must leave `review-pr.md` / `approve-pr.md`'s
+      existing `## Authority to post` sections intact.
+- [x] **Not adopted: the fresh-subagent-per-round pattern** (`e45ecb0`). It exists
+      to keep `/review-loop`'s session small across many fix rounds. Here the loop
+      does no fix work, most ticks are a three-line state read, and the watch stops
+      at the first approval — so the posting step stays in the main session, where
+      the verdicts must be read first-hand anyway. Maintainer decision, 2026-08-07.
 
 ### Step 1: ADRs
 
@@ -422,22 +461,30 @@ this mode `review-run`:
   and adds a `report:` path per verdict line to the compact output. Model ids are
   `provider/model` — a path separator — so the model segment is percent-encoded
   with the existing `reviewjournal.EncodeBranch` helper (already collision-free and
-  escape-proof; no second safe-filename encoder). Without report persistence the
-  reports die with the headless runs: the sibling's output contract is verdicts +
-  open ids, and the journal holds only one-line blocking entries — nothing
-  `/review-pr` could compose a cohesive review from
-- Skips the default-branch refusal — the guard protects current-branch semantics
-  that explicit-range mode replaces
+  escape-proof; no second safe-filename encoder). It writes from the stdout the
+  progress sampler already captures (`CommandParams.OnStdoutLine`) — no second
+  capture path. Without report persistence the reports die with the headless runs:
+  the shipped output contract is verdict lines only, and the journal holds one-line
+  blocking entries — nothing `/review-pr` could compose a cohesive review from
+- Skips **all three** HEAD-dependent refusals (default branch, detached/wrong
+  HEAD, and ADR-0019's "no commits ahead AND clean tree" check) — each one guards
+  current-branch semantics that explicit-range mode replaces. And unlike branch
+  mode's ADR-0019 working-state semantics, range mode reviews the **immutable
+  SHAs only** — the working tree is never part of the diff — stated explicitly
+  and covered by a test
 - Keeps everything else identical: reviewer list from `review.reviewers` (or the
   OpenCode default model when unset), `--reviewer` agent selection validated against
-  `BuiltinReviewerChoices`, sequential runs, the five outcomes, the compact
-  per-model output contract
+  `BuiltinReviewerChoices`, `--note` (composes with range mode unchanged — the
+  note rides the prompt, not the range), sequential runs, the five outcomes, the
+  compact per-model output contract, and the sampled stderr progress heartbeats
+  (full stream behind the root `--verbose`)
 
 Tests: range mode with/without configured models; flag-pairing validation (partial
 `--base` without `--head`/`--journal` errors); journal writes land under the key at
 the rev; reports written one per run with model ids containing `/` encoded in the
 filename, and their paths printed; range mode runs from a default-branch checkout
-(no refusal). All mocked.
+(no refusal) and from a detached HEAD; range mode with `--note` carries the note in
+the prompt; the range diff never includes working-tree changes. All mocked.
 
 Verify: `go test ./internal/tooling/task/ ./internal/apps/opencode/ ./cmd/`.
 
@@ -503,7 +550,20 @@ removed from any one file.
 
 `configs/shared/commands/pr-review-loop.md`. Frontmatter: `description` only.
 
-Usage: `/pr-review-loop [pr-number] [code|doc|skill ...]` — the PR number is optional
+The file carries a standing-authorization section (per CLAUDE.md's posting/unattended
+rule and `requireStandingAuthorization`'s wording contract): running the command IS
+the authorization for the whole watch — state reads, fetches, reviewer runs, and the
+posting step — and the agent must not ask before any of it. Guard tests in
+`internal/apps/opencode/permissions_test.go`, mirroring the `/review-loop` family:
+the unattended grant is present (analog of `TestReviewLoopRunsUnattendedWithoutAsking`),
+the tick forwards the selected types as `--reviewer` (analog of
+`TestReviewLoopForwardsReviewerSelector`), and the tick forwards `--note` (analog of
+`TestReviewLoopForwardsTheNote`).
+
+Usage: `/pr-review-loop [pr-number] [code|doc|skill ...] [--note <text>]` — the
+`--note` text is the human's own emphasis, forwarded verbatim to every `review-run`
+invocation of every tick (same semantics as `/review-loop --note`: extra context,
+never a narrowing of the review). The PR number is optional
 and resolves from the current branch's PR when omitted (`devgeta task current-pr`,
 the same inference every PR command already does); pass it only when watching a PR
 whose branch isn't the checkout. The types name which reviewer agents run; more than
@@ -540,9 +600,12 @@ reads the working tree:
    skills/commands; mixed → the matching set).
 4. `SCRATCH=$(devgeta task scratch)` — the reports' home for this tick.
 5. Per type, run the cross-model review:
-   `devgeta task review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"`.
-   Every configured model runs the selected agent sequentially; verdicts, open
-   journal ids, and one `report:` path per run come back in the compact output.
+   `devgeta task review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"`
+   (plus `--note <text>` when the loop was given one). Every configured model runs
+   the selected agent sequentially; verdicts and one `report:` path per run come
+   back in the compact output. `review-run` prints no journal ids — the open ids
+   come from `devgeta task review-notes --branch <key> --rev <head>` (step 8),
+   exactly as `/review-loop` learns them.
 6. Aggregate — the sibling's any-single-blocker rule across **all** runs (every type
    × every model). Any `ERROR` or `NO VERDICT` → **terminal: escalated.** Name the
    failing run; never approve, never auto-retry.
@@ -837,3 +900,18 @@ corrected premise:
 Round 7 (2026-08-06) — **APPROVE**, no concerns. Maintainer approved the doc the
 same day. Suggested order confirmed: ADRs first, then Steps 2–3, 4a, 4c, 4d while
 the sibling cycle's `review-run` lands, then 4b and the tick command.
+
+Round 8 (2026-08-07) — pre-implementation re-probe against the sibling **as
+shipped**, recorded as Step 0b. The sibling merged with four post-approval changes;
+three carry into this cycle and one is deliberately not adopted. `--note` is now in
+scope end to end (loop flag → every `review-run`); range mode must skip ADR-0019's
+new empty-branch refusal and state that it reviews the immutable SHAs only, never
+the working tree; the tick command ships a standing-authorization section with guard
+tests, because posting authority now lives in prose rather than in the frontmatter
+that was removed. Step 0's report-persistence finding was re-verified and its
+premise tightened: `review-run`'s stdout is verdict lines only (the `open:` line is
+gone), so the tick reads open ids from `review-notes --branch <key> --rev <head>`.
+Not adopted: the fresh-subagent-per-round pattern — this loop does no fix work,
+most ticks are a three-line state read, and verdicts must be read first-hand.
+The sequencing gate is now satisfied — the sibling's Steps 2–4 are merged, so
+Step 4b is unblocked along with the rest.
