@@ -1480,6 +1480,31 @@ func TestSplitWindow(t *testing.T) {
 		}
 	})
 
+	t.Run("horizontal direction with non-empty command", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SplitWindow(
+			"wt-feature",
+			"/tmp/repo",
+			"horizontal",
+			"opencode --prompt 'hi'",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"split-window", "-v", "-t", "wt-feature", "-c", "/tmp/repo", "opencode --prompt 'hi'",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
 	t.Run("unknown direction returns error without executing a command", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -1756,6 +1781,81 @@ func TestSendKeysToPane(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected target '%%12' in args %v", last.Args)
+	}
+}
+
+// TestSendKeysLengthGuard proves every SendKeys* wrapper refuses a payload
+// the pty cannot deliver intact (ADR-0020, part 4) instead of handing it to
+// tmux to be silently truncated. 1023 bytes is the last length that fits the
+// pty input queue alongside the trailing Enter; 1024 is the first length that
+// does not, so the guard's boundary sits exactly there. A rejected call must
+// make zero ExecCommand calls - the point of the guard is that nothing
+// reaches the pty, not merely that an error comes back.
+func TestSendKeysLengthGuard(t *testing.T) {
+	accepted := strings.Repeat("a", 1023)
+	rejected := strings.Repeat("a", 1024)
+
+	cases := []struct {
+		name string
+		call func(*tmux.Tmux, string) error
+	}{
+		{
+			name: "SendKeys",
+			call: func(a *tmux.Tmux, keys string) error { return a.SendKeys("my-session", keys) },
+		},
+		{
+			name: "SendKeysToWindow",
+			call: func(a *tmux.Tmux, keys string) error {
+				return a.SendKeysToWindow("wt-feature", keys)
+			},
+		},
+		{
+			name: "SendKeysToWindowInSession",
+			call: func(a *tmux.Tmux, keys string) error {
+				return a.SendKeysToWindowInSession("my-session", "wt-feature", keys)
+			},
+		},
+		{
+			name: "SendKeysToPane",
+			call: func(a *tmux.Tmux, keys string) error { return a.SendKeysToPane("%12", keys) },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("1023 bytes is accepted", func(t *testing.T) {
+				mockApp := testutil.NewMockApp()
+				mockApp.Base.SetExecCommandResult("", "", nil)
+				app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+				if err := tc.call(app, accepted); err != nil {
+					t.Fatalf("unexpected error at 1023 bytes: %v", err)
+				}
+				if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+					t.Errorf("expected 1 ExecCommand call, got %d", calls)
+				}
+			})
+
+			t.Run("1024 bytes is rejected without executing a command", func(t *testing.T) {
+				mockApp := testutil.NewMockApp()
+				app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+				err := tc.call(app, rejected)
+				if err == nil {
+					t.Fatal("expected error at 1024 bytes")
+				}
+				if !strings.Contains(err.Error(), "1024") ||
+					!strings.Contains(err.Error(), "1023") {
+					t.Errorf(
+						"expected error to name both the actual length and the limit, got: %v",
+						err,
+					)
+				}
+				if calls := mockApp.Base.GetExecCommandCallCount(); calls != 0 {
+					t.Errorf("expected zero ExecCommand calls, got %d", calls)
+				}
+			})
+		})
 	}
 }
 

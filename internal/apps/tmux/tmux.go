@@ -153,10 +153,19 @@ func (t *Tmux) CreateSession(name, workdir string) error {
 // byte-identical behavior.
 func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command string) error {
 	args := []string{"new-session", "-d", "-s", session, "-n", windowName, "-c", workdir}
-	if command != "" {
-		args = append(args, command)
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
+}
+
+// appendPaneCommand appends command as the final argv element when non-empty,
+// returning args unchanged when command is "". Shared by every tmux call that
+// creates a pane (CreateSessionWithWindow, CreateWindowInSession, CreateWindow,
+// SplitWindow) so the pane's shell-command (ADR-0020) is appended identically
+// everywhere instead of once per call site.
+func appendPaneCommand(args []string, command string) []string {
+	if command == "" {
+		return args
 	}
-	return t.ExecuteCommand(args...)
+	return append(args, command)
 }
 
 // CreateWindowInSession creates a window inside a specific session.
@@ -170,10 +179,7 @@ func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command str
 // produced before command existed.
 func (t *Tmux) CreateWindowInSession(session, name, workdir, command string) error {
 	args := []string{"new-window", "-d", "-t", session + ":", "-n", name, "-c", workdir}
-	if command != "" {
-		args = append(args, command)
-	}
-	return t.ExecuteCommand(args...)
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // SessionInfo describes one tmux session for listing purposes.
@@ -507,8 +513,39 @@ func (t *Tmux) SwitchToSession(name string) error {
 	return t.ExecuteCommand("switch-client", "-t", name)
 }
 
+// maxSendKeysBytes is the largest send-keys payload guaranteed to reach a
+// pane intact. Measured on macOS/BSD (ADR-0020): the pty input queue backing
+// an interactive pane is capped at 1024 bytes; a write that overflows it is
+// silently discarded by the terminal driver - including the trailing Enter
+// send-keys appends - while tmux itself still exits 0. 1023 bytes of command
+// plus that Enter fills the queue exactly, so 1023 is the last length that is
+// safe to send.
+const maxSendKeysBytes = 1023
+
+// checkSendKeysLength rejects a send-keys payload that the pty cannot
+// deliver intact, instead of handing it over to be silently cut in half (see
+// ADR-0020, part 4: any remaining send-keys path refuses to truncate).
+// Chunking the payload into sub-limit writes is deliberately not an option
+// here - it keeps the data flowing through the terminal and reintroduces the
+// same timing-dependent silent loss this guard exists to remove.
+func checkSendKeysLength(keys string) error {
+	if len(keys) > maxSendKeysBytes {
+		return fmt.Errorf(
+			"send-keys payload is %d bytes, over the %d-byte tmux pty input queue limit; "+
+				"shorten it before sending - past this limit the terminal driver silently "+
+				"drops the excess and the trailing Enter, and tmux still reports success (ADR-0020)",
+			len(keys),
+			maxSendKeysBytes,
+		)
+	}
+	return nil
+}
+
 // SendKeysToWindowInSession sends keystrokes to a window in a specific session.
 func (t *Tmux) SendKeysToWindowInSession(session, window, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", session+":"+window, keys, "Enter")
 }
 
@@ -525,6 +562,9 @@ func (t *Tmux) HasSession(name string) bool {
 
 // SendKeys sends keystrokes to a session
 func (t *Tmux) SendKeys(session, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", session, keys, "Enter")
 }
 
@@ -543,10 +583,7 @@ func (t *Tmux) SendKeys(session, keys string) error {
 // produced before command existed.
 func (t *Tmux) CreateWindow(name, workdir, command string) error {
 	args := []string{"new-window", "-d", "-n", name, "-c", workdir}
-	if command != "" {
-		args = append(args, command)
-	}
-	return t.ExecuteCommand(args...)
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // SplitWindow splits an existing window, rooting the new pane at workdir.
@@ -570,10 +607,7 @@ func (t *Tmux) SplitWindow(window, workdir, direction, command string) error {
 			direction,
 		)
 	}
-	if command != "" {
-		args = append(args, command)
-	}
-	return t.ExecuteCommand(args...)
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // ActivePaneID returns the tmux pane_id (e.g. "%12") of window's currently
@@ -659,6 +693,9 @@ func (t *Tmux) KillPane(paneID string) error {
 
 // SendKeysToWindow sends keystrokes to a specific window
 func (t *Tmux) SendKeysToWindow(window, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", window, keys, "Enter")
 }
 
@@ -670,6 +707,9 @@ func (t *Tmux) SendKeysToWindow(window, keys string) error {
 // is active in the target window at send time, this always lands in the
 // exact pane captured earlier, even if the active pane has since changed.
 func (t *Tmux) SendKeysToPane(paneID, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", paneID, keys, "Enter")
 }
 
