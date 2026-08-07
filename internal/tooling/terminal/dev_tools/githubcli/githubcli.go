@@ -84,13 +84,25 @@ func (g *GithubCli) SoftConfigure() error {
 	return nil
 }
 
+// ExecuteCommand runs a gh command, discarding stdout, for callers that only
+// care whether it succeeded (ApprovePR, RequestChangesPR, CommentPR, MergePR,
+// UpdatePRDescription, RequestReviewPR — every outward-posting command). On
+// failure it surfaces gh's stderr for the same reason as RunWithOutput and
+// CurrentPRNumber: the Go-level error is never more than "exit status 1",
+// while gh's own message ("HTTP 404: Not Found", a rate-limit message, auth
+// advice) is the only actionable reason. The wrapped Go error is the fallback
+// for the case gh produced no stderr at all (binary missing, killed, timed out).
 func (g *GithubCli) ExecuteCommand(args ...string) error {
 	execCommand := cmd.CommandParams{
 		IsSudo:  false,
 		Command: constants.GithubCli,
 		Args:    args,
 	}
-	if _, _, err := g.Base.ExecCommand(execCommand); err != nil {
+	_, stderr, err := g.Base.ExecCommand(execCommand)
+	if err != nil {
+		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+			return fmt.Errorf("gh: %s", trimmed)
+		}
 		return fmt.Errorf("failed to run gh command: %w", err)
 	}
 	return nil
@@ -101,14 +113,28 @@ func (g *GithubCli) Update() error {
 }
 
 // RunWithOutput runs a gh command and returns captured stdout.
+//
+// On failure it surfaces gh's stderr, because that is the only place the
+// actionable reason exists: gh writes "HTTP 404: Not Found", a rate-limit
+// message, or its auth advice there, while the Go-level error it exits with is
+// never more than "exit status 1". Discarding stderr left every command routed
+// through here — PRView, PRChecks, FetchReviewThreads, FetchPRDiscussion — with
+// nothing a user could act on, which bites hardest in commands that run
+// unattended (pr-review-state on a poll), where that string is all a human sees.
+// The wrapped Go error is the fallback for the case gh produced no stderr at all
+// (binary missing, killed, timed out). Same shape as CurrentPRNumber and
+// AuthenticatedLogin below.
 func (g *GithubCli) RunWithOutput(args ...string) (string, error) {
 	execCommand := cmd.CommandParams{
 		IsSudo:  false,
 		Command: constants.GithubCli,
 		Args:    args,
 	}
-	stdout, _, err := g.Base.ExecCommand(execCommand)
+	stdout, stderr, err := g.Base.ExecCommand(execCommand)
 	if err != nil {
+		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+			return "", fmt.Errorf("gh: %s", trimmed)
+		}
 		return "", fmt.Errorf("failed to run gh command: %w", err)
 	}
 	return stdout, nil
@@ -580,6 +606,38 @@ func (g *GithubCli) CurrentPRNumber() (string, error) {
 		return "", fmt.Errorf("failed to resolve current pr number: %w", err)
 	}
 	return strings.TrimSpace(stdout), nil
+}
+
+// AuthenticatedLogin returns the login of the GitHub user gh is authenticated
+// as, resolved by gh itself rather than from any local config.
+//
+// "Is this review requested from ME?" is a comparison against a PR's
+// reviewRequests logins (see task.PRManager.PRReviewState), so the answer has
+// to be the account whose token gh would actually review with — not a git
+// user.name, not an email, and not a value a caller passes in and can get
+// wrong. An empty answer is an error rather than a login that matches nothing.
+func (g *GithubCli) AuthenticatedLogin() (string, error) {
+	stdout, stderr, err := g.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.GithubCli,
+		Args:    []string{"api", "user", "--jq", ".login"},
+	})
+	if err != nil {
+		if strings.TrimSpace(stderr) != "" {
+			return "", fmt.Errorf(
+				"could not resolve the authenticated GitHub user (gh: %s) — check `gh auth status`",
+				strings.TrimSpace(stderr),
+			)
+		}
+		return "", fmt.Errorf(
+			"could not resolve the authenticated GitHub user: %w — check `gh auth status`",
+			err,
+		)
+	}
+	login := strings.TrimSpace(stdout)
+	if login == "" {
+		return "", fmt.Errorf("gh reported no authenticated user; run `gh auth login`")
+	}
+	return login, nil
 }
 
 // CurrentRepo returns the current repository as "owner/name". It delegates

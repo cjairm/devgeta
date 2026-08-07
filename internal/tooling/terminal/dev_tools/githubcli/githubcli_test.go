@@ -97,8 +97,9 @@ func TestExecuteCommand(t *testing.T) {
 		}
 	})
 
-	// Test 2: Error handling
-	t.Run("command execution error", func(t *testing.T) {
+	// Test 2: Error handling — gh wrote stderr, which carries the actionable
+	// reason (the Go error is only ever "exit status 1"-shaped).
+	t.Run("command execution error surfaces gh's stderr", func(t *testing.T) {
 		mockBase.ResetExecCommand()
 		mockBase.SetExecCommandResult(
 			"",
@@ -110,15 +111,34 @@ func TestExecuteCommand(t *testing.T) {
 		if err == nil {
 			t.Fatal("Expected ExecuteCommand to return error")
 		}
-		if !strings.Contains(err.Error(), "failed to run gh command") {
-			t.Fatalf("Expected error to contain 'failed to run gh command', got: %v", err)
-		}
-
-		// Verify the error was properly wrapped
-		if !strings.Contains(err.Error(), "command not found: gh") {
-			t.Fatalf("Expected error to contain original error message, got: %v", err)
+		if err.Error() != "gh: command not found" {
+			t.Fatalf("expected gh's stderr surfaced, got: %v", err)
 		}
 	})
+
+	// Test 2b: gh wrote no stderr at all (binary missing, killed, timed out) —
+	// falls back to the wrapped Go error, same shape as RunWithOutput and
+	// CurrentPRNumber.
+	t.Run(
+		"command execution error falls back to wrapped error when gh wrote no stderr",
+		func(t *testing.T) {
+			mockBase.ResetExecCommand()
+			mockBase.SetExecCommandResult(
+				"",
+				"  \n",
+				fmt.Errorf("exec: \"gh\": not found"),
+			)
+
+			err := app.ExecuteCommand("--invalid-flag")
+			if err == nil {
+				t.Fatal("Expected ExecuteCommand to return error")
+			}
+			if !strings.Contains(err.Error(), "failed to run gh command") ||
+				!strings.Contains(err.Error(), "not found") {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		},
+	)
 
 	// Test 3: Multiple arguments
 	t.Run("multiple arguments", func(t *testing.T) {
@@ -214,15 +234,34 @@ func TestRunWithOutput(t *testing.T) {
 		}
 	})
 
-	t.Run("wraps error", func(t *testing.T) {
+	t.Run("surfaces gh's stderr, which carries the actionable reason", func(t *testing.T) {
+		// The Go error is only ever "exit status 1"; everything a user could
+		// act on is in stderr, so dropping it left every PR command reporting
+		// nothing usable.
 		mockBase.ResetExecCommand()
-		mockBase.SetExecCommandResult("", "err", fmt.Errorf("exit 1"))
+		mockBase.SetExecCommandResult("", "HTTP 404: Not Found", fmt.Errorf("exit status 1"))
 
 		_, err := app.RunWithOutput("api", "graphql")
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "failed to run gh command") {
+		if err.Error() != "gh: HTTP 404: Not Found" {
+			t.Fatalf("expected gh's stderr surfaced, got: %v", err)
+		}
+	})
+
+	t.Run("falls back to the wrapped error when gh wrote no stderr", func(t *testing.T) {
+		// gh missing, killed, or timed out: there is no gh message to show, so
+		// the underlying reason is the only thing left to report.
+		mockBase.ResetExecCommand()
+		mockBase.SetExecCommandResult("", "  \n", fmt.Errorf("exec: \"gh\": not found"))
+
+		_, err := app.RunWithOutput("api", "graphql")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "failed to run gh command") ||
+			!strings.Contains(err.Error(), "not found") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
@@ -1012,6 +1051,69 @@ func TestCurrentRepo(t *testing.T) {
 
 		if _, err := app.CurrentRepo(); err == nil {
 			t.Fatal("expected error when not in a repo")
+		}
+	})
+}
+
+func TestAuthenticatedLogin(t *testing.T) {
+	t.Run("returns the login gh is authenticated as", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("cjairm\n", "", nil)
+
+		login, err := app.AuthenticatedLogin()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if login != "cjairm" {
+			t.Fatalf("expected cjairm, got %q", login)
+		}
+		call := mockBase.GetLastExecCommandCall()
+		if !argSeq(call.Args, "api", "user", "--jq", ".login") {
+			t.Fatalf("expected 'api user --jq .login', got %v", call.Args)
+		}
+	})
+
+	t.Run("an empty answer is an error, not an empty login", func(t *testing.T) {
+		// An empty login would silently match no reviewer and read as "no
+		// review requested" — a wrong answer rather than a missing one.
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("", "", nil)
+
+		if _, err := app.AuthenticatedLogin(); err == nil {
+			t.Fatal("expected an error when gh reports no user")
+		}
+	})
+
+	t.Run("an auth failure says what to run", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult(
+			"", "gh: To get started with GitHub CLI, please run: gh auth login",
+			fmt.Errorf("exit 1"),
+		)
+
+		_, err := app.AuthenticatedLogin()
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "gh auth status") {
+			t.Fatalf("expected actionable advice, got: %v", err)
+		}
+	})
+
+	t.Run("a failure with no stderr still surfaces", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("", "", fmt.Errorf("exec: \"gh\": not found"))
+
+		_, err := app.AuthenticatedLogin()
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "not found") {
+			t.Fatalf("expected the underlying reason, got: %v", err)
 		}
 	})
 }
