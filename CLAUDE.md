@@ -513,6 +513,13 @@ Rules:
   on any asymmetry, in either direction. It is the reason the lists cannot drift
   again — do not weaken it to land a one-sided change. If a rule genuinely cannot
   be expressed in one agent, drop it from both.
+- **That test compares pattern STRINGS, not what they match.** A rule can be
+  present in both configs, identical, and still enforce nothing — the
+  `~/`-anchored rules are inert on OpenCode today, because it matches paths
+  project-relative. Read
+  [docs/guides/agent-permission-matching.md](docs/guides/agent-permission-matching.md)
+  before adding or re-anchoring a rule; symmetry on paper is not symmetry in
+  effect.
 - Deploy both after any change: `dg configure claude --force` **and**
   `dg configure opencode --force`.
 
@@ -563,23 +570,24 @@ Accepted differences (deliberate, do not "fix" by halves):
 
 Quick reference to where things live:
 
-| Topic                  | Location                                     | Description                                                                                 |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **Development Guides** | `docs/guides/README.md`                      | Index of all guides with quick-start by task                                                |
-| **Feature Spec**       | `docs/spec.md`                               | What features exist, architecture, edge cases, testing strategy                             |
-| **Testing Patterns**   | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                               |
-| **Error Handling**     | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                        |
-| **CLI Patterns**       | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                       |
-| **Task Design**        | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance |
-| **Cross-Platform**     | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                       |
-| **Theming**            | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule |
-| **Claude Code app**    | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                           |
-| **Releasing**          | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                        |
-| **Release notes**      | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body          |
-| **Migrations**         | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                             |
-| **Roadmap**            | `ROADMAP.md`                                 | Planned commands, future features, open questions                                           |
-| **Decisions**          | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                      |
-| **Contributing**       | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                       |
+| Topic                   | Location                                     | Description                                                                                                                   |
+| ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Development Guides**  | `docs/guides/README.md`                      | Index of all guides with quick-start by task                                                                                  |
+| **Feature Spec**        | `docs/spec.md`                               | What features exist, architecture, edge cases, testing strategy                                                               |
+| **Testing Patterns**    | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                                                                 |
+| **Error Handling**      | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                                                          |
+| **CLI Patterns**        | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                                                         |
+| **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                   |
+| **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders |
+| **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                         |
+| **Theming**             | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule                                   |
+| **Claude Code app**     | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                                                             |
+| **Releasing**           | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                                                          |
+| **Release notes**       | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body                                            |
+| **Migrations**          | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                                                               |
+| **Roadmap**             | `ROADMAP.md`                                 | Planned commands, future features, open questions                                                                             |
+| **Decisions**           | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                                                        |
+| **Contributing**        | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                                                         |
 
 ---
 

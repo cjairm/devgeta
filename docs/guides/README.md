@@ -122,6 +122,23 @@ The formal interface all apps implement:
 
 ---
 
+### [Agent Permission Matching](agent-permission-matching.md) — What the permission patterns actually match
+
+How the two AI agents resolve permission patterns at runtime, and where that
+differs from how they read:
+
+- `~/`-anchored patterns never fire on OpenCode — paths arrive project-relative, so 26 shipped deny rules are inert
+- `*` crosses `/`, so depth-based narrowing does not work and `dir/*` grants a whole subtree
+- The two agents' conflict resolution differs (first-match-by-action vs. longest-pattern-wins), so a carve-out expressible in one is impossible in the other
+- Why making the dead rules fire would re-break agent memory
+- How to probe any of this against the real binary instead of guessing
+
+**When to read:** Before adding, re-anchoring, or relying on any rule in `settings.json.tmpl` or `opencode.json.tmpl` — the parity test compares pattern strings and cannot tell you whether a pattern matches anything.
+
+**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
+
+---
+
 ### [Releasing](releasing.md) — Version management and GitHub Actions
 
 Complete release workflow:
