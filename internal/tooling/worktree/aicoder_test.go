@@ -67,6 +67,11 @@ func TestClaudeCoderCommand(t *testing.T) {
 // its prompt positionally, opencode takes --prompt (verified against the
 // installed binaries, 2026-07-31; see ADR-0011). These assert the exact strings
 // so a "cleanup" that unifies them fails here.
+//
+// opencode's flags are quoted (`oc '--prompt' '<text>'`) since PromptCommand
+// started rendering the structured launch, which quotes every argument the same
+// way rather than exempting anything that looks like a flag - see
+// paneLaunch.render. Same command to the shell; the bytes changed.
 func TestPromptCommandExactFormPerCoder(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -74,13 +79,13 @@ func TestPromptCommandExactFormPerCoder(t *testing.T) {
 		prompt string
 		want   string
 	}{
-		{"opencode uses --prompt", &OpenCodeCoder{}, "fix the bug", "oc --prompt 'fix the bug'"},
+		{"opencode uses --prompt", &OpenCodeCoder{}, "fix the bug", "oc '--prompt' 'fix the bug'"},
 		{"claude takes the prompt positionally", &ClaudeCoder{}, "fix the bug", "cc 'fix the bug'"},
 		{
 			"opencode quotes an embedded single quote",
 			&OpenCodeCoder{},
 			"it's broken",
-			`oc --prompt 'it'\''s broken'`,
+			`oc '--prompt' 'it'\''s broken'`,
 		},
 		{
 			"claude quotes an embedded single quote",
@@ -113,13 +118,13 @@ func TestOpenCodePromptCommandWithAgent(t *testing.T) {
 	coder := &OpenCodeCoder{}
 
 	withAgent := coder.promptCommandWithAgent("code-reviewer", "review it")
-	if want := "oc --agent code-reviewer --prompt 'review it'"; withAgent != want {
+	if want := "oc '--agent' 'code-reviewer' '--prompt' 'review it'"; withAgent != want {
 		t.Errorf("got %q, want %q", withAgent, want)
 	}
 
 	// An empty agent must omit the flag entirely, not emit a bare "--agent".
 	noAgent := coder.promptCommandWithAgent("", "review it")
-	if want := "oc --prompt 'review it'"; noAgent != want {
+	if want := "oc '--prompt' 'review it'"; noAgent != want {
 		t.Errorf("got %q, want %q", noAgent, want)
 	}
 	if strings.Contains(noAgent, "--agent") {

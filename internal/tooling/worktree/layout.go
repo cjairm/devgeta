@@ -9,6 +9,8 @@ package worktree
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/config"
@@ -381,6 +383,61 @@ func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// posixShell is the floor of resolveShell's ladder. POSIX requires it to exist,
+// so shell resolution can never come back empty and no worktree create is ever
+// blocked on it.
+const posixShell = "/bin/sh"
+
+// resolveShell picks the shell a created pane's command is run by and re-exec'd
+// into (see launch.go's two recipes, where it is interpolated twice). It returns
+// the first USABLE candidate, or posixShell if none of them is.
+//
+// Usable means an absolute path that stats as an existing, executable, regular
+// file. An absolute-path shape check alone is not enough for this value:
+// "/bin/zsh" that was uninstalled, or a $SHELL pointing at a directory, passes
+// a shape check and would sail into both interpolation sites (ADR-0020).
+//
+// It takes its candidates as INPUT rather than reading $SHELL or tmux's
+// default-shell itself. Two reasons, both structural:
+//
+//   - This file has no tmux dependency, and acquiring one just to read an
+//     option would invert the layering (the tmux wrapper is the caller's, and
+//     the caller already holds it).
+//   - A failed or empty tmux query is not an error here, it is simply one fewer
+//     candidate. Callers pass $SHELL followed by tmux's default-shell only if
+//     that query succeeded, so "no answer" needs no representation in this
+//     function at all.
+//
+// One honest consequence of the floor: falling all the way to /bin/sh means the
+// interactive-shell fallback recipe cannot reproduce the cc/oc aliases, because
+// /bin/sh never had them. That combination - no resolved binary path AND no
+// usable user shell - is a badly broken environment, and the pane reports it
+// itself when the command fails to resolve. Blocking the create pre-emptively
+// would be worse (ADR-0011, ADR-0016).
+func resolveShell(candidates ...string) string {
+	for _, candidate := range candidates {
+		if isUsableShell(candidate) {
+			return candidate
+		}
+	}
+	return posixShell
+}
+
+// isUsableShell reports whether path can be interpolated into a pane command as
+// the shell to run. os.Stat (not Lstat) so a shell installed as a symlink
+// resolves to its target's mode; any execute bit counts, since devgeta cannot
+// know which of user/group/other it will run as.
+func isUsableShell(path string) bool {
+	if !filepath.IsAbs(path) {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}
+
 // ReviewerChoice is one entry of the reviewer registry as callers outside
 // this package see it: the short key passed to LaunchReviewInRepo (and to
 // `dg task review-run --reviewer`), the reviewer's human label for a picker,
@@ -426,8 +483,13 @@ func BuiltinReviewerChoices() []ReviewerChoice {
 // The command is built by OpenCodeCoder.promptCommandWithAgent, which is also
 // what PromptCommand (the --prompt flag's path) delegates to - so the
 // `--prompt '<quoted>'` fragment, including the single-quoting a send-keys
-// command line requires, has exactly one author. The emitted string is
-// unchanged from when this function assembled it itself.
+// command line requires, has exactly one author.
+//
+// That author now renders opencode's structured launch (see launch.go), which
+// quotes every argument uniformly - so this emits
+// `oc '--agent' '<name>' '--prompt' '<text>'`. Same command to the shell as the
+// older `oc --agent <name> --prompt '<text>'`; see paneLaunch.render for why the
+// flags are quoted too.
 func ReviewCommand(key string) (string, error) {
 	reviewer, ok := builtinReviewers()[key]
 	if !ok {

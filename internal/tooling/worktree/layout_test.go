@@ -387,7 +387,7 @@ func TestWithPromptRetargetsCoderPane(t *testing.T) {
 		layout       string
 		wantCommands []string
 	}{
-		{"opencode", []string{"oc --prompt 'fix the bug'"}},
+		{"opencode", []string{"oc '--prompt' 'fix the bug'"}},
 		{"claude", []string{"cc 'fix the bug'"}},
 		{"claude-nvim", []string{"cc 'fix the bug'", "nvim"}},
 	}
@@ -847,8 +847,10 @@ func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
 
 // TestReviewCommandBuildsExpectedCommand asserts the exact command string
 // for every registered reviewer key: the OpenCodeCoder launch token ("oc"),
-// not a hardcoded "opencode", followed by --agent <name> and the fixed,
-// single-quoted review prompt.
+// not a hardcoded "opencode", followed by --agent <name> and the fixed review
+// prompt. Every argument is single-quoted, flags included, since this renders
+// opencode's structured launch (see paneLaunch.render for why the rule is
+// uniform rather than "quote only the values").
 func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
 	wantOpenCodeToken := (&OpenCodeCoder{}).Command()
 
@@ -868,8 +870,8 @@ func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
 				t.Fatalf("ReviewCommand(%q) returned error: %v", tt.key, err)
 			}
 
-			want := wantOpenCodeToken + " --agent " + tt.wantAgent +
-				" --prompt 'Review this branch against the default branch.'"
+			want := wantOpenCodeToken + " '--agent' " + shellSingleQuote(tt.wantAgent) +
+				" '--prompt' 'Review this branch against the default branch.'"
 			if got != want {
 				t.Errorf("ReviewCommand(%q) = %q, want %q", tt.key, got, want)
 			}
@@ -954,5 +956,79 @@ func TestShellSingleQuoteRoundTripsThroughRealShell(t *testing.T) {
 				t.Errorf("round trip mismatch: got %q, want %q (quoted was %q)", out, input, quoted)
 			}
 		})
+	}
+}
+
+// --- resolveShell ---
+
+// usableShellFixture creates an executable regular file in a temp dir, standing
+// in for an installed shell. Nothing here touches a real shell or the user's
+// environment: resolveShell takes its candidates as arguments precisely so it
+// can be tested this way.
+func usableShellFixture(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("failed to create shell fixture: %v", err)
+	}
+	return path
+}
+
+// TestResolveShellFallsBackToPosixShell covers every way a candidate can fail
+// the "usable" test. An absolute-path shape check alone would accept the first
+// three of these and interpolate them into a pane command at two sites, which is
+// why the check stats the file (ADR-0020).
+func TestResolveShellFallsBackToPosixShell(t *testing.T) {
+	dir := t.TempDir()
+
+	nonExecutable := filepath.Join(dir, "notexec")
+	if err := os.WriteFile(nonExecutable, []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatalf("failed to create non-executable fixture: %v", err)
+	}
+
+	tests := []struct {
+		name      string
+		candidate string
+	}{
+		{"no candidate at all", ""},
+		{"an absolute path that does not exist", filepath.Join(dir, "missing", "zsh")},
+		{"a directory", dir},
+		{"an existing file with no execute bit", nonExecutable},
+		{"a relative path", "bin/zsh"},
+		{"a bare command name", "zsh"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveShell(tt.candidate); got != posixShell {
+				t.Errorf("resolveShell(%q) = %q, want %q", tt.candidate, got, posixShell)
+			}
+		})
+	}
+}
+
+// TestResolveShellWithNoCandidatesUsesThePosixFloor: a caller whose $SHELL is
+// unset AND whose tmux query failed passes nothing, which must still resolve -
+// no create is ever blocked on shell resolution.
+func TestResolveShellWithNoCandidatesUsesThePosixFloor(t *testing.T) {
+	if got := resolveShell(); got != posixShell {
+		t.Errorf("resolveShell() = %q, want %q", got, posixShell)
+	}
+}
+
+// TestResolveShellPrefersTheFirstUsableCandidate pins the ladder's order: the
+// caller passes $SHELL first and tmux's default-shell second, so a usable $SHELL
+// must win, and an unusable one must be skipped rather than returned.
+func TestResolveShellPrefersTheFirstUsableCandidate(t *testing.T) {
+	first := usableShellFixture(t, "zsh")
+	second := usableShellFixture(t, "bash")
+
+	if got := resolveShell(first, second); got != first {
+		t.Errorf("resolveShell(usable, usable) = %q, want the first one %q", got, first)
+	}
+
+	broken := filepath.Join(t.TempDir(), "uninstalled-zsh")
+	if got := resolveShell(broken, second); got != second {
+		t.Errorf("resolveShell(broken, usable) = %q, want %q", got, second)
 	}
 }
