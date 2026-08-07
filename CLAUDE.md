@@ -579,6 +579,19 @@ Quick reference to where things live:
 
 **Recent changes:**
 
+- Agent memory is writable again (2026-08-07). Both permission layers denied
+  `~/.claude/projects/<slug>/memory/`, Claude Code's per-project memory
+  directory, so the agent could not write a memory file. Memory holds notes,
+  not permissions or hooks, so `agent-config-guard.sh`/`.js` clause 1 gained a
+  second exception beside `worktrees` (scoped to a file strictly under
+  `projects/<slug>/memory/`, `.claude`-only), and the settings floor's blanket
+  `Edit(~/.claude/**)` was replaced by an enumeration of the config surfaces
+  under that root — deny beats allow with no specificity tiebreak, so no
+  carve-out could re-open it otherwise. See
+  [ADR-0014](docs/decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)'s
+  memory amendment. Both agents changed symmetrically, and
+  `TestGlobalClaudeFloorLeavesMemoryWritable` stops the blanket coming back.
+
 - Review scope, output, and steering changed together (2026-08-07). A review now
   covers the branch's **working state** — commits AND uncommitted work, untracked
   files included — so `review-scope` and `branch-diff` diff `git diff <merge-base>`
@@ -591,9 +604,15 @@ Quick reference to where things live:
   framed so it cannot narrow the review; forwarded by `/review-loop --note`),
   dropped its trailing `open:` line (findings live in the journal — `review-notes`
   is what lists them, and `/review-loop` reads its ids from there), and reports
-  progress **as it happens** — one line per tool call a reviewer makes — via the
-  new `CommandParams.OnStdoutLine`, which hands a caller each stdout line while
-  the child still runs.
+  progress **as it happens** via the new `CommandParams.OnStdoutLine`, which hands
+  a caller each stdout line while the child still runs. That progress is
+  **sampled**: at most one heartbeat every 30s
+  (`progressHeartbeatInterval`), naming the running counters and the tool call
+  that triggered it, because the line-per-tool-call version measured ~200 lines a
+  round that `/review-loop` captured and paid tokens for. The full stream is
+  behind the existing root `--verbose` flag — no new flag — which `cmd/task.go`
+  copies onto `TaskManager.Verbose`; every tool call is still counted while quiet,
+  so the closing line totals the whole run.
 
 - `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
   (2026-07-31). `--prompt` starts the layout's AI coder already working on a

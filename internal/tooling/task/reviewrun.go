@@ -104,12 +104,12 @@ type reviewerRun struct {
 // real, final ids.
 //
 // While a reviewer runs, progress goes to progressWriter() (stderr by
-// default) as it happens — a start line, one line per tool call the reviewer
-// makes, and a closing line with the outcome — never to the returned string,
-// which stays the exact parseable contract docs/guides/task-design.md
-// governs. A multi-minute headless run against a real branch diff would
-// otherwise leave the caller watching silence with no way to tell working
-// from stuck.
+// default) as it happens — a start line, a sampled heartbeat while it works
+// (every tool call instead, under TaskManager.Verbose), and a closing line
+// with the outcome — never to the returned string, which stays the exact
+// parseable contract docs/guides/task-design.md governs. A multi-minute
+// headless run against a real branch diff would otherwise leave the caller
+// watching silence with no way to tell working from stuck.
 func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 	// Cheapest guards first: a bad --reviewer or a blank --note needs no git
 	// and no config.
@@ -164,9 +164,10 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 			progressOut,
 			fmt.Sprintf("[%d/%d]", i+1, len(runs)),
 			run.label,
+			tm.Verbose,
+			tm.now,
 		)
 		progress.started()
-		start := tm.now()
 
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
@@ -179,7 +180,7 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 			Env:          []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
 			OnStdoutLine: progress.line,
 		}, progress)
-		progress.finished(outcome, tm.now().Sub(start))
+		progress.finished(outcome)
 
 		// The branch is a precondition of the whole round, not just of its
 		// first moment, so it is re-checked after every reviewer.

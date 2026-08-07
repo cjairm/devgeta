@@ -14,6 +14,13 @@
 //     findings and its reasoning — belongs in the journal (`review-notes`),
 //     not spilled across the terminal at the end of a round where it is
 //     unreadable and, for an agent caller, pure token cost.
+//
+// The same token cost is why the tool-by-tool stream is not the default. A real
+// round makes on the order of 200 tool calls, and /review-loop captures this
+// stderr for every round it runs, so a line each was paying tokens for a
+// scrolling log nobody reads back. By default a round prints a sampled
+// heartbeat instead — see progressHeartbeatInterval — and only `--verbose`
+// restores the line-per-tool-call stream.
 package task
 
 import (
@@ -41,9 +48,34 @@ const maxToolLabelLen = 70
 // reported by name alone rather than with a guessed-at summary.
 var toolInputKeys = []string{"command", "filePath", "pattern", "name"}
 
+// progressHeartbeatInterval is the least time between two heartbeat lines: a
+// quiet (non-verbose) round prints at most one line per reviewer per interval,
+// however many tool calls happened inside it. 30s is short enough that a
+// reader glancing at a stalled-looking round gets an answer quickly, and long
+// enough that a multi-minute reviewer costs a handful of lines instead of a
+// couple of hundred.
+//
+// It is deliberately a constant and not a flag: the choice a caller actually
+// has is "sampled or everything" (--verbose), and a tunable interval would be
+// a third thing to explain for no decision anyone needs to make.
+const progressHeartbeatInterval = 30 * time.Second
+
 // reviewerProgress renders one reviewer's run as it happens: a start line,
-// one line per tool call, and a closing line carrying the outcome, the
+// progress while it works, and a closing line carrying the outcome, the
 // elapsed time, and what the run cost.
+//
+// What "progress while it works" means depends on verbose. Quiet (the
+// default) samples: a tool call prints a heartbeat only when
+// progressHeartbeatInterval has passed since the last printed line, and that
+// line carries the running counters plus whichever tool call happened to
+// trigger it. Verbose prints every tool call, which is what a human debugging
+// a reviewer wants and what an agent capturing stderr does not.
+//
+// Sampling is driven by the tool calls themselves rather than by a timer, so
+// a reviewer that goes quiet prints nothing until it acts again. That is the
+// deliberate trade for staying single-threaded: a ticker would need a
+// goroutine writing to p.out concurrently with the stdout drain below, and the
+// lock that would then be required buys nothing a reader misses.
 //
 // It is written to from two places — the round loop (started/finished) and the
 // executor's stdout-draining goroutine (line, via
@@ -52,12 +84,21 @@ var toolInputKeys = []string{"command", "filePath", "pattern", "name"}
 // ExecCommand joins that goroutine before returning. So no lock is needed
 // here, and adding one would suggest a concurrency this type does not have.
 type reviewerProgress struct {
-	out    io.Writer
-	prefix string // "[1/2]" — which reviewer of how many
-	label  string // the model name, or defaultModelLabel
+	out     io.Writer
+	prefix  string // "[1/2]" — which reviewer of how many
+	label   string // the model name, or defaultModelLabel
+	verbose bool   // print every tool call instead of sampling
+	now     func() time.Time
 
-	// reported is the callIDs already printed, so a tool that emits more than
-	// one event (pending, then running, then completed) still costs one line.
+	// start is when this reviewer began, and lastLine when a progress line was
+	// last printed for it. Both are stamped at construction rather than by
+	// started(), so a reviewerProgress used without it still has a real clock
+	// instead of a zero time that would read as decades elapsed.
+	start    time.Time
+	lastLine time.Time
+
+	// reported is the callIDs already counted, so a tool that emits more than
+	// one event (pending, then running, then completed) is still one call.
 	reported map[string]bool
 	tools    int
 	// cost accumulates every step's own cost, as OpenCode reports it. Zero
@@ -67,11 +108,25 @@ type reviewerProgress struct {
 	cost float64
 }
 
-func newReviewerProgress(out io.Writer, prefix, label string) *reviewerProgress {
+// newReviewerProgress starts the clock for one reviewer. now is the caller's
+// clock (TaskManager.now), so a test drives the heartbeat with a fixed one
+// rather than racing the wall clock; verbose comes from the root --verbose
+// flag.
+func newReviewerProgress(
+	out io.Writer,
+	prefix, label string,
+	verbose bool,
+	now func() time.Time,
+) *reviewerProgress {
+	started := now()
 	return &reviewerProgress{
 		out:      out,
 		prefix:   prefix,
 		label:    label,
+		verbose:  verbose,
+		now:      now,
+		start:    started,
+		lastLine: started,
 		reported: map[string]bool{},
 	}
 }
@@ -92,13 +147,26 @@ func (p *reviewerProgress) started() {
 // reason is carried along so a permanent cause (an auto-rejected permission,
 // say) is visible on the FIRST failure instead of only in the closing line
 // after both attempts have been spent.
+// It prints in quiet mode too, unlike a tool call: this is an event, not a
+// sample of ongoing work, and a round that silently paid for two attempts is
+// exactly what the sampling is not meant to hide. It stamps lastLine for the
+// same reason a heartbeat does — the field means "when a progress line was
+// last printed", so leaving it stale here would let the sampler follow this
+// announcement with a heartbeat that adds nothing.
 func (p *reviewerProgress) retrying(outcome string) {
 	fmt.Fprintf(p.out, "%s %s: %s — no report, retrying once\n", p.prefix, p.label, outcome)
+	p.lastLine = p.now()
 }
 
 // finished closes the reviewer out with the outcome the round will report.
-func (p *reviewerProgress) finished(outcome string, elapsed time.Duration) {
-	fmt.Fprintf(p.out, "%s %s: %s (%s)\n", p.prefix, p.label, outcome, p.summary(elapsed))
+// The elapsed time is measured from construction rather than passed in, so the
+// closing line and the heartbeats above it can never disagree about when this
+// reviewer began.
+func (p *reviewerProgress) finished(outcome string) {
+	fmt.Fprintf(
+		p.out, "%s %s: %s (%s)\n",
+		p.prefix, p.label, outcome, p.summary(p.now().Sub(p.start)),
+	)
 }
 
 // summary is the parenthetical on the closing line: always the elapsed time,
@@ -141,8 +209,10 @@ func (p *reviewerProgress) line(raw string) {
 	}
 }
 
-// reportTool prints one line for a tool call the reviewer made, the first
-// time that call is seen.
+// reportTool takes one tool call the reviewer made, the first time that call
+// is seen: it always counts, and it prints according to the sampling rule
+// above — every call under --verbose, at most one line per
+// progressHeartbeatInterval otherwise.
 func (p *reviewerProgress) reportTool(rawPart json.RawMessage) {
 	var part struct {
 		Tool   string `json:"tool"`
@@ -165,11 +235,25 @@ func (p *reviewerProgress) reportTool(rawPart json.RawMessage) {
 	}
 	p.tools++
 
-	line := p.prefix + "   " + part.Tool
+	desc := part.Tool
 	if label := toolLabel(part.State.Input); label != "" {
-		line += " " + label
+		desc += " " + label
 	}
-	fmt.Fprintln(p.out, line)
+	if p.verbose {
+		fmt.Fprintln(p.out, p.prefix+"   "+desc)
+		return
+	}
+	now := p.now()
+	if now.Sub(p.lastLine) < progressHeartbeatInterval {
+		return
+	}
+	p.lastLine = now
+	// The heartbeat reuses summary() rather than restating the counters: it is
+	// the same "where is this run" answer the closing line gives, taken
+	// mid-run, and two formatters for it would be free to drift apart. The
+	// tool that happened to trigger the sample follows, so the line says what
+	// the reviewer is doing and not only that it is still doing something.
+	fmt.Fprintf(p.out, "%s   ... %s - %s\n", p.prefix, p.summary(now.Sub(p.start)), desc)
 }
 
 // toolLabel summarizes a tool call's arguments into a few words, or "" when

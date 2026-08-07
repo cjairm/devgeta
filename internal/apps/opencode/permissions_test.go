@@ -204,8 +204,20 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			"**/.opencode/opencode.json":     "deny",
 			"**/.opencode/plugin/**":         "deny",
 			"**/.mcp.json":                   "deny",
-			"~/.claude/**":                   "deny",
 			"~/.config/opencode/**":          "deny",
+
+			// The global Claude root is enumerated rather than covered by a
+			// blanket `~/.claude/**`, so the memory directory underneath it
+			// stays writable — see TestGlobalClaudeFloorLeavesMemoryWritable.
+			"~/.claude/*.json":      "deny",
+			"~/.claude/*.sh":        "deny",
+			"~/.claude/*.md":        "deny",
+			"~/.claude/agents/**":   "deny",
+			"~/.claude/commands/**": "deny",
+			"~/.claude/skills/**":   "deny",
+			"~/.claude/plugins/**":  "deny",
+			"~/.claude/hooks/**":    "deny",
+			"~/.claude/lib/**":      "deny",
 		},
 	}
 
@@ -221,6 +233,89 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			case actual != action:
 				t.Errorf("permission.%s[%q] = %q, want %q", block, pattern, actual, action)
 			}
+		}
+	}
+}
+
+// TestGlobalClaudeFloorLeavesMemoryWritable is the regression guard for the
+// bug that made Claude Code's local memory unusable: a blanket
+// `Edit(~/.claude/**)` deny in the settings floor also covered
+// `~/.claude/projects/<slug>/memory/`, where the agent writes its own memory
+// files. Nothing under `memory/` grants a permission, registers a hook, or
+// defines an agent — it is data the agent is meant to write — so the deny
+// blocked a feature while protecting nothing.
+//
+// It cannot be fixed with an allow carve-out. Claude Code evaluates "deny,
+// then ask, then allow. The first match in that order determines the outcome,
+// and rule specificity doesn't change the order", so a longer allow never
+// defeats a shorter deny, and permission patterns have no negation. The only
+// expressible fix is to stop the deny from matching in the first place, which
+// is why the global Claude root is enumerated (agents/, commands/, skills/,
+// plugins/, hooks/, lib/, and the direct-child config files by extension)
+// instead of swept with `**`. The guard hook remains the default-deny layer
+// for surface upstream has not shipped yet (ADR-0014 §3).
+//
+// This asserts the shape rather than the exact list: no `~/`-anchored edit
+// deny may put `**` immediately after `.claude/`, in EITHER config. Re-adding
+// `~/.claude/**` — the one edit that silently re-breaks memory — fails here.
+func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
+	const blanket = "~/.claude/**"
+
+	check := func(t *testing.T, source string, patterns []string) {
+		t.Helper()
+		for _, pattern := range patterns {
+			if pattern != blanket {
+				continue
+			}
+			t.Errorf(
+				"%s denies %q — that blanket also covers "+
+					"~/.claude/projects/<slug>/memory/, Claude Code's memory "+
+					"directory, and deny beats any allow carve-out. Enumerate the "+
+					"config surfaces under ~/.claude/ instead (see ADR-0014's "+
+					"memory amendment)",
+				source, pattern,
+			)
+		}
+	}
+
+	claudeEdit := claudePermissions(t)["edit"]
+	claudePatterns := make([]string, 0, len(claudeEdit))
+	for pattern, action := range claudeEdit {
+		if action == "deny" {
+			claudePatterns = append(claudePatterns, pattern)
+		}
+	}
+	check(t, "settings.json.tmpl", claudePatterns)
+
+	openCodePatterns := make([]string, 0)
+	for _, p := range permissionBlocks(t)["edit"] {
+		if p[1] == "deny" {
+			openCodePatterns = append(openCodePatterns, p[0])
+		}
+	}
+	check(t, "opencode.json.tmpl", openCodePatterns)
+
+	// The enumeration has to actually cover the escalation surface, or
+	// "memory works" would be satisfiable by deleting the floor outright.
+	// Parity means checking one config is enough here — the parity test
+	// above fails if the other disagrees.
+	for _, want := range []string{
+		"~/.claude/*.json",
+		"~/.claude/*.sh",
+		"~/.claude/agents/**",
+		"~/.claude/commands/**",
+		"~/.claude/skills/**",
+		"~/.claude/plugins/**",
+		"~/.claude/hooks/**",
+		"~/.claude/lib/**",
+	} {
+		if claudeEdit[want] != "deny" {
+			t.Errorf(
+				"settings.json.tmpl no longer denies %q — dropping the blanket "+
+					"~/.claude/** deny is only safe while every config surface "+
+					"under it is named explicitly",
+				want,
+			)
 		}
 	}
 }
@@ -1105,5 +1200,237 @@ func TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport(t *testing.T) {
 				)
 			}
 		}
+	}
+}
+
+// readReviewLoop returns review-loop.md's path and body, the two things every
+// guard test below starts from.
+func readReviewLoop(t *testing.T) (string, string) {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	return path, string(data)
+}
+
+// reviewLoopFlowSection is reviewLoopSection with the section's whitespace
+// collapsed to single spaces, so a phrase a guard test looks for still matches
+// when the prose is rewrapped. The file is hand-wrapped at ~90 columns, and a
+// phrase that happens to straddle a line break would otherwise read as deleted
+// the next time a sentence above it grows by a word.
+func reviewLoopFlowSection(t *testing.T, body, heading string) string {
+	t.Helper()
+	return strings.Join(strings.Fields(reviewLoopSection(t, body, heading)), " ")
+}
+
+// TestReviewLoopStopsWhenARoundLeavesNothingToActOn guards the second exit step
+// 3 needs. A round can withhold approval and still record no journal finding —
+// NEEDS DISCUSSION asks for a conversation, and a reviewer only journals its
+// blocking findings — and with the single exit that used to be there, such a
+// round fell through to step 4, which iterates the `open:` ids and so did
+// nothing, then to step 5, which found nothing open and started another round.
+// The loop changed nothing in between, so every remaining round bought the same
+// verdict again and the human waited for the cap to expire.
+//
+// What this catches: step 3 losing either destination — the step 4 hand-off for
+// a round that did leave findings, or the terminal-report stop for a round that
+// did not.
+// What this does NOT catch: an executing agent reading both branches correctly
+// and still picking the wrong one; substring checks over prose cannot run the
+// instructions.
+func TestReviewLoopStopsWhenARoundLeavesNothingToActOn(t *testing.T) {
+	path, body := readReviewLoop(t)
+	section := reviewLoopFlowSection(t, body, "### 3. Check for clean approval")
+
+	if !strings.Contains(section, "continue to step 4") {
+		t.Errorf(
+			"%s step 3 no longer sends a round that DID leave open findings on to "+
+				"step 4 — that hand-off is how findings reach triage at all",
+			path,
+		)
+	}
+	if !strings.Contains(section, "Do not run another round") {
+		t.Errorf(
+			"%s step 3 no longer stops a round that withheld approval without "+
+				"recording a finding — such a round gives step 4 nothing to triage, "+
+				"so the loop falls through and spins through every remaining round, "+
+				"re-running the same reviewers against the same tree",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopTriageRoutesEveryOpenFinding guards step 4's routing: each open
+// id goes to exactly one of two places, and neither place is "settled by the
+// main session". A finding that needs a human is left open deliberately — the
+// journal is what carries it to the human, so settling it on their behalf is
+// the one thing that makes it disappear.
+//
+// What this catches: the two-pile split collapsing, the escalation pile losing
+// its "leave it open" rule, or either settle outcome being dropped so a verified
+// finding has no way to be closed.
+// What this does NOT catch: a finding being sorted into the wrong pile — the
+// test that separates "outside this loop's authority" from "hard" is judgment.
+func TestReviewLoopTriageRoutesEveryOpenFinding(t *testing.T) {
+	path, body := readReviewLoop(t)
+	section := reviewLoopFlowSection(
+		t,
+		body,
+		"### 4. Otherwise, triage each open finding, then settle it",
+	)
+
+	if !strings.Contains(section, "two piles") {
+		t.Errorf(
+			"%s step 4 no longer sorts each open id into two piles — without the "+
+				"split there is nothing separating a finding a subagent can fix from "+
+				"one only the human can decide",
+			path,
+		)
+	}
+	if !strings.Contains(section, "Leave it open") {
+		t.Errorf(
+			"%s step 4 no longer says an escalated finding is left open — the "+
+				"journal is the only thing carrying it to the human, so settling it "+
+				"here removes it from their view entirely",
+			path,
+		)
+	}
+	for _, outcome := range []string{"--as fixed", "--as rejected"} {
+		if !strings.Contains(section, outcome) {
+			t.Errorf(
+				"%s step 4 no longer gives the subagent the `%s` settle command — a "+
+					"verified finding it cannot close comes back unchanged next round",
+				path, outcome,
+			)
+		}
+	}
+}
+
+// TestReviewLoopDispatchesOneSubagentPerRound guards step 6's dispatch shape.
+// One fresh subagent carries the whole round: per-finding subagents each rebuild
+// the same branch context, re-run the same suites, and cannot see each other's
+// edits, so two fixes touching one file collide. Keeping the fix work out of the
+// main session is the other half — it is why the main session's context stays
+// free of diffs and test output, which is the entire point of the split.
+//
+// What this catches: a regression to one subagent per finding, or the main
+// session being allowed back into the fix work.
+// What this does NOT catch: a dispatch that says "one subagent" and then omits
+// half the round's findings from it.
+func TestReviewLoopDispatchesOneSubagentPerRound(t *testing.T) {
+	path, body := readReviewLoop(t)
+	section := reviewLoopFlowSection(t, body, "### 6. The fix subagent")
+
+	if !strings.Contains(section, "one fresh subagent per round") {
+		t.Errorf(
+			"%s step 6 no longer dispatches one fresh subagent per round — the "+
+				"alternative is one per finding, where two fixes touching one file "+
+				"collide because neither subagent can see the other's edits",
+			path,
+		)
+	}
+	if !strings.Contains(section, "never one subagent per finding") {
+		t.Errorf(
+			"%s step 6 no longer rules out one subagent per finding explicitly — "+
+				"stating the rule without ruling out the alternative leaves the "+
+				"collision available to anyone reading quickly",
+			path,
+		)
+	}
+	if !strings.Contains(section, "The main session stays out of the fix work entirely") {
+		t.Errorf(
+			"%s step 6 no longer keeps the main session out of the fix work — that "+
+				"exclusion is what keeps diffs and test runs out of its context, and "+
+				"is the reason the round is dispatched at all",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopTrustsTheJournalOverTheSubagent guards the settlement check. A
+// subagent reports what it believes it did; the journal records what actually
+// happened, and the two can differ — a settle command that failed still leaves
+// the id under `open:`. So the main session re-reads the journal after the
+// subagent returns and treats that as the round's state, and step 5 stops for
+// anything still open there. Without both halves, a finding the subagent only
+// claimed to settle is waved past and never reaches the human.
+//
+// What this catches: the post-dispatch journal re-read disappearing from step 4,
+// or step 5 no longer stopping on anything left open.
+// What this does NOT catch: the main session re-reading the journal and then
+// reporting something other than what it says.
+func TestReviewLoopTrustsTheJournalOverTheSubagent(t *testing.T) {
+	path, body := readReviewLoop(t)
+
+	fixSection := reviewLoopFlowSection(
+		t,
+		body,
+		"### 4. Otherwise, triage each open finding, then settle it",
+	)
+	if !strings.Contains(fixSection, "re-read") || !strings.Contains(fixSection, "review-notes") {
+		t.Errorf(
+			"%s step 4 no longer re-reads `devgeta task review-notes` after the "+
+				"subagent returns — the subagent's report is a claim, and a settle "+
+				"that failed leaves the id open while the report says it is closed",
+			path,
+		)
+	}
+
+	stopSection := reviewLoopFlowSection(
+		t,
+		body,
+		"### 5. Stop for anything escalated, then enforce the round cap",
+	)
+	if !strings.Contains(stopSection, "still open") ||
+		!strings.Contains(stopSection, "any id still under") {
+		t.Errorf(
+			"%s step 5 no longer stops for anything still open after the round — "+
+				"without it the loop runs more rounds over a finding it already knows "+
+				"it cannot settle, and step 3 can never call the result clean anyway",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopFixedSettlementNamesTheTestEvidence keeps the two halves of one
+// instruction aligned. The `--note` a subagent writes when it settles a finding
+// `fixed` is specified twice: step 4 gives the command template it copies, and
+// step 6's never-do list requires the test command and its result in that same
+// note. When only the never-do list carries the requirement, the template a
+// subagent actually copies invites "what changed and where" and nothing more,
+// and the journal loses the evidence a human needs to check the fix.
+//
+// What this catches: either half drifting — the template dropping the evidence
+// again, or the never-do rule that demands it disappearing.
+// What this does NOT catch: a subagent that fills the placeholder in and names a
+// test it never ran; no substring check over prose can verify that.
+func TestReviewLoopFixedSettlementNamesTheTestEvidence(t *testing.T) {
+	path, body := readReviewLoop(t)
+
+	settleSection := reviewLoopFlowSection(
+		t,
+		body,
+		"### 4. Otherwise, triage each open finding, then settle it",
+	)
+	if !strings.Contains(settleSection, "test command") {
+		t.Errorf(
+			"%s step 4's `--as fixed` settle template no longer asks for the test "+
+				"command and its result — the template is what a subagent copies, so "+
+				"the evidence stops reaching the journal even though step 6 still "+
+				"requires it",
+			path,
+		)
+	}
+
+	dispatchSection := reviewLoopFlowSection(t, body, "### 6. The fix subagent")
+	if !strings.Contains(dispatchSection, "name the command and its result") {
+		t.Errorf(
+			"%s step 6's never-do list no longer requires the test command and its "+
+				"result in the `--note` — that rule is what makes the fix verifiable "+
+				"by whoever reads the journal later",
+			path,
+		)
 	}
 }

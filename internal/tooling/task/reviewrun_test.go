@@ -1147,10 +1147,14 @@ func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
 	if !strings.Contains(out, "ERROR(") {
 		t.Errorf("expected an ERROR outcome in the stdout contract, got:\n%s", out)
 	}
+	// The failed reviewer reads "(2s)" rather than "(1s)" purely because
+	// fixedClock advances on every call and the retry announcement stamps
+	// lastLine, costing one extra tick. Its elapsed time is still measured
+	// from construction to finished() — the retry does not double it.
 	wantProgress := strings.Join([]string{
 		"[1/2] openai/gpt-5.2: running",
 		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) — no report, retrying once",
-		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (1s)",
+		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (2s)",
 		"[2/2] google/gemini-3-pro: running",
 		"[2/2] google/gemini-3-pro: APPROVE (1s)",
 		"",
