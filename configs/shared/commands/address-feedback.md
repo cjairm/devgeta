@@ -4,6 +4,12 @@ description: Address PR review feedback — implement suggestions, reply to revi
 
 Address PR review feedback: implement the requested changes, reply to each reviewer thread, and resolve the ones you handled.
 
+## Authority to post
+
+Running this command **is** the authorization to act on the PR. Commit and push the fixes, then post the replies yourself — `devgeta task reply-thread`, `devgeta task resolve-thread`, and `devgeta task request-review`. **Do not ask the user to confirm, do not show the replies for approval first, and do not stop at "ready to reply?".** The user asked for the feedback to be addressed; pausing to check is the failure here, not the safeguard.
+
+This authorizes _acting without asking_, nothing else. The triage in step 4 still decides what to implement — a reviewer comment is an input to verify, not an order — and a "needs clarity" thread is still replied to and left open.
+
 ## Usage
 
 ```
@@ -142,6 +148,7 @@ Requested from: <reviewer1>, <reviewer2>
 
 ## Notes
 
+- Reply, resolve, and re-request review yourself, without asking — see "Authority to post" above. Drafting the replies and waiting for a go-ahead leaves every thread where it started.
 - Resolve a thread only after you've actually addressed it; never resolve to clear noise.
 - Don't make changes unrelated to the feedback.
 - If a push or a resolve fails, report it and continue with the rest — your local commits are safe.

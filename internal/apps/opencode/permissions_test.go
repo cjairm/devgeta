@@ -938,6 +938,180 @@ func TestSharedCommandsNeverReferenceTmp(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Standing authorization: a command that posts must say so in its own prose.
+//
+// The shared commands used to carry a `permission:` frontmatter block whose
+// bash list read `"devgeta task *": allow`. OpenCode never enforced it, which
+// is why commit 6bb17ab removed it — but an agent still READ that line as
+// durable authorization to run the posting commands. Nothing replaced it in
+// prose, so the base instinct to confirm outward-facing actions took over and
+// /review-pr and /approve-pr began asking the human before posting their own
+// verdict. Prose is now the only carrier of that authorization; these tests
+// keep it in every file that needs it.
+// ---------------------------------------------------------------------------
+
+// outwardTaskVerbs are the `devgeta task` subcommands that act outside this
+// machine — each one posts to a PR. A command file that runs any of them must
+// declare standing authorization to do so without asking.
+var outwardTaskVerbs = map[string]bool{
+	"submit-review":  true,
+	"approve-pr":     true,
+	"comment-pr":     true,
+	"create-pr":      true,
+	"reply-thread":   true,
+	"resolve-thread": true,
+	"request-review": true,
+}
+
+// postingAuthorizationHeading is the stable anchor
+// TestPostingCommandsDeclareStandingAuthorization reads. It must stay exactly
+// this string in every shared command file that posts.
+const postingAuthorizationHeading = "## Authority to post"
+
+// devgetaTaskCall matches a `devgeta task <verb>` invocation in a command
+// file's prose, capturing the verb.
+var devgetaTaskCall = regexp.MustCompile(`devgeta task ([a-z][a-z-]*)`)
+
+// gitStateChangingCall matches an instruction to commit or push. These are the
+// local counterparts of an outward `devgeta task` verb: they change state the
+// user cares about, so the agent's default is to confirm first, so the command
+// file has to say it must not.
+var gitStateChangingCall = regexp.MustCompile(`git (commit|push)\b`)
+
+// requireStandingAuthorization asserts that `text` both grants the standing
+// authorization and forbids the confirmation pause. Both halves are load
+// bearing: granting the authority without forbidding the pause is not enough,
+// because the default behavior being overridden is exactly the "want me to do
+// this?" question. `where` names the part of the file being checked, so a
+// failure says which prose to fix.
+//
+// Either phrasing of the prohibition is accepted ("do not ask" / "without
+// asking") — the files are hand-wrapped prose and both say the same thing, so
+// pinning one literal would fail on a legitimate reword.
+func requireStandingAuthorization(t *testing.T, name, where, text string) {
+	t.Helper()
+	lower := strings.ToLower(text)
+	if !strings.Contains(lower, "authorization") {
+		t.Errorf(
+			"%s's %s no longer says that running the command IS the authorization "+
+				"to act — that sentence is the whole point of it",
+			name, where,
+		)
+	}
+	if !strings.Contains(lower, "do not ask") && !strings.Contains(lower, "without asking") {
+		t.Errorf(
+			"%s's %s no longer tells the agent not to ask first. Granting authority "+
+				"without forbidding the confirmation step is not enough: the default "+
+				"behavior it has to override is exactly that 'want me to do this?' pause",
+			name, where,
+		)
+	}
+}
+
+// TestPostingCommandsDeclareStandingAuthorization requires every shared
+// command that invokes an outward `devgeta task` verb to carry an "Authority
+// to post" section that names each such verb and tells the agent not to ask
+// first. Which files are covered is derived from the files themselves, not a
+// hard-coded list, so a new posting command — or an existing one that gains a
+// posting verb — fails the build until it declares the authorization too.
+//
+// What this catches: the authorization prose being dropped, moved out of its
+// section, or written so generically that it never names the verb the file
+// actually posts with.
+// What this does NOT catch: wording that keeps the words but reverses the
+// meaning, or an agent disobeying correctly-worded instructions — a substring
+// check over prose cannot reach either.
+func TestPostingCommandsDeclareStandingAuthorization(t *testing.T) {
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
+		}
+		body := string(data)
+
+		// Collect the outward verbs this file actually invokes, in a stable
+		// order so failures read the same way every run.
+		var verbs []string
+		seen := map[string]bool{}
+		for _, m := range devgetaTaskCall.FindAllStringSubmatch(body, -1) {
+			verb := m[1]
+			if outwardTaskVerbs[verb] && !seen[verb] {
+				seen[verb] = true
+				verbs = append(verbs, verb)
+			}
+		}
+		if len(verbs) == 0 {
+			return
+		}
+		sort.Strings(verbs)
+
+		if !strings.Contains(body, postingAuthorizationHeading) {
+			t.Fatalf(
+				"%s invokes the outward command(s) %v but has no %q section. Posting "+
+					"authorization now lives only in prose: the `permission:` "+
+					"frontmatter that used to grant it (`\"devgeta task *\": allow`) was "+
+					"removed in 6bb17ab because OpenCode never enforced it, and without "+
+					"a replacement the agent falls back to asking the human before it "+
+					"posts. Add the section.",
+				name, verbs, postingAuthorizationHeading,
+			)
+		}
+
+		section := markdownSection(t, body, postingAuthorizationHeading)
+		requireStandingAuthorization(
+			t, name, fmt.Sprintf("%q section", postingAuthorizationHeading), section,
+		)
+		for _, verb := range verbs {
+			if !strings.Contains(section, verb) {
+				t.Errorf(
+					"%s posts with `devgeta task %s` but its %q section never names "+
+						"that command, so the authorization does not visibly cover it",
+					name, verb, postingAuthorizationHeading,
+				)
+			}
+		}
+	})
+}
+
+// TestCommittingCommandsDeclareStandingAuthorization is the local counterpart
+// of TestPostingCommandsDeclareStandingAuthorization. A command that tells the
+// agent to run `git commit` or `git push` changes state the user cares about,
+// so the same instinct that produced "want me to post this?" produces "want me
+// to commit this?" — and the removed `permission:` block covered these too. Any
+// shared command that instructs a commit or a push must therefore say in its
+// own prose that running it IS the authorization and that the agent must not
+// ask first.
+//
+// Which files are covered is derived from the files themselves, so a new
+// command that commits or pushes fails the build until it declares the
+// authorization too. Unlike the posting test this does not require a dedicated
+// section: `smart-commit` carries the statement in its Rules list, where the
+// rule it replaced already lived, and moving it would only make the file read
+// worse.
+//
+// What this catches: the no-ask statement being dropped from a command that
+// commits or pushes, and a new such command shipping without one.
+// What this does NOT catch: wording that keeps the words but reverses the
+// meaning, or an agent disobeying a correctly-worded instruction — a substring
+// check over prose cannot execute the instructions. No harness in this repo
+// can: reviewer runs are exercised against a scripted `opencode run` fixture
+// (internal/tooling/task/reviewrun_test.go), never a live agent, because
+// CLAUDE.md forbids tests that execute real commands.
+func TestCommittingCommandsDeclareStandingAuthorization(t *testing.T) {
+	forEachSharedCommand(t, func(t *testing.T, name, path string) {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", name, err)
+		}
+		body := string(data)
+		if !gitStateChangingCall.MatchString(body) {
+			return
+		}
+		requireStandingAuthorization(t, name, "prose", body)
+	})
+}
+
 // reviewLoopReportHeading is the stable anchor
 // TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport checks against. It must
 // stay exactly this string in configs/shared/commands/review-loop.md, above
@@ -955,17 +1129,30 @@ const reviewLoopReportHeading = "## Terminal report"
 // flag must fall after the report template's heading, so an instruction
 // earlier in the file telling the loop to run one itself fails the build
 // instead of shipping silently.
-// reviewLoopSection extracts the body of one flow step from review-loop.md:
+// markdownSection extracts the body of one section from a command file:
 // everything from `heading` up to (but not including) the next line that
-// starts with "#" — so a guard test can anchor on a single step's content
+// starts with "#" — so a guard test can anchor on a single section's content
 // without being tripped by wording changes in the rest of the file.
-func reviewLoopSection(t *testing.T, body, heading string) string {
+// readSharedCommand returns the path and body of one
+// configs/shared/commands/<name> file — the two things every guard test below
+// starts from.
+func readSharedCommand(t *testing.T, name string) (string, string) {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", name)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	return path, string(data)
+}
+
+func markdownSection(t *testing.T, body, heading string) string {
 	t.Helper()
 	start := strings.Index(body, heading)
 	if start < 0 {
 		t.Fatalf(
-			"%q heading not found in review-loop.md — this is the anchor a guard "+
-				"test uses to isolate one flow step's content",
+			"%q heading not found — this is the anchor a guard test uses to "+
+				"isolate one section's content",
 			heading,
 		)
 	}
@@ -996,14 +1183,9 @@ func reviewLoopSection(t *testing.T, body, heading string) string {
 // nothing open" from "ignores what is open" — it only proves the concept is
 // still named in the right place).
 func TestReviewLoopCleanApprovalRequiresNothingOpen(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	body := string(data)
+	path, body := readSharedCommand(t, "review-loop.md")
 
-	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+	section := markdownSection(t, body, "### 3. Check for clean approval")
 
 	if !strings.Contains(section, "open:") {
 		t.Errorf(
@@ -1045,14 +1227,9 @@ func TestReviewLoopCleanApprovalRequiresNothingOpen(t *testing.T) {
 // plausibly while actually forwarding a stale or wrong value, since this is a
 // substring check over prose, not an execution of the instructions.
 func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	body := string(data)
+	path, body := readSharedCommand(t, "review-loop.md")
 
-	parseSection := reviewLoopSection(t, body, "### 0. Resolve the reviewer selector")
+	parseSection := markdownSection(t, body, "### 0. Resolve the reviewer selector")
 	if !strings.Contains(parseSection, "$ARGUMENTS") {
 		t.Errorf(
 			"%s step 0 no longer mentions parsing $ARGUMENTS — without this the "+
@@ -1062,7 +1239,7 @@ func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
 		)
 	}
 
-	runSection := reviewLoopSection(t, body, "### 1. Run a round")
+	runSection := markdownSection(t, body, "### 1. Run a round")
 	if !strings.Contains(runSection, "--reviewer <key>") {
 		t.Errorf(
 			"%s step 1 no longer forwards --reviewer <key> to `devgeta task "+
@@ -1085,17 +1262,12 @@ func TestReviewLoopForwardsReviewerSelector(t *testing.T) {
 // of passing it verbatim — that is judgment, which the instruction states
 // plainly but no substring check can verify.
 func TestReviewLoopForwardsTheNote(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	body := string(data)
+	path, body := readSharedCommand(t, "review-loop.md")
 
 	if !strings.Contains(body, "--note <text>") {
 		t.Fatalf("%s no longer documents --note <text> at all", path)
 	}
-	parseSection := reviewLoopSection(t, body, "### 0. Resolve the reviewer selector")
+	parseSection := markdownSection(t, body, "### 0. Resolve the reviewer selector")
 	if !strings.Contains(parseSection, "--note") {
 		t.Errorf(
 			"%s step 0 no longer resolves --note — a note that is never parsed "+
@@ -1104,7 +1276,7 @@ func TestReviewLoopForwardsTheNote(t *testing.T) {
 			path,
 		)
 	}
-	runSection := reviewLoopSection(t, body, "### 1. Run a round")
+	runSection := markdownSection(t, body, "### 1. Run a round")
 	if !strings.Contains(runSection, "--note <text>") {
 		t.Errorf(
 			"%s step 1 no longer forwards --note <text> to `devgeta task "+
@@ -1132,12 +1304,7 @@ func TestReviewLoopForwardsTheNote(t *testing.T) {
 // marker entirely — that is judgment, and the terminal report is where a
 // human sees the rejection either way.
 func TestReviewLoopAgentPrefixMatchesTheConstant(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	body := string(data)
+	path, body := readSharedCommand(t, "review-loop.md")
 
 	if want := `--note "` + reviewjournal.AgentNotePrefix; !strings.Contains(body, want) {
 		t.Errorf(
@@ -1148,7 +1315,7 @@ func TestReviewLoopAgentPrefixMatchesTheConstant(t *testing.T) {
 		)
 	}
 
-	section := reviewLoopSection(t, body, "### 3. Check for clean approval")
+	section := markdownSection(t, body, "### 3. Check for clean approval")
 	if !strings.Contains(section, reviewjournal.AgentNotePrefix) {
 		t.Errorf(
 			"%s step 3 no longer names %q as the marker of an unratified agent "+
@@ -1168,12 +1335,7 @@ func TestReviewLoopAgentPrefixMatchesTheConstant(t *testing.T) {
 }
 
 func TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "configs", "shared", "commands", "review-loop.md")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", path, err)
-	}
-	body := string(data)
+	path, body := readSharedCommand(t, "review-loop.md")
 
 	headingAt := strings.Index(body, reviewLoopReportHeading)
 	if headingAt < 0 {
@@ -1222,7 +1384,7 @@ func readReviewLoop(t *testing.T) (string, string) {
 // the next time a sentence above it grows by a word.
 func reviewLoopFlowSection(t *testing.T, body, heading string) string {
 	t.Helper()
-	return strings.Join(strings.Fields(reviewLoopSection(t, body, heading)), " ")
+	return strings.Join(strings.Fields(markdownSection(t, body, heading)), " ")
 }
 
 // TestReviewLoopStopsWhenARoundLeavesNothingToActOn guards the second exit step
@@ -1431,6 +1593,48 @@ func TestReviewLoopFixedSettlementNamesTheTestEvidence(t *testing.T) {
 				"result in the `--note` — that rule is what makes the fix verifiable "+
 				"by whoever reads the journal later",
 			path,
+		)
+	}
+}
+
+// TestReviewLoopRunsUnattendedWithoutAsking guards the standing authorization
+// that makes this loop a loop. It invokes no outward `devgeta task` verb and no
+// `git commit`, so neither derived authorization test above reaches it — yet it
+// lost the same `permission:` frontmatter, and it is the command with the most
+// to lose from the fallback: an unattended loop that stops to ask before each
+// round is not unattended, and every pause costs the human the attention the
+// loop exists to save.
+//
+// The carve-out is checked with it, not separately. "Do everything yourself
+// without asking" and "ratification is the human's alone"
+// (TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport) are in tension, so the
+// exception has to sit in the same breath as the grant — an authorization
+// stated without it invites the loop to ratify its own rejections.
+//
+// What this catches: the authorization bullet being dropped from the Notes
+// section, or kept while its human-only exception is dropped.
+// What this does NOT catch: wording that keeps the words but reverses the
+// meaning, or an agent asking anyway despite a correctly-worded instruction —
+// a substring check over prose cannot execute the instructions, and no harness
+// in this repo can (see TestCommittingCommandsDeclareStandingAuthorization).
+func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
+	path, body := readSharedCommand(t, "review-loop.md")
+
+	section := markdownSection(t, body, "## Notes")
+	requireStandingAuthorization(t, path, `"## Notes" section`, section)
+
+	// The grant and its one exception must live in the same section, so a
+	// reader of the grant cannot reach the end of it without meeting the limit.
+	lower := strings.ToLower(section)
+	if !strings.Contains(lower, "exception") {
+		t.Errorf(
+			"%s grants the loop standing authorization to run unattended but its "+
+				"%q section no longer names the exception — retiring an agent's "+
+				"rejection stays the human's call. Without the carve-out beside the "+
+				"grant, 'settle findings yourself, without asking' reads as covering "+
+				"--ratify too, which is exactly what "+
+				"TestReviewLoopOnlyInvokesRatifyOrReopenInTheReport forbids",
+			path, "## Notes",
 		)
 	}
 }
