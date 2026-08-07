@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"strings"
@@ -1292,8 +1293,11 @@ func (m *mockPRRunner) MergePR(pr, method string) (string, error) {
 }
 func (m *mockPRRunner) PRView(pr string) (string, error)   { return m.record("PRView", "pr", pr) }
 func (m *mockPRRunner) PRChecks(pr string) (string, error) { return m.record("PRChecks", "pr", pr) }
-func (m *mockPRRunner) CurrentPR() (string, error)         { return m.record("CurrentPR") }
-func (m *mockPRRunner) CurrentRepo() (string, error)       { return m.record("CurrentRepo") }
+func (m *mockPRRunner) PRReviewTarget(pr string) (string, error) {
+	return m.record("PRReviewTarget", "pr", pr)
+}
+func (m *mockPRRunner) CurrentPR() (string, error)   { return m.record("CurrentPR") }
+func (m *mockPRRunner) CurrentRepo() (string, error) { return m.record("CurrentRepo") }
 
 func setupPRMock(t *testing.T, mock prRunner) func() {
 	t.Helper()
@@ -1406,6 +1410,30 @@ func TestPRTask_Dispatch(t *testing.T) {
 		}
 		if mock.calls[0] != "PRView" {
 			t.Fatalf("expected PRView, got %v", mock.calls)
+		}
+	})
+
+	t.Run("pr-review-target passes the pr flag", func(t *testing.T) {
+		mock := newMockPRRunner()
+		mock.ret = "base: 9f2c\nhead: 2f38\njournal: pr/octocat/hello/42\nfiles:\n- a.go"
+		defer setupPRMock(t, mock)()
+		prFlag = "42"
+		defer func() { prFlag = "" }()
+
+		out := &bytes.Buffer{}
+		taskPRReviewTargetCmd.SetOut(out)
+		defer taskPRReviewTargetCmd.SetOut(nil)
+
+		if err := taskPRReviewTargetCmd.RunE(taskPRReviewTargetCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.calls[0] != "PRReviewTarget" || mock.lastArg["pr"] != "42" {
+			t.Fatalf("unexpected dispatch: %v / %v", mock.calls, mock.lastArg)
+		}
+		// The target is printed verbatim: every later step parses this block,
+		// so the command may not reformat or decorate it.
+		if got := out.String(); got != mock.ret+"\n" {
+			t.Fatalf("target not printed verbatim:\ngot:  %q\nwant: %q", got, mock.ret+"\n")
 		}
 	})
 

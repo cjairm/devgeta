@@ -230,9 +230,34 @@ func (g *Git) FetchOrigin() error {
 // network call can't block a caller expecting a fast response (e.g.
 // TaskManager.ReviewScope). A zero timeout is unbounded, same as FetchOrigin.
 func (g *Git) FetchOriginTimeout(timeout time.Duration) error {
+	return g.fetchTimeout(timeout, "origin")
+}
+
+// FetchOriginRefspecsTimeout fetches ONLY the named refspecs from origin,
+// bounded by timeout. Unlike FetchOriginTimeout it never touches the rest of
+// the remote: each refspec names its own destination, so the caller decides
+// exactly which refs are written and nothing else moves.
+//
+// Written for reviewing a pull request that is not checked out (ADR-0021 §1):
+// a refspec such as "+refs/pull/12/head:refs/devgeta/pr/12/head" updates a
+// non-branch ref, so no local branch moves, no upstream tracking changes, and
+// the working tree is untouched. The leading "+" is what makes a second fetch
+// survive a force-push on the source ref; callers that must NOT overwrite
+// simply omit it. --no-tags keeps the fetch to what was asked for, rather than
+// dragging in every tag that points into the fetched history.
+func (g *Git) FetchOriginRefspecsTimeout(timeout time.Duration, refspecs ...string) error {
+	if len(refspecs) == 0 {
+		return fmt.Errorf("fetch requires at least one refspec")
+	}
+	return g.fetchTimeout(timeout, append([]string{"--no-tags", "origin"}, refspecs...)...)
+}
+
+// fetchTimeout runs `git fetch <args...>` bounded by timeout, with the error
+// wrapping every fetch entry point shares. A zero timeout is unbounded.
+func (g *Git) fetchTimeout(timeout time.Duration, args ...string) error {
 	execCommand := cmd.CommandParams{
 		Command: constants.Git,
-		Args:    []string{"fetch", "origin"},
+		Args:    append([]string{"fetch"}, args...),
 		Stream:  g.Stream,
 		Timeout: timeout,
 	}
@@ -243,6 +268,46 @@ func (g *Git) FetchOriginTimeout(timeout time.Duration) error {
 		return fmt.Errorf("failed to run git command: %w", err)
 	}
 	return nil
+}
+
+// MergeBase returns the best common ancestor of two refs (`git merge-base a b`).
+//
+// It is the base of any range that must equal what GitHub shows for a pull
+// request: `git diff a..b` compares two ENDPOINTS, so when a is a branch tip
+// that advanced after b forked off, everything merged into a in the meantime
+// appears in the diff reversed, as if b were undoing it. Anchoring the range
+// at the merge base removes that class of phantom change entirely.
+func (g *Git) MergeBase(a, b string) (string, error) {
+	out, err := g.RunCapture("merge-base", a, b)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve the merge base of %s and %s: %w", a, b, err)
+	}
+	sha := strings.TrimSpace(out)
+	if sha == "" {
+		return "", fmt.Errorf("%s and %s have no common ancestor", a, b)
+	}
+	return sha, nil
+}
+
+// ResolveCommit resolves ref to the full SHA of the commit it names
+// (`git rev-parse --verify <ref>^{commit}`).
+//
+// The ^{commit} peel is the difference from a bare `rev-parse --verify`: it
+// makes an annotated tag or any other non-commit object resolve to the commit
+// it points at, and fail outright when it points at none. Callers that only
+// need "does this ref exist" keep using RunCapture directly; this one exists
+// for callers that need the SHA itself, because a ref name resolved twice
+// during a long-running review can name two different commits.
+func (g *Git) ResolveCommit(ref string) (string, error) {
+	out, err := g.RunCapture("rev-parse", "--verify", ref+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve %s to a commit: %w", ref, err)
+	}
+	sha := strings.TrimSpace(out)
+	if sha == "" {
+		return "", fmt.Errorf("failed to resolve %s to a commit: git returned no sha", ref)
+	}
+	return sha, nil
 }
 
 func (g *Git) Pop(branch string) error {

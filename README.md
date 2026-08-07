@@ -224,6 +224,7 @@ dg install --skip databases,desktop
     - `dg task comment-pr [--pr N] --body B` - Post a top-level PR comment
     - `dg task merge-pr [--pr N] [--method squash|merge|rebase]` - Merge a PR
     - `dg task pr-view [--pr N]` / `pr-checks [--pr N]` - Compact PR summary / CI check status
+    - `dg task pr-review-target [--pr N]` - Immutable review target for a PR: merge-base/head SHAs, PR-scoped journal key, and the noise-filtered changed-file list (fetches `refs/pull/<n>/head` read-only; fails rather than review a stale ref). The working tree is untouched, but the fetch leaves two refs — `refs/devgeta/pr/<n>/head` and `.../base` — in the repo for later review steps to read; they are reused per PR, and `git update-ref -d` removes them
     - `dg task current-pr` / `current-repo` - Resolve the current branch's PR number / `owner/name`
 - `dg --version` - Show version information
 - `dg --help` - Show help message

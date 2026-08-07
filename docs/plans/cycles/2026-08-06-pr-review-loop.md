@@ -143,15 +143,21 @@ no-third-undocumented-outcome rule as the sibling cycle.
 - [ ] gh wrapper method returning one PR's review-request state: current
       `reviewRequests` logins, PR state, `isDraft`, base/head ref names, fork owner,
       and the authenticated user's latest submitted review state
-- [ ] git wrapper method: bounded read-only fetch of a PR ref (`refs/pull/<n>/head`)
+- [x] git wrapper method: bounded read-only fetch of a PR ref (`refs/pull/<n>/head`)
       and a base ref, plus merge-base resolution
 - [ ] `dg task pr-review-state [--pr N]` — one tick's state read (task-design output)
-- [ ] `dg task pr-review-target [--pr N]` — fetch, then print the immutable
+- [x] `dg task pr-review-target [--pr N]` — fetch, then print the immutable
       `base:`/`head:` SHAs (merge-base and PR head), the journal key, and the
       noise-filtered changed-file list. This output is **the review target**: the one
       context every later step reads — reviewer runs, journal stamps, type
       selection, finding verification, and posting all key off it, never off the
       working tree
+- [ ] Ref cleanup on a terminal tick: the tick command deletes
+      `refs/devgeta/pr/<n>/head` and `.../base` when the loop reaches any terminal
+      state (approved, closed, or escalated), mirroring how `review-notes --prune`
+      cleans journals. The refs must survive the tick that created them — later
+      steps read them and they pin the objects against a concurrent `git gc` — so
+      the delete belongs to whoever owns the loop's end, not to `pr-review-target`
 - [ ] Revision-aware journal mode: extend `reviewjournal.Manager` so stamping and
       freshness resolve against a given commit (`<rev>:<path>` blob lookup) instead
       of the working tree, exposed as `--rev <sha>` on `review-note`/`review-notes`
@@ -664,6 +670,16 @@ reads the working tree:
     killed mid-tick — a dead process runs no cleanup; that directory is swept by the
     existing `dg configure --force` scratch sweep, the same recovery every scratch
     user has.
+
+    On the exits that are also **terminal for the loop** — approved, closed, or
+    escalated — the same step deletes the target refs `pr-review-target` fetched:
+    `git update-ref -d refs/devgeta/pr/<n>/head` and `.../base`. They cannot go
+    earlier: every later step of the tick reads them, and holding them is what keeps
+    a concurrent `git gc` from collecting the reviewed commits. A non-terminal exit
+    keeps them, because the next tick reviews the same PR. A mid-tick kill leaves
+    them behind exactly as it leaves a scratch dir, and they are reused per PR
+    number, so the leftovers are bounded by distinct PRs reviewed, not by ticks.
+
 11. Report the tick's outcome in ≤3 lines (state read, runs and verdicts, next
     expectation).
 
@@ -773,6 +789,7 @@ Step 6's twelve-point live sequence, plus:
 | Author pushes while a tick is mid-review                 | Med        | Step 5.7 re-checks state + head immediately before posting and posts nothing on any change; the still-pending request makes the next tick review the new head. The submit itself stamps `--commit <reviewed-sha>` — no atomic submit exists in GitHub's API, so a push racing the final call still lands, but attributed to the old SHA (outdated markers, stale-approval dismissal) instead of silently claiming the new head. Steps 6.11–6.13 force all of it live |
 | Author re-requests while a tick is mid-review            | Low        | Next tick sees `requested: yes` again and re-fetches; the pre-post head check above covers the pushed-commits case                                                                                                                                                                                                                                                                                                                                                   |
 | PR-scoped journals accumulate                            | Low        | `review-notes --prune` already deletes journals whose branch does not exist locally or on the remote — a `pr/...` key never will, so they prune on request                                                                                                                                                                                                                                                                                                           |
+| Fetched `refs/devgeta/pr/<n>/*` accumulate               | Low        | Step 5.10 deletes both refs on every terminal tick (approved/closed/escalated). They are keyed by PR number and reused per tick, so growth tracks distinct PRs reviewed, not ticks; a mid-tick kill leaks one pair, removable with `git update-ref -d`                                                                                                                                                                                                               |
 | Team review requests don't name the user                 | Low        | Deliberate: personal request only — the rule the user applies manually                                                                                                                                                                                                                                                                                                                                                                                               |
 
 ### Trade-offs Made

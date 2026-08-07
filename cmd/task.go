@@ -79,7 +79,8 @@ Six families:
   - npm deps:    reinstall-libraries, reinstall-library
   - GitHub PRs:  review-threads, resolve/unresolve/reply-thread, submit-review,
                  create-pr, update-pr-description, approve-pr, request-changes-pr,
-                 comment-pr, merge-pr, pr-view, pr-checks, current-pr, current-repo
+                 comment-pr, merge-pr, pr-view, pr-checks, pr-review-target,
+                 current-pr, current-repo
 
 review-scope and PR data commands return compact, LLM-oriented output
 (review-scope/branch-diff/review-package parse git plumbing; PR commands run

@@ -823,23 +823,24 @@ trackers):
 **Pull request subcommands** (via `gh`; data-returning ones are formatted by `jq`
 into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
 
-| Subcommand              | Args / Flags                                  | Description                                                                                         |
-| ----------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all` | Render PR review threads as compact markdown (default: unresolved)                                  |
-| `resolve-thread`        | `<id>`                                        | Mark a review thread resolved                                                                       |
-| `unresolve-thread`      | `<id>`                                        | Reopen a resolved review thread                                                                     |
-| `reply-thread`          | `<id> <body>`                                 | Reply to a review thread                                                                            |
-| `create-pr`             | `--title` (req), `--body`, `--base`           | Open a PR from the current branch; prints the URL                                                   |
-| `update-pr-description` | `--pr N`, `--body` (req)                      | Replace a PR's description                                                                          |
-| `approve-pr`            | `--pr N`, `--body`                            | Approve a PR                                                                                        |
-| `request-changes-pr`    | `--pr N`, `--body` (req)                      | Request changes on a PR                                                                             |
-| `request-review`        | `--pr N`, `<reviewer>...` (req)               | Re-request review (adds reviewers back to the requested list)                                       |
-| `comment-pr`            | `--pr N`, `--body` (req)                      | Post a top-level PR comment                                                                         |
-| `merge-pr`              | `--pr N`, `--method squash\|merge\|rebase`    | Merge a PR (default: squash)                                                                        |
-| `pr-view`               | `--pr N`                                      | Compact PR summary (number, title, state, mergeable, review, branch)                                |
-| `pr-checks`             | `--pr N`                                      | CI check status, one line per check; failing checks get an indented log digest appended (see below) |
-| `current-pr`            | —                                             | PR number for the current branch                                                                    |
-| `current-repo`          | —                                             | Current repository as `owner/name`                                                                  |
+| Subcommand              | Args / Flags                                  | Description                                                                                               |
+| ----------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all` | Render PR review threads as compact markdown (default: unresolved)                                        |
+| `resolve-thread`        | `<id>`                                        | Mark a review thread resolved                                                                             |
+| `unresolve-thread`      | `<id>`                                        | Reopen a resolved review thread                                                                           |
+| `reply-thread`          | `<id> <body>`                                 | Reply to a review thread                                                                                  |
+| `create-pr`             | `--title` (req), `--body`, `--base`           | Open a PR from the current branch; prints the URL                                                         |
+| `update-pr-description` | `--pr N`, `--body` (req)                      | Replace a PR's description                                                                                |
+| `approve-pr`            | `--pr N`, `--body`                            | Approve a PR                                                                                              |
+| `request-changes-pr`    | `--pr N`, `--body` (req)                      | Request changes on a PR                                                                                   |
+| `request-review`        | `--pr N`, `<reviewer>...` (req)               | Re-request review (adds reviewers back to the requested list)                                             |
+| `comment-pr`            | `--pr N`, `--body` (req)                      | Post a top-level PR comment                                                                               |
+| `merge-pr`              | `--pr N`, `--method squash\|merge\|rebase`    | Merge a PR (default: squash)                                                                              |
+| `pr-view`               | `--pr N`                                      | Compact PR summary (number, title, state, mergeable, review, branch)                                      |
+| `pr-checks`             | `--pr N`                                      | CI check status, one line per check; failing checks get an indented log digest appended (see below)       |
+| `pr-review-target`      | `--pr N`                                      | Immutable review target for a PR: merge-base/head SHAs, journal key, noise-filtered file list (see below) |
+| `current-pr`            | —                                             | PR number for the current branch                                                                          |
+| `current-repo`          | —                                             | Current repository as `owner/name`                                                                        |
 
 For every PR subcommand, `--pr` defaults to the current branch's PR when omitted.
 Review-thread output is paginated across all threads (`gh api graphql --paginate`).
@@ -882,6 +883,47 @@ same write-access gating above. 60 sits at the top of this feature's
 originally suggested 40-60 line range and matches the order of magnitude
 observed for one ordinary CI step's full log on this repo's own successful
 runs (30-90 lines/step).
+
+**`pr-review-target`.** Resolves what a PR review looks at, as fixed commit
+SHAs, for a PR that is usually not checked out. It fetches `refs/pull/<n>/head`
+and the PR's base branch read-only into non-branch refs under `refs/devgeta/pr/<n>/`
+(no local branch moves, nothing is checked out, the working tree is untouched),
+then prints:
+
+```
+base: 9f2c1ab8bc0d1e2f3a4b5c6d7e8f90a1b2c3d4e5
+head: 2f38a274cd0e1f2a3b4c5d6e7f8091a2b3c4d5e6
+journal: pr/Employ-Inc/employ-agent/213
+files:
+- internal/tooling/task/pr.go
+- docs/spec.md
+```
+
+- `base` is the **merge base** of the base branch and the head, not the base
+  branch tip, so `git diff base..head` is exactly the diff GitHub shows. An
+  endpoint range against a base branch that advanced after the PR opened would
+  render every commit merged into it meanwhile as a reversal.
+- `journal` is the PR-scoped review journal key (`pr/<owner>/<repo>/<n>`) passed
+  to `review-notes`/`review-note --branch`, so a PR's review memory is never
+  mixed with a checkout branch's.
+- `files` is the range's changed files with lockfile-style noise filtered out
+  (same exclusion list as `review-scope`); an `excluded (...)` receipt naming
+  what was dropped follows it whenever anything was. An empty list prints
+  `(none)`.
+- **A failed fetch ends the command with an error** — it never falls back to
+  whatever refs are on disk, because reviewing a stale ref produces a confident
+  review of code the PR no longer contains.
+
+The two fetched refs — `refs/devgeta/pr/<n>/head` and `.../base` — **stay in the
+repository** after the command exits. That is the one durable trace it leaves,
+and it is deliberate: later steps of the same review read them (`git show
+<head>:<path>`), and holding the refs pins those objects against a `git gc` that
+runs while reviewers are still working. They are keyed by PR number, so a
+re-review of the same PR reuses them and the count tracks distinct PRs reviewed,
+not reviews run. Remove them by hand with
+`git update-ref -d refs/devgeta/pr/<n>/head` (and `.../base`).
+
+See [ADR-0021](decisions/ADR-0021-a-pr-review-targets-immutable-shas.md).
 
 **Release management subcommand** (automates the CLAUDE.md §9 push-and-tag flow):
 

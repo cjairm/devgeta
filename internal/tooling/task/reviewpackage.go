@@ -79,7 +79,7 @@ func (tm *TaskManager) reviewPackageAll(rangeSpec, base, head string) (string, e
 		return "", fmt.Errorf("review-package: %w", err)
 	}
 
-	files, err := tm.fileChanges(rangeSpec)
+	files, err := fileChanges(tm.Git, rangeSpec)
 	if err != nil {
 		return "", fmt.Errorf("review-package: %w", err)
 	}

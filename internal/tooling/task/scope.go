@@ -5,11 +5,17 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	git_app "github.com/cjairm/devgeta/internal/apps/git"
 )
 
-// reviewScopeFetchTimeout bounds the network fetch in ReviewScope so a hung
-// remote can't block a caller expecting a fast, single-call response.
-const reviewScopeFetchTimeout = 10 * time.Second
+// reviewFetchTimeout bounds the network fetch every review-oriented task makes
+// before reading refs, so a hung remote can't block a caller expecting a fast,
+// single-call response. Shared by ReviewScope and PRReviewTarget: they differ
+// in what a failed fetch MEANS (ReviewScope reports it and carries on;
+// PRReviewTarget ends with an error, ADR-0021 §1), not in how long either is
+// willing to wait.
+const reviewFetchTimeout = 10 * time.Second
 
 // commitFieldSep and commitRecordSep delimit commitLog's git log format:
 // %h/%as/%s/%b are joined with commitFieldSep and each commit is terminated
@@ -86,7 +92,7 @@ type scopeData struct {
 // yet, and which are untracked, are each called out on their own line: a file
 // the commit list above never mentions would otherwise look like a mistake.
 func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
-	fetchFailed := tm.Git.FetchOriginTimeout(reviewScopeFetchTimeout) != nil
+	fetchFailed := tm.Git.FetchOriginTimeout(reviewFetchTimeout) != nil
 
 	currentBranch, err := tm.Git.CurrentBranch()
 	if err != nil {
@@ -127,7 +133,7 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 	// Two dots, not three: `git diff <base>` compares the merge-base against
 	// the WORKING TREE, so staged and unstaged edits are counted alongside
 	// committed ones. `<base>...HEAD` would report only what is committed.
-	files, err := tm.fileChanges(base)
+	files, err := fileChanges(tm.Git, base)
 	if err != nil {
 		return "", fmt.Errorf("review-scope: %w", err)
 	}
@@ -136,7 +142,7 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 	// HEAD against the working tree: what the branch changes that no commit
 	// carries yet. Excluded paths are dropped here too, so a lockfile nobody
 	// is reviewing does not show up as uncommitted work.
-	uncommitted, err := tm.fileChanges("HEAD")
+	uncommitted, err := fileChanges(tm.Git, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("review-scope: %w", err)
 	}
@@ -160,11 +166,7 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 // mergeBase resolves the merge-base between origin/<defaultBranch> and HEAD —
 // the comparison base reused for ahead/behind, commit log, and the diff.
 func (tm *TaskManager) mergeBase(defaultBranch string) (string, error) {
-	out, err := tm.Git.RunCapture("merge-base", "origin/"+defaultBranch, "HEAD")
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(out), nil
+	return tm.Git.MergeBase("origin/"+defaultBranch, "HEAD")
 }
 
 // aheadBehind returns how many commits HEAD is ahead/behind origin/<defaultBranch>.
@@ -234,12 +236,17 @@ func parseCommitLog(raw string) ([]commit, error) {
 // fileChanges runs numstat + name-status over rangeSpec (both --no-renames,
 // so a rename deterministically renders as a D + A pair) and merges them by
 // path into one fileChange list.
-func (tm *TaskManager) fileChanges(rangeSpec string) ([]fileChange, error) {
-	numstatOut, err := tm.Git.RunCapture("diff", "--numstat", "--no-renames", rangeSpec)
+//
+// It takes the git app rather than hanging off TaskManager (the same shape as
+// untrackedFiles) because PRManager gathers the same table for a pull request
+// it has fetched but not checked out — one gather, two callers, no second
+// copy of the numstat/name-status merge to drift.
+func fileChanges(g *git_app.Git, rangeSpec string) ([]fileChange, error) {
+	numstatOut, err := g.RunCapture("diff", "--numstat", "--no-renames", rangeSpec)
 	if err != nil {
 		return nil, err
 	}
-	nameStatusOut, err := tm.Git.RunCapture("diff", "--name-status", "--no-renames", rangeSpec)
+	nameStatusOut, err := g.RunCapture("diff", "--name-status", "--no-renames", rangeSpec)
 	if err != nil {
 		return nil, err
 	}

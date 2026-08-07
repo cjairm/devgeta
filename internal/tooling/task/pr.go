@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	git_app "github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/jq"
 )
@@ -16,11 +17,20 @@ import (
 type PRManager struct {
 	Gh *githubcli.GithubCli
 	Jq *jq.Jq
+	// Git resolves a pull request to local commits. Only PRReviewTarget uses
+	// it, and it has to: gh names a PR's refs, but only git can fetch them,
+	// find their merge base, and diff it — and every one of those goes through
+	// the app wrapper rather than a raw exec, same as everywhere else.
+	//
+	// Output is deliberately NOT streamed (unlike TaskManager's git): these
+	// commands' stdout is a machine-read contract, so nothing else may land on
+	// it.
+	Git *git_app.Git
 }
 
 // NewPR creates a PRManager with real executors.
 func NewPR() *PRManager {
-	return &PRManager{Gh: githubcli.New(), Jq: jq.New()}
+	return &PRManager{Gh: githubcli.New(), Jq: jq.New(), Git: git_app.New()}
 }
 
 // resolvedPtrForState maps a --state value to the *bool the jq filter expects:

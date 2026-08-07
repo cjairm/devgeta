@@ -1994,6 +1994,176 @@ func TestFetchOriginTimeout(t *testing.T) {
 	})
 }
 
+func TestFetchOriginRefspecsTimeout(t *testing.T) {
+	t.Run("fetches only the named refspecs, no tags, bounded", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		err := g.FetchOriginRefspecsTimeout(
+			10*time.Second,
+			"+refs/pull/42/head:refs/devgeta/pr/42/head",
+			"+refs/heads/main:refs/devgeta/pr/42/base",
+		)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		call := mockBase.GetLastExecCommandCall()
+		if call == nil {
+			t.Fatal("expected an ExecCommand call")
+		}
+		if call.Timeout != 10*time.Second {
+			t.Fatalf("expected Timeout=10s, got %v", call.Timeout)
+		}
+		want := []string{
+			"fetch", "--no-tags", "origin",
+			"+refs/pull/42/head:refs/devgeta/pr/42/head",
+			"+refs/heads/main:refs/devgeta/pr/42/base",
+		}
+		if call.Command != "git" || !slices.Equal(call.Args, want) {
+			t.Fatalf("expected git %v, got %s %v", want, call.Command, call.Args)
+		}
+	})
+
+	t.Run("every destination is a non-branch ref, so nothing local moves", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if err := g.FetchOriginRefspecsTimeout(
+			time.Second,
+			"+refs/pull/7/head:refs/devgeta/pr/7/head",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// A refspec that wrote refs/heads/* or refs/remotes/* would move a
+		// branch out from under the user — the thing this method exists to
+		// avoid — and no argument here may name a checkout-changing verb.
+		for _, arg := range mockBase.GetLastExecCommandCall().Args {
+			if strings.Contains(arg, ":refs/heads/") || strings.Contains(arg, ":refs/remotes/") {
+				t.Fatalf("refspec writes a branch ref: %q", arg)
+			}
+			if arg == "checkout" || arg == "switch" || arg == "reset" {
+				t.Fatalf("unexpected working-tree command: %q", arg)
+			}
+		}
+	})
+
+	t.Run("refuses an empty refspec list before running anything", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if err := g.FetchOriginRefspecsTimeout(time.Second); err == nil {
+			t.Fatal("expected error")
+		}
+		testutil.VerifyNoRealCommands(t, mockBase)
+	})
+
+	t.Run("reports git's stderr", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult(
+			"",
+			"couldn't find remote ref refs/pull/9/head",
+			fmt.Errorf("exit 128"),
+		)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		err := g.FetchOriginRefspecsTimeout(time.Second, "+refs/pull/9/head:refs/devgeta/pr/9/head")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "couldn't find remote ref") {
+			t.Fatalf("expected git's stderr in the error, got %v", err)
+		}
+	})
+}
+
+func TestMergeBase(t *testing.T) {
+	t.Run("returns the common ancestor", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("9f2c1ab8bc0d1e2f3a4b5c6d7e8f90a1b2c3d4e5\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		got, err := g.MergeBase("refs/devgeta/pr/42/base", "refs/devgeta/pr/42/head")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "9f2c1ab8bc0d1e2f3a4b5c6d7e8f90a1b2c3d4e5" {
+			t.Fatalf("unexpected sha %q", got)
+		}
+		want := []string{"merge-base", "refs/devgeta/pr/42/base", "refs/devgeta/pr/42/head"}
+		if call := mockBase.GetLastExecCommandCall(); !slices.Equal(call.Args, want) {
+			t.Fatalf("expected git %v, got %v", want, call.Args)
+		}
+	})
+
+	t.Run("errors when the two refs share no history", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "", fmt.Errorf("exit status 1"))
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.MergeBase("a", "b"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("errors on empty output rather than returning an empty sha", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.MergeBase("a", "b"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestResolveCommit(t *testing.T) {
+	t.Run("peels the ref to a commit sha", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("2f38a274cd0e1f2a3b4c5d6e7f8091a2b3c4d5e6\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		got, err := g.ResolveCommit("refs/devgeta/pr/42/head")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "2f38a274cd0e1f2a3b4c5d6e7f8091a2b3c4d5e6" {
+			t.Fatalf("unexpected sha %q", got)
+		}
+		want := []string{"rev-parse", "--verify", "refs/devgeta/pr/42/head^{commit}"}
+		if call := mockBase.GetLastExecCommandCall(); !slices.Equal(call.Args, want) {
+			t.Fatalf("expected git %v, got %v", want, call.Args)
+		}
+	})
+
+	t.Run("errors on an unknown ref", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult(
+			"",
+			"fatal: Needed a single revision",
+			fmt.Errorf("exit status 128"),
+		)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.ResolveCommit("refs/devgeta/pr/42/head"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("errors on empty output rather than returning an empty sha", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("  \n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.ResolveCommit("HEAD"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestCurrentBranch(t *testing.T) {
 	t.Run("returns the checked-out branch", func(t *testing.T) {
 		mockBase := commands.NewMockBaseCommand()

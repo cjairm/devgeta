@@ -29,6 +29,7 @@ type prRunner interface {
 	MergePR(prNumber, method string) (string, error)
 	PRView(prNumber string) (string, error)
 	PRChecks(prNumber string) (string, error)
+	PRReviewTarget(prNumber string) (string, error)
 	CurrentPR() (string, error)
 	CurrentRepo() (string, error)
 }
@@ -307,6 +308,46 @@ var taskPRChecksCmd = &cobra.Command{
 	},
 }
 
+var taskPRReviewTargetCmd = &cobra.Command{
+	Use:   "pr-review-target",
+	Short: "Print the immutable review target for a pull request (base/head SHAs, journal key, files)",
+	Long: `Resolve what a pull request review should look at, as fixed commit SHAs.
+
+It fetches the PR's head (refs/pull/<n>/head, which the upstream repo serves for
+fork PRs too) and its base branch read-only into non-branch refs — no local
+branch moves, nothing is checked out, the working tree is untouched — then
+prints four things:
+
+  base:    the MERGE BASE of the base branch and the PR head, so a two-dot
+           base..head diff is exactly the diff GitHub shows. (A base branch tip
+           would inject every commit merged into it since the PR opened as if
+           this PR were undoing them.)
+  head:    the PR's head commit
+  journal: pr/<owner>/<repo>/<number> — the PR-scoped review journal key, for
+           review-notes/review-note --branch, so a PR's review memory is never
+           mixed with a checkout branch's
+  files:   the changed files in the range, lockfile-style noise filtered out
+
+Both SHAs are resolved once here so every later step reads one fixed snapshot.
+A failed fetch ends the command with an error rather than falling back to local
+refs: reviewing a stale ref produces a confident review of code the PR no
+longer contains.
+
+The two fetched refs (refs/devgeta/pr/<n>/head and .../base) are left in place
+on purpose: later steps of the review read them, and holding them keeps git gc
+from collecting the commits mid-review. They are reused per PR number. To drop
+them: git update-ref -d refs/devgeta/pr/<n>/head (and .../base).
+
+--pr targets a PR number; omit it to use the current branch's PR.`,
+	Example: `  dg task pr-review-target --pr 42
+  dg task pr-review-target             # the current branch's PR`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newPRTasks().PRReviewTarget(prFlag)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 var taskCurrentPRCmd = &cobra.Command{
 	Use:   "current-pr",
 	Short: "Print the PR number for the current branch",
@@ -342,6 +383,7 @@ func init() {
 	taskCmd.AddCommand(taskMergePRCmd)
 	taskCmd.AddCommand(taskPRViewCmd)
 	taskCmd.AddCommand(taskPRChecksCmd)
+	taskCmd.AddCommand(taskPRReviewTargetCmd)
 	taskCmd.AddCommand(taskCurrentPRCmd)
 	taskCmd.AddCommand(taskCurrentRepoCmd)
 
@@ -403,4 +445,6 @@ func init() {
 
 	taskPRViewCmd.Flags().StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 	taskPRChecksCmd.Flags().StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
+	taskPRReviewTargetCmd.Flags().
+		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 }
