@@ -149,6 +149,19 @@ func statusReport(verdict string) string {
 	}, "\n") + "\n"
 }
 
+// statusLineReport is statusReport's more general sibling: the caller
+// supplies the WHOLE status line verbatim, including wherever it wants to
+// place (or omit) markdown emphasis — statusReport always emphasizes only
+// "Status:", which cannot express the shape a real run produced (emphasis
+// around the whole line: "**Status: REQUEST CHANGES**").
+func statusLineReport(line string) string {
+	return strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		textEvent("### Recommendation\n\n" + line + "\n"),
+		`{"type":"step_finish","part":{"type":"step-finish"}}`,
+	}, "\n") + "\n"
+}
+
 // --- outcomes -------------------------------------------------------------
 
 func TestReviewRunVerdictOutcomes(t *testing.T) {
@@ -264,6 +277,156 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"NO VERDICT",
 		},
+		// Markdown emphasis PLACEMENT must not matter. The reviewer
+		// template wraps only "Status:" in "**...**" (statusReport,
+		// above); a real run (github-copilot/gpt-5.3-codex, under the
+		// document-reviewer agent) instead wrapped the WHOLE line --
+		// "**Status: REQUEST CHANGES**" -- which the pre-fix parser never
+		// matched at all, silently reporting a genuine REQUEST CHANGES as
+		// NO VERDICT. Every placement below must resolve identically to
+		// the template form, for all three verdicts.
+		{
+			"whole-line double-asterisk emphasis (the real bug shape)",
+			statusLineReport("**Status: APPROVE**"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"single-asterisk emphasis around Status only",
+			statusLineReport("*Status:* APPROVE"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"single-asterisk emphasis around the whole line",
+			statusLineReport("*Status: APPROVE*"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"underscore emphasis around Status only",
+			statusLineReport("_Status:_ APPROVE"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"underscore emphasis around the whole line",
+			statusLineReport("_Status: APPROVE_"),
+			nil,
+			"APPROVE",
+		},
+		{"no emphasis at all", statusLineReport("Status: APPROVE"), nil, "APPROVE"},
+		{
+			"whole-line double-asterisk emphasis, request changes (the real bug shape)",
+			statusLineReport("**Status: REQUEST CHANGES**"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"single-asterisk emphasis around Status only, request changes",
+			statusLineReport("*Status:* REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"single-asterisk emphasis around the whole line, request changes",
+			statusLineReport("*Status: REQUEST CHANGES*"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"underscore emphasis around Status only, request changes",
+			statusLineReport("_Status:_ REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"underscore emphasis around the whole line, request changes",
+			statusLineReport("_Status: REQUEST CHANGES_"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"no emphasis at all, request changes",
+			statusLineReport("Status: REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"whole-line double-asterisk emphasis, needs discussion",
+			statusLineReport("**Status: NEEDS DISCUSSION**"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"single-asterisk emphasis around Status only, needs discussion",
+			statusLineReport("*Status:* NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"single-asterisk emphasis around the whole line, needs discussion",
+			statusLineReport("*Status: NEEDS DISCUSSION*"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"underscore emphasis around Status only, needs discussion",
+			statusLineReport("_Status:_ NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"underscore emphasis around the whole line, needs discussion",
+			statusLineReport("_Status: NEEDS DISCUSSION_"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"no emphasis at all, needs discussion",
+			statusLineReport("Status: NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		// Adversarial: emphasis stripping must not turn a fail-closed case
+		// into a false approval. The unsafe direction is toward APPROVE,
+		// so these must still fall through to NO VERDICT with whole-line
+		// emphasis exactly as they do with the template's placement.
+		{
+			"whole-line emphasis: approved is not approve",
+			statusLineReport("**Status: APPROVED**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			"whole-line emphasis: approve not is not approve",
+			statusLineReport("**Status: APPROVE NOT**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			// The reviewer template's own format line, but wrapped in
+			// whole-line emphasis instead of the template's "Status:"-only
+			// emphasis -- must be refused as a quoted format, not read as
+			// any of the three verdicts it lists.
+			"the pipe template line wrapped in whole-line emphasis is not a verdict",
+			statusLineReport("**Status: APPROVE | REQUEST CHANGES | NEEDS DISCUSSION**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			// A fenced example wrapped in whole-line emphasis, below a
+			// real verdict that uses the template's own placement -- the
+			// fence skip must still apply regardless of which placement
+			// the quoted example inside it uses.
+			"a whole-line-emphasis status line inside a fenced code block is not a verdict",
+			textEvent(
+				"**Status:** REQUEST CHANGES\n\nExample of the format:\n```\n" +
+					"**Status: APPROVE**\n```\n",
+			),
+			nil,
+			"REQUEST CHANGES",
+		},
 	}
 
 	for _, tt := range tests {
@@ -283,6 +446,52 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			verifyNoStrayCommands(t, tm)
 		})
 	}
+}
+
+// TestReviewRunClassifiesRealCodexDocumentReviewerCapture is the regression
+// test for the bug this fix closes: a real headless run of
+// github-copilot/gpt-5.3-codex under the document-reviewer agent wrote
+// "**Status: REQUEST CHANGES**" — emphasis wrapping the WHOLE line, not just
+// "Status:" the way the agent template does — and the pre-fix parser never
+// matched it, silently reporting the round as NO VERDICT instead of the
+// blocking REQUEST CHANGES the reviewer actually delivered.
+//
+// The fixture below is hand-trimmed from the real capture, on disk (not
+// committed — it is a 46KB, 43-event NDJSON stream) at
+// ~/.cache/devgeta/scratch/codex-doc.json: that capture has 13
+// step_start/step_finish pairs, 15 tool_use events, and 2 text events. This
+// keeps one step_start/step_finish pair, one tool_use event (to prove event
+// types classifyReviewerRun ignores are still tolerated alongside the real
+// one), and the exact text event carrying the bug's status line, with the
+// surrounding prose shortened.
+func TestReviewRunClassifiesRealCodexDocumentReviewerCapture(t *testing.T) {
+	capture := strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		`{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"status":"completed"}}}`,
+		textEvent(
+			"## Summary\n\nThis is a **code branch review** request, not a document " +
+				"review. The blocking concerns already logged in the branch journal " +
+				"(`n1`, `n4`) are still valid and unresolved. I recommend " +
+				"**REQUEST CHANGES**.\n\n## Recommendation\n\n**Status: REQUEST CHANGES**\n\n" +
+				"Settle when answered: `devgeta task review-note --settle --id n4 " +
+				`--as fixed|rejected|answered --note "<why>"`,
+		),
+		`{"type":"step_finish","part":{"type":"step-finish"}}`,
+	}, "\n") + "\n"
+
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: capture})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "OpenCode default model → REQUEST CHANGES\nopen: none"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+	verifyNoStrayCommands(t, tm)
 }
 
 // An error EVENT is what classifies ERROR, not the text of the message: the

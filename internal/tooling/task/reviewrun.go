@@ -67,14 +67,20 @@ const reviewRunTimeout = 30 * time.Minute
 // The reason is OpenCode's own text, cut — never reworded or guessed at.
 const maxReasonLen = 120
 
-// statusLinePattern matches ONE reviewer verdict line, e.g.
-// "**Status:** REQUEST CHANGES". Case-insensitive because the marker is prose
-// the model reproduces. It is applied to a single line at a time by
+// statusLinePattern matches ONE reviewer verdict line, e.g. "Status: REQUEST
+// CHANGES". It is applied to a line AFTER stripLineEmphasis has removed the
+// line's markdown emphasis markers, which is why it names no "**" at all — a
+// real run (github-copilot/gpt-5.3-codex, under document-reviewer) wrote
+// "**Status: REQUEST CHANGES**", wrapping the whole line in emphasis rather
+// than just "Status:" the way the agent template does, and the old pattern
+// (which hard-coded "\*\*status:\*\*") never matched it, silently reporting a
+// genuine REQUEST CHANGES as NO VERDICT. Case-insensitive because the marker
+// is prose the model reproduces. It is applied to a single line at a time by
 // lastStatusVerdict — which is why it carries no (?m) flag: there is no
 // multi-line text for ^ and $ to anchor within, and the horizontal-only
 // whitespace classes ([^\S\n]) keep it that way even if a caller ever passed
 // a fragment containing a newline.
-var statusLinePattern = regexp.MustCompile(`(?i)^[^\S\n]*\*\*status:\*\*[^\S\n]*(.*)$`)
+var statusLinePattern = regexp.MustCompile(`(?i)^[^\S\n]*status:[^\S\n]*(.*)$`)
 
 // reviewerRun is one reviewer this round runs: how its line is labeled, and
 // which model to pin it to ("" = no -m flag, i.e. OpenCode's own default).
@@ -425,7 +431,8 @@ func errorEventReason(raw json.RawMessage) string {
 	return truncateReason(string(raw))
 }
 
-// lastStatusVerdict returns the verdict from the LAST `**Status:**` line
+// lastStatusVerdict returns the verdict from the LAST status line ("Status:"
+// with any placement of "*"/"_" emphasis around it, see stripLineEmphasis)
 // that names a real verdict, or "" when none does.
 //
 // "Last" is what the reviewer contract means: a report can quote the format
@@ -460,7 +467,7 @@ func lastStatusVerdict(text string) string {
 		if inFence {
 			continue
 		}
-		match := statusLinePattern.FindStringSubmatch(line)
+		match := statusLinePattern.FindStringSubmatch(stripLineEmphasis(line))
 		if match == nil {
 			continue
 		}
@@ -519,9 +526,35 @@ func matchesKnownVerdict(value, known string) bool {
 // isFenceDelimiter reports whether line opens or closes a fenced code block
 // (``` or ~~~, optionally followed by a language tag) — Markdown's two fence
 // styles, either of which can wrap a quoted example in a reviewer's report.
+//
+// It is checked against the RAW line, never the emphasis-stripped one:
+// stripLineEmphasis only removes "*" and "_", neither of which a fence
+// delimiter is built from ("```" / "~~~"), so this ordering is not
+// load-bearing today — but it stays deliberate so a future emphasis marker
+// never has a chance to hide a fence boundary.
 func isFenceDelimiter(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
+}
+
+// stripLineEmphasis removes markdown emphasis markers ("*" and "_") from a
+// single line before statusLinePattern is applied, so a reviewer's verdict
+// line reads the same regardless of where those markers landed: the agent
+// template's "**Status:** APPROVE" (emphasis around "Status:" only), a real
+// run's "**Status: APPROVE**" (emphasis around the whole line), "Status:
+// APPROVE" (no emphasis at all), and the single-asterisk and underscore
+// variants of both. This is a line-level normalization only — it does not
+// parse markdown structure, so it cannot tell "*" used as emphasis from "*"
+// used as, say, a literal multiplication sign; that tradeoff is acceptable
+// here because the only thing read out of the result is whether the line
+// starts with "status:" and what follows it.
+//
+// Backticks are deliberately left alone: they can legitimately wrap the
+// verdict VALUE (e.g. "**Status:** `APPROVE`"), and normalizeStatusValue
+// already strips them from the captured value — stripping them here too
+// would be redundant, not more correct.
+func stripLineEmphasis(line string) string {
+	return strings.NewReplacer("*", "", "_", "").Replace(line)
 }
 
 // normalizeStatusValue strips the markdown a status line can carry and
