@@ -5,8 +5,10 @@ package task
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"time"
 
 	git_app "github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/apps/opencode"
@@ -24,6 +26,17 @@ type TaskManager struct {
 	// wrapper, not a raw executor, because CLAUDE.md §6 keeps the
 	// `opencode run` command line assembled in exactly one place.
 	OpenCode *opencode.OpenCode
+	// ProgressOut is where review-run writes its per-reviewer progress lines
+	// (never the parseable stdout return value — see reviewrun.go). Nil
+	// means os.Stderr; a test builds a TaskManager literal without New() and
+	// points this at a buffer to capture the lines instead of spraying them
+	// across the test run.
+	ProgressOut io.Writer
+	// NowFn is review-run's clock for timing each reviewer's progress line.
+	// Nil means time.Now. Injectable for the same reason
+	// reviewjournal.Manager.NowFn is: a test needs a deterministic elapsed
+	// duration, not a race against the wall clock.
+	NowFn func() time.Time
 }
 
 // New creates a TaskManager with real executors. Git output is streamed so

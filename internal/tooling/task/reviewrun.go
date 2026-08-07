@@ -14,6 +14,7 @@ package task
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -92,6 +93,12 @@ type reviewerRun struct {
 // this same round. Their writes go straight to the live journal and get
 // real, final ids — which is why the open list at the end is read from the
 // live journal, not the snapshot.
+//
+// While a reviewer runs, a start/finish progress line goes to
+// progressWriter() (stderr by default) — never to the returned string, which
+// stays the exact parseable contract docs/guides/task-design.md governs. A
+// multi-minute headless run against a real branch diff would otherwise leave
+// the caller watching silence with no way to tell working from stuck.
 func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 	// Cheapest guard first: a bad --reviewer needs no git and no config.
 	agent, err := reviewerAgentFor(reviewer)
@@ -130,8 +137,13 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 		}
 	}()
 
+	progressOut := tm.progressWriter()
 	var out strings.Builder
-	for _, run := range runs {
+	for i, run := range runs {
+		position := fmt.Sprintf("[%d/%d]", i+1, len(runs))
+		fmt.Fprintf(progressOut, "%s %s: running\n", position, run.label)
+		start := tm.now()
+
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
 		// throw away work already paid for.
@@ -142,7 +154,11 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 			Timeout: reviewRunTimeout,
 			Env:     []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
 		})
-		fmt.Fprintf(&out, "%s → %s\n", run.label, classifyReviewerRun(stdout, runErr))
+		outcome := classifyReviewerRun(stdout, runErr)
+		elapsed := tm.now().Sub(start)
+		fmt.Fprintf(progressOut, "%s %s: %s (%s)\n", position, run.label, outcome, elapsed)
+
+		fmt.Fprintf(&out, "%s → %s\n", run.label, outcome)
 	}
 
 	open, err := openEntryIDs(jm, branch)
@@ -151,6 +167,26 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 	}
 	out.WriteString(open)
 	return out.String(), nil
+}
+
+// progressWriter returns where ReviewRun writes its per-reviewer progress
+// lines: TaskManager.ProgressOut when the caller set one, os.Stderr
+// otherwise — so a TaskManager built as a literal in a test, bypassing New(),
+// still gets a safe default instead of writing through a nil interface.
+func (tm *TaskManager) progressWriter() io.Writer {
+	if tm.ProgressOut != nil {
+		return tm.ProgressOut
+	}
+	return os.Stderr
+}
+
+// now returns TaskManager.NowFn() when set, time.Now() otherwise — the same
+// nil-means-default fallback as progressWriter, for the same reason.
+func (tm *TaskManager) now() time.Time {
+	if tm.NowFn != nil {
+		return tm.NowFn()
+	}
+	return time.Now()
 }
 
 // reviewerAgentFor resolves --reviewer to the OpenCode agent name to run,

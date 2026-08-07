@@ -1,6 +1,7 @@
 package task
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cjairm/devgeta/internal/commands"
@@ -425,6 +427,121 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
 	verifyNoStrayCommands(t, tm)
+}
+
+// --- progress lines --------------------------------------------------------
+
+// fixedClock returns a func() time.Time for TaskManager.NowFn that starts at
+// start and advances by step on every call after the first. ReviewRun calls
+// it twice per reviewer (start, then finish), so consecutive reviewers each
+// see exactly step elapsed — a deterministic duration instead of a race
+// against the wall clock.
+func fixedClock(start time.Time, step time.Duration) func() time.Time {
+	next := start
+	first := true
+	return func() time.Time {
+		if first {
+			first = false
+			return next
+		}
+		next = next.Add(step)
+		return next
+	}
+}
+
+// Progress lines go to ProgressOut, one per reviewer as it starts and one as
+// it resolves, each carrying its position, label, outcome, and elapsed time
+// — and the returned string (the stdout contract docs/guides/task-design.md
+// governs) is completely unaffected. This is the regression that matters:
+// every other test in this file asserts that exact returned string byte for
+// byte, with ProgressOut left unset (defaulting to os.Stderr), so their
+// continuing to pass already proves the same thing from the other side.
+func TestReviewRunWritesProgressLinesPerReviewer(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: statusReport("REQUEST CHANGES")},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), 1500*time.Millisecond)
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	wantOut := "openai/gpt-5.2 → REQUEST CHANGES\ngoogle/gemini-3-pro → APPROVE\nopen: none"
+	if out != wantOut {
+		t.Errorf("stdout contract changed:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	wantProgress := strings.Join([]string{
+		"[1/2] openai/gpt-5.2: running",
+		"[1/2] openai/gpt-5.2: REQUEST CHANGES (1.5s)",
+		"[2/2] google/gemini-3-pro: running",
+		"[2/2] google/gemini-3-pro: APPROVE (1.5s)",
+		"",
+	}, "\n")
+	if progress.String() != wantProgress {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), wantProgress)
+	}
+}
+
+// The unset-reviewers case: the progress label must match the final output's
+// label exactly ("OpenCode default model"), not the empty model string.
+func TestReviewRunProgressUsesDefaultModelLabel(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
+
+	if _, err := tm.ReviewRun(""); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "[1/1] OpenCode default model: running\n[1/1] OpenCode default model: APPROVE (1s)\n"
+	if progress.String() != want {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), want)
+	}
+}
+
+// A reviewer that fails still gets both its progress lines, and the
+// reviewer after it still gets its own — a failure must never go quiet or
+// stop the rest.
+func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{err: errors.New("exit status 1")},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
+	}
+	if !strings.Contains(out, "ERROR(") {
+		t.Errorf("expected an ERROR outcome in the stdout contract, got:\n%s", out)
+	}
+	wantProgress := strings.Join([]string{
+		"[1/2] openai/gpt-5.2: running",
+		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (1s)",
+		"[2/2] google/gemini-3-pro: running",
+		"[2/2] google/gemini-3-pro: APPROVE (1s)",
+		"",
+	}, "\n")
+	if progress.String() != wantProgress {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), wantProgress)
+	}
 }
 
 // --- reviewer list resolution --------------------------------------------
