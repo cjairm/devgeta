@@ -676,8 +676,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-		if out != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out)
+		if out.Stdout != `{"type":"text"}` {
+			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
 		}
 
 		lastCall := mockApp.Base.GetLastExecCommandCall()
@@ -729,8 +729,8 @@ func TestRun(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Run returned error: %v", err)
 		}
-		if out != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out)
+		if out.Stdout != `{"type":"text"}` {
+			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
 		}
 
 		lastCall := mockApp.Base.GetLastExecCommandCall()
@@ -777,8 +777,8 @@ func TestRun(t *testing.T) {
 		}
 		// Partial/diagnostic output must still be handed back to the caller
 		// even on failure — a nonzero exit can still carry an error event.
-		if out != `{"type":"error"}` {
-			t.Fatalf("expected stdout on error path, got %q", out)
+		if out.Stdout != `{"type":"error"}` {
+			t.Fatalf("expected stdout on error path, got %q", out.Stdout)
 		}
 	})
 }

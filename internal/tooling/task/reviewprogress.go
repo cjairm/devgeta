@@ -82,6 +82,20 @@ func (p *reviewerProgress) started() {
 	fmt.Fprintf(p.out, "%s %s: running\n", p.prefix, p.label)
 }
 
+// retrying announces that an attempt produced no report and the reviewer is
+// being launched one more time, naming the outcome that attempt would have
+// been reported as.
+//
+// This is printed rather than left silent because the retry is otherwise
+// invisible: the reviewer's line would simply take twice as long, which reads
+// as a slow provider rather than a failed attempt being paid for again. The
+// reason is carried along so a permanent cause (an auto-rejected permission,
+// say) is visible on the FIRST failure instead of only in the closing line
+// after both attempts have been spent.
+func (p *reviewerProgress) retrying(outcome string) {
+	fmt.Fprintf(p.out, "%s %s: %s — no report, retrying once\n", p.prefix, p.label, outcome)
+}
+
 // finished closes the reviewer out with the outcome the round will report.
 func (p *reviewerProgress) finished(outcome string, elapsed time.Duration) {
 	fmt.Fprintf(p.out, "%s %s: %s (%s)\n", p.prefix, p.label, outcome, p.summary(elapsed))

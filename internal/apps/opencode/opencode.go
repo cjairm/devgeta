@@ -317,7 +317,28 @@ type RunOptions struct {
 	OnStdoutLine func(string)
 }
 
-// Run executes `opencode run` headlessly and returns its captured stdout.
+// RunResult is everything one headless `opencode run` produced.
+//
+// Stderr is carried alongside Stdout rather than discarded because it is
+// sometimes the ONLY record of why a run produced nothing. An auto-rejected
+// permission request — "! permission requested: external_directory (...);
+// auto-rejecting", which is what a headless run does with any permission it
+// cannot ask a human about — is written there and never appears as an event.
+// A caller reading only the event stream therefore sees a run that exited 0,
+// wrote no report, and explained itself nowhere: exactly the silent NO VERDICT
+// this field exists to make impossible.
+//
+// The text is raw, including the ANSI color escapes OpenCode wraps its
+// warnings in. Stripping them belongs to whoever renders the text, not here —
+// this wrapper's job is to hand back what OpenCode actually wrote.
+type RunResult struct {
+	// Stdout is the raw `--format json` NDJSON event stream.
+	Stdout string
+	// Stderr is everything OpenCode wrote outside that stream.
+	Stderr string
+}
+
+// Run executes `opencode run` headlessly and returns what it produced.
 //
 // This is the only place in devgeta that assembles the `opencode run` command
 // line (CLAUDE.md §6): every caller that needs a headless agent run — e.g.
@@ -327,11 +348,11 @@ type RunOptions struct {
 // this method needs that, so it is not a caller-chosen option. Interpreting
 // the resulting NDJSON events and the `**Status:**` verdict line stays out of
 // this method and belongs to the caller. Unlike ExecuteCommand, which
-// discards output, Run returns stdout because the caller's whole job is to
-// read what the agent produced — stdout is returned even when err is
-// non-nil, since a non-zero exit can still carry a partial or diagnostic
-// event stream worth inspecting.
-func (o *OpenCode) Run(opts RunOptions) (string, error) {
+// discards output, Run returns what the child wrote because the caller's whole
+// job is to read what the agent produced — the result is returned even when
+// err is non-nil, since a non-zero exit can still carry a partial or
+// diagnostic event stream worth inspecting.
+func (o *OpenCode) Run(opts RunOptions) (RunResult, error) {
 	args := []string{"run", "--agent", opts.Agent, "--format", "json"}
 	if opts.Model != "" {
 		args = append(args, "-m", opts.Model)
@@ -346,11 +367,12 @@ func (o *OpenCode) Run(opts RunOptions) (string, error) {
 		Env:          opts.Env,
 		OnStdoutLine: opts.OnStdoutLine,
 	}
-	stdout, _, err := o.Base.ExecCommand(params)
+	stdout, stderr, err := o.Base.ExecCommand(params)
+	result := RunResult{Stdout: stdout, Stderr: stderr}
 	if err != nil {
-		return stdout, fmt.Errorf("opencode run failed: %w", err)
+		return result, fmt.Errorf("opencode run failed: %w", err)
 	}
-	return stdout, nil
+	return result, nil
 }
 
 func (o *OpenCode) Update() error {
