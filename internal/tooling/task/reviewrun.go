@@ -106,10 +106,14 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 		return "", err
 	}
 
-	// Both branch refusals happen here, before any reviewer is launched and
-	// before any file is written — a wrong branch must cost nothing.
-	branch, err := tm.checkOnReviewableBranch()
+	// All three refusals happen here, before any reviewer is launched and
+	// before any file is written — a wrong branch, or a branch with nothing
+	// committed to review, must cost nothing.
+	branch, defaultBranch, err := tm.checkOnReviewableBranch()
 	if err != nil {
+		return "", err
+	}
+	if err := tm.checkBranchHasCommittedDiff(branch, defaultBranch); err != nil {
 		return "", err
 	}
 
@@ -213,32 +217,64 @@ func reviewerAgentFor(key string) (string, error) {
 
 // checkOnReviewableBranch is review-run's branch guard — the mirror image of
 // release's checkOnDefaultBranch, sharing the same HEAD resolution so the
-// two can never disagree about what git reported.
+// two can never disagree about what git reported. It returns the resolved
+// default branch alongside current so checkBranchHasCommittedDiff (the third
+// refusal) does not have to resolve HEAD a second time.
 //
 // It refuses two of the three things HEAD can be. On the default branch
 // there is nothing to review against, and a detached HEAD has no branch name
 // to key a journal by — reviewjournal would eventually refuse it too, but
 // only after a full multi-model review had already been spent, so it is
 // caught here instead. Both refusals carry the same fix.
-func (tm *TaskManager) checkOnReviewableBranch() (string, error) {
-	current, defaultBranch, err := tm.resolveHead()
+func (tm *TaskManager) checkOnReviewableBranch() (current, defaultBranch string, err error) {
+	current, defaultBranch, err = tm.resolveHead()
 	if err != nil {
-		return "", fmt.Errorf("review-run: %w", err)
+		return "", "", fmt.Errorf("review-run: %w", err)
 	}
 	if current == "" {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"review-run: HEAD is detached, so there is no branch to review or to key a " +
 				"review journal by — run 'git switch -c <branch>' to put this work on a branch first",
 		)
 	}
 	if current == defaultBranch {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"review-run: on the default branch %q, which is what a review compares against — "+
 				"run 'git switch -c <branch>' to move this work onto a branch first",
 			defaultBranch,
 		)
 	}
-	return current, nil
+	return current, defaultBranch, nil
+}
+
+// checkBranchHasCommittedDiff is review-run's third refusal: a branch with
+// no commits ahead of the default branch has nothing committed to review,
+// even though it is a real, named, non-default branch that the first two
+// refusals let through.
+//
+// It reuses aheadBehind (scope.go) — the same `git rev-list --left-right
+// --count` call review-scope already runs to answer "what does this branch
+// change against the default branch" — rather than a second git invocation
+// of its own.
+//
+// Only ahead is checked, deliberately: `git rev-list` only ever sees
+// committed history, so a user with dirty, uncommitted files but no commits
+// yet legitimately hits this refusal. The message says so explicitly so it
+// reads as "commit first", never as "your work vanished".
+func (tm *TaskManager) checkBranchHasCommittedDiff(branch, defaultBranch string) error {
+	_, ahead, err := tm.aheadBehind(defaultBranch)
+	if err != nil {
+		return fmt.Errorf("review-run: %w", err)
+	}
+	if ahead == 0 {
+		return fmt.Errorf(
+			"review-run: branch %q has no commits ahead of %q, so there is nothing committed "+
+				"to review yet — uncommitted changes don't count here; commit your work, then "+
+				"run review-run again",
+			branch, defaultBranch,
+		)
+	}
+	return nil
 }
 
 // resolveReviewerRuns turns review.reviewers into the runs for this round.

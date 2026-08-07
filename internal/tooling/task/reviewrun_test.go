@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -43,6 +44,25 @@ func withReviewers(t *testing.T, models ...string) {
 		sb.WriteString("    - " + m + "\n")
 	}
 	testutil.CreateGlobalConfigFile(t, paths.Paths.Config.Root, sb.String())
+}
+
+// withAheadCount overrides newRepoSetup's default ahead-of-default-branch
+// count (3) for the one test that needs a different value — chiefly 0, to
+// exercise checkBranchHasCommittedDiff's refusal. Every other git call keeps
+// answering exactly as newRepoSetup's fixture already does.
+func withAheadCount(t *testing.T, tm *TaskManager, ahead int) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "rev-list") {
+			return fmt.Sprintf("0\t%d\n", ahead), "", nil
+		}
+		return orig(c)
+	}
 }
 
 // scriptedRun is one `opencode run` the fixture will answer, in order.
@@ -716,6 +736,48 @@ func TestReviewRunRefusesOnDetachedHead(t *testing.T) {
 		t.Errorf("the refusal must carry the fix, got: %v", err)
 	}
 	assertNoReviewFilesWritten(t, root)
+}
+
+// A named, non-default branch with no commits ahead of the default branch
+// still has nothing committed to review — the third refusal, distinct from
+// the other two: HEAD is fine, there is simply no diff yet.
+func TestReviewRunRefusesWhenBranchHasNoCommittedDiff(t *testing.T) {
+	tm, root, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 0)
+	scriptOpenCode(t, ocBase) // no run may happen
+
+	_, err := tm.ReviewRun("")
+	if err == nil {
+		t.Fatal("expected a refusal when the branch has no commits ahead of the default branch")
+	}
+	if !strings.Contains(err.Error(), "feat") {
+		t.Errorf("expected the branch name in the refusal, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "uncommitted") {
+		t.Errorf(
+			"expected the refusal to distinguish uncommitted work from a vanished commit, got: %v",
+			err,
+		)
+	}
+	assertNoReviewFilesWritten(t, root)
+}
+
+// A branch that does have commits ahead of the default branch proceeds,
+// regardless of how many.
+func TestReviewRunProceedsWhenBranchHasCommittedDiff(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 1)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun on a branch with a committed diff must proceed, got: %v", err)
+	}
+	if out != "OpenCode default model → APPROVE\nopen: none" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
 }
 
 // assertNoReviewFilesWritten proves a refusal cost nothing: no journal, no

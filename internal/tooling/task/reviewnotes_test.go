@@ -65,6 +65,13 @@ func newRepoSetup(
 			}
 			sum := sha1.Sum(data)
 			return hex.EncodeToString(sum[:])[:7] + "\n", "", nil
+		case slices.Contains(args, "rev-list"):
+			// review-run's empty-diff guard (checkBranchHasCommittedDiff)
+			// needs a nonzero ahead count by default so every existing test
+			// that expects the round to proceed keeps proceeding;
+			// withAheadCount (reviewrun_test.go) overrides this per test for
+			// the guard's own refusal/allow tests.
+			return "0\t3\n", "", nil // behind 0, ahead 3
 		// Ahead of the "--short" case below on purpose: the default-branch
 		// query is `symbolic-ref --short refs/remotes/origin/HEAD`, so
 		// matching on "--short" first would answer it with HEAD's SHA and
