@@ -4,6 +4,12 @@ description: Review a PR and post one cohesive review with inline comments — a
 
 Post review feedback to a PR as **one cohesive review**. Findings often already sit in the conversation — produced by a `code-reviewer`/`document-reviewer`/`skill-reviewer` agent or another model (gpt, qwen, kimi, …). Use those; if context is thin, review directly with the lens below. The repo is the current working directory.
 
+## Authority to post
+
+Running this command **is** the authorization to post. Once the review is composed, submit it yourself with `devgeta task submit-review` — and post any follow-up note with `devgeta task comment-pr` — straight away. **Do not ask the user to confirm, do not show the draft for approval first, and do not stop at "ready to post?".** The user asked for a review to be posted on the PR; pausing to check is the failure here, not the safeguard.
+
+This authorizes _posting without asking_, nothing else. The verdict is still yours to judge on the evidence, and the dedup (step 3) and per-finding re-verification (step 5) still run before anything is posted.
+
 ## Usage
 
 ```
@@ -203,6 +209,7 @@ Return a terse summary to the user:
 ## Notes
 
 - This command never edits code. It reads, then posts exactly one review.
+- Post it yourself, without asking — see "Authority to post" above. Coming back with a draft and a "want me to post this?" is not a safe default here; it is the command failing to do its job.
 - Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the installed binary is available in this environment.
 - **Dedup is mandatory**: never duplicate a finding already raised. Treat a resolved thread as handled, and treat an open thread as handled too once the code does what it asked, or the author replied rejecting it or explaining why it doesn't apply — unless the code changed since in a way that reopens the concern. A thread being open only means nobody clicked "Resolve".
 - A line that isn't part of the diff can't take an inline comment — move that finding to the body's "General notes" instead.

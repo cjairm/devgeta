@@ -527,7 +527,17 @@ Accepted differences (deliberate, do not "fix" by halves):
   either agent. A command's permissions come from the agent it runs under,
   which a command can select with `agent:`. Unifying this needs per-agent
   frontmatter rendering from one policy source (an ADR-level change, not yet
-  made).
+  made). Because of this, **a command that posts outward — to a PR, a ticket,
+  anywhere a human sees it — must grant that authorization in its own prose.**
+  The frontmatter that used to imply it was removed once it turned out to
+  enforce nothing, and with nothing in its place the agent falls back to asking
+  the human before every post. Say plainly in the command file that running it
+  _is_ the authorization and that the agent must not ask first;
+  `TestPostingCommandsDeclareStandingAuthorization` fails the build for a
+  posting command that doesn't. The same holds for a command that acts locally
+  without a further prompt — committing, pushing, or running unattended —
+  guarded by `TestCommittingCommandsDeclareStandingAuthorization` and
+  `TestReviewLoopRunsUnattendedWithoutAsking`.
 - **The lint feedback loop is Claude-only.** `format.sh` returns linter findings
   via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
   return context, and OpenCode surfaces LSP diagnostics instead.

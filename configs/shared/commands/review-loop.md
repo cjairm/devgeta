@@ -347,6 +347,10 @@ instruction. Follow it exactly.
 
 - One call to `devgeta task review-run` is one round; this file is what turns that into a
   loop with a stopping point.
+- Run the rounds and settle findings yourself, without asking — running this command is the
+  authorization for the whole cycle, and an unattended loop that stops to ask before each
+  round is not unattended. The single exception is retiring an agent's rejection, which
+  stays the human's call (see the report section above).
 - Never invent a reviewer's verdict, and never present a run that failed, or a run that
   hit the round cap, as one that passed.
 - If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, a

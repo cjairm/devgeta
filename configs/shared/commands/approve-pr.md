@@ -4,6 +4,12 @@ description: Verify a PR's review feedback was addressed, then approve it or rep
 
 Confirm that the feedback on an already-reviewed PR was actually addressed, then approve it — or report what still blocks the merge.
 
+## Authority to post
+
+Running this command **is** the authorization to post. Once you have decided, post the verdict yourself — `devgeta task approve-pr` to approve, `devgeta task comment-pr` for the note when something still blocks. **Do not ask the user to confirm, do not show the body for approval first, and do not stop at "shall I approve?".** The user asked for the approval decision to be made and posted; pausing to check is the failure here, not the safeguard.
+
+This authorizes _posting without asking_, nothing else. Every gate below still holds: a live blocker still means no approval, and approving over open non-blocking comments still rests on a reviewer agent's `APPROVE` verdict already in this conversation.
+
 ## Usage
 
 ```
@@ -132,6 +138,7 @@ Return only this terse summary to the user — keep it out of the PR itself:
 ## Notes
 
 - This command never edits code and never runs a full review — that's `/review-pr`.
+- Post the verdict yourself, without asking — see "Authority to post" above. Reporting the decision back and waiting for a go-ahead leaves the PR exactly where it started.
 - Severity decides, not activity. A thread blocks when its concern is a blocker and still live in the code. A thread whose concern was fixed is not a blocker, and neither is an untouched suggestion or nit — approve with `LGWC` and name who left it. Resolving threads is the author's bookkeeping, not an approval gate.
 - Approving over live comments rests on a reviewer agent's `APPROVE` verdict in context. Without one, don't approve over them — point at `/review-pr` instead.
 - Failing CI is flagged, not a blocker — the user decides what to do about it.

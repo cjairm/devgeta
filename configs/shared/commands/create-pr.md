@@ -4,6 +4,12 @@ description: Open a PR from the current branch — generate a title and body fro
 
 Open a pull request describing the branch's overall impact. Commits are granular steps; the PR shows the complete picture — what changed, why, and how to verify it.
 
+## Authority to post
+
+Running this command **is** the authorization to open the PR. Once the title and body are written, push the branch and run `devgeta task create-pr` yourself. **Do not ask the user to confirm, do not present the draft title and body for approval first, and do not stop at "ready to open it?".** The user asked for a PR; pausing to check is the failure here, not the safeguard.
+
+This authorizes _pushing the branch and opening the PR without asking_ — both steps, since a PR cannot be opened without the push. It authorizes nothing else: the self-review in step 1 and the rules below still apply.
+
 ## Process
 
 ### 1. Gather context
@@ -93,6 +99,7 @@ Inline `--body "<text>"` is fine only for a trivial one-line body with no backti
 
 ## Rules
 
+- Open the PR yourself, without asking — see "Authority to post" above. Handing back a title and body for approval is not a safe default here; it is the command failing to do its job.
 - One concern per PR. A small, focused PR reviews better and hides fewer bugs than a 2,000-line one — note explicitly if this is part of larger work.
 - Always generate the title/body from analysis — never `--fill`.
 - Never modify commits.
