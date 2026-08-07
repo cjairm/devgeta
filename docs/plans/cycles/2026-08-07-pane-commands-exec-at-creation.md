@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-07
 **Estimated Duration:** ~6-8 hours
-**Status:** Draft
+**Status:** Approved — awaiting implementation
 
 ---
 
@@ -145,18 +145,20 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
 
 ### File Changes
 
-| Action | File                                     | Description                                                        |
-| ------ | ---------------------------------------- | ------------------------------------------------------------------ |
-| Modify | `internal/apps/tmux/tmux.go`             | command param on the 4 pane-creating calls; send-keys length guard |
-| Modify | `internal/apps/tmux/tmux_test.go`        | tests for both                                                     |
-| Modify | `internal/commands/shell_lookup.go`      | resolved-path variant; path-shaped validation                      |
-| Modify | `internal/commands/shell_lookup_test.go` | classification tests incl. alias/function/builtin text             |
-| Modify | `internal/tooling/worktree/layout.go`    | shell resolution, recipe builders, `Pane` resolution, quoting      |
-| Modify | `internal/tooling/worktree/aicoder.go`   | launch recipe constant; `Command()` semantics                      |
-| Modify | `internal/tooling/worktree/worktree.go`  | create paths exec; review split converts; `validateLayout` returns |
-| Modify | `configs/templates/devgeta.zsh.tmpl`     | alias lines fed by the Go constant                                 |
-| Modify | `internal/tooling/worktree/*_test.go`    | ordered tmux-call sequences updated                                |
-| Modify | `docs/spec.md`                           | only if user-visible behavior changes                              |
+| Action | File                                     | Description                                                         |
+| ------ | ---------------------------------------- | ------------------------------------------------------------------- |
+| Modify | `internal/apps/tmux/tmux.go`             | command param on the 4 pane-creating calls; send-keys length guard  |
+| Modify | `internal/apps/tmux/tmux_test.go`        | tests for both                                                      |
+| Modify | `internal/commands/shell_lookup.go`      | resolved-path variant; path-shaped validation                       |
+| Modify | `internal/commands/shell_lookup_test.go` | classification tests incl. alias/function/builtin text              |
+| Modify | `internal/tooling/worktree/layout.go`    | shell resolution, recipe builders, `Pane` resolution, quoting       |
+| Modify | `internal/tooling/worktree/aicoder.go`   | `Command()` semantics; reads the recipe constants                   |
+| Modify | `pkg/constants/`                         | launch recipe constants (the one package both sides already import) |
+| Modify | `internal/config/fromFile.go:590`        | `RegenerateShellConfig` passes the recipes into the template data   |
+| Modify | `internal/tooling/worktree/worktree.go`  | create paths exec; review split converts; `validateLayout` returns  |
+| Modify | `configs/templates/devgeta.zsh.tmpl`     | alias literals replaced by template values                          |
+| Modify | `internal/tooling/worktree/*_test.go`    | ordered tmux-call sequences updated                                 |
+| Modify | `docs/spec.md`                           | only if user-visible behavior changes                               |
 
 ### Step-by-Step
 
@@ -167,7 +169,13 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
   **exact** argument list these produce today (a plain shell pane), so existing
   behavior is byte-identical when no command is given.
 - Append the command as the final argument, after the existing flags.
-- Verify: `go build ./...`
+- Add `DefaultShell() (string, bool)` — `show-options -gv default-shell` — for
+  step 4's shell resolution. The wrapper has **no** option-reading API today, so
+  this is new surface. Model it on `CurrentSession`: return `("", false)` on a
+  failed or empty query rather than an error, because every caller treats "no
+  answer" as "skip this candidate", not as a failure.
+- Verify: `go build ./...` and `go test ./internal/apps/tmux/` — assert the
+  empty-command argument list is byte-identical to today's.
 
 #### Step 2: tmux wrapper — send-keys refuses to truncate
 
@@ -180,33 +188,106 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
 
 #### Step 3: `shell_lookup` returns the resolved path
 
+- **The probe script has to change first — today it throws the path away.** The
+  script is `command -v -- "$1" >/dev/null 2>&1; printf '\n<marker>%d\n' "$?"`
+  (`shell_lookup.go:97`): stdout is redirected to `/dev/null`, so there is no
+  path to extract and no amount of parsing recovers one. Drop the `>/dev/null`
+  and keep stderr suppressed (`2>/dev/null`), so stdout carries the resolved
+  path and then the marker line.
+- The marker line stays the proof the lookup ran (ADR-0016) — unchanged.
+- Read the path as the **last non-empty line before the marker**, not simply
+  "the output before it": the existing comment on that script documents rc-file
+  banner noise landing on stdout, and that noise now shares the stream with the
+  path.
 - Add a variant returning `(path string, result ShellLookupResult)`. Keep the
   existing three-valued function working for callers that only need the verdict.
-- The marker line stays the proof the lookup ran (ADR-0016). Read the path from
-  stdout **before** the marker.
 - Accept the path **only if it begins with `/`**. Alias text
   (`alias cc='…'`), a bare function name, a bare builtin name, and empty output
   are all "no path".
-- Verify: `go test ./internal/commands/` — table-test `classifyShellLookup`'s new
-  path extraction against real observed shapes: an absolute path, `alias cc='…'`,
-  a bare name, empty, and a mangled/truncated marker.
+- Verify: `go test ./internal/commands/`
+  - table-test the pure classifier against real observed shapes: an absolute
+    path, `alias cc='…'`, a bare name, empty, a mangled/truncated marker, and
+    **rc-file noise preceding a valid path**.
+  - **plus a test that exercises the probe script itself**, not only fixture
+    strings — fixtures cannot catch a script that redirects its own output away,
+    which is exactly the defect this step was written with. Run the real probe
+    against a command known to exist and assert an absolute path comes back.
 
 #### Step 4: Shell resolution + the two launch recipes
 
-- In `layout.go` (next to `shellSingleQuote`), add:
-  - `resolveShell()` — first usable of `$SHELL`, tmux `default-shell`, `/bin/sh`;
-    usable means absolute **and** stats as an existing executable regular file.
-    `/bin/sh` is the floor, so this cannot fail.
-  - A recipe builder producing `<shell> -ic '<script>; exec <shell> -i'` for the
-    interactive form and the direct form for a resolved path.
+- **Shell resolution takes its candidates as input; it does not reach for tmux.**
+  `layout.go` imports only `fmt`, `strings` and `internal/config` — it has no
+  tmux dependency, and giving it one to read an option would invert the layering.
+  So:
+  - Step 1 adds `Tmux.DefaultShell() (string, bool)` to the wrapper
+    (`show-options -gv default-shell`), alongside the other option-free
+    accessors. There is **no** option-reading API on the wrapper today; this is
+    new surface, not a call that already exists.
+  - `resolveShell(candidates ...string) string` is a pure function next to
+    `shellSingleQuote`: first usable of what it is handed, then `/bin/sh`.
+    Usable = absolute **and** stats as an existing executable regular file.
+  - The caller (which already holds `w.Tmux`) supplies
+    `$SHELL, <tmux default-shell if the query succeeded>`. **A failed or empty
+    tmux query simply drops that candidate** — it is never an error, never
+    logged as one, and never blocks a create. `/bin/sh` is the floor, so
+    resolution cannot fail.
+- **A devgeta-owned launch is structured, not a "path plus prompt" pair.** The
+  create paths do not all have the same argument shape, so a two-slot template
+  cannot express them. The forms that must survive:
+
+  | Pane                  | Program    | Arguments                                    |
+  | --------------------- | ---------- | -------------------------------------------- |
+  | nvim                  | `nvim`     | none                                         |
+  | claude, no prompt     | `claude`   | none (env `CLAUDE_CODE_NO_FLICKER=1`)        |
+  | claude, with prompt   | `claude`   | `<prompt>` (positional)                      |
+  | opencode, no prompt   | `opencode` | none                                         |
+  | opencode, with prompt | `opencode` | `--prompt`, `<prompt>`                       |
+  | reviewer              | `opencode` | `--agent`, `<agent>`, `--prompt`, `<prompt>` |
+  | shell pane            | —          | no command at all                            |
+
+  So introduce a small devgeta-owned launch value — **program, argument list, and
+  optional env prefix** — and build the command string by quoting each element
+  independently and joining. The env prefix stays a devgeta-owned constant and is
+  never interpolated from user data.
+
+  This replaces string concatenation as the representation: `AICoder.Command()` /
+  `PromptCommand()` and `ReviewCommand()` currently each hand-assemble a string
+  (`aicoder.go:112`, `:114`, `:144`), which is exactly why a prompt and an
+  `--agent` flag cannot share one template today.
+
+  **`--pane` values stay unparsed.** They are command lines, not argument lists —
+  devgeta never splits them, and the structured form does not apply to them.
+  This is the same boundary ADR-0011 drew for quoting, in a second place.
+
+- Both recipes end with the **same-shell trailing `exec`**, not just the
+  interactive one. ADR-0020 part 2 applies to every created pane, so a coder that
+  quits leaves a shell behind whether or not a path resolved. Only the
+  interactive fallback adds `-ic`:
+
+  | Case                | Recipe                                        |
+  | ------------------- | --------------------------------------------- |
+  | Resolved path       | `<rendered launch>; exec '<shell>'`           |
+  | Fallback / `--pane` | `'<shell>' -ic '<script>; exec '<shell>' -i'` |
+
+  where `<rendered launch>` is the structured value above, each element quoted.
+
 - Apply ADR-0020's quoting table exactly: resolved path quoted, prompt quoted,
   shell quoted at **both** interpolation sites, the assembled inner script quoted
   as a whole, `--pane` value unquoted _within_ its script.
 - The trailing `exec` must be inside the **same** shell invocation — a nested one
   loses a `cd` from a `--pane` value.
 - Verify: `go test ./internal/tooling/worktree/` — unit-test the builders as pure
-  string functions, including a `--pane` value containing a single quote and a
-  shell path containing a space.
+  string functions:
+  - **One case per row of the launch table above** (nvim, claude ±prompt,
+    opencode ±prompt, reviewer, shell pane). This is the regression net for
+    n18: a builder that silently drops `--agent` or turns nvim into
+    `nvim '<prompt>'` must fail here.
+  - A `--pane` value containing a single quote, and a shell path containing a
+    space.
+  - **Both recipes end in the trailing exec.**
+  - `resolveShell` handed candidates directly (a non-existent absolute path, a
+    directory, a non-executable file, an empty string), asserting the `/bin/sh`
+    floor — no tmux, no env mutation needed.
 
 #### Step 5: Carry the probe result from check to launch
 
@@ -218,18 +299,55 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
 - Store the resolution on the pane the same way `check`/`prompt` already live
   there (constructor-set, unexported), and make sure `clone` still gives each
   create its own copy.
-- Verify: `go build ./... && go test ./internal/tooling/worktree/`
+- **`validateLayout` is not the only probe site — the review path has its own.**
+  `LaunchReviewInRepo` calls `(&OpenCodeCoder{}).EnsureInstalled()` directly
+  (`worktree.go:1967`) before building its ad-hoc pane, and that call's result is
+  currently discarded. Routing resolution only through `validateLayout` would
+  leave the reviewer launch to re-probe or silently fall back — the exact
+  "one probe, one recipe" invariant ADR-0020 requires, broken in the one path
+  that does its own checking.
+
+  Give the reviewer a **single resolution-carrying constructor** used by both of
+  its launches — the create branch (no live window) and the split branch (live
+  window) — so the one probe feeds both. This composes with step 7's requirement
+  that `LaunchReviewInRepo` stop building a bare `Pane{}` literal: the
+  constructor is where the resolution lands.
+
+- Verify: `go build ./... && go test ./internal/tooling/worktree/` — include a
+  test that a reviewer launch probes **once**, by counting probe invocations
+  through the existing `ShellCommandLookupFn` seam (`setShellCommandExistsFn`).
 
 #### Step 6: The launch recipe becomes the source of the alias
 
-- Move the recipe (`CLAUDE_CODE_NO_FLICKER=1 claude`, `opencode`) into a Go
-  constant, and render `devgeta.zsh`'s alias lines from it.
+**The constant cannot live in `internal/tooling/worktree`.** The only renderer of
+`devgeta.zsh` is `GlobalConfig.RegenerateShellConfig`
+(`internal/config/fromFile.go:590`), and `internal/config` **cannot** import
+`internal/tooling/worktree` — worktree already imports config in four files, so
+that edge would be a cycle. The repo has already solved this exact problem once:
+`WorktreeLocationShared` / `WorktreeLocationInRepo` live in
+`internal/config/fromFile.go` with a comment explaining that config is the owner
+which adds no new edge, and worktree reads them back through the existing one.
+
+- Put the recipe constants in **`pkg/constants`**. Verified that both
+  `internal/config` (`fromFile.go`, `reconcile.go`) and
+  `internal/tooling/worktree` (`repo_candidates.go`) already import it, so
+  neither side gains an edge and neither has to own the other's value. (If that
+  turns out not to fit, the fallback is `internal/config`, following the
+  `WorktreeLocation*` precedent above — **not** worktree.)
+- **`RegenerateShellConfig` must actually pass them to the template.** Today it
+  hands the template only `ShellFeatures`; the alias lines are literals in
+  `devgeta.zsh.tmpl`. Extend the template data with the recipe values and replace
+  those literals. Without this the constant exists but changes nothing — the plan
+  previously said "render from it" without naming the renderer or its data, which
+  is not an implementable instruction.
 - `ensureToolInstalled` now probes the **binary**, since that is what the pane
   execs. Update its doc comment — its stated invariant ("probe exactly what the
   pane will launch") is preserved, but the thing being probed changed.
 - Add a test against the embedded configs FS asserting the rendered alias matches
   the constant, so the two cannot drift.
-- Verify: `go test ./internal/tooling/worktree/ ./internal/apps/...`
+- Verify: `go test ./internal/config/ ./internal/tooling/worktree/ ./internal/apps/...`
+  and `go build ./...` (a cycle shows up here immediately if the constant landed
+  in the wrong package).
 
 #### Step 7: Create paths pass commands at creation
 
