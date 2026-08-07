@@ -516,7 +516,7 @@ func (w *WorktreeManager) FollowWindow(windowName string) error {
 // single-pane path gave, never a window with some panes up alongside a
 // worktree that's still there.
 func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layout Layout) error {
-	if err := w.Tmux.CreateWindow(windowName, wtPath); err != nil {
+	if err := w.Tmux.CreateWindow(windowName, wtPath, ""); err != nil {
 		_ = w.Git.RemoveWorktree(wtPath, true, "")
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}
@@ -566,7 +566,7 @@ func (w *WorktreeManager) buildWindowPanes(
 			// split, the new pane is active, and sendKeys below (send-keys
 			// with no pane index) always targets whichever pane in the
 			// window is currently active.
-			if err := w.Tmux.SplitWindow(target, wtPath, pane.Split); err != nil {
+			if err := w.Tmux.SplitWindow(target, wtPath, pane.Split, ""); err != nil {
 				return fmt.Errorf(
 					"layout %q, pane %d: failed to split window: %w",
 					layout.Name, i+1, err,
@@ -2059,7 +2059,7 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 		return nil
 	}
 
-	if err := w.Tmux.SplitWindow(target, wtPath, "vertical"); err != nil {
+	if err := w.Tmux.SplitWindow(target, wtPath, "vertical", ""); err != nil {
 		return fmt.Errorf("failed to split window %s: %w", windowName, err)
 	}
 
@@ -2146,11 +2146,11 @@ func (w *WorktreeManager) createWindowWithLayout(
 ) error {
 	session := TmuxSessionName(repoSlug)
 	if w.Tmux.HasSession(session) {
-		if err := w.Tmux.CreateWindowInSession(session, windowName, wtPath); err != nil {
+		if err := w.Tmux.CreateWindowInSession(session, windowName, wtPath, ""); err != nil {
 			return fmt.Errorf("failed to create tmux window: %w", err)
 		}
 	} else {
-		if err := w.Tmux.CreateSessionWithWindow(session, windowName, wtPath); err != nil {
+		if err := w.Tmux.CreateSessionWithWindow(session, windowName, wtPath, ""); err != nil {
 			return fmt.Errorf("failed to create tmux session: %w", err)
 		}
 	}

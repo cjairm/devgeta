@@ -145,8 +145,18 @@ func (t *Tmux) CreateSession(name, workdir string) error {
 // window is named windowName, rooted at workdir. Used when a worktree's session
 // does not yet exist, so the session starts with the worktree window directly
 // instead of a stray default window.
-func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir string) error {
-	return t.ExecuteCommand("new-session", "-d", "-s", session, "-n", windowName, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (tmux execs
+// it as the pane's process rather than devgeta typing it in afterward - see
+// ADR-0020). An empty command produces the exact argument list this method
+// produced before command existed, so existing callers passing "" see
+// byte-identical behavior.
+func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command string) error {
+	args := []string{"new-session", "-d", "-s", session, "-n", windowName, "-c", workdir}
+	if command != "" {
+		args = append(args, command)
+	}
+	return t.ExecuteCommand(args...)
 }
 
 // CreateWindowInSession creates a window inside a specific session.
@@ -154,8 +164,16 @@ func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir string) erro
 // -d for the same reason CreateWindow passes it: building a window must never
 // move the attached client. Without it, a client attached to `session` gets
 // dragged to the new window, overriding a caller that decided to stay put.
-func (t *Tmux) CreateWindowInSession(session, name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-d", "-t", session+":", "-n", name, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (see
+// ADR-0020). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) CreateWindowInSession(session, name, workdir, command string) error {
+	args := []string{"new-window", "-d", "-t", session + ":", "-n", name, "-c", workdir}
+	if command != "" {
+		args = append(args, command)
+	}
+	return t.ExecuteCommand(args...)
 }
 
 // SessionInfo describes one tmux session for listing purposes.
@@ -460,6 +478,30 @@ func (t *Tmux) CurrentSession() (string, bool) {
 	return name, true
 }
 
+// DefaultShell returns tmux's server-global "default-shell" option value -
+// the shell tmux itself would launch a pane with when nothing more specific
+// is given. Unlike CurrentSession, this does not gate on running inside a
+// tmux client: "show-options -gv default-shell" is a server-global query that
+// answers from outside a tmux client too, and the pane-creation paths that
+// need this run from outside tmux (a plain `dg wt create` invocation).
+// Returns ("", false) on a failed or empty query - callers treat "no answer"
+// as "skip this candidate", not as a failure.
+func (t *Tmux) DefaultShell() (string, bool) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args:    []string{"show-options", "-gv", "default-shell"},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", false
+	}
+	shell := strings.TrimSpace(stdout)
+	if shell == "" {
+		return "", false
+	}
+	return shell, true
+}
+
 // SwitchToSession moves the attached client to the given session.
 func (t *Tmux) SwitchToSession(name string) error {
 	return t.ExecuteCommand("switch-client", "-t", name)
@@ -495,26 +537,43 @@ func (t *Tmux) SendKeys(session, keys string) error {
 // dashboard's worktree.attach_after_create: false was overridden by this call
 // before it was ever read. Moving the client is now always a separate,
 // explicit step (SwitchToWindow), so only a caller that asks for it gets it.
-func (t *Tmux) CreateWindow(name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-d", "-n", name, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (see
+// ADR-0020). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) CreateWindow(name, workdir, command string) error {
+	args := []string{"new-window", "-d", "-n", name, "-c", workdir}
+	if command != "" {
+		args = append(args, command)
+	}
+	return t.ExecuteCommand(args...)
 }
 
 // SplitWindow splits an existing window, rooting the new pane at workdir.
 // direction describes the resulting pane arrangement (this cycle's Layout
 // model's language), not tmux's own flag letters: "vertical" means panes
 // side by side (tmux's -h), "horizontal" means panes stacked (tmux's -v).
-func (t *Tmux) SplitWindow(window, workdir, direction string) error {
+//
+// command, when non-empty, is appended as the new pane's shell-command (see
+// ADR-0020). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) SplitWindow(window, workdir, direction, command string) error {
+	var args []string
 	switch direction {
 	case "vertical":
-		return t.ExecuteCommand("split-window", "-h", "-t", window, "-c", workdir)
+		args = []string{"split-window", "-h", "-t", window, "-c", workdir}
 	case "horizontal":
-		return t.ExecuteCommand("split-window", "-v", "-t", window, "-c", workdir)
+		args = []string{"split-window", "-v", "-t", window, "-c", workdir}
 	default:
 		return fmt.Errorf(
 			"unknown split direction %q (want \"vertical\" or \"horizontal\")",
 			direction,
 		)
 	}
+	if command != "" {
+		args = append(args, command)
+	}
+	return t.ExecuteCommand(args...)
 }
 
 // ActivePaneID returns the tmux pane_id (e.g. "%12") of window's currently

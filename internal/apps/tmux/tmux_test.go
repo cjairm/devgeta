@@ -1363,20 +1363,49 @@ func TestKillPane(t *testing.T) {
 }
 
 func TestCreateWindow(t *testing.T) {
-	mockApp := testutil.NewMockApp()
-	mockApp.Base.SetExecCommandResult("", "", nil)
-	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	t.Run("empty command is byte-identical to today's argv", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	if err := app.CreateWindow("wt-feature", "/tmp/repo"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	last := mockApp.Base.GetLastExecCommandCall()
-	if last == nil {
-		t.Fatal("no ExecCommand call recorded")
-	}
-	if last.Args[0] != "new-window" {
-		t.Errorf("expected 'new-window', got %q", last.Args[0])
-	}
+		if err := app.CreateWindow("wt-feature", "/tmp/repo", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{"new-window", "-d", "-n", "wt-feature", "-c", "/tmp/repo"}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
+	t.Run("non-empty command is appended as the final argv element", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.CreateWindow("wt-feature", "/tmp/repo", "claude 'hello'"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"new-window",
+			"-d",
+			"-n",
+			"wt-feature",
+			"-c",
+			"/tmp/repo",
+			"claude 'hello'",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
 }
 
 func TestSplitWindow(t *testing.T) {
@@ -1385,7 +1414,7 @@ func TestSplitWindow(t *testing.T) {
 		mockApp.Base.SetExecCommandResult("", "", nil)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-		if err := app.SplitWindow("wt-feature", "/tmp/repo", "vertical"); err != nil {
+		if err := app.SplitWindow("wt-feature", "/tmp/repo", "vertical", ""); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		last := mockApp.Base.GetLastExecCommandCall()
@@ -1408,7 +1437,7 @@ func TestSplitWindow(t *testing.T) {
 		mockApp.Base.SetExecCommandResult("", "", nil)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-		if err := app.SplitWindow("wt-feature", "/tmp/repo", "horizontal"); err != nil {
+		if err := app.SplitWindow("wt-feature", "/tmp/repo", "horizontal", ""); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		last := mockApp.Base.GetLastExecCommandCall()
@@ -1426,11 +1455,36 @@ func TestSplitWindow(t *testing.T) {
 		}
 	})
 
+	t.Run("non-empty command is appended as the final argv element", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SplitWindow(
+			"wt-feature",
+			"/tmp/repo",
+			"vertical",
+			"opencode --prompt 'hi'",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"split-window", "-h", "-t", "wt-feature", "-c", "/tmp/repo", "opencode --prompt 'hi'",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
 	t.Run("unknown direction returns error without executing a command", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-		err := app.SplitWindow("wt-feature", "/tmp/repo", "diagonal")
+		err := app.SplitWindow("wt-feature", "/tmp/repo", "diagonal", "")
 		if err == nil {
 			t.Fatal("expected error for unknown direction")
 		}
@@ -1444,28 +1498,63 @@ func TestSplitWindow(t *testing.T) {
 }
 
 func TestCreateWindowInSession(t *testing.T) {
-	mockApp := testutil.NewMockApp()
-	mockApp.Base.SetExecCommandResult("", "", nil)
-	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	t.Run("empty command is byte-identical to today's argv", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	if err := app.CreateWindowInSession("my-session", "wt-feature", "/tmp/repo"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	last := mockApp.Base.GetLastExecCommandCall()
-	if last == nil || last.Args[0] != "new-window" {
-		t.Errorf("expected 'new-window', got %v", last)
-	}
-	// Target should include session
-	found := false
-	for _, arg := range last.Args {
-		if arg == "my-session:" {
-			found = true
-			break
+		if err := app.CreateWindowInSession(
+			"my-session",
+			"wt-feature",
+			"/tmp/repo",
+			"",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-	}
-	if !found {
-		t.Errorf("expected session target 'my-session:' in args %v", last.Args)
-	}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"new-window", "-d", "-t", "my-session:", "-n", "wt-feature", "-c", "/tmp/repo",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
+	t.Run("non-empty command is appended as the final argv element", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.CreateWindowInSession(
+			"my-session",
+			"wt-feature",
+			"/tmp/repo",
+			"claude 'hi'",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"new-window",
+			"-d",
+			"-t",
+			"my-session:",
+			"-n",
+			"wt-feature",
+			"-c",
+			"/tmp/repo",
+			"claude 'hi'",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
 }
 
 // TestCreateWindowsAreDetached locks in the one property that makes "create
@@ -1482,12 +1571,12 @@ func TestCreateWindowsAreDetached(t *testing.T) {
 	}{
 		{
 			name: "CreateWindow",
-			call: func(a *tmux.Tmux) error { return a.CreateWindow("wt-feature", "/tmp/repo") },
+			call: func(a *tmux.Tmux) error { return a.CreateWindow("wt-feature", "/tmp/repo", "") },
 		},
 		{
 			name: "CreateWindowInSession",
 			call: func(a *tmux.Tmux) error {
-				return a.CreateWindowInSession("my-session", "wt-feature", "/tmp/repo")
+				return a.CreateWindowInSession("my-session", "wt-feature", "/tmp/repo", "")
 			},
 		},
 	}
@@ -1513,17 +1602,60 @@ func TestCreateWindowsAreDetached(t *testing.T) {
 }
 
 func TestCreateSessionWithWindow(t *testing.T) {
-	mockApp := testutil.NewMockApp()
-	mockApp.Base.SetExecCommandResult("", "", nil)
-	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	t.Run("empty command is byte-identical to today's argv", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	if err := app.CreateSessionWithWindow("my-session", "wt-feature", "/tmp/repo"); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	last := mockApp.Base.GetLastExecCommandCall()
-	if last == nil || last.Args[0] != "new-session" {
-		t.Errorf("expected 'new-session', got %v", last)
-	}
+		if err := app.CreateSessionWithWindow(
+			"my-session",
+			"wt-feature",
+			"/tmp/repo",
+			"",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"new-session", "-d", "-s", "my-session", "-n", "wt-feature", "-c", "/tmp/repo",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
+	t.Run("non-empty command is appended as the final argv element", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.CreateSessionWithWindow(
+			"my-session", "wt-feature", "/tmp/repo", "claude 'hi'",
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"new-session",
+			"-d",
+			"-s",
+			"my-session",
+			"-n",
+			"wt-feature",
+			"-c",
+			"/tmp/repo",
+			"claude 'hi'",
+		}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
 }
 
 func TestHasWindow(t *testing.T) {
@@ -1665,6 +1797,50 @@ func TestCurrentSession(t *testing.T) {
 
 		if _, ok := app.CurrentSession(); ok {
 			t.Error("expected false on exec error")
+		}
+	})
+}
+
+func TestDefaultShell(t *testing.T) {
+	t.Run("returns the shell on a successful query, outside tmux", func(t *testing.T) {
+		// Unlike CurrentSession, this must not gate on TMUX: the create paths
+		// that need it run from outside a tmux client.
+		t.Setenv("TMUX", "")
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("/bin/zsh\n", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		shell, ok := app.DefaultShell()
+		if !ok || shell != "/bin/zsh" {
+			t.Errorf("expected (/bin/zsh, true), got (%q, %v)", shell, ok)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil {
+			t.Fatal("no ExecCommand call recorded")
+		}
+		expectedArgs := []string{"show-options", "-gv", "default-shell"}
+		if !slices.Equal(last.Args, expectedArgs) {
+			t.Errorf("expected args %v, got %v", expectedArgs, last.Args)
+		}
+	})
+
+	t.Run("returns false on exec error", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "no server", errors.New("no server"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if shell, ok := app.DefaultShell(); ok {
+			t.Errorf("expected false on exec error, got (%q, %v)", shell, ok)
+		}
+	})
+
+	t.Run("returns false on empty stdout", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("\n", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if shell, ok := app.DefaultShell(); ok {
+			t.Errorf("expected false on empty stdout, got (%q, %v)", shell, ok)
 		}
 	})
 }
