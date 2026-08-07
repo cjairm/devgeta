@@ -44,6 +44,18 @@ func newRepoSetup(
 	branch string,
 ) (*TaskManager, string, *commands.MockBaseCommand) {
 	t.Helper()
+
+	// The snapshot pointer is inherited from whatever process runs the suite,
+	// and loadJournalForDisplay reads it on every review-notes call. A
+	// reviewer runs its own `go test ./...` from inside a round, where
+	// review-run has set this to that round's snapshot — so without clearing
+	// it here, these tests would display an unrelated external journal
+	// instead of the one they just wrote, and fail. Clearing it in the shared
+	// setup is what keeps a future test from having to remember. The handful
+	// of tests that need a pointer set it with their own t.Setenv after this
+	// call, which wins; both values are restored at cleanup.
+	t.Setenv(ReviewJournalSnapshotEnvVar, "")
+
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
 	if err := os.MkdirAll(gitDir, 0o755); err != nil {

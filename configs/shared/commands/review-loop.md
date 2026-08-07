@@ -98,12 +98,19 @@ run another round, and do not attempt to fix anything based on a run that did no
 complete. Go straight to the terminal report, and name the failing reviewer in it:
 
 - `ERROR(<reason>)`: report the reason verbatim.
-- `NO VERDICT`: there is no reason to report — the outcome is the bare string. State
-  that the reviewer completed without producing a verdict. Do not invent a reason; the
-  outcome carries none, and making one up would misreport what happened.
+- `NO VERDICT(<reason>)`: the reviewer wrote no report at all, and the text in parentheses
+  is OpenCode's own words for why. Report it verbatim, the same as for `ERROR`.
+- `NO VERDICT` with nothing in parentheses: there is no reason to report — the outcome is
+  the bare string. State that the reviewer completed without producing a verdict. Do not
+  invent a reason; the outcome carries none, and making one up would misreport what
+  happened.
 
-There is no retry in this version — a flaky run and a broken one look the same from
-here, so both get reported rather than silently rerun.
+This loop never re-runs a round — a flaky round and a broken one look the same from here,
+so both get reported rather than silently rerun. One level below, `review-run` does retry:
+a reviewer whose attempt produced no report at all is launched once more inside the same
+round (devgeta's ADR-0020), and the outcome you are reading already accounts for it. So a
+failure that reaches you has already survived the only retry there is — there is nothing
+left for this loop to rerun.
 
 ### 3. Check for clean approval
 
