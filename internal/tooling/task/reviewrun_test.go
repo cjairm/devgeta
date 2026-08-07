@@ -771,20 +771,41 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 
 // --- progress lines --------------------------------------------------------
 
-// The nil-ProgressOut default must resolve to exactly os.Stderr — never
-// os.Stdout, which would silently merge progress into the parseable payload
+// The nil-ProgressOut default must resolve to os.Stderr — never os.Stdout,
+// which would silently merge progress into the parseable payload
 // docs/guides/task-design.md governs. A TaskManager built as a bare literal
 // (bypassing New()) is exactly the shape every test in this file uses, so
-// this is what actually pins the fallback; nothing else in the suite
-// compares against os.Stderr by identity.
+// this is what actually pins the fallback; nothing else in the suite pins
+// which stream the default resolves to.
+//
+// The assertion installs its own sentinel over os.Stderr instead of comparing
+// against the real one, because under `go test -json` the harness itself sets
+// `os.Stderr = os.Stdout` (testing.go, (*M).Run — it makes the two share one
+// pfd so their writes cannot interleave and confuse test2json). Once the two
+// variables name the same *os.File, every naive form of this check is broken:
+// `got == os.Stdout` is true by construction and fails a correct
+// implementation, and both `got == os.Stderr` and an fd comparison against
+// fd 2 stop distinguishing the two streams at all — os.Stderr's own Fd() is 1
+// under that harness — so they would pass a buggy `return os.Stdout`.
+// Swapping in a file that is neither stream makes the check mean the one
+// thing that matters under both harnesses: progressWriter reads os.Stderr.
 func TestReviewRunProgressWriterDefaultsToStderr(t *testing.T) {
-	tm := &TaskManager{}
-	got := tm.progressWriter()
-	if got != io.Writer(os.Stderr) {
-		t.Fatalf("expected the nil ProgressOut default to be os.Stderr, got %v", got)
+	sentinel, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
 	}
-	if got == io.Writer(os.Stdout) {
-		t.Fatalf("the nil ProgressOut default must never be os.Stdout")
+	realStderr := os.Stderr
+	os.Stderr = sentinel
+	t.Cleanup(func() {
+		os.Stderr = realStderr
+		if err := sentinel.Close(); err != nil {
+			t.Logf("closing the stderr sentinel: %v", err)
+		}
+	})
+
+	tm := &TaskManager{}
+	if got := tm.progressWriter(); got != io.Writer(sentinel) {
+		t.Fatalf("expected the nil ProgressOut default to be os.Stderr, got %v", got)
 	}
 }
 
