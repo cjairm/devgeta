@@ -140,12 +140,19 @@ no-third-undocumented-outcome rule as the sibling cycle.
       `refs/pull/<n>/head`, merge-base-correct range, immutable SHAs; the PR-scoped
       journal key; and `review-run`'s explicit-range mode (write before
       implementation, §11)
-- [ ] gh wrapper method returning one PR's review-request state: current
-      `reviewRequests` logins, PR state, `isDraft`, base/head ref names, fork owner,
-      and the authenticated user's latest submitted review state
+- [x] gh wrapper method: `AuthenticatedLogin()` (`gh api user --jq .login`) — the
+      account the request must name. The PR side needed no new wrapper method: the
+      existing `PRView(prNumber, fields...)` already selects fields, so the state read
+      is `PRView(pr, "state", "isDraft", "reviewRequests", "reviews")` and the field
+      choice lives beside its parsing in the task package (the `prBaseBranch`
+      precedent from Step 2). **Corrected against this bullet as written:**
+      `baseRefName`, `headRefName` and the fork owner are NOT queried — nothing in the
+      three-line contract or the §5 table consumes them, `pr-review-target` already
+      owns base/head resolution, and requesting them here would be unconsumed data
+      plus a second spelling of a fact that already has one
 - [x] git wrapper method: bounded read-only fetch of a PR ref (`refs/pull/<n>/head`)
       and a base ref, plus merge-base resolution
-- [ ] `dg task pr-review-state [--pr N]` — one tick's state read (task-design output)
+- [x] `dg task pr-review-state [--pr N]` — one tick's state read (task-design output)
 - [x] `dg task pr-review-target [--pr N]` — fetch, then print the immutable
       `base:`/`head:` SHAs (merge-base and PR head), the journal key, and the
       noise-filtered changed-file list. This output is **the review target**: the one
@@ -716,7 +723,11 @@ On a real PR in a work repo (from its checkout), with two configured models:
     running → step 7's state re-check posts nothing and takes the fresh state's row
 13. Inspect a posted review on GitHub → it is anchored to the reviewed SHA
     (`commit_id`), and its journal entries stamp the same SHA
-14. Merge the PR → tick reports closed, stops
+14. Dismiss your own approval on the PR → next tick reports `my-review: none`, not
+    `approved`, and the loop keeps watching instead of stopping — this is the one
+    wire fact the dismissed-approval rule rests on (gh reporting `DISMISSED`
+    rather than `APPROVED`), and nothing else here probes it live
+15. Merge the PR → tick reports closed, stops
 
 ### Step 7: Docs + close out
 
@@ -741,7 +752,7 @@ the working tree elsewhere entirely.
 
 ### Manual
 
-Step 6's twelve-point live sequence, plus:
+Step 6's fifteen-point live sequence, plus:
 
 1. **Fork PR** — `pr-review-target` resolves head via `refs/pull/<n>/head` and the
    review shows the fork's changes

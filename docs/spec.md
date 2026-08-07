@@ -839,6 +839,7 @@ into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
 | `pr-view`               | `--pr N`                                      | Compact PR summary (number, title, state, mergeable, review, branch)                                      |
 | `pr-checks`             | `--pr N`                                      | CI check status, one line per check; failing checks get an indented log digest appended (see below)       |
 | `pr-review-target`      | `--pr N`                                      | Immutable review target for a PR: merge-base/head SHAs, journal key, noise-filtered file list (see below) |
+| `pr-review-state`       | `--pr N`                                      | Whether a PR wants a review from you right now: `pr:` / `requested:` / `my-review:` (see below)           |
 | `current-pr`            | —                                             | PR number for the current branch                                                                          |
 | `current-repo`          | —                                             | Current repository as `owner/name`                                                                        |
 
@@ -924,6 +925,39 @@ not reviews run. Remove them by hand with
 `git update-ref -d refs/devgeta/pr/<n>/head` (and `.../base`).
 
 See [ADR-0021](decisions/ADR-0021-a-pr-review-targets-immutable-shas.md).
+
+**`pr-review-state`.** Reads one pull request's current review-request state —
+the trigger a PR review loop decides from — and prints exactly three lines:
+
+```
+pr: open
+requested: yes
+my-review: none
+```
+
+- `pr` is `open`, `draft`, `merged`, or `closed`. `draft` is reported
+  separately from `open` because a requested draft is still unfinished work; a
+  caller that treats drafts as not-yet-reviewable needs to see it. A **closed
+  draft reads `closed`**, not `draft` — it is over, not waiting.
+- `requested` is whether the authenticated GitHub user (`gh api user`) is named
+  in the PR's `reviewRequests` right now. A request addressed to a **team** that
+  does not name the user is not a request from them and reads `no`
+  ([ADR-0020](decisions/ADR-0020-pr-review-trigger-is-a-polled-state-read.md) §3).
+- `my-review` is the state of that user's latest **submitted** review:
+  `approved`, `changes-requested`, `commented`, or `none`. A review still being
+  drafted is not submitted, and a dismissed approval reports `none` rather than
+  `approved` — an approval GitHub has thrown away must not read as standing.
+- An unrecognized PR state ends the command with an error instead of resolving
+  to a value, because a caller acts on `pr:` and a guess there is a wrong action.
+
+This is a **state read, not an event log**, and devgeta keeps no record of its
+own. GitHub maintains all three facts: submitting any review — approve,
+request-changes, or comment alike — removes the user from `reviewRequests`, and
+the re-request button puts them back. So one field answers "is a review wanted",
+"was it already answered", and "did the author ask again", with nothing local
+that could go stale after a session dies or a review is submitted from another
+machine. See
+[ADR-0020](decisions/ADR-0020-pr-review-trigger-is-a-polled-state-read.md).
 
 **Release management subcommand** (automates the CLAUDE.md §9 push-and-tag flow):
 

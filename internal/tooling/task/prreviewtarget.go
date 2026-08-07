@@ -26,9 +26,12 @@ func prLocalRefs(prNumber string) (headRef, baseRef string) {
 // validatePRNumber rejects anything that is not a bare positive integer in its
 // canonical form.
 //
-// The number is interpolated into a git refspec, so the digits-only rule is
-// input validation, not politeness: without it a caller's `--pr` value chooses
-// which ref gets written under refs/devgeta/. Only digits reach the refspec.
+// The digits-only rule is input validation, not politeness, and two different
+// callers need it. pr-review-target interpolates the number into a git refspec,
+// so without it a caller's `--pr` value chooses which ref gets written under
+// refs/devgeta/. pr-review-state hands the same number to gh as a positional
+// argument, so without it a value beginning with a dash is read by gh as a flag
+// of its own (`--repo=attacker/evil`). Only digits reach either.
 //
 // The range and leading-zero rules exist for a different reason. GitHub numbers
 // pull requests from 1, and it echoes a number back canonically, so "0" and

@@ -30,6 +30,7 @@ type prRunner interface {
 	PRView(prNumber string) (string, error)
 	PRChecks(prNumber string) (string, error)
 	PRReviewTarget(prNumber string) (string, error)
+	PRReviewState(prNumber string) (string, error)
 	CurrentPR() (string, error)
 	CurrentRepo() (string, error)
 }
@@ -348,6 +349,45 @@ them: git update-ref -d refs/devgeta/pr/<n>/head (and .../base).
 	},
 }
 
+var taskPRReviewStateCmd = &cobra.Command{
+	Use:   "pr-review-state",
+	Short: "Print whether a pull request currently wants a review from you",
+	Long: `Read one pull request's current review-request state and print it as three
+lines:
+
+  pr: open
+  requested: yes
+  my-review: none
+
+  pr:        open | draft | merged | closed
+  requested: yes | no — is the authenticated GitHub user (gh api user) named in
+             the PR's reviewRequests RIGHT NOW. A request addressed to a team
+             that does not name the user is not a request from them.
+  my-review: approved | changes-requested | commented | none — the state of that
+             user's latest submitted review
+
+This is a state read, not an event log. GitHub maintains all three facts:
+submitting any review (approve, request-changes, or comment alike) removes the
+user from reviewRequests, and the re-request button puts them back. So the same
+field answers "is a review wanted", "was it already answered", and "did the
+author ask again" — devgeta keeps no record of its own that could go stale.
+
+draft is reported separately from open because a requested draft is still a
+draft; a caller that treats drafts as unfinished work needs to see it.
+
+Nothing is guessed: a state gh reports that devgeta does not recognize ends the
+command with an error rather than resolving to a wrong answer.
+
+--pr targets a PR number; omit it to use the current branch's PR.`,
+	Example: `  dg task pr-review-state --pr 42
+  dg task pr-review-state             # the current branch's PR`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newPRTasks().PRReviewState(prFlag)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 var taskCurrentPRCmd = &cobra.Command{
 	Use:   "current-pr",
 	Short: "Print the PR number for the current branch",
@@ -384,6 +424,7 @@ func init() {
 	taskCmd.AddCommand(taskPRViewCmd)
 	taskCmd.AddCommand(taskPRChecksCmd)
 	taskCmd.AddCommand(taskPRReviewTargetCmd)
+	taskCmd.AddCommand(taskPRReviewStateCmd)
 	taskCmd.AddCommand(taskCurrentPRCmd)
 	taskCmd.AddCommand(taskCurrentRepoCmd)
 
@@ -446,5 +487,7 @@ func init() {
 	taskPRViewCmd.Flags().StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 	taskPRChecksCmd.Flags().StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 	taskPRReviewTargetCmd.Flags().
+		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
+	taskPRReviewStateCmd.Flags().
 		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 }

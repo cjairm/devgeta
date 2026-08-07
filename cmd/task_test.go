@@ -1296,6 +1296,10 @@ func (m *mockPRRunner) PRChecks(pr string) (string, error) { return m.record("PR
 func (m *mockPRRunner) PRReviewTarget(pr string) (string, error) {
 	return m.record("PRReviewTarget", "pr", pr)
 }
+
+func (m *mockPRRunner) PRReviewState(pr string) (string, error) {
+	return m.record("PRReviewState", "pr", pr)
+}
 func (m *mockPRRunner) CurrentPR() (string, error)   { return m.record("CurrentPR") }
 func (m *mockPRRunner) CurrentRepo() (string, error) { return m.record("CurrentRepo") }
 
@@ -1434,6 +1438,31 @@ func TestPRTask_Dispatch(t *testing.T) {
 		// so the command may not reformat or decorate it.
 		if got := out.String(); got != mock.ret+"\n" {
 			t.Fatalf("target not printed verbatim:\ngot:  %q\nwant: %q", got, mock.ret+"\n")
+		}
+	})
+
+	t.Run("pr-review-state passes the pr flag", func(t *testing.T) {
+		mock := newMockPRRunner()
+		mock.ret = "pr: open\nrequested: yes\nmy-review: none"
+		defer setupPRMock(t, mock)()
+		prFlag = "42"
+		defer func() { prFlag = "" }()
+
+		out := &bytes.Buffer{}
+		taskPRReviewStateCmd.SetOut(out)
+		defer taskPRReviewStateCmd.SetOut(nil)
+
+		if err := taskPRReviewStateCmd.RunE(taskPRReviewStateCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.calls[0] != "PRReviewState" || mock.lastArg["pr"] != "42" {
+			t.Fatalf("unexpected dispatch: %v / %v", mock.calls, mock.lastArg)
+		}
+		// The three lines are printed verbatim: a tick matches all of them to
+		// select exactly one row, so the command may not reformat or decorate
+		// them.
+		if got := out.String(); got != mock.ret+"\n" {
+			t.Fatalf("state not printed verbatim:\ngot:  %q\nwant: %q", got, mock.ret+"\n")
 		}
 	})
 
