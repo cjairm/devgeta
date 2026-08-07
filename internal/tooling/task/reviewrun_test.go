@@ -1,13 +1,17 @@
 package task
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/cjairm/devgeta/internal/commands"
@@ -41,6 +45,46 @@ func withReviewers(t *testing.T, models ...string) {
 		sb.WriteString("    - " + m + "\n")
 	}
 	testutil.CreateGlobalConfigFile(t, paths.Paths.Config.Root, sb.String())
+}
+
+// withAheadCount overrides newRepoSetup's default ahead-of-default-branch
+// count (3) for the one test that needs a different value — chiefly 0, to
+// exercise checkBranchHasCommittedDiff's refusal. Every other git call keeps
+// answering exactly as newRepoSetup's fixture already does.
+func withAheadCount(t *testing.T, tm *TaskManager, ahead int) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "rev-list") {
+			return fmt.Sprintf("0\t%d\n", ahead), "", nil
+		}
+		return orig(c)
+	}
+}
+
+// withRevListFailure makes the `rev-list` call aheadBehind runs fail exactly
+// as it does in a repo with no local refs/remotes/origin/<default> ref: no
+// remote, a shallow or --single-branch clone, or a default branch never
+// fetched. This is the case checkBranchHasCommittedDiff must fail OPEN on
+// rather than surface — see the guard's own comment.
+func withRevListFailure(t *testing.T, tm *TaskManager) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "rev-list") {
+			return "", "fatal: ambiguous argument 'origin/main...HEAD': unknown revision or " +
+				"path not in the working tree.", errors.New("exit status 128")
+		}
+		return orig(c)
+	}
 }
 
 // scriptedRun is one `opencode run` the fixture will answer, in order.
@@ -123,6 +167,19 @@ func statusReport(verdict string) string {
 	return strings.Join([]string{
 		`{"type":"step_start","part":{"type":"step-start"}}`,
 		textEvent("### Recommendation\n\n**Status:** " + verdict + "\n"),
+		`{"type":"step_finish","part":{"type":"step-finish"}}`,
+	}, "\n") + "\n"
+}
+
+// statusLineReport is statusReport's more general sibling: the caller
+// supplies the WHOLE status line verbatim, including wherever it wants to
+// place (or omit) markdown emphasis — statusReport always emphasizes only
+// "Status:", which cannot express the shape a real run produced (emphasis
+// around the whole line: "**Status: REQUEST CHANGES**").
+func statusLineReport(line string) string {
+	return strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		textEvent("### Recommendation\n\n" + line + "\n"),
 		`{"type":"step_finish","part":{"type":"step-finish"}}`,
 	}, "\n") + "\n"
 }
@@ -242,6 +299,186 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"NO VERDICT",
 		},
+		// Markdown emphasis PLACEMENT must not matter. The reviewer
+		// template wraps only "Status:" in "**...**" (statusReport,
+		// above); a real run (github-copilot/gpt-5.3-codex, under the
+		// document-reviewer agent) instead wrapped the WHOLE line --
+		// "**Status: REQUEST CHANGES**" -- which the pre-fix parser never
+		// matched at all, silently reporting a genuine REQUEST CHANGES as
+		// NO VERDICT. Every placement below must resolve identically to
+		// the template form, for all three verdicts.
+		{
+			"whole-line double-asterisk emphasis (the real bug shape)",
+			statusLineReport("**Status: APPROVE**"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"single-asterisk emphasis around Status only",
+			statusLineReport("*Status:* APPROVE"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"single-asterisk emphasis around the whole line",
+			statusLineReport("*Status: APPROVE*"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"underscore emphasis around Status only",
+			statusLineReport("_Status:_ APPROVE"),
+			nil,
+			"APPROVE",
+		},
+		{
+			"underscore emphasis around the whole line",
+			statusLineReport("_Status: APPROVE_"),
+			nil,
+			"APPROVE",
+		},
+		{"no emphasis at all", statusLineReport("Status: APPROVE"), nil, "APPROVE"},
+		{
+			"whole-line double-asterisk emphasis, request changes (the real bug shape)",
+			statusLineReport("**Status: REQUEST CHANGES**"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"single-asterisk emphasis around Status only, request changes",
+			statusLineReport("*Status:* REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"single-asterisk emphasis around the whole line, request changes",
+			statusLineReport("*Status: REQUEST CHANGES*"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"underscore emphasis around Status only, request changes",
+			statusLineReport("_Status:_ REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"underscore emphasis around the whole line, request changes",
+			statusLineReport("_Status: REQUEST CHANGES_"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"no emphasis at all, request changes",
+			statusLineReport("Status: REQUEST CHANGES"),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			"whole-line double-asterisk emphasis, needs discussion",
+			statusLineReport("**Status: NEEDS DISCUSSION**"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"single-asterisk emphasis around Status only, needs discussion",
+			statusLineReport("*Status:* NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"single-asterisk emphasis around the whole line, needs discussion",
+			statusLineReport("*Status: NEEDS DISCUSSION*"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"underscore emphasis around Status only, needs discussion",
+			statusLineReport("_Status:_ NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"underscore emphasis around the whole line, needs discussion",
+			statusLineReport("_Status: NEEDS DISCUSSION_"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		{
+			"no emphasis at all, needs discussion",
+			statusLineReport("Status: NEEDS DISCUSSION"),
+			nil,
+			"NEEDS DISCUSSION",
+		},
+		// Adversarial: emphasis stripping must not turn a fail-closed case
+		// into a false approval. The unsafe direction is toward APPROVE,
+		// so these must still fall through to NO VERDICT with whole-line
+		// emphasis exactly as they do with the template's placement.
+		{
+			"whole-line emphasis: approved is not approve",
+			statusLineReport("**Status: APPROVED**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			"whole-line emphasis: approve not is not approve",
+			statusLineReport("**Status: APPROVE NOT**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			// The reviewer template's own format line, but wrapped in
+			// whole-line emphasis instead of the template's "Status:"-only
+			// emphasis -- must be refused as a quoted format, not read as
+			// any of the three verdicts it lists.
+			"the pipe template line wrapped in whole-line emphasis is not a verdict",
+			statusLineReport("**Status: APPROVE | REQUEST CHANGES | NEEDS DISCUSSION**"),
+			nil,
+			"NO VERDICT",
+		},
+		{
+			// A fenced example wrapped in whole-line emphasis, below a
+			// real verdict that uses the template's own placement -- the
+			// fence skip must still apply regardless of which placement
+			// the quoted example inside it uses.
+			"a whole-line-emphasis status line inside a fenced code block is not a verdict",
+			textEvent(
+				"**Status:** REQUEST CHANGES\n\nExample of the format:\n```\n" +
+					"**Status: APPROVE**\n```\n",
+			),
+			nil,
+			"REQUEST CHANGES",
+		},
+		{
+			// Dropping "\*\*" from the anchor (so emphasis placement stops
+			// mattering, see stripLineEmphasis) also widened the pattern to
+			// match a markdown list bullet: stripLineEmphasis removes ALL
+			// "*"/"_" on the line, including a leading "* " bullet marker, not
+			// just emphasis around "Status:". A bulleted "* **Status:**
+			// APPROVE" therefore strips to "  Status: APPROVE" and matches
+			// exactly like the template's own unbulleted line.
+			//
+			// PINNED BEHAVIOR: this counts as a real APPROVE, deliberately.
+			// stripLineEmphasis's own doc comment already accepts that it
+			// "cannot tell '*' used as emphasis from '*' used as [something
+			// else]" -- a list bullet is exactly that other use, and telling
+			// it apart from emphasis would need real markdown-structure
+			// parsing, which is explicitly out of scope for a line-level
+			// normalizer. The reviewer contract's status line is a single
+			// declarative line, never a list item, so a bulleted status line
+			// showing up at all is already an out-of-contract report; no
+			// live reviewer output has been observed to produce one. If that
+			// ever changes -- e.g. a report bullets a quoted verdict outside
+			// a fence and "last status line wins" lets it override a real
+			// verdict above it -- re-narrowing the pattern is a deliberate,
+			// separate decision, not a side effect of an unrelated change;
+			// this test is what makes that a deliberate edit instead of an
+			// accidental regression.
+			"a bulleted status line matches like the unbulleted template form",
+			statusLineReport("* **Status:** APPROVE"),
+			nil,
+			"APPROVE",
+		},
 	}
 
 	for _, tt := range tests {
@@ -261,6 +498,52 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			verifyNoStrayCommands(t, tm)
 		})
 	}
+}
+
+// TestReviewRunClassifiesRealCodexDocumentReviewerCapture is the regression
+// test for the bug this fix closes: a real headless run of
+// github-copilot/gpt-5.3-codex under the document-reviewer agent wrote
+// "**Status: REQUEST CHANGES**" — emphasis wrapping the WHOLE line, not just
+// "Status:" the way the agent template does — and the pre-fix parser never
+// matched it, silently reporting the round as NO VERDICT instead of the
+// blocking REQUEST CHANGES the reviewer actually delivered.
+//
+// The fixture below is hand-trimmed from the real capture, on disk (not
+// committed — it is a 46KB, 43-event NDJSON stream) at
+// ~/.cache/devgeta/scratch/codex-doc.json: that capture has 13
+// step_start/step_finish pairs, 15 tool_use events, and 2 text events. This
+// keeps one step_start/step_finish pair, one tool_use event (to prove event
+// types classifyReviewerRun ignores are still tolerated alongside the real
+// one), and the exact text event carrying the bug's status line, with the
+// surrounding prose shortened.
+func TestReviewRunClassifiesRealCodexDocumentReviewerCapture(t *testing.T) {
+	capture := strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		`{"type":"tool_use","part":{"type":"tool","tool":"read","state":{"status":"completed"}}}`,
+		textEvent(
+			"## Summary\n\nThis is a **code branch review** request, not a document " +
+				"review. The blocking concerns already logged in the branch journal " +
+				"(`n1`, `n4`) are still valid and unresolved. I recommend " +
+				"**REQUEST CHANGES**.\n\n## Recommendation\n\n**Status: REQUEST CHANGES**\n\n" +
+				"Settle when answered: `devgeta task review-note --settle --id n4 " +
+				`--as fixed|rejected|answered --note "<why>"`,
+		),
+		`{"type":"step_finish","part":{"type":"step-finish"}}`,
+	}, "\n") + "\n"
+
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: capture})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "OpenCode default model → REQUEST CHANGES\nopen: none"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+	verifyNoStrayCommands(t, tm)
 }
 
 // An error EVENT is what classifies ERROR, not the text of the message: the
@@ -425,6 +708,140 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
 	verifyNoStrayCommands(t, tm)
+}
+
+// --- progress lines --------------------------------------------------------
+
+// The nil-ProgressOut default must resolve to exactly os.Stderr — never
+// os.Stdout, which would silently merge progress into the parseable payload
+// docs/guides/task-design.md governs. A TaskManager built as a bare literal
+// (bypassing New()) is exactly the shape every test in this file uses, so
+// this is what actually pins the fallback; nothing else in the suite
+// compares against os.Stderr by identity.
+func TestReviewRunProgressWriterDefaultsToStderr(t *testing.T) {
+	tm := &TaskManager{}
+	got := tm.progressWriter()
+	if got != io.Writer(os.Stderr) {
+		t.Fatalf("expected the nil ProgressOut default to be os.Stderr, got %v", got)
+	}
+	if got == io.Writer(os.Stdout) {
+		t.Fatalf("the nil ProgressOut default must never be os.Stdout")
+	}
+}
+
+// fixedClock returns a func() time.Time for TaskManager.NowFn that starts at
+// start and advances by step on every call after the first. ReviewRun calls
+// it twice per reviewer (start, then finish), so consecutive reviewers each
+// see exactly step elapsed — a deterministic duration instead of a race
+// against the wall clock.
+func fixedClock(start time.Time, step time.Duration) func() time.Time {
+	next := start
+	first := true
+	return func() time.Time {
+		if first {
+			first = false
+			return next
+		}
+		next = next.Add(step)
+		return next
+	}
+}
+
+// Progress lines go to ProgressOut, one per reviewer as it starts and one as
+// it resolves, each carrying its position, label, outcome, and elapsed time
+// — and the returned string (the stdout contract docs/guides/task-design.md
+// governs) is completely unaffected. This is the regression that matters:
+// every other test in this file asserts that exact returned string byte for
+// byte, with newRepoSetup's default ProgressOut (io.Discard, so the suite
+// stays quiet — see TestReviewRunProgressWriterDefaultsToStderr for the
+// os.Stderr default that default stands in for), so their continuing to pass
+// already proves the same thing from the other side.
+func TestReviewRunWritesProgressLinesPerReviewer(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: statusReport("REQUEST CHANGES")},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), 1500*time.Millisecond)
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	wantOut := "openai/gpt-5.2 → REQUEST CHANGES\ngoogle/gemini-3-pro → APPROVE\nopen: none"
+	if out != wantOut {
+		t.Errorf("stdout contract changed:\ngot:\n%s\nwant:\n%s", out, wantOut)
+	}
+	wantProgress := strings.Join([]string{
+		"[1/2] openai/gpt-5.2: running",
+		"[1/2] openai/gpt-5.2: REQUEST CHANGES (1.5s)",
+		"[2/2] google/gemini-3-pro: running",
+		"[2/2] google/gemini-3-pro: APPROVE (1.5s)",
+		"",
+	}, "\n")
+	if progress.String() != wantProgress {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), wantProgress)
+	}
+}
+
+// The unset-reviewers case: the progress label must match the final output's
+// label exactly ("OpenCode default model"), not the empty model string.
+func TestReviewRunProgressUsesDefaultModelLabel(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
+
+	if _, err := tm.ReviewRun(""); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "[1/1] OpenCode default model: running\n[1/1] OpenCode default model: APPROVE (1s)\n"
+	if progress.String() != want {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), want)
+	}
+}
+
+// A reviewer that fails still gets both its progress lines, and the
+// reviewer after it still gets its own — a failure must never go quiet or
+// stop the rest.
+func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{err: errors.New("exit status 1")},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	var progress bytes.Buffer
+	tm.ProgressOut = &progress
+	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
+	}
+	if !strings.Contains(out, "ERROR(") {
+		t.Errorf("expected an ERROR outcome in the stdout contract, got:\n%s", out)
+	}
+	wantProgress := strings.Join([]string{
+		"[1/2] openai/gpt-5.2: running",
+		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (1s)",
+		"[2/2] google/gemini-3-pro: running",
+		"[2/2] google/gemini-3-pro: APPROVE (1s)",
+		"",
+	}, "\n")
+	if progress.String() != wantProgress {
+		t.Errorf("progress got:\n%s\nwant:\n%s", progress.String(), wantProgress)
+	}
 }
 
 // --- reviewer list resolution --------------------------------------------
@@ -599,6 +1016,73 @@ func TestReviewRunRefusesOnDetachedHead(t *testing.T) {
 		t.Errorf("the refusal must carry the fix, got: %v", err)
 	}
 	assertNoReviewFilesWritten(t, root)
+}
+
+// A named, non-default branch with no commits ahead of the default branch
+// still has nothing committed to review — the third refusal, distinct from
+// the other two: HEAD is fine, there is simply no diff yet.
+func TestReviewRunRefusesWhenBranchHasNoCommittedDiff(t *testing.T) {
+	tm, root, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 0)
+	scriptOpenCode(t, ocBase) // no run may happen
+
+	_, err := tm.ReviewRun("")
+	if err == nil {
+		t.Fatal("expected a refusal when the branch has no commits ahead of the default branch")
+	}
+	if !strings.Contains(err.Error(), "feat") {
+		t.Errorf("expected the branch name in the refusal, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "uncommitted") {
+		t.Errorf(
+			"expected the refusal to distinguish uncommitted work from a vanished commit, got: %v",
+			err,
+		)
+	}
+	assertNoReviewFilesWritten(t, root)
+}
+
+// A branch that does have commits ahead of the default branch proceeds,
+// regardless of how many.
+func TestReviewRunProceedsWhenBranchHasCommittedDiff(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withAheadCount(t, tm, 1)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf("ReviewRun on a branch with a committed diff must proceed, got: %v", err)
+	}
+	if out != "OpenCode default model → APPROVE\nopen: none" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
+// When the ahead/behind comparison itself cannot be made — no local
+// refs/remotes/origin/<default> ref, as in a repo with no remote, a shallow
+// or --single-branch clone, or a default branch never fetched —
+// checkBranchHasCommittedDiff must fail OPEN and let the round proceed,
+// never surface git's raw "unknown revision" error or block the round on
+// "cannot tell". Before the fix, this failed: ReviewRun returned the raw
+// rev-list error and no reviewer ran at all.
+func TestReviewRunProceedsWhenAheadCountCannotBeDetermined(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withRevListFailure(t, tm)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf(
+			"an unresolvable ahead/behind comparison must fail open, not block the round: %v",
+			err,
+		)
+	}
+	if out != "OpenCode default model → APPROVE\nopen: none" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
 }
 
 // assertNoReviewFilesWritten proves a refusal cost nothing: no journal, no

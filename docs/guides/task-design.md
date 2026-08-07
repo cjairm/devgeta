@@ -69,6 +69,14 @@ threads.`, `On <default> — no branch to compare…`) are contracts with the sh
    and an escape hatch (`branch-diff` prints `excluded: go.sum (+40/-12)` and offers
    `--file`). A reviewer agent's verification bar requires reading actual code —
    silently compressed payloads produce confidently wrong reviews.
+6. **Progress goes to stderr; stdout stays the contract.** A task that runs long
+   enough to leave a caller watching silence (a multi-minute headless review, a
+   multi-step install) may emit human-readable progress — start/finish, elapsed
+   time — but it belongs on stderr, never stdout: stdout stays exactly the
+   parseable payload principles 1-4 describe. `review-run` is the precedent: it
+   streams a `[n/total] <label>: running` / `<label>: <outcome> (<elapsed>)` line
+   per reviewer to stderr while its stdout return stays the `<label> → <outcome>`
+   contract, unaffected.
 
 ## Architecture: orchestrate, then format
 

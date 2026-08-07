@@ -25,8 +25,9 @@ review-run` takes; default is `code`. The branch is whatever is currently checke
   branch. Prints one line per reviewer (`<model label> → <outcome>`), then the ids still
   open in the journal (`open: n4 n7`, or `open: none`). An outcome is `APPROVE`,
   `REQUEST CHANGES`, `NEEDS DISCUSSION`, `NO VERDICT`, or `ERROR(<reason>)`. It refuses to
-  run on the default branch or a detached HEAD — if it refuses, surface that error as-is
-  and stop; there is nothing to loop on.
+  run on the default branch, a detached HEAD, or a branch with no commits ahead of the
+  default branch (nothing committed to review yet) — if it refuses, surface that error
+  as-is and stop; there is nothing to loop on.
 - `devgeta task review-notes` — the branch's review journal: every open finding, and
   every settled one with its resolution and note.
 - `devgeta task review-note --open --note "<text>" [--at <path[:line]>]` — record a
@@ -219,5 +220,6 @@ instruction. Follow it exactly.
   loop with a stopping point.
 - Never invent a reviewer's verdict, and never present a run that failed, or a run that
   hit the round cap, as one that passed.
-- If `devgeta task review-run` itself refuses to run (default branch, detached HEAD),
-  surface that error as-is and stop before running anything else.
+- If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, or no
+  commits ahead of the default branch), surface that error as-is and stop before running
+  anything else.

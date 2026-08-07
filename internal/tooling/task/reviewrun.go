@@ -14,6 +14,7 @@ package task
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -66,14 +67,20 @@ const reviewRunTimeout = 30 * time.Minute
 // The reason is OpenCode's own text, cut — never reworded or guessed at.
 const maxReasonLen = 120
 
-// statusLinePattern matches ONE reviewer verdict line, e.g.
-// "**Status:** REQUEST CHANGES". Case-insensitive because the marker is prose
-// the model reproduces. It is applied to a single line at a time by
+// statusLinePattern matches ONE reviewer verdict line, e.g. "Status: REQUEST
+// CHANGES". It is applied to a line AFTER stripLineEmphasis has removed the
+// line's markdown emphasis markers, which is why it names no "**" at all — a
+// real run (github-copilot/gpt-5.3-codex, under document-reviewer) wrote
+// "**Status: REQUEST CHANGES**", wrapping the whole line in emphasis rather
+// than just "Status:" the way the agent template does, and the old pattern
+// (which hard-coded "\*\*status:\*\*") never matched it, silently reporting a
+// genuine REQUEST CHANGES as NO VERDICT. Case-insensitive because the marker
+// is prose the model reproduces. It is applied to a single line at a time by
 // lastStatusVerdict — which is why it carries no (?m) flag: there is no
 // multi-line text for ^ and $ to anchor within, and the horizontal-only
 // whitespace classes ([^\S\n]) keep it that way even if a caller ever passed
 // a fragment containing a newline.
-var statusLinePattern = regexp.MustCompile(`(?i)^[^\S\n]*\*\*status:\*\*[^\S\n]*(.*)$`)
+var statusLinePattern = regexp.MustCompile(`(?i)^[^\S\n]*status:[^\S\n]*(.*)$`)
 
 // reviewerRun is one reviewer this round runs: how its line is labeled, and
 // which model to pin it to ("" = no -m flag, i.e. OpenCode's own default).
@@ -92,6 +99,12 @@ type reviewerRun struct {
 // this same round. Their writes go straight to the live journal and get
 // real, final ids — which is why the open list at the end is read from the
 // live journal, not the snapshot.
+//
+// While a reviewer runs, a start/finish progress line goes to
+// progressWriter() (stderr by default) — never to the returned string, which
+// stays the exact parseable contract docs/guides/task-design.md governs. A
+// multi-minute headless run against a real branch diff would otherwise leave
+// the caller watching silence with no way to tell working from stuck.
 func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 	// Cheapest guard first: a bad --reviewer needs no git and no config.
 	agent, err := reviewerAgentFor(reviewer)
@@ -99,10 +112,14 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 		return "", err
 	}
 
-	// Both branch refusals happen here, before any reviewer is launched and
-	// before any file is written — a wrong branch must cost nothing.
-	branch, err := tm.checkOnReviewableBranch()
+	// All three refusals happen here, before any reviewer is launched and
+	// before any file is written — a wrong branch, or a branch with nothing
+	// committed to review, must cost nothing.
+	branch, defaultBranch, err := tm.checkOnReviewableBranch()
 	if err != nil {
+		return "", err
+	}
+	if err := tm.checkBranchHasCommittedDiff(branch, defaultBranch); err != nil {
 		return "", err
 	}
 
@@ -130,8 +147,13 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 		}
 	}()
 
+	progressOut := tm.progressWriter()
 	var out strings.Builder
-	for _, run := range runs {
+	for i, run := range runs {
+		position := fmt.Sprintf("[%d/%d]", i+1, len(runs))
+		fmt.Fprintf(progressOut, "%s %s: running\n", position, run.label)
+		start := tm.now()
+
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
 		// throw away work already paid for.
@@ -142,7 +164,18 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 			Timeout: reviewRunTimeout,
 			Env:     []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
 		})
-		fmt.Fprintf(&out, "%s → %s\n", run.label, classifyReviewerRun(stdout, runErr))
+		outcome := classifyReviewerRun(stdout, runErr)
+		elapsed := tm.now().Sub(start)
+		fmt.Fprintf(
+			progressOut,
+			"%s %s: %s (%s)\n",
+			position,
+			run.label,
+			outcome,
+			formatElapsed(elapsed),
+		)
+
+		fmt.Fprintf(&out, "%s → %s\n", run.label, outcome)
 	}
 
 	open, err := openEntryIDs(jm, branch)
@@ -151,6 +184,41 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 	}
 	out.WriteString(open)
 	return out.String(), nil
+}
+
+// progressWriter returns where ReviewRun writes its per-reviewer progress
+// lines: TaskManager.ProgressOut when the caller set one, os.Stderr
+// otherwise — so a TaskManager built as a literal in a test, bypassing New(),
+// still gets a safe default instead of writing through a nil interface.
+func (tm *TaskManager) progressWriter() io.Writer {
+	if tm.ProgressOut != nil {
+		return tm.ProgressOut
+	}
+	return os.Stderr
+}
+
+// now returns TaskManager.NowFn() when set, time.Now() otherwise — the same
+// nil-means-default fallback as progressWriter, for the same reason.
+func (tm *TaskManager) now() time.Time {
+	if tm.NowFn != nil {
+		return tm.NowFn()
+	}
+	return time.Now()
+}
+
+// formatElapsed renders a progress line's elapsed duration for a human
+// glancing at it, in place of time.Duration.String()'s raw nanosecond
+// precision — which reads as "(6.54025ms)" for a fast run and
+// "(4m12.183746291s)" for a multi-minute one, neither of which anyone reads
+// at a glance. A reviewer run is seconds-to-minutes long, so once a second
+// has elapsed, precision below a tenth of a second is noise; below a second,
+// though, millisecond precision is the only thing that distinguishes two
+// fast runs, so it is kept there rather than rounded away to "0s" or "1s".
+func formatElapsed(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
 }
 
 // reviewerAgentFor resolves --reviewer to the OpenCode agent name to run,
@@ -177,32 +245,83 @@ func reviewerAgentFor(key string) (string, error) {
 
 // checkOnReviewableBranch is review-run's branch guard — the mirror image of
 // release's checkOnDefaultBranch, sharing the same HEAD resolution so the
-// two can never disagree about what git reported.
+// two can never disagree about what git reported. It returns the resolved
+// default branch alongside current so checkBranchHasCommittedDiff (the third
+// refusal) does not have to resolve HEAD a second time.
 //
 // It refuses two of the three things HEAD can be. On the default branch
 // there is nothing to review against, and a detached HEAD has no branch name
 // to key a journal by — reviewjournal would eventually refuse it too, but
 // only after a full multi-model review had already been spent, so it is
 // caught here instead. Both refusals carry the same fix.
-func (tm *TaskManager) checkOnReviewableBranch() (string, error) {
-	current, defaultBranch, err := tm.resolveHead()
+func (tm *TaskManager) checkOnReviewableBranch() (current, defaultBranch string, err error) {
+	current, defaultBranch, err = tm.resolveHead()
 	if err != nil {
-		return "", fmt.Errorf("review-run: %w", err)
+		return "", "", fmt.Errorf("review-run: %w", err)
 	}
 	if current == "" {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"review-run: HEAD is detached, so there is no branch to review or to key a " +
 				"review journal by — run 'git switch -c <branch>' to put this work on a branch first",
 		)
 	}
 	if current == defaultBranch {
-		return "", fmt.Errorf(
+		return "", "", fmt.Errorf(
 			"review-run: on the default branch %q, which is what a review compares against — "+
 				"run 'git switch -c <branch>' to move this work onto a branch first",
 			defaultBranch,
 		)
 	}
-	return current, nil
+	return current, defaultBranch, nil
+}
+
+// checkBranchHasCommittedDiff is review-run's third refusal: a branch with
+// no commits ahead of the default branch has nothing committed to review,
+// even though it is a real, named, non-default branch that the first two
+// refusals let through.
+//
+// It reuses aheadBehind (scope.go) — the same `git rev-list --left-right
+// --count` call review-scope already runs to answer "what does this branch
+// change against the default branch" — rather than a second git invocation
+// of its own.
+//
+// Only ahead is checked, deliberately: `git rev-list` only ever sees
+// committed history, so a user with dirty, uncommitted files but no commits
+// yet legitimately hits this refusal. The message says so explicitly so it
+// reads as "commit first", never as "your work vanished".
+func (tm *TaskManager) checkBranchHasCommittedDiff(branch, defaultBranch string) error {
+	_, ahead, err := tm.aheadBehind(defaultBranch)
+	if err != nil {
+		// Fail OPEN, not closed. This guard exists only to save the cost of a
+		// round that has nothing to review — it is not a safety property, so
+		// "cannot tell" must not be treated the same as "confirmed empty".
+		// `aheadBehind` runs `git rev-list … origin/<default>...HEAD`, which
+		// needs a local refs/remotes/origin/<default> ref; that ref is
+		// legitimately absent in a repo with no remote, a shallow or
+		// --single-branch clone, or a default branch never fetched (unlike
+		// review-scope, review-run does not fetch first — see
+		// Git.DefaultBranch's fallback in internal/apps/git/git.go). In that
+		// case git exits 128 with a raw "unknown revision" error, and
+		// surfacing that to the user is exactly what CLAUDE.md's error rule
+		// forbids. Blocking the round on an unresolvable comparison is worse
+		// than just spending one round finding out the branch turned out
+		// empty, so let it proceed instead.
+		logger.L().Debugw(
+			"review-run: could not determine commits ahead of default branch; "+
+				"proceeding without the empty-diff guard",
+			"branch", branch, "defaultBranch", defaultBranch, "error", err,
+		)
+		return nil
+	}
+	if ahead == 0 {
+		return fmt.Errorf(
+			"review-run: branch %q has no commits ahead of %q, so there is nothing committed "+
+				"to review yet — uncommitted changes don't count here; commit your work, then "+
+				"run review-run again",
+			branch, defaultBranch,
+		)
+	}
+	return nil
 }
 
 // resolveReviewerRuns turns review.reviewers into the runs for this round.
@@ -353,7 +472,8 @@ func errorEventReason(raw json.RawMessage) string {
 	return truncateReason(string(raw))
 }
 
-// lastStatusVerdict returns the verdict from the LAST `**Status:**` line
+// lastStatusVerdict returns the verdict from the LAST status line ("Status:"
+// with any placement of "*"/"_" emphasis around it, see stripLineEmphasis)
 // that names a real verdict, or "" when none does.
 //
 // "Last" is what the reviewer contract means: a report can quote the format
@@ -388,7 +508,7 @@ func lastStatusVerdict(text string) string {
 		if inFence {
 			continue
 		}
-		match := statusLinePattern.FindStringSubmatch(line)
+		match := statusLinePattern.FindStringSubmatch(stripLineEmphasis(line))
 		if match == nil {
 			continue
 		}
@@ -447,9 +567,35 @@ func matchesKnownVerdict(value, known string) bool {
 // isFenceDelimiter reports whether line opens or closes a fenced code block
 // (``` or ~~~, optionally followed by a language tag) — Markdown's two fence
 // styles, either of which can wrap a quoted example in a reviewer's report.
+//
+// It is checked against the RAW line, never the emphasis-stripped one:
+// stripLineEmphasis only removes "*" and "_", neither of which a fence
+// delimiter is built from ("```" / "~~~"), so this ordering is not
+// load-bearing today — but it stays deliberate so a future emphasis marker
+// never has a chance to hide a fence boundary.
 func isFenceDelimiter(line string) bool {
 	trimmed := strings.TrimSpace(line)
 	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
+}
+
+// stripLineEmphasis removes markdown emphasis markers ("*" and "_") from a
+// single line before statusLinePattern is applied, so a reviewer's verdict
+// line reads the same regardless of where those markers landed: the agent
+// template's "**Status:** APPROVE" (emphasis around "Status:" only), a real
+// run's "**Status: APPROVE**" (emphasis around the whole line), "Status:
+// APPROVE" (no emphasis at all), and the single-asterisk and underscore
+// variants of both. This is a line-level normalization only — it does not
+// parse markdown structure, so it cannot tell "*" used as emphasis from "*"
+// used as, say, a literal multiplication sign; that tradeoff is acceptable
+// here because the only thing read out of the result is whether the line
+// starts with "status:" and what follows it.
+//
+// Backticks are deliberately left alone: they can legitimately wrap the
+// verdict VALUE (e.g. "**Status:** `APPROVE`"), and normalizeStatusValue
+// already strips them from the captured value — stripping them here too
+// would be redundant, not more correct.
+func stripLineEmphasis(line string) string {
+	return strings.NewReplacer("*", "", "_", "").Replace(line)
 }
 
 // normalizeStatusValue strips the markdown a status line can carry and
