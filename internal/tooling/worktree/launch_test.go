@@ -1,13 +1,17 @@
 package worktree
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 // Test paths for the launch forms. They are fake on purpose: these are pure
-// string builders, so nothing here touches the filesystem or a real binary
-// (resolveShell's tests in layout_test.go are the only ones that need fixtures).
+// string builders, so most of this file touches no filesystem and no real
+// binary. The two real-shell round-trip tests at the bottom are the exception,
+// and they build their own fixtures under t.TempDir().
 const (
 	testClaudePath   = "/Users/dev/.local/bin/claude"
 	testOpenCodePath = "/opt/homebrew/bin/opencode"
@@ -155,6 +159,154 @@ func TestLaunchQuotesEmbeddedSingleQuotes(t *testing.T) {
 	}
 }
 
+// TestALaunchWithArgumentsButNoProgramDoesNotVanish is the regression net for
+// the one way this cycle's original bug could come back through this file: a
+// launch built from a resolution that handed over an EMPTY path, with a
+// non-empty prompt.
+//
+// While "empty" meant `program == ""`, such a launch reported itself empty, so
+// render() and the recipe both returned "" - the pane became a bare shell, the
+// prompt was gone, and nothing errored or logged. Emptiness is now the zero
+// KIND, so a constructed launch is never empty: it renders, and the pane reports
+// a command it could not run with the prompt visible beside it.
+func TestALaunchWithArgumentsButNoProgramDoesNotVanish(t *testing.T) {
+	const prompt = "fix issue 1082"
+
+	launches := []struct {
+		name   string
+		launch paneLaunch
+	}{
+		{"binary launch with no path", binaryLaunch("", prompt)},
+		{
+			"binary launch with an env prefix and no path",
+			binaryLaunchWithEnv(claudeNoFlickerEnv, "", prompt),
+		},
+		{"claude's exec form with no path", (&ClaudeCoder{}).execLaunch("", prompt)},
+		{"opencode's exec form with no path", (&OpenCodeCoder{}).execLaunch("", prompt)},
+		{"alias launch with no program", aliasLaunch("", prompt)},
+	}
+
+	for _, tt := range launches {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.launch.isEmpty() {
+				t.Fatalf("a launch carrying %q reported itself empty", prompt)
+			}
+			rendered := tt.launch.render()
+			if rendered == "" {
+				t.Fatalf("render() = \"\", so the prompt %q was silently dropped", prompt)
+			}
+			if !strings.Contains(rendered, prompt) {
+				t.Errorf(
+					"render() = %q, expected it to still carry the prompt %q",
+					rendered,
+					prompt,
+				)
+			}
+			// The pane command must fail visibly rather than come back as "no
+			// command", which tmux reads as "just start a shell".
+			if got := paneCommandFor(tt.launch, testShell); got == "" {
+				t.Errorf("paneCommandFor() = \"\", so the pane would silently be a bare shell")
+			}
+		})
+	}
+}
+
+// TestZeroLaunchIsTheOnlyEmptyLaunch states the other half of the same property
+// positively: the shell pane is the zero value, and nothing a constructor
+// produces is empty.
+func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
+	zero := paneLaunch{}
+	if !zero.isEmpty() {
+		t.Error("the zero launch must be empty - it is the shell pane")
+	}
+	for _, launch := range []paneLaunch{
+		aliasLaunch(""),
+		binaryLaunch(""),
+		binaryLaunchWithEnv(claudeNoFlickerEnv, ""),
+	} {
+		if launch.isEmpty() {
+			t.Errorf("a constructed launch (%+v) must never report itself empty", launch)
+		}
+	}
+}
+
+// --- routing a launch to its recipe ---
+
+// TestPaneCommandForRoutesOnLaunchKind pins the pairing that used to be the
+// caller's to get right. An ALIAS launch handed to the exec recipe emits
+// `cc 'fix it'; exec '/bin/zsh'`, which tmux runs non-interactively - where cc
+// does not exist. That is exactly the case the interactive recipe serves
+// (ADR-0020 part 3), and routing on the kind the value already carries is what
+// makes the wrong pairing unrepresentable.
+func TestPaneCommandForRoutesOnLaunchKind(t *testing.T) {
+	tests := []struct {
+		name   string
+		launch paneLaunch
+		want   string
+	}{
+		{
+			name:   "a binary launch gets the exec recipe",
+			launch: (&ClaudeCoder{}).execLaunch(testClaudePath, "fix it"),
+			want: `CLAUDE_CODE_NO_FLICKER=1 '/Users/dev/.local/bin/claude' ` +
+				`'fix it'; exec '/bin/zsh'`,
+		},
+		{
+			name:   "an alias launch gets the interactive recipe",
+			launch: (&ClaudeCoder{}).interactiveLaunch("fix it"),
+			want:   `'/bin/zsh' -ic 'cc '\''fix it'\''; exec '\''/bin/zsh'\'' -i'`,
+		},
+		{
+			name:   "a bare binary name is an alias launch too",
+			launch: aliasLaunch(nvimCommand),
+			want:   `'/bin/zsh' -ic 'nvim; exec '\''/bin/zsh'\'' -i'`,
+		},
+		{
+			// A shell pane must stay a shell pane: no command at all is what
+			// gives it the shell tmux would have started anyway.
+			name:   "the zero launch gets no command",
+			launch: paneLaunch{},
+			want:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := paneCommandFor(tt.launch, testShell)
+			if got != tt.want {
+				t.Errorf("paneCommandFor() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPaneCommandForNeverSendsAnAliasThroughTheExecRecipe is the negative form
+// of the routing test, written against the shape rather than the bytes: whatever
+// the alias form renders to, it must arrive wrapped in the interactive shell and
+// must NOT arrive as the bare `<command>; exec '<shell>'` the exec recipe
+// produces.
+func TestPaneCommandForNeverSendsAnAliasThroughTheExecRecipe(t *testing.T) {
+	aliasLaunches := []paneLaunch{
+		(&ClaudeCoder{}).interactiveLaunch("fix it"),
+		(&OpenCodeCoder{}).interactiveLaunch("fix it"),
+		(&OpenCodeCoder{}).interactiveLaunchWithAgent("code-reviewer", ReviewPrompt),
+		aliasLaunch(nvimCommand),
+	}
+
+	for _, launch := range aliasLaunches {
+		got := paneCommandFor(launch, testShell)
+		if got == execPaneCommand(launch.render(), testShell) {
+			t.Errorf(
+				"alias launch %q got the exec recipe (%q), which runs "+
+					"non-interactively where the alias does not exist",
+				launch.render(), got,
+			)
+		}
+		if !strings.HasPrefix(got, shellSingleQuote(testShell)+" -ic ") {
+			t.Errorf("alias launch must be wrapped in the interactive shell, got %q", got)
+		}
+	}
+}
+
 // --- recipe 1: the resolved-path pane command ---
 
 // TestExecPaneCommandAppendsTrailingExec pins the whole recipe. The trailing
@@ -164,10 +316,10 @@ func TestLaunchQuotesEmbeddedSingleQuotes(t *testing.T) {
 func TestExecPaneCommandAppendsTrailingExec(t *testing.T) {
 	launch := (&ClaudeCoder{}).execLaunch(testClaudePath, "fix issue 1082")
 
-	got := execPaneCommand(launch, testShell)
+	got := paneCommandFor(launch, testShell)
 	want := `CLAUDE_CODE_NO_FLICKER=1 '/Users/dev/.local/bin/claude' 'fix issue 1082'; exec '/bin/zsh'`
 	if got != want {
-		t.Errorf("execPaneCommand() = %q, want %q", got, want)
+		t.Errorf("paneCommandFor() = %q, want %q", got, want)
 	}
 	if !strings.HasSuffix(got, "; exec "+shellSingleQuote(testShell)) {
 		t.Errorf("recipe must end in the trailing exec, got %q", got)
@@ -178,20 +330,25 @@ func TestExecPaneCommandAppendsTrailingExec(t *testing.T) {
 // of this recipe. $SHELL and tmux's default-shell are both values devgeta does
 // not control, so neither site may assume a space-free path.
 func TestExecPaneCommandQuotesAShellWithASpace(t *testing.T) {
-	got := execPaneCommand(binaryLaunch(testNvimPath), "/opt/my shells/zsh")
+	got := paneCommandFor(binaryLaunch(testNvimPath), "/opt/my shells/zsh")
 	want := `'/opt/homebrew/bin/nvim'; exec '/opt/my shells/zsh'`
 	if got != want {
-		t.Errorf("execPaneCommand() = %q, want %q", got, want)
+		t.Errorf("paneCommandFor() = %q, want %q", got, want)
 	}
 }
 
-// TestExecPaneCommandOnAnEmptyLaunchIsEmpty: a shell pane must stay a shell
+// TestExecPaneCommandOnABlankCommandIsEmpty: a shell pane must stay a shell
 // pane. Building "; exec '<shell>'" around nothing would run an empty command
 // first, and passing no command at all is what gives the pane the shell tmux
 // would have started anyway - today's behavior exactly.
-func TestExecPaneCommandOnAnEmptyLaunchIsEmpty(t *testing.T) {
-	if got := execPaneCommand(paneLaunch{}, testShell); got != "" {
-		t.Errorf("execPaneCommand(empty launch) = %q, want \"\"", got)
+func TestExecPaneCommandOnABlankCommandIsEmpty(t *testing.T) {
+	for _, command := range []string{"", "   ", "\t\n"} {
+		if got := execPaneCommand(command, testShell); got != "" {
+			t.Errorf("execPaneCommand(%q) = %q, want \"\"", command, got)
+		}
+	}
+	if got := paneCommandFor(paneLaunch{}, testShell); got != "" {
+		t.Errorf("paneCommandFor(zero launch) = %q, want \"\"", got)
 	}
 }
 
@@ -285,7 +442,7 @@ func TestInteractivePaneCommandIsTheSameShellForm(t *testing.T) {
 }
 
 // TestInteractivePaneCommandOnABlankScriptIsEmpty mirrors
-// TestExecPaneCommandOnAnEmptyLaunchIsEmpty: with nothing to run, the pane gets
+// TestExecPaneCommandOnABlankCommandIsEmpty: with nothing to run, the pane gets
 // no command rather than a wrapper around an empty script (which would run
 // `; exec ...` as its first statement).
 func TestInteractivePaneCommandOnABlankScriptIsEmpty(t *testing.T) {
@@ -293,5 +450,137 @@ func TestInteractivePaneCommandOnABlankScriptIsEmpty(t *testing.T) {
 		if got := interactivePaneCommand(script, testShell); got != "" {
 			t.Errorf("interactivePaneCommand(%q) = %q, want \"\"", script, got)
 		}
+	}
+}
+
+// --- both recipes against a real shell parser ---
+//
+// The tests above pin the recipes against hand-computed literals, which proves
+// they are stable but not that they are CORRECT: a wrong expectation and a wrong
+// builder agree with each other. tmux hands a pane command to a real shell, so
+// these two run the built command through one and check what the argv on the
+// other side actually is. Same precedent and same justification as
+// TestShellSingleQuoteRoundTripsThroughRealShell in layout_test.go: this is
+// pure shell-syntax validation of a built string, exercising no devgeta
+// tmux/git behavior, so it needs no testutil.MockApp. Nothing is installed and
+// nothing outside t.TempDir() is written or read.
+
+// argvEchoFixture writes an executable script that prints each argument it was
+// given on its own line, and returns its path. It stands in for both
+// interpolated executables a recipe names - the shell and the resolved binary -
+// so a test can read back exactly how the real parser split the command.
+//
+// dirName is a subdirectory created under t.TempDir(); passing one with a space
+// in it puts the quoting of the interpolated path under test too, which is the
+// case ADR-0020 calls out ("/Users/Jane Doe/.local/bin/claude").
+func argvEchoFixture(t *testing.T, dirName, name string) string {
+	t.Helper()
+
+	dir := filepath.Join(t.TempDir(), dirName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("failed to create fixture dir: %v", err)
+	}
+	path := filepath.Join(dir, name)
+	script := "#!/bin/sh\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\"; done\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("failed to create fixture %q: %v", path, err)
+	}
+	return path
+}
+
+// runThroughRealShell runs command the way tmux does - as one shell-command
+// string handed to a shell - and returns its stdout lines.
+func runThroughRealShell(t *testing.T, command string) []string {
+	t.Helper()
+
+	out, err := exec.Command("sh", "-c", command).Output()
+	if err != nil {
+		t.Fatalf("sh -c %q failed: %v", command, err)
+	}
+	return strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+}
+
+// TestInteractivePaneCommandWrapperSurvivesARealShellParser is the round trip
+// for the wrapper's load-bearing claim: everything after -ic must reach the
+// inner shell as ONE argument, with every character of the script intact -
+// embedded single quote included. A hand-computed literal cannot prove that; the
+// parser can.
+//
+// It substitutes an argv-echoing script for the shell, so nothing interactive
+// runs and the trailing `exec` inside the quoted word is never executed - it is
+// simply printed back as part of the argument, which is exactly the thing being
+// asserted.
+func TestInteractivePaneCommandWrapperSurvivesARealShellParser(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available in PATH, skipping shell round-trip test")
+	}
+
+	// A directory with a space in it: the shell path is interpolated twice, and
+	// both sites have to survive it.
+	fakeShell := argvEchoFixture(t, "my shells", "fake-shell")
+
+	tests := []struct {
+		name   string
+		script string
+	}{
+		{
+			name:   "a devgeta alias-form launch with a quoted prompt",
+			script: (&ClaudeCoder{}).interactiveLaunch("it's fine").render(),
+		},
+		{
+			// ADR-0020 measured this exact value: a naive embedding ends the
+			// -ic wrapper early and the command breaks.
+			name:   "a --pane value containing a single quote",
+			script: `printf %s "it's fine"`,
+		},
+		{
+			name:   "a compound --pane value",
+			script: "cd api && make dev",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			command := interactivePaneCommand(tt.script, fakeShell)
+			argv := runThroughRealShell(t, command)
+
+			wantInner := tt.script + "; exec " + shellSingleQuote(fakeShell) + " -i"
+			if len(argv) != 2 {
+				t.Fatalf("expected exactly 2 arguments, got %d: %q (command was %q)",
+					len(argv), argv, command)
+			}
+			if argv[0] != "-ic" {
+				t.Errorf("argv[0] = %q, want %q", argv[0], "-ic")
+			}
+			if argv[1] != wantInner {
+				t.Errorf("inner script arrived as %q, want %q", argv[1], wantInner)
+			}
+		})
+	}
+}
+
+// TestExecPaneCommandSurvivesARealShellParser is the same round trip for the
+// resolved-path recipe: the quoted binary path and the quoted prompt must arrive
+// as exactly two argv elements, and the trailing `exec` must then run in the
+// SAME shell rather than being swallowed by the first command's quoting.
+func TestExecPaneCommandSurvivesARealShellParser(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("sh not available in PATH, skipping shell round-trip test")
+	}
+
+	const prompt = "it's fine"
+	fakeBinary := argvEchoFixture(t, "my bins", "fake-claude")
+	// The exec'd shell is the same kind of fixture, so it prints nothing when it
+	// runs with no arguments - its only job here is to prove the trailing exec
+	// was a runnable command and not part of the first one.
+	fakeShell := argvEchoFixture(t, "my shells", "fake-shell")
+
+	launch := binaryLaunchWithEnv(claudeNoFlickerEnv, fakeBinary, prompt)
+	command := paneCommandFor(launch, fakeShell)
+	argv := runThroughRealShell(t, command)
+
+	if len(argv) != 1 || argv[0] != prompt {
+		t.Fatalf("the binary received %q, want exactly one argument %q (command was %q)",
+			argv, prompt, command)
 	}
 }

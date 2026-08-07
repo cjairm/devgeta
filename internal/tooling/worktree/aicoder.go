@@ -37,6 +37,20 @@ type AICoder interface {
 	// would silently fall through and produce a promptless - or, now, a
 	// prefix-less - launch with no compile error.
 	//
+	// BOTH are needed here, even though interactiveLaunch(p).render() is
+	// string-identical to PromptCommand(p) today. A created pane's command is a
+	// function of the preflight probe's resolution - a resolved path takes the
+	// exec form, no path takes the alias form (ADR-0020 part 3) - and the code
+	// that must express that, coderPane in layout.go, holds a coder only as an
+	// AICoder. With just execLaunch on the interface it could not reach the
+	// alias form polymorphically, leaving two options that are both worse: a
+	// type switch on the concrete coder (what ADR-0011's argument above
+	// rejects), or building the fallback from the PromptCommand STRING and
+	// handing it to interactivePaneCommand directly - which bypasses
+	// paneCommandFor, the single place that pairs a launch kind with its recipe,
+	// and blurs the two representations launch.go's header comment keeps
+	// separate (PromptCommand is the form TYPED into a live interactive shell).
+	//
 	// They are unexported, which also seals the interface: every AICoder is one
 	// of this file's, and ResolveAICoder is the only way to get one. Nothing
 	// outside this package implements it today, and a launch form defined

@@ -18,7 +18,9 @@
 //     are what a create path passes to tmux.
 //
 // This file owns the second one, plus the structured launch value both are
-// rendered from.
+// rendered from. paneCommandFor is the single door from a launch to a pane
+// command: it picks the recipe from the launch's kind, so a create path never
+// pairs the two by hand.
 
 package worktree
 
@@ -37,7 +39,7 @@ import "strings"
 const claudeNoFlickerEnv = "CLAUDE_CODE_NO_FLICKER=1"
 
 // paneLaunch is one devgeta-owned command to run in a pane, in structured form:
-// a program, its arguments, and an optional environment prefix.
+// a kind, a program, its arguments, and an optional environment prefix.
 //
 // It is structured rather than a "program plus prompt" pair because the create
 // paths do not share one argument shape - claude takes its prompt positionally,
@@ -47,19 +49,51 @@ const claudeNoFlickerEnv = "CLAUDE_CODE_NO_FLICKER=1"
 // could not share the prompt fragment's single author).
 //
 // The zero value means "no command at all" - the shell pane, which gets the
-// shell tmux would have started anyway. It renders to "", and both recipes
-// below pass that through as "" rather than building a command around nothing.
+// shell tmux would have started anyway. It renders to "", and paneCommandFor
+// passes that through as "" rather than building a command around nothing.
 //
-// Every field is set by a constructor below. quoteProgram in particular is not
-// a style knob: it records which KIND of program this is, and getting it
-// backwards breaks the launch in a way no mocked test would notice (see
-// aliasLaunch and binaryLaunch).
+// Every field is set by a constructor below; kind is the one those constructors
+// exist to get right (see launchKind).
 type paneLaunch struct {
-	envPrefix    string
-	program      string
-	quoteProgram bool
-	args         []string
+	kind      launchKind
+	envPrefix string
+	program   string
+	args      []string
 }
+
+// launchKind records which KIND of program a launch names. It is not a quoting
+// style knob: it decides how the program word is rendered AND which recipe the
+// launch runs under (see paneCommandFor), and getting it backwards breaks the
+// launch in a way no mocked test would notice - an alias does not exist in the
+// non-interactive shell tmux runs a pane command in, and an unquoted resolved
+// path splits on the first space inside it.
+//
+// Its zero value carries a second load-bearing property: "empty" is the zero
+// KIND, not a property of the other fields. Every constructor below sets a
+// non-zero kind, so only a launch nobody constructed is empty. A malformed
+// launch - arguments but no program, the shape a resolution handing over an
+// empty path would produce - is therefore NOT empty: it still renders, and
+// fails visibly in the pane, instead of collapsing to "" and taking the prompt
+// with it. That collapse is this cycle's original bug (success reported, prompt
+// never delivered, nothing logged), and ADR-0011 and ADR-0016 both prefer a
+// launch that fails visibly to one that vanishes. Keying emptiness on the
+// program alone made it representable again; keying it on the kind cannot
+// (CLAUDE.md §4).
+type launchKind int
+
+const (
+	// launchNone is the zero value: no command at all. The shell pane, which
+	// gets the shell tmux would have started anyway.
+	launchNone launchKind = iota
+
+	// launchAlias names a program the shell running it must resolve - a devgeta
+	// shell alias ("cc"/"oc") or a bare binary name ("nvim"). See aliasLaunch.
+	launchAlias
+
+	// launchBinary names a resolved absolute path a pane execs directly. See
+	// binaryLaunch.
+	launchBinary
+)
 
 // aliasLaunch builds a launch whose program is a NAME the shell running it must
 // resolve: a devgeta shell alias ("cc"/"oc", defined in devgeta.zsh) or a bare
@@ -72,9 +106,10 @@ type paneLaunch struct {
 // word is special.
 //
 // This is the form typed into (or run by) an interactive shell: Pane.Command,
-// and the inner script of interactivePaneCommand.
+// and the inner script of interactivePaneCommand - which is also where
+// paneCommandFor routes it, because that is the only shell that has the alias.
 func aliasLaunch(program string, args ...string) paneLaunch {
-	return paneLaunch{program: program, args: args}
+	return paneLaunch{kind: launchAlias, program: program, args: args}
 }
 
 // binaryLaunch builds a launch whose program is a resolved absolute path, for a
@@ -86,8 +121,19 @@ func aliasLaunch(program string, args ...string) paneLaunch {
 // The path IS quoted, and that is not symmetry with the arguments - it is
 // required. "/Users/Jane Doe/.local/bin/claude" is a perfectly valid resolved
 // path and would otherwise split into two words.
+//
+// An empty path is a caller bug, not a shell pane: a resolution that produced no
+// path must select the alias form and the interactive recipe (ADR-0020 part 3 -
+// the resolved path is an optimization, and its absence is what the fallback
+// exists for), never hand "" over here. This constructor cannot refuse it - Go
+// has no non-empty string type and this value has no error channel - so the
+// launch is built anyway and the failure is made LOUD rather than silent: the
+// kind is set, so the launch is not empty, so it renders as an empty program
+// word followed by its quoted arguments, and the pane reports a command it could
+// not run with the prompt visible beside it. The prompt is never quietly
+// discarded. See launchKind.
 func binaryLaunch(path string, args ...string) paneLaunch {
-	return paneLaunch{program: path, quoteProgram: true, args: args}
+	return paneLaunch{kind: launchBinary, program: path, args: args}
 }
 
 // binaryLaunchWithEnv is binaryLaunch plus a devgeta-owned environment prefix
@@ -104,9 +150,16 @@ func binaryLaunchWithEnv(envPrefix, path string, args ...string) paneLaunch {
 	return launch
 }
 
-// isEmpty reports whether this launch has no command to run (the zero value -
-// the shell pane).
-func (l paneLaunch) isEmpty() bool { return l.program == "" }
+// isEmpty reports whether this launch has no command to run: the zero value,
+// and only the zero value - the shell pane.
+//
+// It keys on the KIND, not on the program, and that distinction is the whole
+// point. Keying it on `program == ""` made a launch with arguments but no
+// program (binaryLaunch("", "fix issue 1082")) read as "no command at all", so
+// it rendered to "" and the pane became a bare shell with the prompt gone and
+// nothing logged - this cycle's original bug reached by a second route. With the
+// kind, that launch is not empty and cannot become "". See launchKind.
+func (l paneLaunch) isEmpty() bool { return l.kind == launchNone }
 
 // render turns the launch into a shell command line: the env prefix, the
 // program, then every argument, joined by spaces.
@@ -128,7 +181,7 @@ func (l paneLaunch) render() string {
 	if l.envPrefix != "" {
 		parts = append(parts, l.envPrefix)
 	}
-	if l.quoteProgram {
+	if l.kind == launchBinary {
 		parts = append(parts, shellSingleQuote(l.program))
 	} else {
 		parts = append(parts, l.program)
@@ -139,28 +192,75 @@ func (l paneLaunch) render() string {
 	return strings.Join(parts, " ")
 }
 
+// paneCommandFor returns the shell-command tmux should run as a created pane's
+// process for launch, choosing the recipe from the launch's KIND:
+//
+//	launchBinary -> execPaneCommand        - <rendered>; exec '<shell>'
+//	launchAlias  -> interactivePaneCommand - '<shell>' -ic '<rendered>; exec '<shell>' -i'
+//	launchNone   -> ""                     - no command; the pane keeps the shell
+//	                                         tmux would have started anyway
+//
+// This is the only place a launch is paired with a recipe, which is the point:
+// the two are NOT interchangeable, and the wrong pairing used to be something
+// any caller could write. tmux runs a pane's shell-command through a
+// NON-INTERACTIVE shell (measured: flags `569X`, no `i`), which has no aliases -
+// so an alias launch sent through the exec recipe emits `cc 'fix it'; exec
+// '/bin/zsh'` and dies on `command not found`, which is exactly the case
+// ADR-0020 part 3's interactive fallback exists to serve. In the other
+// direction, a resolved absolute path needs none of the user's interactive
+// startup and should not pay for it (ADR-0020 rejects `-ic` as the default for
+// precisely that reason). Routing on the discriminator the value already carries
+// makes both mistakes unrepresentable rather than merely avoidable
+// (CLAUDE.md §4).
+//
+// shell must come from resolveShell - both recipes interpolate it, twice in the
+// interactive one.
+//
+// A --pane value does NOT come through here: it is a raw user command line, not
+// a paneLaunch at all, and it goes to interactivePaneCommand directly (ADR-0011
+// keeps it unparsed and unsplit).
+func paneCommandFor(launch paneLaunch, shell string) string {
+	switch launch.kind {
+	case launchBinary:
+		return execPaneCommand(launch.render(), shell)
+	case launchAlias:
+		return interactivePaneCommand(launch.render(), shell)
+	default:
+		// launchNone: the shell pane. Passing no command at all is what gives
+		// the pane the shell tmux would have started on its own - today's
+		// behavior exactly. Wrapping nothing in a recipe would instead run an
+		// empty command first.
+		return ""
+	}
+}
+
 // execPaneCommand returns the shell-command tmux should run as a created pane's
-// process for a devgeta-owned launch whose binary path resolved:
+// process for an already-rendered devgeta-owned launch whose binary path
+// resolved:
 //
-//	<rendered launch>; exec '<shell>'
+//	<command>; exec '<shell>'
 //
-// The trailing `exec` preserves today's pane lifetime: exec'ing the launch
-// alone would close the pane when the command exits, and the last pane closing
-// takes the window with it - so quitting your coder would destroy the window
-// instead of dropping you at a shell (both measured, ADR-0020 part 2).
+// paneCommandFor is its only caller, and deliberately so: it takes the rendered
+// string rather than a paneLaunch so that "which recipe does this launch get"
+// is answered in exactly one place (see paneCommandFor for why an alias launch
+// must never reach this recipe).
+//
+// The trailing `exec` preserves today's pane lifetime: exec'ing the command
+// alone would close the pane when it exits, and the last pane closing takes the
+// window with it - so quitting your coder would destroy the window instead of
+// dropping you at a shell (both measured, ADR-0020 part 2).
 //
 // shell must come from resolveShell: it is interpolated into the command and
 // only that resolution guarantees it is an existing, executable, absolute path
 // rather than a $SHELL pointing at something uninstalled.
 //
-// An empty launch (the shell pane) yields "", meaning "no command" - the pane
-// gets the shell tmux would have started on its own, which is exactly today's
-// behavior. Wrapping nothing in `; exec` would instead run an empty command.
-func execPaneCommand(launch paneLaunch, shell string) string {
-	if launch.isEmpty() {
+// A blank command yields "" rather than a bare `; exec '<shell>'`, whose first
+// statement would be empty.
+func execPaneCommand(command, shell string) string {
+	if strings.TrimSpace(command) == "" {
 		return ""
 	}
-	return launch.render() + "; exec " + shellSingleQuote(shell)
+	return command + "; exec " + shellSingleQuote(shell)
 }
 
 // interactivePaneCommand returns the shell-command tmux should run as a created
@@ -171,13 +271,15 @@ func execPaneCommand(launch paneLaunch, shell string) string {
 // Two kinds of script land here, and one mechanism serving both is deliberate
 // (ADR-0020 part 3) rather than one of them being a special case:
 //
-//   - A user-authored --pane value. It is a command line the user wrote for
-//     their own shell and may use their own aliases and functions, so running
-//     it non-interactively would silently change what it means.
+//   - A user-authored --pane value, passed to this function DIRECTLY. It is a
+//     command line the user wrote for their own shell and may use their own
+//     aliases and functions, so running it non-interactively would silently
+//     change what it means. It is not a paneLaunch and is never turned into one:
+//     ADR-0011 keeps it unparsed and unsplit.
 //   - A devgeta-owned alias-form launch, when the preflight probe could not
-//     resolve an absolute path. The alias (cc/oc) only exists in an interactive
-//     shell, so this is what keeps an inconclusive probe costing the pane
-//     nothing - ADR-0016's fail-open, preserved.
+//     resolve an absolute path, routed here by paneCommandFor. The alias (cc/oc)
+//     only exists in an interactive shell, so this is what keeps an inconclusive
+//     probe costing the pane nothing - ADR-0016's fail-open, preserved.
 //
 // Three quoting facts, each load-bearing:
 //
@@ -197,7 +299,7 @@ func execPaneCommand(launch paneLaunch, shell string) string {
 //     still looking like it worked.
 //
 // shell must come from resolveShell, as with execPaneCommand. A blank script
-// yields "" for the same reason an empty launch does there.
+// yields "" for the same reason a blank command does there.
 func interactivePaneCommand(script, shell string) string {
 	if strings.TrimSpace(script) == "" {
 		return ""
