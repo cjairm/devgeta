@@ -39,8 +39,14 @@ func TestExecLaunchFormPerPaneKind(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "nvim takes no arguments",
-			launch: binaryLaunch(testNvimPath),
+			// Through nvim's PRODUCTION builder, not a hand-built launch: that
+			// is what makes this row the stated regression net. A builder that
+			// started passing the prompt through - turning the editor pane into
+			// `nvim 'fix issue 1082'`, which opens a file by that name - now
+			// fails here, which a locally constructed paneLaunch could never
+			// catch. The prompt is passed in deliberately for that reason.
+			name:   "nvim takes no arguments, prompt or not",
+			launch: nvimExecLaunch(testNvimPath, prompt),
 			want:   `'/opt/homebrew/bin/nvim'`,
 		},
 		{
@@ -214,10 +220,19 @@ func TestALaunchWithArgumentsButNoProgramDoesNotVanish(t *testing.T) {
 // TestZeroLaunchIsTheOnlyEmptyLaunch states the other half of the same property
 // positively: the shell pane is the zero value, and nothing a constructor
 // produces is empty.
+//
+// The render() assertion is not redundant with isEmpty(). Emptiness being the
+// kind only stops a launch from REPORTING itself empty; a launch can still render
+// to "" and vanish anyway, which is what aliasLaunch("") did while the program
+// word was left unquoted for every alias launch. So this loop asserts both, and
+// it is the assertion that pins the quoting of an empty program word.
 func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 	zero := paneLaunch{}
 	if !zero.isEmpty() {
 		t.Error("the zero launch must be empty - it is the shell pane")
+	}
+	if got := zero.render(); got != "" {
+		t.Errorf("the zero launch must render to \"\", got %q", got)
 	}
 	for _, launch := range []paneLaunch{
 		aliasLaunch(""),
@@ -226,6 +241,16 @@ func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 	} {
 		if launch.isEmpty() {
 			t.Errorf("a constructed launch (%+v) must never report itself empty", launch)
+		}
+		if launch.render() == "" {
+			t.Errorf(
+				"a constructed launch (%+v) rendered to \"\", so it vanishes into a bare "+
+					"shell pane despite not reporting itself empty",
+				launch,
+			)
+		}
+		if paneCommandFor(launch, testShell) == "" {
+			t.Errorf("a constructed launch (%+v) produced no pane command", launch)
 		}
 	}
 }

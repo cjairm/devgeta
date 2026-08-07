@@ -276,7 +276,8 @@ func GetWorktreeBasePath() string {
 // session. If force is false and the repo has hooks incompatible with git
 // worktrees, the user is prompted to confirm before proceeding.
 func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	repoRoot, err := w.Git.GetRepoRoot()
@@ -293,7 +294,8 @@ func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
 // Like Create, it does not move the attached client — call FollowWindow if the
 // user should end up in the new window.
 func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force bool) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	repoRoot, err := w.Git.GetRepoRootIn(paths.ExpandHome(repoPath))
@@ -310,9 +312,17 @@ func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force b
 // gives the same "one actionable message before anything is touched"
 // guarantee validateCoder gave for a single coder - a layout is just N of
 // those checks instead of one.
-func validateLayout(layout Layout) error {
+//
+// It RETURNS the layout, and callers must use the returned value: each pane's
+// check also resolves the absolute path of the tool it verified, and that
+// resolution rides on the copy this returns. Discarding it would leave the
+// eventual pane launch with nothing to build from, forcing it to either probe a
+// second time or launch the bare name - the two outcomes ADR-0020 rules out. The
+// returned layout is a copy, so calling this twice on one resolved layout (which
+// `dg ws` does: resolve once, create repeatedly) keeps each create independent.
+func validateLayout(layout Layout) (Layout, error) {
 	if len(layout.Panes) == 0 {
-		return fmt.Errorf("a layout with at least one pane is required")
+		return Layout{}, fmt.Errorf("a layout with at least one pane is required")
 	}
 	return layout.EnsureInstalled()
 }
@@ -1784,7 +1794,8 @@ func (w *WorktreeManager) repoSlugForWorktree(name string) string {
 // worktree's parent folder (the repo slug), creating that session if it does
 // not exist. Works from any directory or session.
 func (w *WorktreeManager) Repair(name string, layout Layout) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 
@@ -1896,7 +1907,8 @@ func (w *WorktreeManager) RemoveWithSessionInRepo(repoSlug, name string) error {
 
 // RepairInRepo repairs a worktree in a specific repo, bypassing the slug-search ambiguity.
 func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	// realWorktreePathOrConfigured, not worktreePath - see Repair's identical
@@ -1950,21 +1962,22 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 // R never creates a worktree, and the window here is the user's, already
 // holding their work.
 func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string) error {
-	reviewCmd, err := ReviewCommand(reviewerKey)
+	// reviewerPane validates reviewerKey and runs the review path's ONE opencode
+	// probe, keeping its resolution on the pane it returns (see reviewerPane).
+	// Both launches below build from this single pane, so the check and whatever
+	// runs cannot describe different things (ADR-0020).
+	//
+	// A review is always launched via OpenCode (the "oc" alias), regardless of the
+	// worktree's own layout - a user whose default layout is claude/claude-nvim
+	// has never needed oc, so it may never have been installed. Probing here,
+	// before any tmux call, turns that into one actionable error instead of a pane
+	// that prints "oc: command not found" while the dashboard reports "review
+	// started" with no error anywhere. The probed token is the "oc" alias itself
+	// (see OpenCodeCoder.EnsureInstalled), not the raw "opencode" binary, so a
+	// coder installed outside devgeta (whose alias was never written to
+	// devgeta.zsh) correctly fails this check.
+	pane, err := reviewerPane(reviewerKey)
 	if err != nil {
-		return err
-	}
-
-	// A review is always launched via OpenCode (the "oc" alias), regardless
-	// of the worktree's own layout - a user whose default layout is
-	// claude/claude-nvim has never needed oc, so it may never have been
-	// installed. Checking here, before any tmux call, turns that into one
-	// actionable error instead of a pane that prints "oc: command not found"
-	// while the dashboard reports "review started" with no error anywhere.
-	// EnsureInstalled checks the "oc" alias itself (see its doc comment), not
-	// the raw "opencode" binary, so a coder installed outside devgeta (whose
-	// alias was never written to devgeta.zsh) correctly fails this check.
-	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
 		return err
 	}
 
@@ -1991,23 +2004,30 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		// two queries, ensureWindow's existing-window branch would send the
 		// review command via a window-targeted send-keys into whatever pane
 		// is active, exactly the unsafe behavior this cycle exists to
-		// prevent. This ad-hoc one-pane layout has no install checker to run
-		// (a review launch never introduces a new tool to check for beyond
-		// the oc check above).
+		// prevent. This one-pane layout carries no install checker, because
+		// reviewerPane already probed - see its doc comment on why a nil check
+		// is what keeps this from becoming a second probe.
 		layout := Layout{
 			Name:  "review-" + reviewerKey,
-			Panes: []Pane{{Command: reviewCmd}},
+			Panes: []Pane{pane},
 		}
 		return w.createWindowWithLayout(repoSlug, windowName, wtPath, layout)
 	}
 
-	return w.launchReviewInLiveWindow(session, windowName, wtPath, reviewCmd)
+	return w.launchReviewInLiveWindow(session, windowName, wtPath, pane)
 }
 
-// launchReviewInLiveWindow gets reviewCmd running in an existing (live)
-// window: in a pane that is sitting at a shell prompt if the window has one,
-// otherwise in a new pane split off for it. Focus is restored to whichever
+// launchReviewInLiveWindow gets pane's review command running in an existing
+// (live) window: in a pane that is sitting at a shell prompt if the window has
+// one, otherwise in a new pane split off for it. Focus is restored to whichever
 // pane was active beforehand, on both success and failure.
+//
+// It takes the whole reviewer Pane, not just a command string, so this branch and
+// LaunchReviewInRepo's create branch spend the SAME probe's resolution (see
+// reviewerPane). Today both sends below use pane.Command - the typed form, which
+// is what an existing pane's live interactive shell needs (ADR-0020 part 4). The
+// split sub-branch creates a pane, so it is the one that will pass its command at
+// creation instead, built from the resolution this pane already carries.
 //
 // The rule this function enforces is "never type into a pane that is running
 // something" - not "always split". An idle shell is not running anything, so
@@ -2032,9 +2052,11 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 // since it was chosen (a user keystroke, a tmux hook), landing the review
 // command in the coder's pane - the exact outcome this function prevents.
 func (w *WorktreeManager) launchReviewInLiveWindow(
-	session, windowName, wtPath, reviewCmd string,
+	session, windowName, wtPath string,
+	pane Pane,
 ) error {
 	target := session + ":" + windowName
+	reviewCmd := pane.Command
 
 	// Capture the active pane before touching anything, so focus can be
 	// restored to it afterward. If this fails, nothing has been created yet,

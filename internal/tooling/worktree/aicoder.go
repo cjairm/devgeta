@@ -24,7 +24,21 @@ type AICoder interface {
 	// positionally, opencode takes --prompt. Do not "unify" them.
 	PromptCommand(prompt string) string
 
-	EnsureInstalled() error
+	// EnsureInstalled verifies this coder is installed and RETURNS THE PATH the
+	// probe resolved, so the pane that launches it can exec exactly what was
+	// checked. An empty path with a nil error is a normal outcome, not a
+	// half-answer: the probe may have been inconclusive (ADR-0016 - it must
+	// never block a create), or `command -v` may have answered with something
+	// that is not a path at all (alias text, a function or builtin name). Every
+	// such outcome selects the interactive fallback (ADR-0020 part 3).
+	//
+	// It returns the path rather than only an error because ADR-0020 requires
+	// ONE probe per pane per create, with the command that runs built from that
+	// probe's answer. An error-only signature leaves only two options, and both
+	// break that: probe again at launch (two answers that can disagree, so the
+	// check verified something other than what ran), or drop the path and always
+	// launch the bare name (every pane silently reduced to the fallback).
+	EnsureInstalled() (string, error)
 
 	// interactiveLaunch and execLaunch are this coder's two launch forms as
 	// structured values (see launch.go's paneLaunch): the alias form a shell
@@ -60,11 +74,19 @@ type AICoder interface {
 }
 
 // ensureToolInstalled reports whether launchToken resolves in the user's
-// interactive shell and returns a consistent, actionable error naming
-// displayName if it doesn't. Shared by every EnsureInstalled below (opencode,
-// claude) and by layout.go's nvim check (nvim has no AICoder wrapper since it
-// isn't an AI coder) - one lookup + error-format shape instead of three
-// hand-rolled copies of it.
+// interactive shell, returning the absolute path the probe resolved for it and a
+// consistent, actionable error naming displayName if it doesn't resolve. Shared
+// by every EnsureInstalled below (opencode, claude) and by layout.go's nvim
+// check (nvim has no AICoder wrapper since it isn't an AI coder) - one lookup +
+// error-format shape instead of three hand-rolled copies of it.
+//
+// The returned path is what a created pane execs, so this probe is the SINGLE
+// one behind both the check and the launch (ADR-0020: one probe per pane per
+// create, and the command that runs is built from that probe's answer). It is
+// empty whenever the probe produced no path - a NotFound or Inconclusive
+// outcome, or a Found outcome whose output was not path-shaped (alias text, a
+// shell function or builtin name; see commands.lastPathLine). Every one of those
+// selects the interactive fallback, and none of them is an error on its own.
 //
 // It goes through commands.ShellCommandLookupFn, NOT commands.LookPathFn /
 // exec.LookPath, on purpose: a worktree window launches its coder by sending a
@@ -91,15 +113,11 @@ type AICoder interface {
 // this check up front with an actionable message, rather than building a window
 // whose pane then dies on `cc: command not found`. displayName is the binary the
 // message names (claude/opencode/nvim), which reads better than the alias.
-func ensureToolInstalled(launchToken, displayName string) error {
-	// The resolved path is discarded here on purpose: this check only proves
-	// the tool is installed. Carrying the path to the pane launch is the next
-	// step of this cycle (ADR-0020) - it needs to live on the resolved
-	// Layout, not be recomputed here.
-	_, result := commands.ShellCommandLookupFn(launchToken)
+func ensureToolInstalled(launchToken, displayName string) (string, error) {
+	resolvedPath, result := commands.ShellCommandLookupFn(launchToken)
 	switch result {
 	case commands.ShellLookupNotFound:
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"%s is not installed. Install it with: dg install --only terminal",
 			displayName,
 		)
@@ -113,8 +131,11 @@ func ensureToolInstalled(launchToken, displayName string) error {
 			"launchToken", launchToken,
 			"tool", displayName,
 		)
+		// No path, no error: the pane takes the interactive fallback, which
+		// leaves it exactly as well off as it is today (ADR-0016, ADR-0020).
+		return "", nil
 	}
-	return nil
+	return resolvedPath, nil
 }
 
 // OpenCodeCoder implements AICoder for OpenCode
@@ -204,7 +225,15 @@ func (o *OpenCodeCoder) launchArgs(agent, prompt string) []string {
 // EnsureInstalled checks the exact launch token (the oc alias), not the raw
 // "opencode" binary, so a pass guarantees the pane launch will resolve too; the
 // error still names "opencode" as the thing to install.
-func (o *OpenCodeCoder) EnsureInstalled() error {
+//
+// It returns whatever path the probe resolved for that token. Probing an ALIAS
+// means that path is empty in practice today (`command -v oc` prints
+// `alias oc=opencode`, which is not path-shaped), so every created coder pane
+// takes the interactive fallback for now - correct, and exactly today's
+// behavior. Switching the probed token to the BINARY is the step that starts
+// producing a path here, and it comes with the launch recipe becoming the source
+// of the alias (ADR-0020's part 3, rule 1).
+func (o *OpenCodeCoder) EnsureInstalled() (string, error) {
 	return ensureToolInstalled(o.Command(), o.Name())
 }
 
@@ -252,8 +281,13 @@ func (c *ClaudeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
 
 // launchArgs is the one place claude's argument shape is decided: the prompt is
 // POSITIONAL (claude has no --prompt flag, unlike opencode), and absent when
-// empty - `claude ”` would hand the coder an empty opening message rather than
-// none.
+// empty - launching claude with an empty quoted argument would hand the coder an
+// empty opening message rather than none.
+//
+// That argument is deliberately DESCRIBED rather than spelled out: gofmt's doc
+// comment printer converts a pair of adjacent single quotes into a typographic
+// closing quote, so writing the literal form here is silently mangled on every
+// format (which is how this sentence became gibberish in the first place).
 func (c *ClaudeCoder) launchArgs(prompt string) []string {
 	if prompt == "" {
 		return nil
@@ -264,7 +298,10 @@ func (c *ClaudeCoder) launchArgs(prompt string) []string {
 // EnsureInstalled checks the exact launch token (the cc alias), not the raw
 // "claude" binary, so a pass guarantees the pane launch will resolve too; the
 // error still names "claude" as the thing to install.
-func (c *ClaudeCoder) EnsureInstalled() error {
+//
+// As with opencode's, the returned path is empty in practice while the probed
+// token is the ALIAS - see OpenCodeCoder.EnsureInstalled.
+func (c *ClaudeCoder) EnsureInstalled() (string, error) {
 	return ensureToolInstalled(c.Command(), c.Name())
 }
 

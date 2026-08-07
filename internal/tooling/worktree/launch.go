@@ -181,7 +181,18 @@ func (l paneLaunch) render() string {
 	if l.envPrefix != "" {
 		parts = append(parts, l.envPrefix)
 	}
-	if l.kind == launchBinary {
+	// An EMPTY program word is quoted whichever kind it is, so it survives as a
+	// literal word the shell then fails to resolve. Left unquoted it disappears
+	// from the command line entirely: aliasLaunch("") renders to "" (the vanish
+	// isEmpty's kind check exists to prevent, reached one layer down), and
+	// aliasLaunch("", "fix issue 1082") renders to " 'fix issue 1082'", which
+	// makes the PROMPT the command being run. Quoting it mirrors what
+	// binaryLaunch("") already did and keeps a caller bug loud in the pane
+	// rather than silent. No production launch can hit this - every program
+	// value is a devgeta constant - so this is the invariant holding, not a live
+	// bug (see binaryLaunch on why the constructors cannot refuse an empty
+	// program outright).
+	if l.kind == launchBinary || l.program == "" {
 		parts = append(parts, shellSingleQuote(l.program))
 	} else {
 		parts = append(parts, l.program)
@@ -232,6 +243,42 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 		// empty command first.
 		return ""
 	}
+}
+
+// creationCommand returns the shell-command tmux should run as this pane's
+// process when devgeta CREATES the pane, using shell (which must come from
+// resolveShell). It is the counterpart of Pane.Command, never a replacement for
+// it: Command stays the form TYPED into a pane that already exists (the repair
+// path, `dg wt move`'s retarget - ADR-0020 part 4).
+//
+// Three kinds of pane, decided by what the pane's constructor put on it rather
+// than by inspecting its Command string:
+//
+//   - launch != nil - a devgeta-owned pane (a coder, the editor, a reviewer).
+//     The launch closure is handed the probe's resolution and this pane's prompt
+//     text, and IT decides exec-vs-interactive by whether the path is empty
+//     (see layout.go's launchFor). That is the one probe's answer being spent,
+//     not a second lookup: ADR-0020 requires the command that runs to be built
+//     from the check's own result, and nothing here re-probes.
+//   - launch == nil with a non-empty Command - a user-authored --pane value. It
+//     goes to the interactive recipe UNPARSED and UNSPLIT (ADR-0011): it is a
+//     command line the user wrote for their own shell, which may use their own
+//     aliases and functions.
+//   - launch == nil with an empty Command - the shell pane. No command at all,
+//     so tmux starts the pane's shell and nothing else, exactly as today.
+//
+// Reading the resolution off the pane (rather than taking it as a parameter) is
+// what keeps one create's resolution from reaching another: it was written onto
+// a CLONE by Layout.EnsureInstalled, and clone gives every create its own
+// backing array (see Layout.clone).
+func (p Pane) creationCommand(shell string) string {
+	if p.launch != nil {
+		return paneCommandFor(p.launch(p.resolvedPath, p.promptText), shell)
+	}
+	if p.Command != "" {
+		return interactivePaneCommand(p.Command, shell)
+	}
+	return ""
 }
 
 // execPaneCommand returns the shell-command tmux should run as a created pane's

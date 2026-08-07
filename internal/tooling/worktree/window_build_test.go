@@ -595,7 +595,9 @@ func TestCreateValidateLayoutFailsBeforeAnyTmuxCall(t *testing.T) {
 	failingLayout := Layout{
 		Name: "broken",
 		Panes: []Pane{
-			{Command: "x", check: func() error { return errors.New("tool missing") }},
+			{Command: "x", check: func() (string, error) {
+				return "", errors.New("tool missing")
+			}},
 		},
 	}
 
@@ -1224,5 +1226,110 @@ func TestLaunchReviewInRepoUsesRealLocationNotConfigured(t *testing.T) {
 			"new-window was rooted at the never-created shared path - " +
 				"resolved via configured location, not verified reality",
 		)
+	}
+}
+
+// TestLaunchReviewProbesExactlyOnce covers the whole LaunchReviewInRepo call, not
+// just reviewerPane, and it asserts ONE - not "at least one".
+//
+// The review path is the one launch that does its own preflight rather than going
+// through validateLayout, so it is the one where a second probe could hide: at
+// pane-command build time, or in a Layout the create branch assembles. Both of its
+// branches are exercised here from the same constructor, so a re-probe added to
+// either fails.
+//
+// Two probes would not just be slow (up to two 5-second timeouts per pane); they
+// are two observations of a changing system and can DISAGREE, which would mean the
+// check verified something other than what ran - the property ADR-0020 exists to
+// establish.
+func TestLaunchReviewProbesExactlyOnce(t *testing.T) {
+	repoSlug := "myrepo"
+	name := "feat"
+	windowName := GetWindowName(repoSlug, name)
+	session := "some-session"
+
+	tests := []struct {
+		name string
+		tmux func() *commands.MockBaseCommand
+	}{
+		{
+			name: "no live window: the create branch",
+			tmux: func() *commands.MockBaseCommand {
+				mockTmuxBase := commands.NewMockBaseCommand()
+				mockTmuxBase.SetExecCommandResults(
+					commands.ExecCommandResult("", "", nil),     // WindowSession: no window
+					commands.ExecCommandResult("", "", nil),     // HasSession
+					commands.ExecCommandResult("", "", nil),     // CreateSessionWithWindow
+					commands.ExecCommandResult("%1\n", "", nil), // ActivePaneID (pane 0)
+					commands.ExecCommandResult("", "", nil),     // SendKeysToWindowInSession
+					commands.ExecCommandResult("", "", nil),     // SelectPane (pane 0)
+				)
+				return mockTmuxBase
+			},
+		},
+		{
+			name: "live window with a busy pane: the split branch",
+			tmux: func() *commands.MockBaseCommand {
+				mockTmuxBase := commands.NewMockBaseCommand()
+				mockTmuxBase.SetExecCommandResults(
+					commands.ExecCommandResult(
+						session+"\t"+windowName+"\n", "", nil,
+					), // WindowSession: exists
+					commands.ExecCommandResult("%1\n", "", nil), // ActivePaneID
+					commands.ExecCommandResult(
+						windowName+"\t%1\t2.1.222\n", "", nil,
+					), // PanesInWindow: busy
+					commands.ExecCommandResult("", "", nil),     // SplitWindow
+					commands.ExecCommandResult("%2\n", "", nil), // ActivePaneID (new pane)
+					commands.ExecCommandResult("", "", nil),     // SendKeysToPane
+					commands.ExecCommandResult("", "", nil),     // SelectPane
+				)
+				return mockTmuxBase
+			},
+		},
+		{
+			name: "live window with an idle shell pane: the reuse branch",
+			tmux: func() *commands.MockBaseCommand {
+				mockTmuxBase := commands.NewMockBaseCommand()
+				mockTmuxBase.SetExecCommandResults(
+					commands.ExecCommandResult(
+						session+"\t"+windowName+"\n", "", nil,
+					), // WindowSession: exists
+					commands.ExecCommandResult("%7\n", "", nil), // ActivePaneID
+					commands.ExecCommandResult(
+						windowName+"\t%7\tzsh\n", "", nil,
+					), // PanesInWindow: idle
+					commands.ExecCommandResult("", "", nil), // SendKeysToPane
+				)
+				return mockTmuxBase
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			probes := 0
+			setShellCommandLookupPathFn(
+				t,
+				func(lookupName string) (string, commands.ShellLookupResult) {
+					probes++
+					if lookupName == "oc" {
+						return "/opt/homebrew/bin/opencode", commands.ShellLookupFound
+					}
+					return "", commands.ShellLookupNotFound
+				},
+			)
+
+			mockTmuxBase := tt.tmux()
+			wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+			if err := wm.LaunchReviewInRepo(repoSlug, name, "code"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if probes != 1 {
+				t.Errorf("expected exactly 1 opencode probe for a review launch, got %d", probes)
+			}
+		})
 	}
 }

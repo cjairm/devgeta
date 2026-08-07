@@ -145,7 +145,7 @@ func TestOpenCodeCoderEnsureInstalledOK(t *testing.T) {
 	// EnsureInstalled checks the launch token (the oc alias), not the raw binary.
 	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
 
-	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
+	if _, err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
 		t.Fatalf("unexpected error when the oc alias resolves in the shell: %v", err)
 	}
 }
@@ -153,12 +153,17 @@ func TestOpenCodeCoderEnsureInstalledOK(t *testing.T) {
 func TestOpenCodeCoderEnsureInstalledMissing(t *testing.T) {
 	setShellCommandExistsFn(t, func(string) bool { return false })
 
-	err := (&OpenCodeCoder{}).EnsureInstalled()
+	resolvedPath, err := (&OpenCodeCoder{}).EnsureInstalled()
 	if err == nil {
 		t.Fatal("expected error when opencode does not resolve in the shell, got nil")
 	}
 	if got := err.Error(); !strings.Contains(got, "opencode") {
 		t.Errorf("expected error to mention opencode, got %q", got)
+	}
+	// A failed check has nothing to launch, so it must not hand back a path a
+	// caller could exec.
+	if resolvedPath != "" {
+		t.Errorf("expected no resolved path alongside the error, got %q", resolvedPath)
 	}
 }
 
@@ -166,7 +171,7 @@ func TestClaudeCoderEnsureInstalledOK(t *testing.T) {
 	// EnsureInstalled checks the launch token (the cc alias), not the raw binary.
 	setShellCommandExistsFn(t, func(name string) bool { return name == "cc" })
 
-	if err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
+	if _, err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
 		t.Fatalf("unexpected error when the cc alias resolves in the shell: %v", err)
 	}
 }
@@ -174,12 +179,69 @@ func TestClaudeCoderEnsureInstalledOK(t *testing.T) {
 func TestClaudeCoderEnsureInstalledMissing(t *testing.T) {
 	setShellCommandExistsFn(t, func(string) bool { return false })
 
-	err := (&ClaudeCoder{}).EnsureInstalled()
+	resolvedPath, err := (&ClaudeCoder{}).EnsureInstalled()
 	if err == nil {
 		t.Fatal("expected error when claude does not resolve in the shell, got nil")
 	}
 	if got := err.Error(); !strings.Contains(got, "claude") {
 		t.Errorf("expected error to mention claude, got %q", got)
+	}
+	if resolvedPath != "" {
+		t.Errorf("expected no resolved path alongside the error, got %q", resolvedPath)
+	}
+}
+
+// TestEnsureInstalledReturnsTheProbesResolvedPath is the check-to-launch link
+// ADR-0020 requires: the path the probe resolved must come BACK from the check,
+// because that is the only way the pane can exec exactly what was verified
+// without probing a second time.
+func TestEnsureInstalledReturnsTheProbesResolvedPath(t *testing.T) {
+	const claudePath = "/Users/dev/.local/bin/claude"
+	const opencodePath = "/opt/homebrew/bin/opencode"
+
+	setShellCommandLookupPathFn(t, func(name string) (string, commands.ShellLookupResult) {
+		switch name {
+		case "cc":
+			return claudePath, commands.ShellLookupFound
+		case "oc":
+			return opencodePath, commands.ShellLookupFound
+		}
+		return "", commands.ShellLookupNotFound
+	})
+
+	got, err := (&ClaudeCoder{}).EnsureInstalled()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != claudePath {
+		t.Errorf("claude resolved path = %q, want %q", got, claudePath)
+	}
+
+	got, err = (&OpenCodeCoder{}).EnsureInstalled()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != opencodePath {
+		t.Errorf("opencode resolved path = %q, want %q", got, opencodePath)
+	}
+}
+
+// TestEnsureInstalledFoundWithNoPathIsNotAnError covers the outcome ADR-0020
+// part 3 calls out as normal rather than exceptional: `command -v` answered, but
+// with something that is not a path (alias text, a shell function or builtin
+// name). That is "no path", never something to exec - and it must not fail the
+// check, because the tool IS installed. The pane takes the interactive fallback.
+func TestEnsureInstalledFoundWithNoPathIsNotAnError(t *testing.T) {
+	setShellCommandLookupPathFn(t, func(string) (string, commands.ShellLookupResult) {
+		return "", commands.ShellLookupFound
+	})
+
+	resolvedPath, err := (&OpenCodeCoder{}).EnsureInstalled()
+	if err != nil {
+		t.Fatalf("a Found outcome with no path must not error, got %v", err)
+	}
+	if resolvedPath != "" {
+		t.Errorf("expected no resolved path, got %q", resolvedPath)
 	}
 }
 
@@ -193,10 +255,17 @@ func TestEnsureInstalledInconclusiveProbeFailsOpen(t *testing.T) {
 		return commands.ShellLookupInconclusive
 	})
 
-	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
+	// The path must come back empty as well as the error being nil: an
+	// inconclusive probe resolved nothing, so anything non-empty here would be
+	// fabricated, and the pane would exec it.
+	if resolvedPath, err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
 		t.Errorf("expected an inconclusive probe to fail open for opencode, got %v", err)
+	} else if resolvedPath != "" {
+		t.Errorf("expected no resolved path from an inconclusive probe, got %q", resolvedPath)
 	}
-	if err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
+	if resolvedPath, err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
 		t.Errorf("expected an inconclusive probe to fail open for claude, got %v", err)
+	} else if resolvedPath != "" {
+		t.Errorf("expected no resolved path from an inconclusive probe, got %q", resolvedPath)
 	}
 }
