@@ -224,9 +224,18 @@ func (l Layout) EnsureInstalled() (Layout, error) {
 // extra panes, or probe resolution into the next.
 //
 // A Pane is copied by value and holds no pointers or slices of its own, so this
-// one-level copy is a full one: promptText and resolvedPath are strings, and the
-// three behaviors are funcs that read only their arguments. Adding a reference
-// type to Pane would break that and needs a deeper copy here.
+// one-level copy is a full one: promptText and resolvedPath are strings, and
+// each of the three behaviors is a func value the copy shares with the original.
+//
+// Sharing those func values is safe because of a property the CONSTRUCTORS hold,
+// not because the closures are argument-only - reviewerPane's two launch
+// closures capture the reviewer's agent name and its OpenCodeCoder, and coderPane
+// captures its coder through the method values it takes. The invariant to check a
+// new behavior against is therefore: whatever a pane's closure captures is fixed
+// at construction, immutable, and belongs to that pane alone. A closure that
+// captured mutable state, or state shared with another pane, would be shared
+// through this copy and needs a deeper one - as would adding a reference type to
+// Pane itself.
 func (l Layout) clone() Layout {
 	out := l
 	out.Panes = append([]Pane(nil), l.Panes...)
@@ -366,11 +375,10 @@ func (l Layout) WithExtraPanes(commands []string) (Layout, error) {
 // "terminal" category (see internal/tooling/terminal/terminal.go), matching the
 // hint ensureToolInstalled already gives for opencode/claude.
 func ensureNvimInstalled() (string, error) {
-	// nvim's launch token and display name are the same - it's the raw binary,
-	// with no cc/oc-style alias indirection. Because the probed token IS a
-	// binary, this is the one built-in check that already resolves a real path
-	// today, so the nvim pane is the first to take the exec form.
-	return ensureToolInstalled(nvimCommand, nvimCommand)
+	// nvim has no cc/oc-style alias indirection to begin with: nvimCommand IS
+	// the binary, which is what every check now probes (ADR-0020 part 3,
+	// rule 1).
+	return ensureToolInstalled(nvimCommand)
 }
 
 // builtinLayoutNames lists the valid layout names in a stable order, used
@@ -578,47 +586,70 @@ func BuiltinReviewerChoices() []ReviewerChoice {
 	return choices
 }
 
-// ReviewCommand returns the reviewer agent's TYPED command - the form sent to a
-// pane that already exists, via send-keys - for the reviewer registered under
-// key ("code", "document", or "skill"), or an error if key is not a registered
-// reviewer.
+// lookupBuiltinReviewer resolves key ("code", "document", or "skill") against
+// the reviewer registry, producing the one "unknown reviewer" error message.
 //
-// It is the pure, probe-free half of reviewerPane, which is the constructor a
-// review launch actually goes through (and which sets exactly this string as its
-// pane's Command). Keeping it separate means the exact command can be pinned by a
-// test without a shell lookup, and it is the single author of both the string and
-// the "unknown reviewer" error.
-//
-// It reuses OpenCodeCoder.Command() for the launch token (the "oc" devgeta
-// alias) rather than hardcoding "oc" or the raw "opencode" binary, so the
-// one definition of how to launch OpenCode stays in devgeta.zsh - the same
-// reasoning builtinLayouts() already applies to its own OpenCode pane.
-// Reviewer launches are OpenCode-only by design (see the cycle plan's scope
-// boundary: the reviewer agents' permission: frontmatter is enforced by
-// OpenCode and ignored by Claude Code), so unlike deriveLayoutFromAlias this
-// does not accept an aiAlias.
+// It exists so that everything which needs a Reviewer gets it from a lookup that
+// can FAIL, rather than from a second index into the registry whose safety
+// depends on some earlier call having validated the key. reviewerPane used to do
+// exactly that (`builtinReviewers()[key].Agent` after ReviewCommand), and a map
+// miss there yields a zero Reviewer with an empty Agent - which builds an
+// opencode launch with no --agent at all, i.e. a plain coder session that looks
+// like a review. Structural rather than comment-guarded (CLAUDE.md §4).
+func lookupBuiltinReviewer(key string) (Reviewer, error) {
+	reviewer, ok := builtinReviewers()[key]
+	if !ok {
+		return Reviewer{}, fmt.Errorf(
+			"unknown reviewer %q. Valid reviewers: %s",
+			key, strings.Join(reviewerKeys, ", "),
+		)
+	}
+	return reviewer, nil
+}
+
+// reviewCommandFor renders reviewer's TYPED command - the form sent to a pane
+// that already exists, via send-keys. It is the single author of that string for
+// both callers that need it (ReviewCommand, from a key; reviewerPane, from the
+// reviewer it already looked up), so neither can drift from the other.
 //
 // The command is built by OpenCodeCoder.promptCommandWithAgent, which is also
 // what PromptCommand (the --prompt flag's path) delegates to - so the
 // `--prompt '<quoted>'` fragment, including the single-quoting a send-keys
 // command line requires, has exactly one author.
 //
-// That author now renders opencode's structured launch (see launch.go), which
-// quotes every argument uniformly - so this emits
+// That author renders opencode's structured launch (see launch.go), which quotes
+// every argument uniformly - so this emits
 // `oc '--agent' '<name>' '--prompt' '<text>'`. Same command to the shell as the
 // older `oc --agent <name> --prompt '<text>'`; see paneLaunch.render for why the
 // flags are quoted too.
-func ReviewCommand(key string) (string, error) {
-	reviewer, ok := builtinReviewers()[key]
-	if !ok {
-		return "", fmt.Errorf(
-			"unknown reviewer %q. Valid reviewers: %s",
-			key, strings.Join(reviewerKeys, ", "),
-		)
-	}
-
+func reviewCommandFor(reviewer Reviewer) string {
 	opencode := &OpenCodeCoder{}
-	return opencode.promptCommandWithAgent(reviewer.Agent, ReviewPrompt), nil
+	return opencode.promptCommandWithAgent(reviewer.Agent, ReviewPrompt)
+}
+
+// ReviewCommand returns the reviewer agent's TYPED command - the form sent to a
+// pane that already exists, via send-keys - for the reviewer registered under
+// key ("code", "document", or "skill"), or an error if key is not a registered
+// reviewer.
+//
+// It is the pure, probe-free half of reviewerPane, which is the constructor a
+// review launch actually goes through (and which builds the same string for its
+// pane's Command, from the same two helpers). Keeping it separate means the exact
+// command can be pinned by a test without a shell lookup.
+//
+// The command names the "oc" devgeta alias rather than the raw binary because it
+// is TYPED into a live interactive shell (ADR-0020 part 4); that alias comes from
+// the launch recipe in pkg/constants, which also renders devgeta.zsh's alias
+// line. Reviewer launches are OpenCode-only by design (see the cycle plan's scope
+// boundary: the reviewer agents' permission: frontmatter is enforced by OpenCode
+// and ignored by Claude Code), so unlike deriveLayoutFromAlias this does not
+// accept an aiAlias.
+func ReviewCommand(key string) (string, error) {
+	reviewer, err := lookupBuiltinReviewer(key)
+	if err != nil {
+		return "", err
+	}
+	return reviewCommandFor(reviewer), nil
 }
 
 // reviewerPane builds the pane that launches the reviewer agent registered under
@@ -634,9 +665,9 @@ func ReviewCommand(key string) (string, error) {
 // live window's split) build from the same pane, so they cannot disagree about
 // what was verified.
 //
-// Ordering is load-bearing: ReviewCommand runs FIRST, so an unknown reviewer key
-// fails before the probe rather than costing a shell lookup (and before any git
-// or tmux state is touched).
+// Ordering is load-bearing: the registry lookup runs FIRST, so an unknown
+// reviewer key fails before the probe rather than costing a shell lookup (and
+// before any git or tmux state is touched).
 //
 // check is left nil deliberately. The probe has already run here, so a nil check
 // is what makes a second one impossible even if this pane is later put in a
@@ -645,12 +676,11 @@ func ReviewCommand(key string) (string, error) {
 // too: the reviewer's opening prompt is fixed (ReviewPrompt), so there is no
 // `--prompt` to retarget onto this pane.
 func reviewerPane(key string) (Pane, error) {
-	command, err := ReviewCommand(key)
+	reviewer, err := lookupBuiltinReviewer(key)
 	if err != nil {
 		return Pane{}, err
 	}
-	// Safe past ReviewCommand: it returned an error for an unregistered key.
-	agent := builtinReviewers()[key].Agent
+	agent := reviewer.Agent
 
 	opencode := &OpenCodeCoder{}
 	resolvedPath, err := opencode.EnsureInstalled()
@@ -659,7 +689,7 @@ func reviewerPane(key string) (Pane, error) {
 	}
 
 	return Pane{
-		Command: command,
+		Command: reviewCommandFor(reviewer),
 		launch: launchFor(
 			func(prompt string) paneLaunch {
 				return opencode.interactiveLaunchWithAgent(agent, prompt)

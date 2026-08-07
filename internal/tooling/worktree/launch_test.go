@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 // Test paths for the launch forms. They are fake on purpose: these are pure
@@ -185,7 +187,7 @@ func TestALaunchWithArgumentsButNoProgramDoesNotVanish(t *testing.T) {
 		{"binary launch with no path", binaryLaunch("", prompt)},
 		{
 			"binary launch with an env prefix and no path",
-			binaryLaunchWithEnv(claudeNoFlickerEnv, "", prompt),
+			binaryLaunchWithEnv(constants.ClaudeLaunch.EnvPrefix, "", prompt),
 		},
 		{"claude's exec form with no path", (&ClaudeCoder{}).execLaunch("", prompt)},
 		{"opencode's exec form with no path", (&OpenCodeCoder{}).execLaunch("", prompt)},
@@ -237,7 +239,7 @@ func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 	for _, launch := range []paneLaunch{
 		aliasLaunch(""),
 		binaryLaunch(""),
-		binaryLaunchWithEnv(claudeNoFlickerEnv, ""),
+		binaryLaunchWithEnv(constants.ClaudeLaunch.EnvPrefix, ""),
 	} {
 		if launch.isEmpty() {
 			t.Errorf("a constructed launch (%+v) must never report itself empty", launch)
@@ -600,7 +602,7 @@ func TestExecPaneCommandSurvivesARealShellParser(t *testing.T) {
 	// was a runnable command and not part of the first one.
 	fakeShell := argvEchoFixture(t, "my shells", "fake-shell")
 
-	launch := binaryLaunchWithEnv(claudeNoFlickerEnv, fakeBinary, prompt)
+	launch := binaryLaunchWithEnv(constants.ClaudeLaunch.EnvPrefix, fakeBinary, prompt)
 	command := paneCommandFor(launch, fakeShell)
 	argv := runThroughRealShell(t, command)
 

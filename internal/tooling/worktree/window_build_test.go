@@ -729,7 +729,7 @@ func sendKeysTarget(calls []commands.CommandParams, wantKeys string) (string, bo
 // established the window is missing, so it calls createWindowWithLayout
 // directly instead of routing back through ensureWindow).
 func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 
 	repoSlug := "myrepo"
 	name := "feat"
@@ -783,7 +783,7 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 // creating a worktree with the shell layout (an empty window, on purpose) and
 // then pressing R.
 func TestLaunchReviewReusesAnIdleShellPane(t *testing.T) {
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 
 	repoSlug := "myrepo"
 	name := "feat"
@@ -914,7 +914,7 @@ func TestLaunchReviewReusesAnIdleShellPane(t *testing.T) {
 // ADR-0008), which is exactly the case an allowlist of idle shells must treat
 // as busy without recognizing the agent at all.
 func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 
 	repoSlug := "myrepo"
 	name := "feat"
@@ -1018,7 +1018,7 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 // pane) and never the worktree (R never creates one, so there's none to roll
 // back).
 func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 
 	repoSlug := "myrepo"
 	name := "feat"
@@ -1132,13 +1132,13 @@ func TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall(t *testing.T) {
 }
 
 // TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing proves
-// LaunchReviewInRepo checks that "oc" resolves before touching tmux at all -
-// mirroring TestCreateValidateLayoutFailsBeforeAnyTmuxCall's shape for the
-// analogous check on the create path. A user whose default layout is
-// claude/claude-nvim has never needed oc, so pressing R without this
-// pre-flight check would build a window/pane whose command prints "oc:
-// command not found" while the dashboard still reports "review started",
-// with no error surfaced anywhere.
+// LaunchReviewInRepo checks that the opencode BINARY resolves before touching
+// tmux at all - mirroring TestCreateValidateLayoutFailsBeforeAnyTmuxCall's shape
+// for the analogous check on the create path. A user whose default layout is
+// claude/claude-nvim has never needed opencode, so pressing R without this
+// pre-flight check would build a window/pane whose command prints "command not
+// found" while the dashboard still reports "review started", with no error
+// surfaced anywhere.
 func TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing(t *testing.T) {
 	setShellCommandExistsFn(t, func(string) bool { return false })
 
@@ -1169,7 +1169,7 @@ func TestLaunchReviewFailsBeforeAnyTmuxCallWhenOpenCodeMissing(t *testing.T) {
 func TestLaunchReviewInRepoUsesRealLocationNotConfigured(t *testing.T) {
 	cleanupPaths := testutil.SetupIsolatedPaths(t)
 	defer cleanupPaths()
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 	t.Chdir(t.TempDir()) // cwd is NOT the owning repo, forcing resolution via recent-repos
 
 	repoRoot := t.TempDir()
@@ -1313,7 +1313,7 @@ func TestLaunchReviewProbesExactlyOnce(t *testing.T) {
 				t,
 				func(lookupName string) (string, commands.ShellLookupResult) {
 					probes++
-					if lookupName == "oc" {
+					if lookupName == "opencode" {
 						return "/opt/homebrew/bin/opencode", commands.ShellLookupFound
 					}
 					return "", commands.ShellLookupNotFound

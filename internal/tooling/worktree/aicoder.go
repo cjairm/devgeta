@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/logger"
 )
 
@@ -73,11 +74,11 @@ type AICoder interface {
 	execLaunch(binaryPath, prompt string) paneLaunch
 }
 
-// ensureToolInstalled reports whether launchToken resolves in the user's
-// interactive shell, returning the absolute path the probe resolved for it and a
-// consistent, actionable error naming displayName if it doesn't resolve. Shared
-// by every EnsureInstalled below (opencode, claude) and by layout.go's nvim
-// check (nvim has no AICoder wrapper since it isn't an AI coder) - one lookup +
+// ensureToolInstalled reports whether binary resolves in the user's interactive
+// shell, returning the absolute path the probe resolved for it and a consistent,
+// actionable error naming it if it doesn't resolve. Shared by every
+// EnsureInstalled below (opencode, claude) and by layout.go's nvim check (nvim
+// has no AICoder wrapper since it isn't an AI coder) - one lookup +
 // error-format shape instead of three hand-rolled copies of it.
 //
 // The returned path is what a created pane execs, so this probe is the SINGLE
@@ -106,20 +107,31 @@ type AICoder interface {
 // probe's deadline) the old bool seam turned every create into a false
 // "opencode is not installed" with an install suggestion that fixed nothing.
 //
-// launchToken is the exact token the window build will send to the pane (the
-// cc/oc alias for a coder, "nvim" for the editor), NOT the underlying binary -
-// so the check can't pass while the launch fails. A coder installed outside
-// devgeta (so its cc/oc alias was never written to devgeta.zsh) correctly fails
-// this check up front with an actionable message, rather than building a window
-// whose pane then dies on `cc: command not found`. displayName is the binary the
-// message names (claude/opencode/nvim), which reads better than the alias.
-func ensureToolInstalled(launchToken, displayName string) (string, error) {
-	resolvedPath, result := commands.ShellCommandLookupFn(launchToken)
+// binary is the tool's EXECUTABLE name (claude/opencode/nvim), never the cc/oc
+// alias. The invariant is unchanged - probe exactly what the pane will launch -
+// but what the pane launches changed: a created pane execs the binary through
+// tmux's non-interactive shell, where an alias does not exist at all (ADR-0020
+// part 3, rule 1). Probing the alias would also make this function unable to
+// resolve a path, because `command -v oc` prints `alias oc=opencode`, which is
+// not path-shaped.
+//
+// Two consequences of that flip, both deliberate:
+//
+//   - A coder installed OUTSIDE devgeta (so its cc/oc alias was never written to
+//     devgeta.zsh) now passes this check, and launches fine, because the pane
+//     execs the binary rather than the alias. The check is more accurate; anyone
+//     who read a failure here as "devgeta never configured this tool" loses that
+//     signal. ADR-0020 accepts this explicitly.
+//   - There is nothing left to name in the error but the binary, so this takes
+//     one argument instead of a (token, displayName) pair. The pair existed only
+//     because the probed token was an alias the message should not mention.
+func ensureToolInstalled(binary string) (string, error) {
+	resolvedPath, result := commands.ShellCommandLookupFn(binary)
 	switch result {
 	case commands.ShellLookupNotFound:
 		return "", fmt.Errorf(
 			"%s is not installed. Install it with: dg install --only terminal",
-			displayName,
+			binary,
 		)
 	case commands.ShellLookupInconclusive:
 		// Debug, not Warn: this runs under the dg ws bubbletea alt-screen,
@@ -128,8 +140,7 @@ func ensureToolInstalled(launchToken, displayName string) (string, error) {
 		// the pane says so the moment it launches.
 		logger.L().Debugw(
 			"tool probe inconclusive, proceeding without blocking (ADR-0016)",
-			"launchToken", launchToken,
-			"tool", displayName,
+			"binary", binary,
 		)
 		// No path, no error: the pane takes the interactive fallback, which
 		// leaves it exactly as well off as it is today (ADR-0016, ADR-0020).
@@ -143,16 +154,17 @@ type OpenCodeCoder struct{}
 
 func (o *OpenCodeCoder) Name() string { return "opencode" }
 
-// Command returns the devgeta shell alias (oc), not the raw binary, so the one
-// definition of how to launch opencode lives in devgeta.zsh (alias oc=opencode)
-// rather than being duplicated here. This is the form typed into an interactive
-// shell (a repaired window, `dg wt move`'s retarget), where that alias is
-// defined.
+// Command returns the devgeta shell alias (oc), not the raw binary. It is read
+// off the launch recipe in pkg/constants, which also renders devgeta.zsh's
+// `alias oc=` line - so the alias a user types and the binary a pane execs come
+// from one definition rather than from a shell config this package would have to
+// stay in step with by hand (ADR-0020).
 //
-// A pane devgeta CREATES no longer uses this: it execs the resolved binary (see
-// execLaunch, and ADR-0020 for why a created pane cannot rely on an alias
-// existing).
-func (o *OpenCodeCoder) Command() string { return "oc" }
+// This is the form typed into an interactive shell (a repaired window, `dg wt
+// move`'s retarget), where that alias is defined. A pane devgeta CREATES no
+// longer uses it: it execs the resolved binary (see execLaunch, and ADR-0020 for
+// why a created pane cannot rely on an alias existing).
+func (o *OpenCodeCoder) Command() string { return constants.OpenCodeLaunch.Alias }
 
 // PromptCommand launches opencode with prompt as its opening message, using
 // opencode's --prompt flag ("prompt to use" in its --help).
@@ -222,19 +234,16 @@ func (o *OpenCodeCoder) launchArgs(agent, prompt string) []string {
 	return args
 }
 
-// EnsureInstalled checks the exact launch token (the oc alias), not the raw
-// "opencode" binary, so a pass guarantees the pane launch will resolve too; the
-// error still names "opencode" as the thing to install.
+// EnsureInstalled checks the "opencode" BINARY - what a created pane execs -
+// not the oc alias, so a pass guarantees the pane launch will resolve too
+// (ADR-0020 part 3, rule 1).
 //
-// It returns whatever path the probe resolved for that token. Probing an ALIAS
-// means that path is empty in practice today (`command -v oc` prints
-// `alias oc=opencode`, which is not path-shaped), so every created coder pane
-// takes the interactive fallback for now - correct, and exactly today's
-// behavior. Switching the probed token to the BINARY is the step that starts
-// producing a path here, and it comes with the launch recipe becoming the source
-// of the alias (ADR-0020's part 3, rule 1).
+// It returns the path the probe resolved for it. Probing the binary is what
+// makes that path non-empty in practice: `command -v opencode` prints an
+// absolute path, while `command -v oc` prints `alias oc=opencode`, which is not
+// path-shaped and always selected the interactive fallback.
 func (o *OpenCodeCoder) EnsureInstalled() (string, error) {
-	return ensureToolInstalled(o.Command(), o.Name())
+	return ensureToolInstalled(constants.OpenCodeLaunch.Binary)
 }
 
 // ClaudeCoder implements AICoder for Claude Code
@@ -242,16 +251,18 @@ type ClaudeCoder struct{}
 
 func (c *ClaudeCoder) Name() string { return "claude" }
 
-// Command returns the devgeta shell alias (cc), not the raw binary. The alias
-// (alias cc="CLAUDE_CODE_NO_FLICKER=1 claude" in devgeta.zsh) carries both the
-// binary name and the no-flicker env var, and this is the form typed into an
-// interactive shell (a repaired window, `dg wt move`'s retarget), where that
-// alias is defined.
+// Command returns the devgeta shell alias (cc), not the raw binary. It is read
+// off the launch recipe in pkg/constants, which also renders devgeta.zsh's
+// `alias cc=` line from the same binary and env prefix - so the alias carries
+// exactly what a created pane execs, by construction rather than by two places
+// agreeing (ADR-0020).
 //
-// A pane devgeta CREATES no longer uses this: it execs the binary, spelling the
-// env var out from claudeNoFlickerEnv instead (see execLaunch, and ADR-0020 for
-// why a created pane cannot rely on an alias existing).
-func (c *ClaudeCoder) Command() string { return "cc" }
+// This is the form typed into an interactive shell (a repaired window, `dg wt
+// move`'s retarget), where that alias is defined. A pane devgeta CREATES no
+// longer uses it: it execs the binary and spells the env var out itself (see
+// execLaunch, and ADR-0020 for why a created pane cannot rely on an alias
+// existing).
+func (c *ClaudeCoder) Command() string { return constants.ClaudeLaunch.Alias }
 
 // PromptCommand launches Claude Code with prompt as its opening message.
 // Claude takes the prompt POSITIONALLY (`claude [options] [command] [prompt]`,
@@ -276,7 +287,11 @@ func (c *ClaudeCoder) interactiveLaunch(prompt string) paneLaunch {
 // prefix spelled out, because exec'ing the binary directly bypasses the alias
 // that used to supply it.
 func (c *ClaudeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
-	return binaryLaunchWithEnv(claudeNoFlickerEnv, binaryPath, c.launchArgs(prompt)...)
+	return binaryLaunchWithEnv(
+		constants.ClaudeLaunch.EnvPrefix,
+		binaryPath,
+		c.launchArgs(prompt)...,
+	)
 }
 
 // launchArgs is the one place claude's argument shape is decided: the prompt is
@@ -295,14 +310,10 @@ func (c *ClaudeCoder) launchArgs(prompt string) []string {
 	return []string{prompt}
 }
 
-// EnsureInstalled checks the exact launch token (the cc alias), not the raw
-// "claude" binary, so a pass guarantees the pane launch will resolve too; the
-// error still names "claude" as the thing to install.
-//
-// As with opencode's, the returned path is empty in practice while the probed
-// token is the ALIAS - see OpenCodeCoder.EnsureInstalled.
+// EnsureInstalled checks the "claude" BINARY - what a created pane execs - not
+// the cc alias, for the reasons spelled out on OpenCodeCoder.EnsureInstalled.
 func (c *ClaudeCoder) EnsureInstalled() (string, error) {
-	return ensureToolInstalled(c.Command(), c.Name())
+	return ensureToolInstalled(constants.ClaudeLaunch.Binary)
 }
 
 // ResolveAICoder resolves an alias to an AICoder implementation

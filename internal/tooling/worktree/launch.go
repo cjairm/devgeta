@@ -26,18 +26,6 @@ package worktree
 
 import "strings"
 
-// claudeNoFlickerEnv is the environment prefix Claude Code is launched with -
-// the same one the devgeta.zsh alias carries
-// (alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"). It is a devgeta-owned constant
-// and is never interpolated from user data, which is why it is the one value in
-// ADR-0020's quoting table that is embedded unquoted.
-//
-// It lives here for now; making this constant the single source that ALSO
-// renders devgeta.zsh's alias line is a later step of this cycle, and it has to
-// move to pkg/constants to get there (internal/config renders devgeta.zsh and
-// cannot import this package - that edge would be an import cycle).
-const claudeNoFlickerEnv = "CLAUDE_CODE_NO_FLICKER=1"
-
 // paneLaunch is one devgeta-owned command to run in a pane, in structured form:
 // a kind, a program, its arguments, and an optional environment prefix.
 //
@@ -96,8 +84,8 @@ const (
 )
 
 // aliasLaunch builds a launch whose program is a NAME the shell running it must
-// resolve: a devgeta shell alias ("cc"/"oc", defined in devgeta.zsh) or a bare
-// binary name ("nvim").
+// resolve: a devgeta shell alias ("cc"/"oc", which devgeta.zsh defines from its
+// launch recipe in pkg/constants) or a bare binary name ("nvim").
 //
 // The program is deliberately NOT quoted. A shell does not expand an alias that
 // was quoted - `'cc' 'text'` looks for a command literally named cc and fails,
@@ -137,7 +125,9 @@ func binaryLaunch(path string, args ...string) paneLaunch {
 }
 
 // binaryLaunchWithEnv is binaryLaunch plus a devgeta-owned environment prefix
-// (today only claudeNoFlickerEnv).
+// (today only claude's, constants.ClaudeLaunch.EnvPrefix - the same value that
+// renders into devgeta.zsh's `alias cc=` line, so the alias and the exec'd
+// command cannot carry different environments).
 //
 // The prefix is only available on the binary form on purpose: an alias launch
 // runs the devgeta alias, which already carries its own env prefix in its

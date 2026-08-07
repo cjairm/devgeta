@@ -16,23 +16,26 @@ import (
 
 func TestBuiltinLayoutShapes(t *testing.T) {
 	tests := []struct {
-		name       string
-		wantPanes  []Pane
-		wantChecks int
+		name         string
+		wantPanes    []Pane
+		wantChecks   int
+		wantLaunches int
 	}{
 		{
 			name: "opencode",
 			wantPanes: []Pane{
 				{Command: "oc", Split: ""},
 			},
-			wantChecks: 1,
+			wantChecks:   1,
+			wantLaunches: 1,
 		},
 		{
 			name: "claude",
 			wantPanes: []Pane{
 				{Command: "cc", Split: ""},
 			},
-			wantChecks: 1,
+			wantChecks:   1,
+			wantLaunches: 1,
 		},
 		{
 			name: "claude-nvim",
@@ -40,23 +43,27 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 				{Command: "cc", Split: ""},
 				{Command: "nvim", Split: "vertical"},
 			},
-			wantChecks: 2,
+			wantChecks:   2,
+			wantLaunches: 2,
 		},
 		{
 			name: "nvim",
 			wantPanes: []Pane{
 				{Command: "nvim", Split: ""},
 			},
-			wantChecks: 1,
+			wantChecks:   1,
+			wantLaunches: 1,
 		},
 		{
-			// The plain layout: one pane, no command to type, and nothing to
-			// check for — a shell is what tmux starts a pane with anyway.
+			// The plain layout: one pane, no command to type, nothing to check
+			// for, and nothing to launch — a shell is what tmux starts a pane
+			// with anyway.
 			name: "shell",
 			wantPanes: []Pane{
 				{Command: "", Split: ""},
 			},
-			wantChecks: 0,
+			wantChecks:   0,
+			wantLaunches: 0,
 		},
 	}
 
@@ -88,7 +95,36 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 			if got := countPaneChecks(layout); got != tt.wantChecks {
 				t.Errorf("expected %d pane install checks, got %d", tt.wantChecks, got)
 			}
+			if got := countPaneLaunches(layout); got != tt.wantLaunches {
+				t.Errorf("expected %d pane launches, got %d", tt.wantLaunches, got)
+			}
 		})
+	}
+}
+
+// TestBuiltinLayoutCheckedPanesAlsoLaunch closes a shape Pane still permits and
+// ADR-0020 forbids: check != nil with launch == nil and a non-empty Command.
+// Such a pane probes, resolves an absolute path, and then routes through
+// creationCommand's --pane branch - DISCARDING the resolution and launching the
+// interactive alias form instead. That is literally "resolves a path and then
+// launches something else", which the ADR says is not an implementation of its
+// decision.
+//
+// No built-in can reach it today, because every checked pane is built by
+// coderPane/nvimPane/reviewerPane. This test is what keeps that true for the
+// next pane someone adds, since the struct literal remains writable.
+func TestBuiltinLayoutCheckedPanesAlsoLaunch(t *testing.T) {
+	for name, layout := range builtinLayouts() {
+		for i, pane := range layout.Panes {
+			if pane.check != nil && pane.launch == nil {
+				t.Errorf(
+					"layout %q pane %d has a check but no launch: it would probe, "+
+						"resolve a path, and then launch the interactive form anyway "+
+						"(ADR-0020)",
+					name, i+1,
+				)
+			}
+		}
 	}
 }
 
@@ -372,6 +408,19 @@ func countPaneChecks(layout Layout) int {
 	return n
 }
 
+// countPaneLaunches reports how many of layout's panes carry a launch closure,
+// i.e. how many are devgeta-owned panes whose created command is built from the
+// probe's resolution rather than from a raw string (see creationCommand).
+func countPaneLaunches(layout Layout) int {
+	n := 0
+	for _, pane := range layout.Panes {
+		if pane.launch != nil {
+			n++
+		}
+	}
+	return n
+}
+
 // commandsOf returns each pane's command, for asserting the shape of a
 // transformed layout.
 func commandsOf(layout Layout) []string {
@@ -591,7 +640,7 @@ func TestWithExtraPanesDoesNotQuoteCommand(t *testing.T) {
 // legitimate commands. EnsureInstalled must therefore still pass for a layout
 // whose extra pane names a command that does not exist as a binary.
 func TestWithExtraPanesAddsNoInstallCheck(t *testing.T) {
-	setShellCommandExistsFn(t, func(name string) bool { return name == "cc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "claude" })
 
 	layout, err := ResolveLayout("claude", "", nil)
 	if err != nil {
@@ -850,9 +899,10 @@ func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
 // --- review pane command ---
 
 // TestReviewCommandBuildsExpectedCommand asserts the exact command string
-// for every registered reviewer key: the OpenCodeCoder launch token ("oc"),
-// not a hardcoded "opencode", followed by --agent <name> and the fixed review
-// prompt. Every argument is single-quoted, flags included, since this renders
+// for every registered reviewer key: the "oc" alias from OpenCodeCoder.Command
+// (this is the TYPED form, sent to a pane that already exists), not a hardcoded
+// "oc" and not the "opencode" binary a created pane execs, followed by
+// --agent <name> and the fixed review prompt. Every argument is single-quoted, flags included, since this renders
 // opencode's structured launch (see paneLaunch.render for why the rule is
 // uniform rather than "quote only the values").
 func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
@@ -1097,15 +1147,16 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 	}{
 		{
 			name:    "a resolved path is exec'd, with the env prefix spelled out",
-			resolve: foundAt(map[string]string{"cc": claudePath}),
+			resolve: foundAt(map[string]string{"claude": claudePath}),
 			want: `CLAUDE_CODE_NO_FLICKER=1 '/Users/dev/.local/bin/claude' ` +
 				`'fix issue 1082'; exec '/bin/zsh'`,
 		},
 		{
-			// `command -v cc` prints "alias cc='...'", which is not path-shaped,
-			// so the probe found the tool but resolved no path. The pane must get
-			// the alias through an INTERACTIVE shell, which is the only shell
-			// that has it.
+			// The probe answered, but with something that is not path-shaped -
+			// `command -v claude` printing a bare name because claude is a
+			// shell function or wrapper rather than a file on PATH. Found, no
+			// path. The pane must then get the cc ALIAS through an INTERACTIVE
+			// shell, which is the only shell that has it.
 			name: "a Found outcome with no path takes the interactive fallback",
 			resolve: func(string) (string, commands.ShellLookupResult) {
 				return "", commands.ShellLookupFound
@@ -1168,8 +1219,8 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 // Building the commands repeatedly must add no probes at all.
 func TestOneProbePerPanePerCreate(t *testing.T) {
 	calls := countedProbe(t, foundAt(map[string]string{
-		"cc":   "/Users/dev/.local/bin/claude",
-		"nvim": "/opt/homebrew/bin/nvim",
+		"claude": "/Users/dev/.local/bin/claude",
+		"nvim":   "/opt/homebrew/bin/nvim",
 	}))
 
 	layout, err := ResolveLayout("claude-nvim", "", nil)
@@ -1196,14 +1247,13 @@ func TestOneProbePerPanePerCreate(t *testing.T) {
 	}
 }
 
-// TestNvimPaneExecsTheResolvedBinaryWithoutThePrompt covers the pane whose probe
-// resolves a real path TODAY (nvim's launch token is the binary, not a cc/oc
-// alias), and pins that the prompt on the coder pane never reaches it -
-// `nvim 'fix issue 1082'` opens a file by that name.
+// TestNvimPaneExecsTheResolvedBinaryWithoutThePrompt covers the editor pane
+// beside a coder pane, and pins that the prompt on the coder pane never reaches
+// it - `nvim 'fix issue 1082'` opens a file by that name.
 func TestNvimPaneExecsTheResolvedBinaryWithoutThePrompt(t *testing.T) {
 	countedProbe(t, foundAt(map[string]string{
-		"cc":   "/Users/dev/.local/bin/claude",
-		"nvim": "/opt/homebrew/bin/nvim",
+		"claude": "/Users/dev/.local/bin/claude",
+		"nvim":   "/opt/homebrew/bin/nvim",
 	}))
 
 	layout, err := ResolveLayout("claude-nvim", "", nil)
@@ -1243,7 +1293,7 @@ func TestNvimPaneExecsTheResolvedBinaryWithoutThePrompt(t *testing.T) {
 //   - a shell pane gets no command at all, so tmux just starts its shell.
 func TestCreationCommandForPanesWithNoLaunch(t *testing.T) {
 	t.Run("a --pane value is wrapped unparsed", func(t *testing.T) {
-		setShellCommandExistsFn(t, func(name string) bool { return name == "cc" })
+		setShellCommandExistsFn(t, func(name string) bool { return name == "claude" })
 
 		layout, err := ResolveLayout("claude", "", nil)
 		if err != nil {
@@ -1294,7 +1344,7 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 	}
 
 	// Create 1: a path resolves, so this create takes the exec form.
-	countedProbe(t, foundAt(map[string]string{"cc": "/Users/dev/.local/bin/claude"}))
+	countedProbe(t, foundAt(map[string]string{"claude": "/Users/dev/.local/bin/claude"}))
 	first, err := source.WithPrompt("first task")
 	if err != nil {
 		t.Fatalf("WithPrompt returned error: %v", err)
@@ -1341,7 +1391,7 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 	// WithPrompt already made. If EnsureInstalled wrote its resolution in place,
 	// this is where it would land on the shared layout, and the source assertions
 	// below are what catch it.
-	countedProbe(t, foundAt(map[string]string{"cc": "/Users/dev/.local/bin/claude"}))
+	countedProbe(t, foundAt(map[string]string{"claude": "/Users/dev/.local/bin/claude"}))
 	thirdResolved, err := source.EnsureInstalled()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1380,7 +1430,7 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 // the pane.
 func TestReviewerPaneProbesOnceAndCarriesTheResolution(t *testing.T) {
 	const opencodePath = "/opt/homebrew/bin/opencode"
-	calls := countedProbe(t, foundAt(map[string]string{"oc": opencodePath}))
+	calls := countedProbe(t, foundAt(map[string]string{"opencode": opencodePath}))
 
 	pane, err := reviewerPane("code")
 	if err != nil {
@@ -1469,7 +1519,7 @@ func TestReviewerPaneFallsBackWhenNoPathResolves(t *testing.T) {
 // programming/CLI error, and it must cost nothing - no shell probe, and therefore
 // no 5-second worst case - before it is reported.
 func TestReviewerPaneRejectsAnUnknownKeyBeforeProbing(t *testing.T) {
-	calls := countedProbe(t, foundAt(map[string]string{"oc": "/opt/homebrew/bin/opencode"}))
+	calls := countedProbe(t, foundAt(map[string]string{"opencode": "/opt/homebrew/bin/opencode"}))
 
 	if _, err := reviewerPane("not-a-real-reviewer"); err == nil {
 		t.Fatal("expected an error for an unknown reviewer key, got nil")

@@ -1967,15 +1967,18 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 	// Both launches below build from this single pane, so the check and whatever
 	// runs cannot describe different things (ADR-0020).
 	//
-	// A review is always launched via OpenCode (the "oc" alias), regardless of the
-	// worktree's own layout - a user whose default layout is claude/claude-nvim
-	// has never needed oc, so it may never have been installed. Probing here,
-	// before any tmux call, turns that into one actionable error instead of a pane
-	// that prints "oc: command not found" while the dashboard reports "review
-	// started" with no error anywhere. The probed token is the "oc" alias itself
-	// (see OpenCodeCoder.EnsureInstalled), not the raw "opencode" binary, so a
-	// coder installed outside devgeta (whose alias was never written to
-	// devgeta.zsh) correctly fails this check.
+	// A review is always launched via OpenCode, regardless of the worktree's own
+	// layout - a user whose default layout is claude/claude-nvim has never needed
+	// opencode, so it may never have been installed. Probing here, before any tmux
+	// call, turns that into one actionable error instead of a pane that prints
+	// "command not found" while the dashboard reports "review started" with no
+	// error anywhere.
+	//
+	// The probed token is the "opencode" BINARY (see
+	// OpenCodeCoder.EnsureInstalled), because that is what the created pane execs.
+	// So an opencode installed outside devgeta - one whose "oc" alias was never
+	// written to devgeta.zsh - now passes this check and launches fine, where the
+	// older alias probe refused it (ADR-0020 accepts that trade deliberately).
 	pane, err := reviewerPane(reviewerKey)
 	if err != nil {
 		return err

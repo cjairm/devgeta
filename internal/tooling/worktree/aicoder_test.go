@@ -133,20 +133,58 @@ func TestOpenCodePromptCommandWithAgent(t *testing.T) {
 }
 
 // OpenCodeCoder/ClaudeCoder.EnsureInstalled route through the shared
-// ensureToolInstalled helper, which resolves the launch token through the
-// swappable commands.ShellCommandLookupFn (see setShellCommandExistsFn /
+// ensureToolInstalled helper, which resolves the tool through the swappable
+// commands.ShellCommandLookupFn (see setShellCommandExistsFn /
 // setShellCommandLookupFn in repo_candidates_test.go) - the interactive-shell
 // probe, not exec.LookPath - so found, not-found, and inconclusive are all
-// exercisable here without spawning a real shell. The check targets the
-// alias the pane will launch (oc/cc), not the underlying binary; only the
-// error message names the binary.
+// exercisable here without spawning a real shell.
+//
+// The probed name is the BINARY (opencode/claude), not the oc/cc alias: a
+// created pane execs the binary, and only a binary makes `command -v` answer
+// with a path (ADR-0020 part 3, rule 1). A stub that answers for the alias
+// instead would silently exercise the interactive fallback here rather than the
+// exec path.
 
 func TestOpenCodeCoderEnsureInstalledOK(t *testing.T) {
-	// EnsureInstalled checks the launch token (the oc alias), not the raw binary.
-	setShellCommandExistsFn(t, func(name string) bool { return name == "oc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "opencode" })
 
 	if _, err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
-		t.Fatalf("unexpected error when the oc alias resolves in the shell: %v", err)
+		t.Fatalf("unexpected error when the opencode binary resolves in the shell: %v", err)
+	}
+}
+
+// TestEnsureInstalledProbesTheBinaryNotTheAlias is the flip itself, asserted on
+// the probe's INPUT rather than on its effects: an opencode/claude installed
+// outside devgeta has no oc/cc alias in devgeta.zsh, and must still pass.
+func TestEnsureInstalledProbesTheBinaryNotTheAlias(t *testing.T) {
+	var probed []string
+	setShellCommandLookupPathFn(t, func(name string) (string, commands.ShellLookupResult) {
+		probed = append(probed, name)
+		// Only the binaries resolve; the aliases do not exist at all here.
+		switch name {
+		case "opencode":
+			return "/opt/homebrew/bin/opencode", commands.ShellLookupFound
+		case "claude":
+			return "/Users/dev/.local/bin/claude", commands.ShellLookupFound
+		}
+		return "", commands.ShellLookupNotFound
+	})
+
+	if _, err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
+		t.Errorf("opencode: unexpected error: %v", err)
+	}
+	if _, err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
+		t.Errorf("claude: unexpected error: %v", err)
+	}
+
+	want := []string{"opencode", "claude"}
+	if len(probed) != len(want) {
+		t.Fatalf("probed %v, want %v", probed, want)
+	}
+	for i := range want {
+		if probed[i] != want[i] {
+			t.Errorf("probe %d asked for %q, want the binary %q", i, probed[i], want[i])
+		}
 	}
 }
 
@@ -168,11 +206,10 @@ func TestOpenCodeCoderEnsureInstalledMissing(t *testing.T) {
 }
 
 func TestClaudeCoderEnsureInstalledOK(t *testing.T) {
-	// EnsureInstalled checks the launch token (the cc alias), not the raw binary.
-	setShellCommandExistsFn(t, func(name string) bool { return name == "cc" })
+	setShellCommandExistsFn(t, func(name string) bool { return name == "claude" })
 
 	if _, err := (&ClaudeCoder{}).EnsureInstalled(); err != nil {
-		t.Fatalf("unexpected error when the cc alias resolves in the shell: %v", err)
+		t.Fatalf("unexpected error when the claude binary resolves in the shell: %v", err)
 	}
 }
 
@@ -201,9 +238,9 @@ func TestEnsureInstalledReturnsTheProbesResolvedPath(t *testing.T) {
 
 	setShellCommandLookupPathFn(t, func(name string) (string, commands.ShellLookupResult) {
 		switch name {
-		case "cc":
+		case "claude":
 			return claudePath, commands.ShellLookupFound
-		case "oc":
+		case "opencode":
 			return opencodePath, commands.ShellLookupFound
 		}
 		return "", commands.ShellLookupNotFound

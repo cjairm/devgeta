@@ -587,11 +587,43 @@ func (gc *GlobalConfig) IsShellFeatureEnabled(featureName string) bool {
 	return false
 }
 
+// ShellTemplateData is everything devgeta.zsh.tmpl is rendered from: which
+// features are enabled, plus the values devgeta OWNS in Go and only writes into
+// the shell config.
+//
+// ShellFeatures is EMBEDDED rather than held in a named field so every
+// {{if .Mise}}-style guard the template already has keeps resolving unchanged -
+// text/template promotes an embedded struct's fields exactly as Go does.
+//
+// The alias lines are here because a created tmux pane no longer resolves them:
+// it execs the coder's binary through a non-interactive shell, which has no
+// aliases at all (ADR-0020). devgeta.zsh's alias therefore stopped being the
+// definition of how devgeta launches a coder and became a rendering of it -
+// see pkg/constants.CoderLaunch, which is the one definition behind both.
+type ShellTemplateData struct {
+	ShellFeatures
+
+	OpenCodeAlias string
+	ClaudeAlias   string
+}
+
+// NewShellTemplateData pairs a ShellFeatures value with the launch recipes'
+// rendered alias lines. It is the single wiring between the recipes and the
+// template, which is what lets a test render the EMBEDDED template through the
+// same path production uses instead of re-deriving the alias itself.
+func NewShellTemplateData(shell ShellFeatures) ShellTemplateData {
+	return ShellTemplateData{
+		ShellFeatures: shell,
+		OpenCodeAlias: constants.OpenCodeLaunch.AliasLine(),
+		ClaudeAlias:   constants.ClaudeLaunch.AliasLine(),
+	}
+}
+
 func (gc *GlobalConfig) RegenerateShellConfig() error {
 	templatePath := filepath.Join(
 		paths.Paths.App.Configs.Templates,
 		constants.App.Template.ShellConfig,
 	)
 	outputPath := filepath.Join(paths.Paths.App.Root, fmt.Sprintf("%s.zsh", constants.App.Name))
-	return files.GenerateFromTemplate(templatePath, outputPath, gc.Shell)
+	return files.GenerateFromTemplate(templatePath, outputPath, NewShellTemplateData(gc.Shell))
 }

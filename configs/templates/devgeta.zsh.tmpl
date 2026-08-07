@@ -176,11 +176,16 @@ alias cat="bat"
 {{end}}
 
 {{if .Opencode}}
-alias oc=opencode
+# ---- AI coders ----
+# Rendered from pkg/constants' launch recipes, NOT written here: a tmux pane
+# devgeta creates execs the coder's binary through a non-interactive shell,
+# which has no aliases, so the recipe (binary + env prefix) is the definition
+# and this alias is one of its two renderings (ADR-0020).
+{{.OpenCodeAlias}}
 {{end}}
 
 {{if .Claude}}
-alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"
+{{.ClaudeAlias}}
 {{end}}
 # ============================================================================
 # End of Devgeta Configuration
