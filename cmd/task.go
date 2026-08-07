@@ -52,7 +52,17 @@ type taskRunner interface {
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
-var newTaskManager = func() taskRunner { return task.New() }
+//
+// The root --verbose flag is copied onto the manager here rather than read
+// from the logger's level, because it steers progress output (review-run's
+// per-tool-call stream) and not only logging. Reading it at call time — not at
+// package init — is what makes it the flag's actual value: PersistentPreRunE
+// has already parsed it by the time a subcommand's RunE calls this.
+var newTaskManager = func() taskRunner {
+	tm := task.New()
+	tm.Verbose = verbose
+	return tm
+}
 
 var taskCmd = &cobra.Command{
 	Use:     "task",
@@ -432,8 +442,10 @@ NO VERDICT and ERROR are never approval. One reviewer failing does not stop
 the others.
 
 While a reviewer runs, progress goes to stderr as it happens — a line when it
-starts, one line per tool call it makes, and a closing line with the outcome,
-elapsed time, and cost. stdout stays exactly the contract above.`,
+starts, a heartbeat at most every 30 seconds naming the tool call it is on and
+the running counters, and a closing line with the outcome, elapsed time, and
+cost. Pass the root --verbose flag to see every tool call instead. stdout stays
+exactly the contract above either way.`,
 	Example: `  dg task review-run
   dg task review-run --reviewer document
   dg task review-run --note "focus on the retry path in internal/http"`,

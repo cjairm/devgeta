@@ -32,11 +32,18 @@ type TaskManager struct {
 	// points this at a buffer to capture the lines instead of spraying them
 	// across the test run.
 	ProgressOut io.Writer
-	// NowFn is review-run's clock for timing each reviewer's progress line.
-	// Nil means time.Now. Injectable for the same reason
-	// reviewjournal.Manager.NowFn is: a test needs a deterministic elapsed
-	// duration, not a race against the wall clock.
+	// NowFn is review-run's clock for timing each reviewer's progress line
+	// and for spacing its heartbeat. Nil means time.Now. Injectable for the
+	// same reason reviewjournal.Manager.NowFn is: a test needs a
+	// deterministic elapsed duration, not a race against the wall clock.
 	NowFn func() time.Time
+	// Verbose mirrors the root --verbose flag, which cmd/task.go copies in.
+	// review-run is the only reader: verbose prints every reviewer tool call,
+	// quiet (the default) prints the sampled heartbeat instead — see
+	// reviewprogress.go. It is a field rather than a read of the logger's
+	// level because progress is not logging: it goes to stderr through
+	// ProgressOut, and a test sets one alongside the other on a literal.
+	Verbose bool
 }
 
 // New creates a TaskManager with real executors. Git output is streamed so

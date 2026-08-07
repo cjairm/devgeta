@@ -591,9 +591,15 @@ Quick reference to where things live:
   framed so it cannot narrow the review; forwarded by `/review-loop --note`),
   dropped its trailing `open:` line (findings live in the journal — `review-notes`
   is what lists them, and `/review-loop` reads its ids from there), and reports
-  progress **as it happens** — one line per tool call a reviewer makes — via the
-  new `CommandParams.OnStdoutLine`, which hands a caller each stdout line while
-  the child still runs.
+  progress **as it happens** via the new `CommandParams.OnStdoutLine`, which hands
+  a caller each stdout line while the child still runs. That progress is
+  **sampled**: at most one heartbeat every 30s
+  (`progressHeartbeatInterval`), naming the running counters and the tool call
+  that triggered it, because the line-per-tool-call version measured ~200 lines a
+  round that `/review-loop` captured and paid tokens for. The full stream is
+  behind the existing root `--verbose` flag — no new flag — which `cmd/task.go`
+  copies onto `TaskManager.Verbose`; every tool call is still counted while quiet,
+  so the closing line totals the whole run.
 
 - `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
   (2026-07-31). `--prompt` starts the layout's AI coder already working on a

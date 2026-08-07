@@ -82,10 +82,20 @@ threads.`, `On <default> — no branch to compare…`) are contracts with the sh
    around a long call (before it, then after it) leave the same silence in the
    middle that they were added to fix. When the tool itself reports what it is
    doing, render that as it arrives: `CommandParams.OnStdoutLine` hands a caller
-   each stdout line while the child still runs, which is how `review-run` prints
-   one line per tool call a reviewer makes instead of nothing for four minutes.
-   Keep each line short and summarized — a tool name and what it was pointed at —
-   never the tool's raw output.
+   each stdout line while the child still runs, which is how `review-run` reports
+   what a reviewer is doing instead of nothing for four minutes. Keep each line
+   short and summarized — a tool name and what it was pointed at — never the
+   tool's raw output.
+
+   **Sample the stream; don't relay it.** A tool that reports its own activity
+   reports far more of it than a reader needs, and every line is tokens for an
+   agent caller. Print at most one line per interval — carrying the running
+   counters and the most recent event, so the sample says where the work is and
+   not merely that it lives — and keep counting everything in between so the
+   closing line still totals the whole run. `review-run` samples at 30s, which
+   turned ~200 lines a round into a handful. Put the full stream behind the root
+   `--verbose` flag rather than a per-command flag of its own: "how much progress
+   detail" is one decision a user makes for the whole CLI, not per task.
 
 7. **A payload states an outcome; it does not carry the record.** When a task's
    result already lives somewhere a caller can read (the review journal, a config

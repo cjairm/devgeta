@@ -27,8 +27,11 @@ makes — they are not just documentation here.
   the current branch. Prints exactly one line per reviewer (`<model label> → <outcome>`)
   and nothing else — no findings, no ids. An outcome is `APPROVE`, `REQUEST CHANGES`,
   `NEEDS DISCUSSION`, `NO VERDICT`, or `ERROR(<reason>)`. Progress goes to stderr while it
-  runs, so a long round reads as working rather than stuck; none of that is part of the
-  verdict — read the verdict lines only. The branch under review is everything it would
+  runs (a line per reviewer, plus a heartbeat at most every 30s), so a long round reads as
+  working rather than stuck; none of that is part of the verdict — read the verdict lines
+  only. Never pass `--verbose`: it replaces the heartbeat with one line per tool call,
+  which is hundreds of lines a round for a log this loop does not read. The branch under
+  review is everything it would
   merge, commits AND uncommitted work, so work in progress does not need committing
   first. It refuses to run on the default branch, a detached HEAD, or a branch that
   changes nothing at all (no commits ahead AND a clean working tree) — if it refuses,
@@ -77,8 +80,8 @@ Parse `$ARGUMENTS` once, before the first round.
 Run `devgeta task review-run`, passing `--reviewer <key>` and `--note <text>` when step 0
 resolved them — omit each flag entirely otherwise. Read its stdout exactly as printed: one
 verdict line per reviewer, nothing else. Never guess at, soften, or invent a verdict the
-line does not state. Its stderr progress lines are not verdicts and carry no findings —
-do not read anything into them.
+line does not state. Its stderr progress lines (per reviewer, plus periodic heartbeats)
+are not verdicts and carry no findings — do not read anything into them.
 
 Run this yourself, in the main session — not in a subagent. The verdict lines are the one
 thing this loop must never take second-hand, and stdout is two or three lines.
