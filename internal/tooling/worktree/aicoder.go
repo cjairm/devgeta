@@ -60,7 +60,12 @@ type AICoder interface {
 // whose pane then dies on `cc: command not found`. displayName is the binary the
 // message names (claude/opencode/nvim), which reads better than the alias.
 func ensureToolInstalled(launchToken, displayName string) error {
-	switch commands.ShellCommandLookupFn(launchToken) {
+	// The resolved path is discarded here on purpose: this check only proves
+	// the tool is installed. Carrying the path to the pane launch is the next
+	// step of this cycle (ADR-0020) - it needs to live on the resolved
+	// Layout, not be recomputed here.
+	_, result := commands.ShellCommandLookupFn(launchToken)
+	switch result {
 	case commands.ShellLookupNotFound:
 		return fmt.Errorf(
 			"%s is not installed. Install it with: dg install --only terminal",
