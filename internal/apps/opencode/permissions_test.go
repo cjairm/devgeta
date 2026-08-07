@@ -204,8 +204,20 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			"**/.opencode/opencode.json":     "deny",
 			"**/.opencode/plugin/**":         "deny",
 			"**/.mcp.json":                   "deny",
-			"~/.claude/**":                   "deny",
 			"~/.config/opencode/**":          "deny",
+
+			// The global Claude root is enumerated rather than covered by a
+			// blanket `~/.claude/**`, so the memory directory underneath it
+			// stays writable — see TestGlobalClaudeFloorLeavesMemoryWritable.
+			"~/.claude/*.json":      "deny",
+			"~/.claude/*.sh":        "deny",
+			"~/.claude/*.md":        "deny",
+			"~/.claude/agents/**":   "deny",
+			"~/.claude/commands/**": "deny",
+			"~/.claude/skills/**":   "deny",
+			"~/.claude/plugins/**":  "deny",
+			"~/.claude/hooks/**":    "deny",
+			"~/.claude/lib/**":      "deny",
 		},
 	}
 
@@ -221,6 +233,89 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 			case actual != action:
 				t.Errorf("permission.%s[%q] = %q, want %q", block, pattern, actual, action)
 			}
+		}
+	}
+}
+
+// TestGlobalClaudeFloorLeavesMemoryWritable is the regression guard for the
+// bug that made Claude Code's local memory unusable: a blanket
+// `Edit(~/.claude/**)` deny in the settings floor also covered
+// `~/.claude/projects/<slug>/memory/`, where the agent writes its own memory
+// files. Nothing under `memory/` grants a permission, registers a hook, or
+// defines an agent — it is data the agent is meant to write — so the deny
+// blocked a feature while protecting nothing.
+//
+// It cannot be fixed with an allow carve-out. Claude Code evaluates "deny,
+// then ask, then allow. The first match in that order determines the outcome,
+// and rule specificity doesn't change the order", so a longer allow never
+// defeats a shorter deny, and permission patterns have no negation. The only
+// expressible fix is to stop the deny from matching in the first place, which
+// is why the global Claude root is enumerated (agents/, commands/, skills/,
+// plugins/, hooks/, lib/, and the direct-child config files by extension)
+// instead of swept with `**`. The guard hook remains the default-deny layer
+// for surface upstream has not shipped yet (ADR-0014 §3).
+//
+// This asserts the shape rather than the exact list: no `~/`-anchored edit
+// deny may put `**` immediately after `.claude/`, in EITHER config. Re-adding
+// `~/.claude/**` — the one edit that silently re-breaks memory — fails here.
+func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
+	const blanket = "~/.claude/**"
+
+	check := func(t *testing.T, source string, patterns []string) {
+		t.Helper()
+		for _, pattern := range patterns {
+			if pattern != blanket {
+				continue
+			}
+			t.Errorf(
+				"%s denies %q — that blanket also covers "+
+					"~/.claude/projects/<slug>/memory/, Claude Code's memory "+
+					"directory, and deny beats any allow carve-out. Enumerate the "+
+					"config surfaces under ~/.claude/ instead (see ADR-0014's "+
+					"memory amendment)",
+				source, pattern,
+			)
+		}
+	}
+
+	claudeEdit := claudePermissions(t)["edit"]
+	claudePatterns := make([]string, 0, len(claudeEdit))
+	for pattern, action := range claudeEdit {
+		if action == "deny" {
+			claudePatterns = append(claudePatterns, pattern)
+		}
+	}
+	check(t, "settings.json.tmpl", claudePatterns)
+
+	openCodePatterns := make([]string, 0)
+	for _, p := range permissionBlocks(t)["edit"] {
+		if p[1] == "deny" {
+			openCodePatterns = append(openCodePatterns, p[0])
+		}
+	}
+	check(t, "opencode.json.tmpl", openCodePatterns)
+
+	// The enumeration has to actually cover the escalation surface, or
+	// "memory works" would be satisfiable by deleting the floor outright.
+	// Parity means checking one config is enough here — the parity test
+	// above fails if the other disagrees.
+	for _, want := range []string{
+		"~/.claude/*.json",
+		"~/.claude/*.sh",
+		"~/.claude/agents/**",
+		"~/.claude/commands/**",
+		"~/.claude/skills/**",
+		"~/.claude/plugins/**",
+		"~/.claude/hooks/**",
+		"~/.claude/lib/**",
+	} {
+		if claudeEdit[want] != "deny" {
+			t.Errorf(
+				"settings.json.tmpl no longer denies %q — dropping the blanket "+
+					"~/.claude/** deny is only safe while every config surface "+
+					"under it is named explicitly",
+				want,
+			)
 		}
 	}
 }

@@ -313,7 +313,12 @@ a same-scope allow with no specificity tiebreak, so a `.claude/worktrees/**`
 allow carve-out could not fix it. A hook can express the exception a
 permission rule cannot:
 
-1. a `.claude` path segment **not** immediately followed by `worktrees`;
+1. a `.claude` path segment **not** immediately followed by either
+   `worktrees`, or `projects/<slug>/memory/` with a file below it — that
+   directory holds the agent's own memory notes, which grant no permission,
+   register no hook, and define no agent, so denying it blocked a feature and
+   protected nothing. The rest of `projects/<slug>/` stays denied, and a
+   `.claude` segment appearing again below `memory/` is judged on its own;
 2. **any** `.opencode` path segment — no exception, since nothing creates
    `.opencode/worktrees/`;
 3. a path under OpenCode's resolved global config root
@@ -353,7 +358,11 @@ A settings-level floor backs this up for when the guard itself cannot run
 Edit(**/.claude/settings.json)        Edit(**/.opencode/opencode.json)
 Edit(**/.claude/settings.local.json)  Edit(**/.opencode/plugin/**)
 Edit(**/.claude/hooks/**)             Edit(**/.mcp.json)
-Edit(~/.claude/**)                    Edit(~/.config/opencode/**)
+                                      Edit(~/.config/opencode/**)
+
+Edit(~/.claude/*.json)   Edit(~/.claude/agents/**)    Edit(~/.claude/plugins/**)
+Edit(~/.claude/*.sh)     Edit(~/.claude/commands/**)  Edit(~/.claude/hooks/**)
+Edit(~/.claude/*.md)     Edit(~/.claude/skills/**)    Edit(~/.claude/lib/**)
 ```
 
 These are the paths that are never legitimately agent-edited in any repo or
@@ -362,6 +371,14 @@ deny rules. The floor and the guard are deliberately asymmetric in coverage —
 the floor covers only this enumerable never-edit set (and survives the guard
 failing open); the guard covers everything else under `.claude/`/`.opencode/`,
 including surface the tools have not shipped yet.
+
+The global Claude root is spelled out rather than swept with a blanket
+`Edit(~/.claude/**)`, because that blanket also covered
+`~/.claude/projects/<slug>/memory/` — the agent's own memory directory — and
+deny beats any allow carve-out, so nothing narrower could re-open it. The
+trade is that a config-bearing directory upstream adds under `~/.claude/`
+isn't in the floor until it's listed here; the guard still denies it by
+default. See ADR-0014's memory amendment.
 
 **Scope:** GLOBAL — it replaces a rule that was already global, and gating it
 to the devgeta repo would silently remove escalation protection from every

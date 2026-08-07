@@ -23,6 +23,11 @@ Two problems in the shipped permission policy are fixed:
    directory instead (`~/.cache/devgeta/scratch` by default), granted
    through `permissions.additionalDirectories` (Claude Code) and
    `permission.external_directory` (OpenCode).
+3. **Claude Code's local memory was denied.** The blanket `Edit(~/.claude/**)`
+   deny — and the guard's own `.claude` rule — both covered
+   `~/.claude/projects/<slug>/memory/`, so the agent could not write a memory
+   file. Memory holds notes, not permissions or hooks, so both layers now
+   carve it out. Everything else under `~/.claude/` stays denied.
 
 See [ADR-0014](../decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)
 and [ADR-0015](../decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md)
@@ -36,19 +41,28 @@ OpenCode discovers plugins from a directory and never mentions them in
 `opencode.json`. Check both the guard and the scratch grant:
 
 ```bash
-# Claude Code — both should print a number greater than 0
+# Claude Code — the first two should print a number greater than 0,
+# the third should print 0 (the blanket deny that blocked memory is gone)
 grep -c agent-config-guard ~/.claude/settings.json
 grep -c additionalDirectories ~/.claude/settings.json
+grep -c 'Edit(~/.claude/\*\*)' ~/.claude/settings.json
 
-# OpenCode — the first should list a file, the second print a number greater than 0
+# OpenCode — the first should list a file, the second print a number greater
+# than 0, the third print 0
 ls ~/.config/opencode/plugin/agent-config-guard.js
 grep -c external_directory ~/.config/opencode/opencode.json
+grep -c '"~/.claude/\*\*"' ~/.config/opencode/opencode.json
 ```
 
-For either agent: a `0`, a "No such file", or a "No such file or directory"
-means that install predates this change and needs the refresh below. All
-checks satisfied means it already has it — nothing to do, and **do not run
-`--force`**, which would re-render over any hand-edits for no gain.
+For either agent: a `0` on one of the first two, a `1` on the third, or a
+"No such file or directory" means that install predates this change and needs
+the refresh below. All checks satisfied means it already has it — nothing to
+do, and **do not run `--force`**, which would re-render over any hand-edits
+for no gain.
+
+An install from the first release of this guide passes the guard and scratch
+checks but fails the third: the memory fix came later, and it needs the same
+refresh.
 
 ## Run these
 
@@ -81,6 +95,14 @@ checks should now be satisfied.
 guard is actually the new one: `~/.claude/agent-config-guard.sh` should
 exist and be executable (`ls -l ~/.claude/agent-config-guard.sh`). If it's
 missing, `--force` didn't complete — rerun it and check for an error.
+
+**A memory write is still denied after refreshing.** Check the deny list
+itself — `grep '~/.claude' ~/.claude/settings.json` should list the
+enumerated entries (`*.json`, `*.sh`, `*.md`, `agents/**`, `commands/**`,
+`skills/**`, `plugins/**`, `hooks/**`, `lib/**`) and **no** bare
+`~/.claude/**`. If the blanket is still there, `--force` didn't run against
+a rebuilt binary: `dg configure` deploys configs from the running binary, so
+`make build` (or reinstalling) has to happen first.
 
 **You use a relocated `CLAUDE_CONFIG_DIR`.** This refresh does not reach
 you: devgeta deploys to a fixed `~/.claude/`, so a relocated Claude config

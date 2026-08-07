@@ -579,6 +579,19 @@ Quick reference to where things live:
 
 **Recent changes:**
 
+- Agent memory is writable again (2026-08-07). Both permission layers denied
+  `~/.claude/projects/<slug>/memory/`, Claude Code's per-project memory
+  directory, so the agent could not write a memory file. Memory holds notes,
+  not permissions or hooks, so `agent-config-guard.sh`/`.js` clause 1 gained a
+  second exception beside `worktrees` (scoped to a file strictly under
+  `projects/<slug>/memory/`, `.claude`-only), and the settings floor's blanket
+  `Edit(~/.claude/**)` was replaced by an enumeration of the config surfaces
+  under that root — deny beats allow with no specificity tiebreak, so no
+  carve-out could re-open it otherwise. See
+  [ADR-0014](docs/decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)'s
+  memory amendment. Both agents changed symmetrically, and
+  `TestGlobalClaudeFloorLeavesMemoryWritable` stops the blanket coming back.
+
 - Review scope, output, and steering changed together (2026-08-07). A review now
   covers the branch's **working state** — commits AND uncommitted work, untracked
   files included — so `review-scope` and `branch-diff` diff `git diff <merge-base>`

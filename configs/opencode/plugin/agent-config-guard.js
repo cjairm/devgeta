@@ -67,11 +67,32 @@ function pathSegments(p) {
   return p.split(path.sep).filter((s) => s.length > 0);
 }
 
-// Clause 1: a `.claude` segment not immediately followed by `worktrees`.
+// A `.claude` segment is only harmless when what follows it is one of the two
+// known non-config subtrees. `..`/symlinks are already collapsed by
+// canonicalize, so an index past the end means the path genuinely ends there
+// — an out-of-range read is `undefined` and matches neither name.
+function claudeSegmentExcepted(segs, i) {
+  // a. `.claude/worktrees/...` — an in-repo checkout of some repository.
+  if (segs[i + 1] === "worktrees") {
+    return true;
+  }
+  // b. `.claude/projects/<slug>/memory/<file>` — agent-authored memory. The
+  //    length bound requires a file strictly BELOW memory/, so the directory
+  //    itself (and a plain file named `memory`) stays denied.
+  return (
+    segs[i + 1] === "projects" &&
+    segs[i + 3] === "memory" &&
+    i + 4 < segs.length
+  );
+}
+
+// Clause 1: a `.claude` segment whose following segments are neither
+// `worktrees` nor `projects/<slug>/memory/<file>` — see the bash mirror's
+// header comment for why memory is agent data, not agent config.
 function clause1Denied(canon) {
   const segs = pathSegments(canon);
   for (let i = 0; i < segs.length; i++) {
-    if (segs[i] === ".claude" && segs[i + 1] !== "worktrees") {
+    if (segs[i] === ".claude" && !claudeSegmentExcepted(segs, i)) {
       return true;
     }
   }
@@ -143,7 +164,7 @@ export const AgentConfigGuard = async (ctx = {}) => {
 
       if (clause1Denied(canon)) {
         throw new Error(
-          `Denies edits under .claude/ outside .claude/worktrees/ — an agent must not rewrite its own permissions, hooks, or definitions — ${BYPASS_HINT}`,
+          `Denies edits under .claude/ outside .claude/worktrees/ and .claude/projects/<slug>/memory/ — an agent must not rewrite its own permissions, hooks, or definitions — ${BYPASS_HINT}`,
         );
       }
       if (clause2Denied(canon)) {
