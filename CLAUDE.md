@@ -85,7 +85,7 @@ Hard constraints that override all other considerations:
 
 | Layer                       | Technology                    | Notes                                                                                               |
 | --------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Language**                | Go 1.23+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                                   |
+| **Language**                | Go 1.25+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                                   |
 | **Build System**            | Make                          | See Makefile for targets                                                                            |
 | **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                                |
 | **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                              |

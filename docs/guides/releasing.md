@@ -65,7 +65,9 @@ enforces both.
 **Do not** run `git tag` / `git push --tags` by hand. That skips the squash
 CLAUDE.md §9 requires, and a bare `git tag <version>` creates a _lightweight_
 tag with no message at all — which is exactly how a release page ends up
-empty.
+empty. Don't push the commits first either: the squash counts commits ahead of
+`origin/main`, so after a push that count is 0 and the squash is skipped with
+no error.
 
 ### 5. Monitor the Release Workflow
 
@@ -139,7 +141,7 @@ The workflow triggers automatically when you push any tag starting with `v`.
 The workflow:
 
 1. Checks out the code (full history, so the annotated tag's message is available)
-2. Sets up Go 1.23
+2. Sets up Go 1.25
 3. Builds binaries for all platforms using cross-compilation
 4. Reads the release notes out of the annotated tag
 5. Creates a GitHub release with those notes and all binaries attached
@@ -241,9 +243,12 @@ See [CLAUDE.md section 9](../../CLAUDE.md#9-versioning--tagging) for the full ve
 - **Minor releases** (v0.2.0, v0.3.0): When new features are added
 - **Major releases** (v1.0.0, v2.0.0): For significant changes or milestones
 
-## Advanced: Manual Release
+## Fallback: Manual Release
 
-If you need to create a release manually without the workflow:
+**Not the normal path.** Use this only when the workflow itself cannot run (for
+example it is broken and a build must ship anyway), or to re-upload assets to a
+release that already exists. Tag with `devgeta task release` either way — these
+steps replace the workflow's build and upload, not the tagging.
 
 ### Build Binaries Locally
 
@@ -280,7 +285,8 @@ gh release create v0.2.0 \
 ### Create Release via GitHub Web UI
 
 1. Go to: https://github.com/cjairm/devgeta/releases/new
-2. Choose the tag (or create new tag)
+2. Choose the existing annotated tag — do not create one here, the web UI makes
+   a lightweight tag
 3. Add release title and notes
 4. Drag and drop all four binary files
 5. Click "Publish release"
@@ -294,31 +300,38 @@ gh release create v0.2.0 \
 git checkout main
 git pull origin main
 
-# 2. Tag and push
-git tag v0.2.0
-git push origin v0.2.0
+# 2. Write the release notes (this file becomes the release page body)
+cp docs/guides/RELEASE-NOTES-TEMPLATE.md /tmp/release-notes.txt
+$EDITOR /tmp/release-notes.txt
 
-# 3. Wait 2-3 minutes for workflow
+# 3. Squash, tag, then push — always in that order, because the squash counts
+#    commits ahead of origin/main and pushing first makes that count 0
+devgeta task release v0.2.0 --message-file /tmp/release-notes.txt --push
 
-# 4. Test
+# 4. Wait 2-3 minutes for workflow
+
+# 5. Test
 curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
 devgeta --version
 ```
 
-### Delete a Release
+Without `--push`, review the result and run the `git push origin main --tags`
+the command prints. Never tag by hand — a bare `git tag` is unannotated, and
+the release page is built from the tag's annotation.
+
+### Delete a Release (recovery only)
+
+Order matters: delete the release first, or GitHub leaves it behind as a
+permanent draft. See [Re-trigger workflow](#workflow-fails) for the full retry.
 
 ```bash
-# Delete tag locally
+# 1. Delete the release (GitHub CLI, or the web UI at
+#    https://github.com/cjairm/devgeta/releases)
+gh release delete v0.2.0 --yes
+
+# 2. Delete the tag locally, then remotely
 git tag -d v0.2.0
-
-# Delete tag remotely
 git push origin :refs/tags/v0.2.0
-
-# Delete release via GitHub CLI
-gh release delete v0.2.0
-
-# Or delete via GitHub web UI
-# https://github.com/cjairm/devgeta/releases
 ```
 
 ## Support

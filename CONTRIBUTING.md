@@ -8,7 +8,7 @@ Thank you for your interest in contributing! This guide covers development setup
 
 ### Prerequisites
 
-- **Go 1.21+** — [Install Go](https://golang.org/doc/install)
+- **Go 1.25+** — [Install Go](https://golang.org/doc/install)
 - **Git** — Version control
 - **Make** — Build automation (included on macOS/Linux)
 - **A supported OS** — macOS 13+ or Debian 12+/Ubuntu 24+
@@ -206,25 +206,42 @@ See [CLAUDE.md section 9](CLAUDE.md#9-versioning--tagging) for the full versioni
 
 ### Making a Release
 
-1. **Update version** (if not automated):
-   - Version is injected from git tags during build
-   - Create git tag: `git tag v1.2.3`
+Never run a bare `git tag`. That creates a **lightweight** tag with no
+annotation, and the release workflow reads the release body out of the tag's
+annotation — so the release page publishes empty. Notes are not auto-generated:
+the `--message-file` text carried in the annotated tag is the only thing that
+fills the release body.
 
-2. **Push tag to GitHub:**
+1. **Write the release notes** to a file, starting from
+   [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md).
+
+2. **Tag** — from a clean working tree on the default branch:
 
    ```bash
-   git push origin v1.2.3
+   devgeta task release v1.2.3 --message-file release-notes.txt
    ```
 
-3. **GitHub Actions** automatically:
-   - Builds all platform binaries (darwin-arm64, darwin-amd64, linux-amd64)
-   - Creates GitHub Release with auto-generated notes
+   This squashes your unpushed commits into one and creates the annotated tag.
+   Nothing is pushed yet.
+
+3. **Push** the commit and tag together — re-run step 2 with `--push`, or run
+   the `git push origin main --tags` command the tool prints. Always tag
+   **before** pushing: `devgeta task release` decides what to squash by counting
+   commits ahead of the remote, so pushing first silently skips the squash.
+
+4. **GitHub Actions** then automatically:
+   - Builds all platform binaries (darwin-arm64, darwin-amd64, linux-amd64, linux-arm64)
+   - Creates the GitHub Release using the annotated tag's message as the body
    - Uploads binaries as release assets
 
-4. **Verify** the release:
+5. **Verify** the release:
    - Check [GitHub Releases](https://github.com/cjairm/devgeta/releases)
    - Test the installer script
    - Verify binary checksums
+
+Full rules live in [CLAUDE.md section 9](CLAUDE.md#9-versioning--tagging); see
+[docs/guides/releasing.md](docs/guides/releasing.md) for the workflow details
+and the retry order when a tag goes out wrong.
 
 ---
 

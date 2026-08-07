@@ -1,6 +1,6 @@
 # Devgeta
 
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
+[![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 [![macOS](https://img.shields.io/badge/macOS-13+-black?logo=apple)](README.md#supported-platforms)
 [![Linux](https://img.shields.io/badge/Linux-Debian%2012%2B-orange?logo=linux)](README.md#supported-platforms)
@@ -337,7 +337,7 @@ Quick links:
 
 ### Prerequisites
 
-- Go 1.21 or newer
+- Go 1.25 or newer
 - Git
 
 ### Build Commands
