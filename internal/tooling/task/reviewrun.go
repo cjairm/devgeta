@@ -166,7 +166,14 @@ func (tm *TaskManager) ReviewRun(reviewer string) (string, error) {
 		})
 		outcome := classifyReviewerRun(stdout, runErr)
 		elapsed := tm.now().Sub(start)
-		fmt.Fprintf(progressOut, "%s %s: %s (%s)\n", position, run.label, outcome, elapsed)
+		fmt.Fprintf(
+			progressOut,
+			"%s %s: %s (%s)\n",
+			position,
+			run.label,
+			outcome,
+			formatElapsed(elapsed),
+		)
 
 		fmt.Fprintf(&out, "%s → %s\n", run.label, outcome)
 	}
@@ -197,6 +204,21 @@ func (tm *TaskManager) now() time.Time {
 		return tm.NowFn()
 	}
 	return time.Now()
+}
+
+// formatElapsed renders a progress line's elapsed duration for a human
+// glancing at it, in place of time.Duration.String()'s raw nanosecond
+// precision — which reads as "(6.54025ms)" for a fast run and
+// "(4m12.183746291s)" for a multi-minute one, neither of which anyone reads
+// at a glance. A reviewer run is seconds-to-minutes long, so once a second
+// has elapsed, precision below a tenth of a second is noise; below a second,
+// though, millisecond precision is the only thing that distinguishes two
+// fast runs, so it is kept there rather than rounded away to "0s" or "1s".
+func formatElapsed(d time.Duration) string {
+	if d < time.Second {
+		return d.Round(time.Millisecond).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
 }
 
 // reviewerAgentFor resolves --reviewer to the OpenCode agent name to run,
@@ -270,7 +292,26 @@ func (tm *TaskManager) checkOnReviewableBranch() (current, defaultBranch string,
 func (tm *TaskManager) checkBranchHasCommittedDiff(branch, defaultBranch string) error {
 	_, ahead, err := tm.aheadBehind(defaultBranch)
 	if err != nil {
-		return fmt.Errorf("review-run: %w", err)
+		// Fail OPEN, not closed. This guard exists only to save the cost of a
+		// round that has nothing to review — it is not a safety property, so
+		// "cannot tell" must not be treated the same as "confirmed empty".
+		// `aheadBehind` runs `git rev-list … origin/<default>...HEAD`, which
+		// needs a local refs/remotes/origin/<default> ref; that ref is
+		// legitimately absent in a repo with no remote, a shallow or
+		// --single-branch clone, or a default branch never fetched (unlike
+		// review-scope, review-run does not fetch first — see
+		// Git.DefaultBranch's fallback in internal/apps/git/git.go). In that
+		// case git exits 128 with a raw "unknown revision" error, and
+		// surfacing that to the user is exactly what CLAUDE.md's error rule
+		// forbids. Blocking the round on an unresolvable comparison is worse
+		// than just spending one round finding out the branch turned out
+		// empty, so let it proceed instead.
+		logger.L().Debugw(
+			"review-run: could not determine commits ahead of default branch; "+
+				"proceeding without the empty-diff guard",
+			"branch", branch, "defaultBranch", defaultBranch, "error", err,
+		)
+		return nil
 	}
 	if ahead == 0 {
 		return fmt.Errorf(

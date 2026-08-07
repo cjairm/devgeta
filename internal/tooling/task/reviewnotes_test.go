@@ -4,6 +4,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -89,6 +90,12 @@ func newRepoSetup(
 		Git:      &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
 		Base:     commands.NewMockBaseCommand(),
 		OpenCode: &opencode.OpenCode{Cmd: commands.NewMockCommand(), Base: openCodeBase},
+		// ReviewRun's progress lines default to os.Stderr (see
+		// TaskManager.progressWriter), which would otherwise spray every
+		// test built from this setup across the real test-run stderr. Only
+		// the handful of tests that actually assert on progress content
+		// override this after the call.
+		ProgressOut: io.Discard,
 	}
 	return tm, root, openCodeBase
 }

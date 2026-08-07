@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -60,6 +61,27 @@ func withAheadCount(t *testing.T, tm *TaskManager, ahead int) {
 	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
 		if slices.Contains(c.Args, "rev-list") {
 			return fmt.Sprintf("0\t%d\n", ahead), "", nil
+		}
+		return orig(c)
+	}
+}
+
+// withRevListFailure makes the `rev-list` call aheadBehind runs fail exactly
+// as it does in a repo with no local refs/remotes/origin/<default> ref: no
+// remote, a shallow or --single-branch clone, or a default branch never
+// fetched. This is the case checkBranchHasCommittedDiff must fail OPEN on
+// rather than surface — see the guard's own comment.
+func withRevListFailure(t *testing.T, tm *TaskManager) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "rev-list") {
+			return "", "fatal: ambiguous argument 'origin/main...HEAD': unknown revision or " +
+				"path not in the working tree.", errors.New("exit status 128")
 		}
 		return orig(c)
 	}
@@ -427,6 +449,36 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"REQUEST CHANGES",
 		},
+		{
+			// Dropping "\*\*" from the anchor (so emphasis placement stops
+			// mattering, see stripLineEmphasis) also widened the pattern to
+			// match a markdown list bullet: stripLineEmphasis removes ALL
+			// "*"/"_" on the line, including a leading "* " bullet marker, not
+			// just emphasis around "Status:". A bulleted "* **Status:**
+			// APPROVE" therefore strips to "  Status: APPROVE" and matches
+			// exactly like the template's own unbulleted line.
+			//
+			// PINNED BEHAVIOR: this counts as a real APPROVE, deliberately.
+			// stripLineEmphasis's own doc comment already accepts that it
+			// "cannot tell '*' used as emphasis from '*' used as [something
+			// else]" -- a list bullet is exactly that other use, and telling
+			// it apart from emphasis would need real markdown-structure
+			// parsing, which is explicitly out of scope for a line-level
+			// normalizer. The reviewer contract's status line is a single
+			// declarative line, never a list item, so a bulleted status line
+			// showing up at all is already an out-of-contract report; no
+			// live reviewer output has been observed to produce one. If that
+			// ever changes -- e.g. a report bullets a quoted verdict outside
+			// a fence and "last status line wins" lets it override a real
+			// verdict above it -- re-narrowing the pattern is a deliberate,
+			// separate decision, not a side effect of an unrelated change;
+			// this test is what makes that a deliberate edit instead of an
+			// accidental regression.
+			"a bulleted status line matches like the unbulleted template form",
+			statusLineReport("* **Status:** APPROVE"),
+			nil,
+			"APPROVE",
+		},
 	}
 
 	for _, tt := range tests {
@@ -660,6 +712,23 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 
 // --- progress lines --------------------------------------------------------
 
+// The nil-ProgressOut default must resolve to exactly os.Stderr — never
+// os.Stdout, which would silently merge progress into the parseable payload
+// docs/guides/task-design.md governs. A TaskManager built as a bare literal
+// (bypassing New()) is exactly the shape every test in this file uses, so
+// this is what actually pins the fallback; nothing else in the suite
+// compares against os.Stderr by identity.
+func TestReviewRunProgressWriterDefaultsToStderr(t *testing.T) {
+	tm := &TaskManager{}
+	got := tm.progressWriter()
+	if got != io.Writer(os.Stderr) {
+		t.Fatalf("expected the nil ProgressOut default to be os.Stderr, got %v", got)
+	}
+	if got == io.Writer(os.Stdout) {
+		t.Fatalf("the nil ProgressOut default must never be os.Stdout")
+	}
+}
+
 // fixedClock returns a func() time.Time for TaskManager.NowFn that starts at
 // start and advances by step on every call after the first. ReviewRun calls
 // it twice per reviewer (start, then finish), so consecutive reviewers each
@@ -683,8 +752,10 @@ func fixedClock(start time.Time, step time.Duration) func() time.Time {
 // — and the returned string (the stdout contract docs/guides/task-design.md
 // governs) is completely unaffected. This is the regression that matters:
 // every other test in this file asserts that exact returned string byte for
-// byte, with ProgressOut left unset (defaulting to os.Stderr), so their
-// continuing to pass already proves the same thing from the other side.
+// byte, with newRepoSetup's default ProgressOut (io.Discard, so the suite
+// stays quiet — see TestReviewRunProgressWriterDefaultsToStderr for the
+// os.Stderr default that default stands in for), so their continuing to pass
+// already proves the same thing from the other side.
 func TestReviewRunWritesProgressLinesPerReviewer(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
@@ -983,6 +1054,31 @@ func TestReviewRunProceedsWhenBranchHasCommittedDiff(t *testing.T) {
 	out, err := tm.ReviewRun("")
 	if err != nil {
 		t.Fatalf("ReviewRun on a branch with a committed diff must proceed, got: %v", err)
+	}
+	if out != "OpenCode default model → APPROVE\nopen: none" {
+		t.Errorf("unexpected output:\n%s", out)
+	}
+}
+
+// When the ahead/behind comparison itself cannot be made — no local
+// refs/remotes/origin/<default> ref, as in a repo with no remote, a shallow
+// or --single-branch clone, or a default branch never fetched —
+// checkBranchHasCommittedDiff must fail OPEN and let the round proceed,
+// never surface git's raw "unknown revision" error or block the round on
+// "cannot tell". Before the fix, this failed: ReviewRun returned the raw
+// rev-list error and no reviewer ran at all.
+func TestReviewRunProceedsWhenAheadCountCannotBeDetermined(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	withRevListFailure(t, tm)
+	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
+
+	out, err := tm.ReviewRun("")
+	if err != nil {
+		t.Fatalf(
+			"an unresolvable ahead/behind comparison must fail open, not block the round: %v",
+			err,
+		)
 	}
 	if out != "OpenCode default model → APPROVE\nopen: none" {
 		t.Errorf("unexpected output:\n%s", out)
