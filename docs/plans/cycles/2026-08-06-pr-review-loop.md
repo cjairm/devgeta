@@ -61,28 +61,31 @@ DISCUSSION`/`NO VERDICT`/`ERROR` outcomes, `--reviewer` agent choice) are the
     the single owner/repo/PR resolver behind every PR task command — the new
     commands join this family and reuse it
   - `internal/tooling/task/reviewpackage.go` — `ReviewPackage(base, head, file)`;
-    **verifies refs with `rev-parse --verify` and never fetches** (line 42-47), and
-    builds an endpoint range `base + ".." + head` (line 49). Both facts drive Step 2
+    **verifies refs with `rev-parse --verify` and never fetches** (calls `verifyRef`
+    at lines 42/45; `verifyRef` itself, with the `rev-parse --verify` literal, is
+    lines 57-66), and builds an endpoint range `base + ".." + head` (line 49). Both
+    facts drive Step 2
   - `internal/tooling/task/scope.go` — `ReviewScope`'s bounded best-effort fetch
-    (`tm.Git.FetchOriginTimeout`, line 74) is the read-only-fetch pattern to follow
-  - `internal/apps/git/git.go` — git wrapper; `FetchOriginTimeout` (line ~226) is the
+    (`tm.Git.FetchOriginTimeout`, line 89) is the read-only-fetch pattern to follow
+  - `internal/apps/git/git.go` — git wrapper; `FetchOriginTimeout` (line 232) is the
     existing fetch entry point the PR-ref fetch extends
-  - `internal/tooling/task/reviewnotes.go` — `journalBranch(branch)` (line 30):
+  - `internal/tooling/task/reviewnotes.go` — `journalBranch(branch)` (line 38):
     an explicit `--branch` overrides the current branch as the journal key. Both
     `review-notes` (read) and `review-note` (write) already expose that flag
   - `internal/tooling/reviewjournal/encoding.go` — `EncodeBranch` percent-encodes
     every non-`[A-Za-z0-9._-]` byte, so a PR-scoped key is safe as a filename and
     cannot escape the review directory
-  - `internal/tooling/reviewjournal/manager.go` — `stamp` (line 118): cite
-    validation is `os.Stat` on the **working tree** and the blob comes from
-    `HashObjectIn` on the checkout file; head stamp is the checkout's `HEAD`. This
-    is what Step 4a's revision mode replaces for PR reviews
+  - `internal/tooling/reviewjournal/manager.go` — `stamp` (func decl at line 175,
+    spanning 169-190): cite validation is `os.Stat` (line 177) on the **working
+    tree** and the blob comes from `HashObjectIn` (line 180) on the checkout file;
+    head stamp is the checkout's `HEAD` (`ShortHeadIn`, line 186). This is what
+    Step 4a's revision mode replaces for PR reviews
   - `internal/tooling/worktree/` — `BuiltinReviewerChoices`, the reviewer-agent
     registry `review-run --reviewer` validates against (code, document, skill)
   - `internal/tooling/terminal/dev_tools/githubcli/githubcli.go` — the gh app
     wrapper; per CLAUDE.md §6 every `gh` invocation goes through it
   - `configs/shared/commands/review-pr.md`, `approve-pr.md` — the posting step.
-    `approve-pr.md` line 111: it **declines** and posts at most a comment when a
+    `approve-pr.md` line 117: it **declines** and posts at most a comment when a
     real gate blocks — it does not always submit an approval
   - `internal/apps/opencode/permissions_test.go` — command-schema guard test (globs
     `configs/shared/commands/*.md`, so it covers the new file automatically)
@@ -261,23 +264,25 @@ no-third-undocumented-outcome rule as the sibling cycle.
       state per PR comes from the reviews list (`APPROVED` / `CHANGES_REQUESTED` /
       `COMMENTED`), verified against real PRs.
 - [x] **`review-package` does not fetch and does not use a merge base.**
-      `reviewpackage.go:42-49` — `rev-parse --verify` on both refs, then
-      `base + ".." + head`. For `git diff` that is an endpoint comparison, so a base
+      `reviewpackage.go:42-66` — `verifyRef` (called at lines 42/45, its
+      `rev-parse --verify` literal at line 62) verifies both refs, then
+      `base + ".." + head` (line 49) builds the range. For `git diff` that is an
+      endpoint comparison, so a base
       branch that advanced after the PR opened injects unrelated reverse-changes into
       the diff. Step 2 exists because of this; the command itself is left unchanged.
-- [x] **The journal key is overridable.** `reviewnotes.go:30` `journalBranch` honors
+- [x] **The journal key is overridable.** `reviewnotes.go:38` `journalBranch` honors
       an explicit `--branch` on both `review-notes` and `review-note`, and
       `encoding.go` percent-encodes every non-`[A-Za-z0-9._-]` byte, so a PR-scoped
       key containing `/` is a legal, collision-free, escape-proof filename.
-- [x] **`/approve-pr` can decline.** `approve-pr.md:111` — on a real blocking gate it
+- [x] **`/approve-pr` can decline.** `approve-pr.md:117` — on a real blocking gate it
       does not approve and posts at most a terse comment. So a tick can end with
       nothing submitted and `requested:` still `yes`.
 - [x] **Headless OpenCode runs work** — verified by the sibling cycle's Step 0
       (2026-08-05, real binary): `opencode run --agent code-reviewer --format json`
       completes without prompts, the `**Status:**` line is recoverable from the JSON
       events, and failures surface as a parseable error event. Not re-probed here.
-- [x] **Journal stamping reads the working tree.** `reviewjournal/manager.go:118-133`
-      — `stamp` does `os.Stat` on the cited path in the working tree (a missing file
+- [x] **Journal stamping reads the working tree.** `reviewjournal/manager.go:169-190`
+      (`stamp`, func decl at line 175) — it does `os.Stat` on the cited path in the working tree (a missing file
       fails the write) and hashes it via `HashObjectIn`; the head stamp is the
       checkout's current `HEAD`. On a foreign PR reviewed from an unrelated branch,
       the cited file is absent or carries unrelated content — so a PR-scoped journal
@@ -303,7 +308,8 @@ was checked against this plan; all four are additive here, none reopens a decisi
       `review-run` of every tick — Step 4b and Step 5.
 - [x] **A review now covers the branch's working state** (ADR-0019), and
       `review-run`'s third refusal is "no commits ahead AND clean tree"
-      (`reviewrun.go:338-404`). **Applies:** range mode must skip that refusal too,
+      (`reviewrun.go:338-408`, `checkBranchHasReviewableChanges`). **Applies:**
+      range mode must skip that refusal too,
       and must state that it reviews the immutable SHAs _only_ — Step 4b.
 - [x] **Progress is sampled to stderr by default** (`reviewprogress.go`, one
       heartbeat per 30s), full stream behind the existing root `--verbose`, carried
@@ -422,7 +428,7 @@ Verify: `go test ./internal/tooling/task/ ./internal/tooling/terminal/dev_tools/
 ### Step 4a: Revision-aware journal mode
 
 The journal's stamp and freshness currently resolve against the working tree
-(`manager.go:118-133`: `os.Stat` + `HashObjectIn` on the checkout, head stamp from
+(`manager.go:169-190`, `stamp` at line 175: `os.Stat` + `HashObjectIn` on the checkout, head stamp from
 the checkout's `HEAD`) — wrong for a foreign PR reviewed from an unrelated branch,
 where a cited path is absent or carries unrelated content, so writes fail or the
 staleness signal lies. Extend `reviewjournal.Manager` with a revision mode:
@@ -529,7 +535,7 @@ nothing else changed. Wrapper/task tests cover `--commit` present and absent.
 ### Step 4d: Target-aware reviewer agents
 
 All three reviewer agent files hardcode unscoped journal commands
-(`code-reviewer.md:23,163`, `document-reviewer.md:23,138`,
+(`code-reviewer.md:23,168`, `document-reviewer.md:23,138`,
 `skill-reviewer.md:23,118`: `devgeta task review-notes` first, `review-note --open`
 to record) — a launch prompt saying "use `--branch`/`--rev`" contradicts the agent's
 own written instructions and loses. Add one scoped-journal clause to each file, next
@@ -639,7 +645,7 @@ reads the working tree:
      first trigger; it never keeps listening past a posted approval.
    - `not approved` → **re-ask once, approve-only.** This branch is reached only
      when every reviewer run said `APPROVE` — that verdict is exactly the basis
-     `approve-pr.md` itself names for approving over live comments (its line 61). So
+     `approve-pr.md` itself names for approving over live comments (its line 67). So
      the tick invokes `/approve-pr` one more time, stating that the cross-model
      verdict in context is `APPROVE` and the expected outcome is an approval with an
      `LGWC; <who/what remains>` body naming the leftover non-blocking comments — not
@@ -840,7 +846,7 @@ Round 4 (2026-08-06) — REQUEST CHANGES, four findings, all verified against th
 and all fixed by making the immutable review target the single context threaded
 through every step (the reviewer's own suggestion):
 
-- `n7` journal stamps read the working tree (`manager.go:118-133` confirmed:
+- `n7` journal stamps read the working tree (`manager.go:169-190`, `stamp` at 175, confirmed:
   `os.Stat` + `HashObjectIn` on the checkout, head stamp from checkout `HEAD`) →
   Step 4a revision-aware journal mode (`--rev <sha>`: blob from
   `git rev-parse <rev>:<path>`, freshness against the current PR head), used by

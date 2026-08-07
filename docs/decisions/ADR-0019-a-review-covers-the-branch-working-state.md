@@ -3,7 +3,7 @@
 **Status:** ACCEPTED
 **Date:** 2026-08-07
 **Deciders:** cjairm
-**Related:** [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md)
+**Related:** [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0021](ADR-0021-a-pr-review-targets-immutable-shas.md) (its explicit-range mode reviews immutable SHAs only, never the working state this ADR established for branch mode)
 
 ---
 

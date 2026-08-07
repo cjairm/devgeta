@@ -39,3 +39,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) — The review loop escalates instead of seeking consensus
 - [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md) — The review loop refuses the default branch, and the fix is a branch
 - [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) — A review covers the branch's working state, not just its committed history
+- [ADR-0020](ADR-0020-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick
+- [ADR-0021](ADR-0021-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
