@@ -13,10 +13,30 @@ This authorizes _posting without asking_, nothing else. The verdict is still you
 ## Usage
 
 ```
-/review-pr [PR_NUMBER]
+/review-pr [PR_NUMBER] [--target <head-sha>]
 ```
 
 The PR is resolved from the current branch unless you pass a number.
+
+### `--target <head-sha>` — reviewing code that isn't checked out
+
+Pass `--target` when the PR's code is not in the working tree: someone else's PR, a fork's PR, or any PR reviewed from an unrelated branch. It names the commit this review judges. **Without `--target`, everything below works exactly as it always has** — the working tree is the source, and nothing in this file changes.
+
+With `--target`, three things change and nothing else:
+
+1. **Resolve it first — and stop if it doesn't resolve.**
+
+   ```bash
+   git rev-parse --verify <head-sha>^{commit}
+   ```
+
+   If that fails, stop and tell the user this clone doesn't have that commit (usually it was never fetched). **Never fall back to reading the working tree.** The tree holds different code, so a review of it would be posted as a review of the PR — findings about files the PR never touched, and real findings dropped because the tree lacks the file.
+
+2. **Every read of repo content resolves at that commit.** `git show <head-sha>:<path>` instead of opening the path on disk, and `git log <head-sha> -- <path>` instead of `git log <path>`. Same checks, same dedup rules, same verdict rules — only where the bytes come from changes. Step 2's `review-scope` and `branch-diff` describe the checked-out branch, so they don't apply here; the diff comes from `devgeta task review-package <base-sha> <head-sha>` instead — one call giving the commit list, the noise-filtered stat table, and the full diff of the reviewed range, which is also what tells you which lines can carry an inline comment in step 5. The base sha comes with the target: whoever hands you `--target` hands you the base too, and `devgeta task pr-review-target --pr <n>` prints both (`base:` and `head:`) when you have to resolve it yourself. Never invent a base — the wrong one turns other people's commits into findings against this PR.
+
+3. **The submit names the commit** — add `--commit <head-sha>` to the `devgeta task submit-review` call in step 6.
+
+Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you review. What it buys is that the posted review names the commit it actually judged: inline comments hang off that diff (GitHub marks them outdated once the head moves), the review record shows the sha, and branch protection's dismiss-stale-approvals has a sha to key off. A review that lands late is visibly stamped with the commit it read instead of silently claiming the new head.
 
 ## Process
 
@@ -36,7 +56,7 @@ If it prints "No pull request found for the current branch.", stop and tell the 
 devgeta task pr-view          # add --pr PR_NUMBER if you have one
 ```
 
-Read the PR's purpose first — the description and linked ticket — before any code. Gather the findings already in the conversation. If there are none, review the change yourself with the lens in step 4. For a locally checked-out branch, run `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats), then `devgeta task branch-diff` (or `--file <path>` for one file) for the full noise-filtered diff. `review-scope` does a read-only fetch of origin and must run first, so the diff reflects current remote state — never `git pull` or merge, which would mutate the branch under review.
+Read the PR's purpose first — the description and linked ticket — before any code. Gather the findings already in the conversation. If there are none, review the change yourself with the lens in step 4. For a locally checked-out branch, run `devgeta task review-scope` for the orientation (branch, ahead/behind, commits, per-file stats), then `devgeta task branch-diff` (or `--file <path>` for one file) for the full noise-filtered diff. `review-scope` does a read-only fetch of origin and must run first, so the diff reflects current remote state — never `git pull` or merge, which would mutate the branch under review. With `--target`, neither of those two commands applies — follow the `--target` rule above instead, where the diff comes from `devgeta task review-package <base-sha> <head-sha>`.
 
 ### 3. Fetch existing threads and dedup — never repeat addressed feedback
 
@@ -51,8 +71,8 @@ This returns three surfaces: inline review threads (resolved and unresolved), a 
 Drop a finding when ANY of these hold:
 
 - An existing thread or prior review already makes substantially the same point AND is **resolved** — resolved means handled; re-raising it is noise.
-- An existing **OPEN** thread already makes substantially the same point AND the code now does what that thread asked — a thread staying open means nobody clicked "Resolve", not that the concern is live. Check the current file (locate the code by the thread's diff hunk, not its line number) and drop the finding if it's already fixed.
-- An existing **OPEN** thread already makes substantially the same point AND the author **replied rejecting it or explaining why it doesn't apply** — treat that as settled and drop it, UNLESS the code has changed since that reply in a way that makes their reasoning no longer hold (only then re-raise it, and say why in the finding). Judge "changed since" primarily from the thread header's `(outdated)` marker (GitHub's own signal that the anchored code has since changed); `review-scope`'s commit lines already carry each commit's date, so for the branch's own commits you can compare the reply timestamp against those directly — no need for a separate git call. Its dates cover the whole branch, not one path, though, so when a thread isn't marked outdated but you suspect only the surrounding code (not the branch as a whole) moved, fall back to `git log <path>` for a path-scoped timestamp.
+- An existing **OPEN** thread already makes substantially the same point AND the code now does what that thread asked — a thread staying open means nobody clicked "Resolve", not that the concern is live. Check the current file (locate the code by the thread's diff hunk, not its line number; with `--target`, read it with `git show <head-sha>:<path>`) and drop the finding if it's already fixed.
+- An existing **OPEN** thread already makes substantially the same point AND the author **replied rejecting it or explaining why it doesn't apply** — treat that as settled and drop it, UNLESS the code has changed since that reply in a way that makes their reasoning no longer hold (only then re-raise it, and say why in the finding). Judge "changed since" primarily from the thread header's `(outdated)` marker (GitHub's own signal that the anchored code has since changed); `review-scope`'s commit lines already carry each commit's date, so for the branch's own commits you can compare the reply timestamp against those directly — no need for a separate git call. Its dates cover the whole branch, not one path, though, so when a thread isn't marked outdated but you suspect only the surrounding code (not the branch as a whole) moved, fall back to `git log <path>` for a path-scoped timestamp (with `--target`, `review-scope` doesn't apply — `review-package`'s commit list carries the same dates, and the path-scoped fallback is `git log <head-sha> -- <path>`).
 - The same point already appears in a review summary body or a conversation comment. Don't restate it — but note that this bullet, unlike the three above it, says nothing about the concern being handled. Someone raised it; nobody said it was fixed. Its severity carries into step 6 untouched.
 
 Match on the finding's **identity, not its location**: the file plus the specific code construct plus the concern being raised, using the diff hunk shown in the thread — NOT the line number. Line numbers shift when new commits are pushed, so a `path:line` match misses the same finding after it moves to a new line. Two findings are "the same point" when they flag the same problem in the same code, regardless of the current line number or exact wording.
@@ -92,7 +112,7 @@ Severity tags drive the verdict: `[CRITICAL]` (data loss, security, correctness 
 
 Findings that point at a specific line become **inline comments** anchored to the diff; everything else goes in the summary **body**.
 
-**Re-verify each finding against the current file before anchoring it.** Read the cited file — don't trust the finding's quoted snippet — and confirm the code actually exists at (or near) the cited `file:line`. If the line drifted, re-anchor to where the code is now; if that new location isn't in the diff, it can't take an inline comment (see the note below), so move the finding to the body's "General notes" instead. If the cited code is gone or was never there — a hallucinated or already-resolved finding, common when findings come from another model — drop it.
+**Re-verify each finding against the current file before anchoring it.** Read the cited file — don't trust the finding's quoted snippet; with `--target`, read it as `git show <head-sha>:<path>` rather than from disk — and confirm the code actually exists at (or near) the cited `file:line`. If the line drifted, re-anchor to where the code is now; if that new location isn't in the diff, it can't take an inline comment (see the note below), so move the finding to the body's "General notes" instead. If the cited code is gone or was never there — a hallucinated or already-resolved finding, common when findings come from another model — drop it.
 
 **Write plainly.** Everything posted must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler. Each comment says what's wrong, why it matters, and the fix — nothing more.
 
@@ -150,7 +170,7 @@ SCRATCH=$(devgeta task scratch)
 
 **Before you submit:**
 
-- **Reflect the current state of the PR.** Review against the latest commit/diff, not a revision you looked at earlier. If new commits landed while you were reviewing, recheck that your findings still apply and drop any that a later commit already resolved — this is what the step 5 re-verification check is for; if you haven't run it since the latest commits landed, do it now.
+- **Reflect the current state of the PR.** Review against the latest commit/diff, not a revision you looked at earlier. If new commits landed while you were reviewing, recheck that your findings still apply and drop any that a later commit already resolved — this is what the step 5 re-verification check is for; if you haven't run it since the latest commits landed, do it now. With `--target` the reviewed revision is fixed instead: judge against `<head-sha>`, and let `--commit` say so on the posted review rather than quietly re-pointing it at a newer head.
 - **Credit prior reviewers, don't echo them.** If a finding you're keeping matches a point a prior reviewer already raised (kept per the step 3 dedup rules — new evidence or a different angle), say so and credit them instead of restating it as new.
 
 Post the body and the inline comments together as a single review, choosing the verdict:
@@ -195,7 +215,7 @@ devgeta task submit-review \
   --comments-file "$SCRATCH/comments.json"      # omit when there are no inline findings
 ```
 
-Add `--pr PR_NUMBER` when you resolved a number in step 1. The review posts atomically — one notification, all inline comments grouped under it.
+Add `--pr PR_NUMBER` when you resolved a number in step 1. With `--target`, add `--commit <head-sha>` too, so the posted review names the commit it judged. The review posts atomically — one notification, all inline comments grouped under it.
 
 **Clean up on every exit path, not just the happy one:**
 
@@ -207,7 +227,7 @@ Run this once you are done with the directory — after a successful submit, and
 
 If submit failed, **print the review body and any inline comments into your reply before cleaning up**, so nothing is lost and the user can post it by hand. Do not leave the directory behind as the backup — a stale scratch directory is only swept during `dg configure --force`, so "I'll leave it there just in case" means it sits around indefinitely.
 
-**Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies, **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
+**Re-review with nothing new to add** — split by whether prior feedback is actually settled. Judge that from the code and the replies (with `--target`, the code is `git show <head-sha>:<path>`), **not** from GitHub's resolved flag: an open thread whose point was fixed counts as addressed, and an unclicked "Resolve" button is never a reason to hold a PR.
 
 - **Every prior thread's concern was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Don't ask the author to resolve threads either. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
 - **A prior concern is still live in the code but doesn't block → approve with `LGWC`, naming who raised it.** An open suggestion or nit from a bot or another reviewer is worth passing along, not worth holding the PR over.

@@ -3,11 +3,15 @@ package task
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/testutil"
 	gitcli "github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/jq"
+	"github.com/cjairm/devgeta/pkg/constants"
 
 	"github.com/cjairm/devgeta/internal/commands"
 )
@@ -544,7 +548,7 @@ func TestPRConfirmations(t *testing.T) {
 		pm, ghBase, _ := newPRSetup()
 		ghBase.SetExecCommandResult("", "", nil)
 
-		out, err := pm.ApprovePR("7", "LGTM")
+		out, err := pm.ApprovePR("7", "LGTM", "")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -636,6 +640,7 @@ func TestBuildReviewPayload(t *testing.T) {
 			"REQUEST_CHANGES",
 			"Please fix",
 			`[{"path":"a.go","line":1,"body":"x"}]`,
+			"",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -653,20 +658,48 @@ func TestBuildReviewPayload(t *testing.T) {
 		}
 	})
 
+	t.Run("commit id becomes commit_id, and is omitted when absent", func(t *testing.T) {
+		withCommit, err := buildReviewPayload("APPROVE", "LGTM", "", "9f2c1ab")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		var got map[string]any
+		if err := json.Unmarshal([]byte(withCommit), &got); err != nil {
+			t.Fatalf("payload is not valid JSON: %v\n%s", err, withCommit)
+		}
+		if got["commit_id"] != "9f2c1ab" {
+			t.Fatalf(
+				"expected commit_id 9f2c1ab, got %v (payload: %s)",
+				got["commit_id"],
+				withCommit,
+			)
+		}
+
+		// Absent means the key is not sent at all: an empty commit_id is not
+		// the same request as no commit_id.
+		withoutCommit, err := buildReviewPayload("APPROVE", "LGTM", "", "")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(withoutCommit, "commit_id") {
+			t.Fatalf("expected no commit_id key without a commit, got %s", withoutCommit)
+		}
+	})
+
 	t.Run("approve allows empty body and no comments", func(t *testing.T) {
-		if _, err := buildReviewPayload("APPROVE", "", ""); err != nil {
+		if _, err := buildReviewPayload("APPROVE", "", "", ""); err != nil {
 			t.Fatalf("approve with empty body should be allowed: %v", err)
 		}
 	})
 
 	t.Run("comment without body or comments errors", func(t *testing.T) {
-		if _, err := buildReviewPayload("COMMENT", "", ""); err == nil {
+		if _, err := buildReviewPayload("COMMENT", "", "", ""); err == nil {
 			t.Fatal("expected error: a comment review needs a body or comments")
 		}
 	})
 
 	t.Run("invalid comments json errors", func(t *testing.T) {
-		if _, err := buildReviewPayload("COMMENT", "ok", "{not json"); err == nil {
+		if _, err := buildReviewPayload("COMMENT", "ok", "{not json", ""); err == nil {
 			t.Fatal("expected error for malformed comments json")
 		}
 	})
@@ -685,6 +718,7 @@ func TestSubmitReview(t *testing.T) {
 			"request-changes",
 			"Please fix",
 			`[{"path":"a.go","line":10,"body":"fix"}]`,
+			"",
 		)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -705,21 +739,129 @@ func TestSubmitReview(t *testing.T) {
 
 	t.Run("invalid verdict errors before any gh call", func(t *testing.T) {
 		pm, ghBase, _ := newPRSetup()
-		if _, err := pm.SubmitReview("42", "bogus", "x", ""); err == nil {
+		if _, err := pm.SubmitReview("42", "bogus", "x", "", ""); err == nil {
 			t.Fatal("expected error for invalid verdict")
 		}
-		if ghBase.GetExecCommandCallCount() != 0 {
-			t.Fatal("expected no gh call when the verdict is invalid")
-		}
+		testutil.VerifyNoRealCommands(t, ghBase)
 	})
 
 	t.Run("malformed comments error before any gh call", func(t *testing.T) {
 		pm, ghBase, _ := newPRSetup()
-		if _, err := pm.SubmitReview("42", "comment", "body", "{bad"); err == nil {
+		if _, err := pm.SubmitReview("42", "comment", "body", "{bad", ""); err == nil {
 			t.Fatal("expected error for malformed comments")
 		}
-		if ghBase.GetExecCommandCallCount() != 0 {
-			t.Fatal("expected no gh call when comments are malformed")
+		testutil.VerifyNoRealCommands(t, ghBase)
+	})
+
+	t.Run("commit anchors the posted payload", func(t *testing.T) {
+		pm, ghBase, _ := newPRSetup()
+		var payload string
+		ghBase.ExecCommandFn = capturingGhFn(t, "octocat/hello", &payload)
+
+		if _, err := pm.SubmitReview("42", "approve", "LGTM", "", "9f2c1ab"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(payload, `"commit_id":"9f2c1ab"`) {
+			t.Fatalf("expected commit_id in the posted payload, got %s", payload)
+		}
+	})
+
+	t.Run("no commit posts no commit_id", func(t *testing.T) {
+		pm, ghBase, _ := newPRSetup()
+		var payload string
+		ghBase.ExecCommandFn = capturingGhFn(t, "octocat/hello", &payload)
+
+		if _, err := pm.SubmitReview("42", "approve", "LGTM", "", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if strings.Contains(payload, "commit_id") {
+			t.Fatalf("expected no commit_id without --commit, got %s", payload)
+		}
+	})
+}
+
+// capturingGhFn answers every mocked gh call: a `--input <file>` call is the
+// reviews POST, whose payload is read back before CreateReview deletes the temp
+// file (the only moment it exists on disk); anything else is the CurrentRepo
+// lookup. Keying off the arguments rather than call position keeps these tests
+// from breaking when an implementation adds a lookup — the reason
+// ExecCommandFn exists.
+func capturingGhFn(
+	t *testing.T,
+	repo string,
+	payload *string,
+) func(commands.CommandParams) (string, string, error) {
+	t.Helper()
+	return func(cmd commands.CommandParams) (string, string, error) {
+		for i, a := range cmd.Args {
+			if a != "--input" || i+1 >= len(cmd.Args) {
+				continue
+			}
+			data, err := os.ReadFile(cmd.Args[i+1])
+			if err != nil {
+				t.Errorf("failed to read the review payload gh was handed: %v", err)
+			}
+			*payload = string(data)
+			return `{"id":1}`, "", nil
+		}
+		return repo, "", nil
+	}
+}
+
+// TestApprovePRRoute pins which API an approval goes through. `gh pr review
+// --approve` cannot carry a commit id, so an anchored approval has to take the
+// REST reviews endpoint — and an unanchored one must NOT, or every plain
+// approval would start needing owner/repo resolution it never needed before.
+func TestApprovePRRoute(t *testing.T) {
+	t.Run("with a commit it posts to the reviews endpoint", func(t *testing.T) {
+		pm, ghBase, _ := newPRSetup()
+		var payload string
+		ghBase.ExecCommandFn = capturingGhFn(t, "octocat/hello", &payload)
+
+		out, err := pm.ApprovePR("7", "LGTM", "9f2c1ab")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != "Approved PR #7" {
+			t.Fatalf("unexpected confirmation: %q", out)
+		}
+		if !strings.Contains(payload, `"commit_id":"9f2c1ab"`) {
+			t.Fatalf("expected commit_id in the posted payload, got %s", payload)
+		}
+		if !strings.Contains(payload, `"event":"APPROVE"`) {
+			t.Fatalf("expected an APPROVE event, got %s", payload)
+		}
+
+		joined := strings.Join(ghBase.ExecCommandCalls[len(ghBase.ExecCommandCalls)-1].Args, " ")
+		if !strings.Contains(joined, "/repos/octocat/hello/pulls/7/reviews") {
+			t.Fatalf("expected the reviews endpoint, got %q", joined)
+		}
+	})
+
+	t.Run("without a commit it keeps the gh pr review route", func(t *testing.T) {
+		pm, ghBase, _ := newPRSetup()
+		ghBase.SetExecCommandResult("", "", nil)
+
+		if _, err := pm.ApprovePR("7", "LGTM", ""); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(ghBase.ExecCommandCalls) != 1 {
+			t.Fatalf("expected exactly one gh call, got %d", len(ghBase.ExecCommandCalls))
+		}
+		// Pin the whole argv rather than searching it for substrings: the
+		// REST route differs from this one in its first argument, so an
+		// exact match is what actually proves the plain route was taken —
+		// and it fails loudly if an extra flag is ever slipped in.
+		call := ghBase.ExecCommandCalls[0]
+		wantArgs := []string{"pr", "review", "7", "--approve", "--body", "LGTM"}
+		if call.Command != constants.GithubCli || !slices.Equal(call.Args, wantArgs) {
+			t.Fatalf(
+				"expected `%s %v`, got `%s %v`",
+				constants.GithubCli,
+				wantArgs,
+				call.Command,
+				call.Args,
+			)
 		}
 	})
 }

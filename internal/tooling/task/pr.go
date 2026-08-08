@@ -169,12 +169,20 @@ func reviewEventForVerdict(verdict string) (string, error) {
 // so callers keep full control of the GitHub comment shape. A body may be empty
 // only for an APPROVE — REQUEST_CHANGES and COMMENT need a body or inline
 // comments, matching GitHub's own requirement.
-func buildReviewPayload(event, body, commentsJSON string) (string, error) {
+//
+// commitID, when non-empty, becomes the payload's commit_id: the sha the review
+// is ATTRIBUTED to. It is not a guard. GitHub accepts a review whose commit_id
+// is behind the head — there is no atomic submit in this API — so what the
+// anchor buys is that inline comments hang off the diff that was actually read
+// (shown as outdated once the head moves), the review record names that commit,
+// and branch protection's dismiss-stale-approvals has a sha to key off.
+func buildReviewPayload(event, body, commentsJSON, commitID string) (string, error) {
 	payload := struct {
 		Body     string          `json:"body,omitempty"`
 		Event    string          `json:"event"`
+		CommitID string          `json:"commit_id,omitempty"`
 		Comments json.RawMessage `json:"comments,omitempty"`
-	}{Event: event, Body: body}
+	}{Event: event, Body: body, CommitID: strings.TrimSpace(commitID)}
 
 	if strings.TrimSpace(commentsJSON) != "" {
 		if !json.Valid([]byte(commentsJSON)) {
@@ -197,16 +205,19 @@ func buildReviewPayload(event, body, commentsJSON string) (string, error) {
 // SubmitReview posts one PR review (approve, request-changes, or comment) in a
 // single submission, optionally with inline comments anchored to diff lines.
 // verdict is the friendly form; commentsJSON is an optional JSON array of inline
-// comments. This is the line-anchored path the /review-pr skill uses, distinct
-// from ApprovePR/RequestChangesPR/CommentPR which carry only a body.
-func (p *PRManager) SubmitReview(prNumber, verdict, body, commentsJSON string) (string, error) {
+// comments; commitID optionally anchors the review to the reviewed commit (see
+// buildReviewPayload). This is the line-anchored path the /review-pr skill uses,
+// distinct from RequestChangesPR/CommentPR which carry only a body.
+func (p *PRManager) SubmitReview(
+	prNumber, verdict, body, commentsJSON, commitID string,
+) (string, error) {
 	event, err := reviewEventForVerdict(verdict)
 	if err != nil {
 		return "", err
 	}
 	// Build (and validate) the payload before any gh call, so a malformed
 	// request fails fast without touching the network.
-	payload, err := buildReviewPayload(event, body, commentsJSON)
+	payload, err := buildReviewPayload(event, body, commentsJSON, commitID)
 	if err != nil {
 		return "", err
 	}
@@ -245,8 +256,23 @@ func (p *PRManager) UpdatePRDescription(prNumber, body string) (string, error) {
 	return "Updated PR description for " + prLabel(prNumber), nil
 }
 
-// ApprovePR approves a PR.
-func (p *PRManager) ApprovePR(prNumber, body string) (string, error) {
+// ApprovePR approves a PR. commitID optionally anchors the approval to the
+// commit that was actually reviewed (see buildReviewPayload); pass "" for the
+// ordinary "approve whatever is at the head" case.
+//
+// The two routes exist because `gh pr review --approve` has no way to carry a
+// commit id — only the REST reviews endpoint does. So an anchored approval is
+// delegated to SubmitReview, which owns payload building and that endpoint
+// already; an unanchored one keeps the existing gh route unchanged, so the
+// common case gains no new failure modes (it needs neither owner/repo
+// resolution nor a temp file).
+func (p *PRManager) ApprovePR(prNumber, body, commitID string) (string, error) {
+	if strings.TrimSpace(commitID) != "" {
+		if _, err := p.SubmitReview(prNumber, "approve", body, "", commitID); err != nil {
+			return "", err
+		}
+		return "Approved " + prLabel(prNumber), nil
+	}
 	if err := p.Gh.ApprovePR(prNumber, body); err != nil {
 		return "", err
 	}

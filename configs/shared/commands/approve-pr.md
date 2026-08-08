@@ -13,12 +13,32 @@ This authorizes _posting without asking_, nothing else. Every gate below still h
 ## Usage
 
 ```
-/approve-pr [PR_NUMBER]
+/approve-pr [PR_NUMBER] [--target <head-sha>]
 ```
 
 The PR is resolved from the current branch unless you pass a number. The repo is the current working directory.
 
 This is the **deciding-approver** step, not a review — the full review lives in `/review-pr`. Because concerns were already raised, read the threads first to confirm they were genuinely resolved before you put your name on the merge.
+
+### `--target <head-sha>` — deciding on code that isn't checked out
+
+Pass `--target` when the PR's code is not in the working tree: someone else's PR, a fork's PR, or any PR judged from an unrelated branch. It names the commit this approval is about. **Without `--target`, everything below works exactly as it always has** — the working tree is the source, and nothing in this file changes.
+
+With `--target`, three things change and nothing else:
+
+1. **Resolve it first — and stop if it doesn't resolve.**
+
+   ```bash
+   git rev-parse --verify <head-sha>^{commit}
+   ```
+
+   If that fails, stop and tell the user this clone doesn't have that commit (usually it was never fetched). **Never fall back to reading the working tree.** The tree holds different code, so a thread would be checked against something the PR never contained — which is an approval resting on nothing.
+
+2. **Every read of repo content resolves at that commit** — `git show <head-sha>:<path>` instead of opening the path on disk. Same gates, same triage, same severity rules; only where the bytes come from changes.
+
+3. **The approval names the commit** — add `--commit <head-sha>` to the `devgeta task approve-pr` call in step 4.
+
+Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you decide. What it buys is that the approval names the commit it was based on, and that branch protection's dismiss-stale-approvals has a sha to key off, so an approval of an older commit is visibly an approval of that commit rather than a silent claim about the new head.
 
 ## Process
 
@@ -52,7 +72,7 @@ devgeta task review-threads --state unresolved
 
 **An open thread is not automatically a blocker.** Authors routinely fix a comment and never click "Resolve", so the thread stays open even though the concern is gone. For each open thread, check whether the point was actually handled:
 
-- Read the cited file and see whether the code now does what the comment asked. Locate the code with the thread's diff hunk, not its line number — lines shift when new commits land.
+- Read the cited file and see whether the code now does what the comment asked. Locate the code with the thread's diff hunk, not its line number — lines shift when new commits land. With `--target`, read it as `git show <head-sha>:<path>` rather than from disk.
 - An author reply that rejects the comment or explains why it doesn't apply also counts as handled.
 
 If either holds, treat the thread as satisfied and note it in the report ("addressed, thread left open"). **Never withhold approval over the resolve button, and never ask the author to go resolve a thread whose concern is already handled.**
@@ -74,7 +94,7 @@ Then confirm the resolved ones were actually fixed, not just replied to and forg
 devgeta task review-threads --state resolved
 ```
 
-Skim these; only open a file to verify when a resolution looks doubtful. Trust GitHub's resolution state as the primary signal — don't re-litigate the whole diff.
+Skim these; only open a file to verify when a resolution looks doubtful (with `--target`, `git show <head-sha>:<path>` again). Trust GitHub's resolution state as the primary signal — don't re-litigate the whole diff.
 
 Finally, look at CI — but treat it as a signal, not a gate:
 
@@ -107,6 +127,8 @@ To approve (cases 2 and 3, and every PR with nothing outstanding at all):
 ```bash
 devgeta task approve-pr --body "<body picked below>"
 ```
+
+Add `--commit <head-sha>` when you were given `--target`, so the approval names the commit it was based on.
 
 **The body must match what actually happened on this PR — never thank the author for addressing feedback that was never given.** Pick by situation:
 

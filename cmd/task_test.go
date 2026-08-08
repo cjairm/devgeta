@@ -1374,13 +1374,14 @@ func (m *mockPRRunner) ReplyThread(id, body string) (string, error) {
 	return m.record("ReplyThread", "id", id, "body", body)
 }
 
-func (m *mockPRRunner) SubmitReview(pr, verdict, body, comments string) (string, error) {
+func (m *mockPRRunner) SubmitReview(pr, verdict, body, comments, commit string) (string, error) {
 	return m.record(
 		"SubmitReview",
 		"pr", pr,
 		"verdict", verdict,
 		"body", body,
 		"comments", comments,
+		"commit", commit,
 	)
 }
 
@@ -1392,8 +1393,8 @@ func (m *mockPRRunner) UpdatePRDescription(pr, body string) (string, error) {
 	return m.record("UpdatePRDescription", "pr", pr, "body", body)
 }
 
-func (m *mockPRRunner) ApprovePR(pr, body string) (string, error) {
-	return m.record("ApprovePR", "pr", pr, "body", body)
+func (m *mockPRRunner) ApprovePR(pr, body, commit string) (string, error) {
+	return m.record("ApprovePR", "pr", pr, "body", body, "commit", commit)
 }
 
 func (m *mockPRRunner) RequestChangesPR(pr, body string) (string, error) {
@@ -1712,6 +1713,58 @@ func TestPRTask_BodyFile(t *testing.T) {
 		}
 		if len(mock.calls) != 0 {
 			t.Fatal("expected no dispatch when comments-file is unreadable")
+		}
+	})
+
+	// --commit is what makes a review of a commit that is not checked out
+	// name the commit it actually judged. It must reach the runner verbatim,
+	// and must stay empty for the ordinary on-branch call.
+	t.Run("submit-review forwards --commit, and empty without it", func(t *testing.T) {
+		mock := newMockPRRunner()
+		defer setupPRMock(t, mock)()
+
+		prFlag, prEventFlag, prBodyFlag, prCommitFlag = "42", "approve", "LGTM", "9f2c1ab"
+		defer func() { prFlag, prEventFlag, prBodyFlag, prCommitFlag = "", "", "", "" }()
+
+		if err := taskSubmitReviewCmd.RunE(taskSubmitReviewCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.lastArg["commit"] != "9f2c1ab" {
+			t.Fatalf("expected commit forwarded, got %q", mock.lastArg["commit"])
+		}
+
+		prCommitFlag = ""
+		if err := taskSubmitReviewCmd.RunE(taskSubmitReviewCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.lastArg["commit"] != "" {
+			t.Fatalf("expected no commit without --commit, got %q", mock.lastArg["commit"])
+		}
+	})
+
+	t.Run("approve-pr forwards --commit, and empty without it", func(t *testing.T) {
+		mock := newMockPRRunner()
+		defer setupPRMock(t, mock)()
+
+		prFlag, prBodyFlag, prCommitFlag = "42", "LGTM", "9f2c1ab"
+		defer func() { prFlag, prBodyFlag, prCommitFlag = "", "", "" }()
+
+		if err := taskApprovePRCmd.RunE(taskApprovePRCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.calls[0] != "ApprovePR" {
+			t.Fatalf("expected ApprovePR, got %v", mock.calls)
+		}
+		if mock.lastArg["commit"] != "9f2c1ab" {
+			t.Fatalf("expected commit forwarded, got %q", mock.lastArg["commit"])
+		}
+
+		prCommitFlag = ""
+		if err := taskApprovePRCmd.RunE(taskApprovePRCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.lastArg["commit"] != "" {
+			t.Fatalf("expected no commit without --commit, got %q", mock.lastArg["commit"])
 		}
 	})
 

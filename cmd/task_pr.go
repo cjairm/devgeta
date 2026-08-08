@@ -19,10 +19,10 @@ type prRunner interface {
 	ResolveThread(threadID string) (string, error)
 	UnresolveThread(threadID string) (string, error)
 	ReplyThread(threadID, body string) (string, error)
-	SubmitReview(prNumber, verdict, body, commentsJSON string) (string, error)
+	SubmitReview(prNumber, verdict, body, commentsJSON, commitID string) (string, error)
 	CreatePR(title, body, base string) (string, error)
 	UpdatePRDescription(prNumber, body string) (string, error)
-	ApprovePR(prNumber, body string) (string, error)
+	ApprovePR(prNumber, body, commitID string) (string, error)
 	RequestChangesPR(prNumber, body string) (string, error)
 	RequestReviewPR(prNumber string, reviewers []string) (string, error)
 	CommentPR(prNumber, body string) (string, error)
@@ -50,7 +50,16 @@ var (
 	prMethodFlag   string
 	prEventFlag    string
 	prCommentsFile string
+	prCommitFlag   string
 )
+
+// commitFlagUsage documents --commit for the two commands that post a review.
+// It is deliberately explicit that the anchor is attribution: GitHub accepts a
+// review whose commit is behind the head, so a caller must not read this flag
+// as a guard against the PR moving mid-review.
+const commitFlagUsage = "Anchor the review to this commit sha (attribution: " +
+	"inline comments hang off that diff and the review names it; it does not " +
+	"reject a newer head)"
 
 // resolveBody returns the body text to use, preferring --body-file over --body.
 // The file contents are passed through verbatim, so GitHub-Flavored Markdown
@@ -163,12 +172,18 @@ summary body, and optional inline comments anchored to diff lines.
 {"path","line","body"} (optionally "start_line" and "side"); they are posted as
 line-anchored review comments in the same submission.
 --pr targets a PR number; omit it to use the current branch's PR.
+--commit anchors the review to the commit sha that was actually reviewed. This
+is attribution, not enforcement: GitHub does not reject a review whose commit is
+behind the head. What it buys is that the inline comments hang off the diff that
+was read (GitHub shows them as outdated once the head moves), the review record
+names that commit, and dismiss-stale-approvals has a sha to key off.
 
 A request-changes or comment review needs a body or inline comments; approve may
 have neither.`,
 	Example: `  devgeta task submit-review --event approve --body "LGTM"
   devgeta task submit-review --event request-changes --body-file review.md --comments-file comments.json
-  devgeta task submit-review --pr 42 --event comment --comments-file comments.json`,
+  devgeta task submit-review --pr 42 --event comment --comments-file comments.json
+  devgeta task submit-review --pr 42 --event approve --body "LGTM" --commit 9f2c1ab`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := resolveBody(prBodyFlag, prBodyFileFlag)
@@ -183,7 +198,7 @@ have neither.`,
 			}
 			comments = string(data)
 		}
-		out, err := newPRTasks().SubmitReview(prFlag, prEventFlag, body, comments)
+		out, err := newPRTasks().SubmitReview(prFlag, prEventFlag, body, comments, prCommitFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -221,13 +236,22 @@ var taskUpdatePRDescriptionCmd = &cobra.Command{
 var taskApprovePRCmd = &cobra.Command{
 	Use:   "approve-pr",
 	Short: "Approve a pull request",
-	Args:  cobra.NoArgs,
+	Long: `Approve a pull request, optionally with a one-line body.
+
+--pr targets a PR number; omit it to use the current branch's PR.
+--commit anchors the approval to the commit sha that was actually reviewed —
+the same attribution (not enforcement) described under submit-review. Passing it
+switches the call to the REST reviews endpoint, because ` + "`gh pr review`" + `
+cannot carry a commit id; without it the plain gh route is used.`,
+	Example: `  devgeta task approve-pr --body "LGTM"
+  devgeta task approve-pr --pr 42 --body "LGTM" --commit 9f2c1ab`,
+	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := resolveBody(prBodyFlag, prBodyFileFlag)
 		if err != nil {
 			return err
 		}
-		out, err := newPRTasks().ApprovePR(prFlag, body)
+		out, err := newPRTasks().ApprovePR(prFlag, body, prCommitFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -446,6 +470,7 @@ func init() {
 	taskSubmitReviewCmd.Flags().StringVar(&prBodyFileFlag, "body-file", "", bodyFileUsage)
 	taskSubmitReviewCmd.Flags().
 		StringVar(&prCommentsFile, "comments-file", "", "JSON file: array of inline comments ({path,line,body})")
+	taskSubmitReviewCmd.Flags().StringVar(&prCommitFlag, "commit", "", commitFlagUsage)
 	_ = taskSubmitReviewCmd.MarkFlagRequired("event")
 
 	taskUpdatePRDescriptionCmd.Flags().
@@ -465,6 +490,7 @@ func init() {
 	taskApprovePRCmd.Flags().
 		StringVar(&prBodyFlag, "body", "", "Optional approval comment (Markdown)")
 	taskApprovePRCmd.Flags().StringVar(&prBodyFileFlag, "body-file", "", bodyFileUsage)
+	taskApprovePRCmd.Flags().StringVar(&prCommitFlag, "commit", "", commitFlagUsage)
 
 	taskRequestChangesPRCmd.Flags().
 		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
