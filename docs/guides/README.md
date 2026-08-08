@@ -139,6 +139,22 @@ differs from how they read:
 
 ---
 
+### [Agent Sync](agent-sync.md) — Which file holds which concern, for both agents
+
+The detail behind CLAUDE.md's one-line rule that a policy change goes into both
+agents:
+
+- The concern-by-concern table: permissions, formatting, redirects, activity state, config protection, scratch grant
+- What `permissions_test.go` enforces — and the trap that it compares pattern strings, not what they match
+- The deliberate differences: agent frontmatter is OpenCode-only, command frontmatter is inert in both, the lint feedback loop is Claude-only, `statusLine` has no OpenCode equivalent
+- Why a command that posts outward must grant its own authorization in prose
+
+**When to read:** Before changing anything under `configs/claude/` or `configs/opencode/`.
+
+**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
+
+---
+
 ### [Releasing](releasing.md) — Version management and GitHub Actions
 
 Complete release workflow:
@@ -252,4 +268,6 @@ If you're adding new guides:
 5. **Link to related guides** — Help developers navigate
 6. **Add to this README** — Update the index and quick start
 
-See [TEMPLATE.md](./TEMPLATE.md) for structure.
+There is no guide template — copy the structure of an existing guide instead;
+[testing-patterns.md](testing-patterns.md) is a good model for a long one,
+[error-handling.md](error-handling.md) for a short one.
