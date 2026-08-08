@@ -17,6 +17,26 @@ why it no longer lives in `CLAUDE.md`.
 
 ## Recent changes
 
+- A long `--prompt` no longer gets silently dropped by `dg wt create`
+  (2026-08-07). Every pane's command was typed into the pane with
+  `tmux send-keys` right after creation; macOS/BSD's tty input queue caps at
+  1024 bytes, so a write past it discarded the excess **and the trailing
+  Enter** while `send-keys` still exited 0 — the window looked fine, the coder
+  sat at an empty session, and `dg wt create` reported success. See
+  [ADR-0021](decisions/ADR-0021-pane-commands-are-exec-d-not-typed.md). Now
+  every tmux call that brings a pane into existence (`CreateWindow`,
+  `CreateWindowInSession`, `CreateSessionWithWindow`, `SplitWindow`) carries
+  that pane's command as a shell-command (process arguments, ~1 MiB of
+  headroom) instead of keystrokes; the paths that write into an
+  already-existing pane (`ensureWindow`'s repair branch,
+  `launchReviewInLiveWindow`'s idle-shell reuse, `dg wt move`'s retarget)
+  still use `send-keys`, now guarded to reject any payload over 1023 bytes
+  rather than truncate it silently. The devgeta-owned launch also stopped
+  depending on the `cc`/`oc` shell alias — a created pane execs the coder's
+  resolved binary path directly, and the alias devgeta still writes into
+  `devgeta.zsh` is now rendered from the same `pkg/constants.CoderLaunch`
+  recipe the launch itself reads, so the two cannot drift.
+
 - Dedup suppresses duplicate comments, never the verdict (2026-08-07). A review
   approved a PR whose missing route coverage was still live: the finding had
   been deduplicated against an existing Copilot comment raising the same point,

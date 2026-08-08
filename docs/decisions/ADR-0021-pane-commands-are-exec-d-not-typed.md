@@ -469,21 +469,23 @@ Because "which paths?" has now been answered wrongly twice from memory, it is
 answered here **mechanically instead**: this is every non-test call site of the
 `SendKeys*` wrappers, and which part governs each.
 
-| Call site (`internal/tooling/worktree/worktree.go`)     | Pane        | Governed by        |
-| ------------------------------------------------------- | ----------- | ------------------ |
-| `buildWindowFromLayout`'s `sendKeys` (:525)             | **created** | part 3 → exec      |
-| `retargetWindowAfterMove` (:1741)                       | existing    | part 4 → send-keys |
-| `launchReviewInLiveWindow`, idle-shell reuse (:2052)    | existing    | part 4 → send-keys |
-| `launchReviewInLiveWindow`, after `SplitWindow` (:2074) | **created** | part 3 → exec      |
-| `ensureWindow` repair (:2112)                           | existing    | part 4 → send-keys |
-| `createWindowWithLayout`'s `sendKeys` (:2159)           | **created** | part 3 → exec      |
+An earlier draft of this table also listed three **created** rows —
+`buildWindowFromLayout`'s `sendKeys`, `launchReviewInLiveWindow`'s branch after
+`SplitWindow`, and `createWindowWithLayout`'s `sendKeys` — marked "part 3 →
+exec" to flag that they belonged to part 3, not here. All three have since been
+implemented, so they are no longer `SendKeys*` call sites **at all**:
+`buildWindowFromLayout` and `createWindowWithLayout` pass pane 0's command to
+the window-creating call, `buildWindowPanes` passes every later pane's to
+`SplitWindow`, and `launchReviewInLiveWindow`'s split carries the review
+command. Re-deriving the table from the code today therefore drops those three
+rows entirely rather than reclassifying them, leaving only the **existing**
+rows that are still genuinely `send-keys` sites:
 
-The three **created** rows have since been implemented, so they are no longer
-`SendKeys*` call sites at all: `buildWindowFromLayout` and `createWindowWithLayout`
-pass pane 0's command to the window-creating call and `buildWindowPanes` passes
-every later pane's to `SplitWindow`, and `launchReviewInLiveWindow`'s split
-carries the review command. Re-deriving the table from the code today therefore
-yields only the three **existing** rows.
+| Call site (`internal/tooling/worktree/worktree.go`)  | Pane     | Governed by        |
+| ---------------------------------------------------- | -------- | ------------------ |
+| `retargetWindowAfterMove` (:1795)                    | existing | part 4 → send-keys |
+| `launchReviewInLiveWindow`, idle-shell reuse (:2146) | existing | part 4 → send-keys |
+| `ensureWindow` repair (:2199)                        | existing | part 4 → send-keys |
 
 `retargetWindowAfterMove` is the one an earlier draft missed: `dg wt move` sends
 `cd <newPath>` into each idle pane of the moved worktree's window. It is also the

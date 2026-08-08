@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-07
 **Estimated Duration:** ~6-8 hours
-**Status:** Approved — awaiting implementation
+**Status:** Done
 
 ---
 
@@ -58,8 +58,11 @@ inconclusive probe must never block a create).
   `LaunchReviewInRepo` (:1952),
   `launchReviewInLiveWindow` (:2034), `ensureWindow` (:2101),
   `createWindowWithLayout` (:2143).
-- `configs/templates/devgeta.zsh.tmpl` — `alias oc=opencode`,
-  `alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"` (lines ~179, ~183).
+- `configs/templates/devgeta.zsh.tmpl` — `{{.OpenCodeAlias}}`, `{{.ClaudeAlias}}`
+  (lines ~191, ~194), rendered by `internal/config.NewShellTemplateData` from
+  `pkg/constants.CoderLaunch.AliasLine()` (`OpenCodeLaunch`/`ClaudeLaunch`) —
+  not the literal `alias oc=opencode` / `alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"`
+  this section originally described.
 
 **Key mechanics to know before touching anything:**
 
@@ -105,23 +108,23 @@ intact; the paths that legitimately send into an already-live pane keep
 
 ### In Scope
 
-- [ ] `CreateWindow`, `CreateWindowInSession`, `CreateSessionWithWindow`,
+- [x] `CreateWindow`, `CreateWindowInSession`, `CreateSessionWithWindow`,
       `SplitWindow` accept an optional pane command
-- [ ] `SendKeysTo*` reject a payload over 1023 bytes with an actionable error
-- [ ] `ShellCommandLookupFn` can return the resolved absolute path
-- [ ] Shell resolution (`$SHELL` → tmux `default-shell` → `/bin/sh`, each
+- [x] `SendKeysTo*` reject a payload over 1023 bytes with an actionable error
+- [x] `ShellCommandLookupFn` can return the resolved absolute path
+- [x] Shell resolution (`$SHELL` → tmux `default-shell` → `/bin/sh`, each
       validated as an existing executable regular file) and the two launch
       recipes (resolved-path non-interactive; alias-based interactive fallback)
-- [ ] `Pane.check` / `Layout.EnsureInstalled` carry the probe's result to the
+- [x] `Pane.check` / `Layout.EnsureInstalled` carry the probe's result to the
       launch instead of returning only `error`
-- [ ] The three create paths in `worktree.go` pass commands at creation
-- [ ] `launchReviewInLiveWindow`'s **split** branch execs; its idle-shell-reuse
+- [x] The three create paths in `worktree.go` pass commands at creation
+- [x] `launchReviewInLiveWindow`'s **split** branch execs; its idle-shell-reuse
       branch keeps `send-keys`
-- [ ] `LaunchReviewInRepo`'s create path builds its pane through a constructor,
+- [x] `LaunchReviewInRepo`'s create path builds its pane through a constructor,
       not a bare `Pane{}` literal
-- [ ] `devgeta.zsh` alias lines generated from the same Go constant as the launch
+- [x] `devgeta.zsh` alias lines generated from the same Go constant as the launch
       recipe, pinned by a test against the embedded configs FS
-- [ ] Tests for all of the above; `docs/spec.md` updated if user-visible behavior
+- [x] Tests for all of the above; `docs/spec.md` updated if user-visible behavior
       changes
 
 ### Explicitly Out of Scope
@@ -386,6 +389,11 @@ make lint
 
 ### Manual (needs a real tmux; this is the bug's home turf)
 
+**Not yet recorded.** The maintainer is running this section's checks
+separately against a real tmux; results are not in as of this writing, so
+nothing below is checked off and this cycle's Done status does not claim
+manual verification passed.
+
 1. **The actual bug:** `dg wt create adr20-a --prompt "$(python3 -c "print('x '*900)")"`
    → the coder starts **with the full prompt**. This is >1800 bytes; before this
    cycle it was cut at 1024 and never ran.
@@ -443,13 +451,13 @@ make lint
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Domain context clear?
-- [ ] Engineer context sufficient?
-- [ ] Objective unambiguous?
-- [ ] Scope actually locked?
-- [ ] Steps actionable?
-- [ ] Verification executable?
-- [ ] Risks realistic?
+- [x] Domain context clear?
+- [x] Engineer context sufficient?
+- [x] Objective unambiguous?
+- [x] Scope actually locked?
+- [x] Steps actionable?
+- [x] Verification executable?
+- [x] Risks realistic?
 
 **Reviewer notes:**
 

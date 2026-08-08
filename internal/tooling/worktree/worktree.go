@@ -2070,7 +2070,11 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 // launchReviewInLiveWindow gets pane's review command running in an existing
 // (live) window: in a pane that is sitting at a shell prompt if the window has
 // one, otherwise in a new pane split off for it. Focus is restored to whichever
-// pane was active beforehand, on both success and failure.
+// pane was active beforehand on the success paths. There is no failure path
+// that moves focus: a failed split never creates a pane, so it never touches
+// focus in the first place, and a failed send-keys into the reused pane leaves
+// that pane's own focus exactly as it was - both leave focus right where it
+// found it, with nothing to restore.
 //
 // It takes the whole reviewer Pane, not just a command string, so this branch and
 // LaunchReviewInRepo's create branch spend the SAME probe's resolution (see
