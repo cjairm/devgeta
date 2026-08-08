@@ -29,7 +29,11 @@
 
 package worktree
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/cjairm/devgeta/pkg/logger"
+)
 
 // paneLaunch is one devgeta-owned command to run in a pane, in structured form:
 // a kind, a program, its arguments, and an optional environment prefix.
@@ -256,18 +260,40 @@ func (l paneLaunch) render() string {
 // A --pane value does NOT come through here: it is a raw user command line, not
 // a paneLaunch at all, and it goes to interactivePaneCommand directly (ADR-0011
 // keeps it unparsed and unsplit).
+//
+// The kinds are matched EXHAUSTIVELY - launchNone has its own case, and the
+// default is an unknown kind, not the zero one. Collapsing the two would undo
+// what launchKind exists for: a fourth kind added later would report
+// isEmpty() == false and still get no command, so its pane would come up as a
+// bare shell with the prompt gone and nothing said about it - this cycle's
+// original bug (success reported, prompt never delivered, nothing logged)
+// reached by a third route. So an unknown kind is LOUD instead: it is logged at
+// error level (an internal invariant violation - there is no error channel here
+// and inventing one would ripple through every create path for a case no
+// production launch can reach), and it still gets a recipe, the interactive one,
+// because that is the conservative pairing. It runs the rendered command through
+// the user's own shell, so the pane either runs it or says why it could not,
+// with the prompt visible beside it - exactly what ADR-0011 and ADR-0016 prefer
+// over a launch that vanishes.
 func paneCommandFor(launch paneLaunch, shell string) string {
 	switch launch.kind {
 	case launchBinary:
 		return execPaneCommand(launch.render(), shell)
 	case launchName:
 		return interactivePaneCommand(launch.render(), shell)
-	default:
-		// launchNone: the shell pane. Passing no command at all is what gives
-		// the pane the shell tmux would have started on its own - today's
-		// behavior exactly. Wrapping nothing in a recipe would instead run an
-		// empty command first.
+	case launchNone:
+		// The shell pane. Passing no command at all is what gives the pane the
+		// shell tmux would have started on its own - today's behavior exactly.
+		// Wrapping nothing in a recipe would instead run an empty command first.
 		return ""
+	default:
+		logger.L().Errorw(
+			"pane launch has an unknown kind, falling back to the interactive recipe "+
+				"(a launch kind was added without giving paneCommandFor a case for it)",
+			"kind", int(launch.kind),
+			"program", launch.program,
+		)
+		return interactivePaneCommand(launch.render(), shell)
 	}
 }
 
@@ -327,6 +353,13 @@ func (p Pane) creationCommand(shell string) string {
 // alone would close the pane when it exits, and the last pane closing takes the
 // window with it - so quitting your coder would destroy the window instead of
 // dropping you at a shell (both measured, ADR-0021 part 2).
+//
+// It carries no flag, while interactivePaneCommand's trailing exec carries -i.
+// That difference is not load-bearing: a shell exec'd with no operands onto the
+// pane's tty is interactive either way (measured, ADR-0021's Negative section) -
+// each recipe simply ships in the form it was verified in. What the trailing exec
+// does NOT give either recipe is a LOGIN shell, which tmux's own pane shell is;
+// that consequence is recorded in the same place.
 //
 // shell must come from resolveShell: it is interpolated into the command and
 // only that resolution guarantees it is an existing, executable, absolute path

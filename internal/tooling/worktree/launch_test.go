@@ -406,6 +406,37 @@ func TestExecPaneCommandOnABlankCommandIsEmpty(t *testing.T) {
 	}
 }
 
+// TestPaneCommandForOnAnUnknownKindDoesNotVanish covers the case launchKind
+// exists to make harmless: a kind added later without giving paneCommandFor a
+// case for it. Such a launch reports isEmpty() == false, so nothing upstream
+// treats it as a shell pane - and if the routing then returned "", the pane
+// would come up as a bare shell with the prompt gone and nothing said about it,
+// this cycle's original bug reached by a third route.
+//
+// So the unknown kind gets the conservative recipe (interactive) and an
+// error-level log. The log is not observable from here; the non-vanish is, and
+// it is the half that decides whether a user loses their prompt.
+func TestPaneCommandForOnAnUnknownKindDoesNotVanish(t *testing.T) {
+	const prompt = "fix issue 1082"
+	// A kind past every constant this file defines - the shape a fourth kind
+	// would have before paneCommandFor learned about it.
+	unknown := paneLaunch{kind: launchBinary + 1, program: "sometool", args: []string{prompt}}
+
+	if unknown.isEmpty() {
+		t.Fatal("a launch with a non-zero kind must not report itself empty")
+	}
+	got := paneCommandFor(unknown, testShell)
+	if got == "" {
+		t.Fatal("paneCommandFor() = \"\", so the pane would silently be a bare shell")
+	}
+	if !strings.Contains(got, prompt) {
+		t.Errorf("pane command %q lost the prompt %q", got, prompt)
+	}
+	if want := interactivePaneCommand(unknown.render(), testShell); got != want {
+		t.Errorf("paneCommandFor() = %q, want the interactive recipe %q", got, want)
+	}
+}
+
 // --- recipe 2: the interactive fallback / --pane pane command ---
 
 // TestInteractivePaneCommandWrapsScriptInTheUserShell pins the fallback recipe

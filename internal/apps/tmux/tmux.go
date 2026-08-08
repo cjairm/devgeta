@@ -682,20 +682,6 @@ func (t *Tmux) KillWindow(name string) error {
 	return t.ExecuteCommand("kill-window", "-t", name)
 }
 
-// KillPane closes a specific pane by its tmux pane_id (e.g. "%12"). Pane ids
-// are unique server-wide, so no window or session qualification is needed -
-// the same property ActivePaneID and SelectPane already rely on. Killing one
-// pane leaves the window and session it lived in alone.
-//
-// It has no caller today. It was written to roll back a review launch that
-// failed after splitting a new pane, and that rollback no longer exists: the
-// pane's command is now an argument of the split that creates the pane, so
-// there is no second step left to fail after a pane exists (ADR-0021, and
-// launchReviewInLiveWindow's doc comment).
-func (t *Tmux) KillPane(paneID string) error {
-	return t.ExecuteCommand("kill-pane", "-t", paneID)
-}
-
 // SendKeysToWindow sends keystrokes to a specific window
 func (t *Tmux) SendKeysToWindow(window, keys string) error {
 	if err := checkSendKeysLength(keys); err != nil {
@@ -707,7 +693,7 @@ func (t *Tmux) SendKeysToWindow(window, keys string) error {
 // SendKeysToPane sends keystrokes to the pane identified by paneID (a tmux
 // pane_id like "%12", as returned by ActivePaneID). Pane IDs are unique
 // server-wide, so no window or session qualification is needed - the same
-// property KillPane and SelectPane already rely on. Unlike
+// property ActivePaneID and SelectPane already rely on. Unlike
 // SendKeysToWindow/SendKeysToWindowInSession, which resolve to whatever pane
 // is active in the target window at send time, this always lands in the
 // exact pane captured earlier, even if the active pane has since changed.

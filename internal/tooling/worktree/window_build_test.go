@@ -296,6 +296,115 @@ func TestCreateSinglePaneLayoutSkipsReselect(t *testing.T) {
 	assertNoSendKeys(t, mockTmuxBase)
 }
 
+// TestPaneShellCandidateLadder pins WHICH candidates paneShell hands
+// resolveShell, and in which order: the user's $SHELL first, then tmux's
+// default-shell (ADR-0021's ladder, with resolveShell's /bin/sh floor behind
+// both).
+//
+// resolveShell itself is covered as a pure function in layout_test.go, but with
+// its candidates handed in directly - so nothing there notices if paneShell
+// stops supplying $SHELL, or supplies the two rungs the other way round. Every
+// other test in this file neutralizes both rungs on purpose (pinPaneShell empties
+// $SHELL and the mocked show-options never answers with an absolute path) so it
+// can assert an exact pane command, which means every one of them lands on the
+// floor. This test is the one that reads the ladder itself, and it matters
+// because the shell is interpolated into every created pane's command - twice in
+// the interactive recipe.
+//
+// Both subtests go through a real create so the assertion is on the command tmux
+// is actually given, not on paneShell's return value: what the ladder is for is
+// deciding what runs in the pane.
+func TestPaneShellCandidateLadder(t *testing.T) {
+	// runCreate builds a one-pane window with the given mocked tmux
+	// show-options answer and returns new-window's pane-command argument plus
+	// the tmux call order.
+	runCreate := func(t *testing.T, tmuxDefaultShell string) (string, []string) {
+		t.Helper()
+		repoRoot := t.TempDir()
+
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(repoRoot+"\n", "", nil), // rev-parse --show-toplevel
+			commands.ExecCommandResult("", "", nil),            // everything else
+		)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil), // worktreeState: list-windows
+			// paneShell: show-options -gv default-shell
+			commands.ExecCommandResult(tmuxDefaultShell+"\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // CreateWindow: new-window
+		)
+
+		wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
+
+		wtPath := filepath.Join(
+			paths.Paths.Data.Root, "devgeta", "worktrees",
+			filepath.Base(repoRoot), "feature-test",
+		)
+		t.Cleanup(func() {
+			if err := os.RemoveAll(filepath.Dir(wtPath)); err != nil {
+				t.Logf("cleanup: %v", err)
+			}
+		})
+
+		if err := wm.Create("feature-test", stubLayout, true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		paneCmd, ok := paneCommandArg(mockTmuxBase.ExecCommandCalls, "new-window")
+		if !ok {
+			t.Fatalf("new-window carried no pane command, calls: %+v",
+				mockTmuxBase.ExecCommandCalls)
+		}
+		// Every git and tmux call this create makes goes through a
+		// MockBaseCommand, so nothing here executes. (testutil's
+		// VerifyNoRealCommands is not the check for that: it asserts ZERO
+		// recorded calls, which is a different property and one a create
+		// deliberately violates.)
+		return paneCmd, tmuxCommandOrder(mockTmuxBase)
+	}
+
+	t.Run("a usable $SHELL wins over tmux's default-shell", func(t *testing.T) {
+		envShell := usableShellFixture(t, "env-zsh")
+		tmuxShell := usableShellFixture(t, "tmux-bash")
+		t.Setenv("SHELL", envShell)
+
+		paneCmd, order := runCreate(t, tmuxShell)
+
+		if want := interactivePaneCommand("stub-cmd", envShell); paneCmd != want {
+			t.Errorf("new-window carried %q, want %q ($SHELL is the first rung)", paneCmd, want)
+		}
+		if strings.Contains(paneCmd, tmuxShell) {
+			t.Errorf("pane command used tmux's default-shell %q over $SHELL: %q",
+				tmuxShell, paneCmd)
+		}
+		// The tmux query is deliberately unconditional - not skipped just
+		// because $SHELL turned out usable - so the tmux calls a create issues
+		// don't depend on the machine's environment. The ordered call-sequence
+		// tests in this file assert that sequence, so dropping the query here
+		// would break them on some machines and not others.
+		if !slices.Contains(order, "show-options") {
+			t.Errorf("paneShell must query tmux's default-shell unconditionally, calls: %v", order)
+		}
+	})
+
+	t.Run("tmux's default-shell is used when $SHELL is unusable", func(t *testing.T) {
+		tmuxShell := usableShellFixture(t, "tmux-bash")
+		t.Setenv("SHELL", "")
+
+		paneCmd, _ := runCreate(t, tmuxShell)
+
+		if want := interactivePaneCommand("stub-cmd", tmuxShell); paneCmd != want {
+			t.Errorf("new-window carried %q, want %q (tmux's default-shell is the second rung)",
+				paneCmd, want)
+		}
+		if strings.Contains(paneCmd, posixShell) {
+			t.Errorf("pane command fell to the %q floor with a usable tmux default-shell: %q",
+				posixShell, paneCmd)
+		}
+	})
+}
+
 // TestCreateMultiPaneMidBuildFailureRollsBack proves that when a tmux call
 // fails partway through building a multi-pane window (here, the split for
 // pane 1), the partially built window is killed and the worktree is rolled

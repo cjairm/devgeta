@@ -79,6 +79,17 @@ func TestClassifyShellLookup(t *testing.T) {
 			want:     ShellLookupFound,
 		},
 		{
+			// ADR-0021's own example of why the caller must shell-quote what
+			// this returns: a path with a space in it is a perfectly valid
+			// resolved path, so it must survive classification whole (a
+			// tokenizing or first-word implementation would cut it at "Jane").
+			// The quoting happens downstream, in worktree's binaryLaunch.
+			name:     "an absolute path containing a space is returned whole",
+			stdout:   "/Users/Jane Doe/.local/bin/claude\n\n" + shellLookupMarker + "0\n",
+			wantPath: "/Users/Jane Doe/.local/bin/claude",
+			want:     ShellLookupFound,
+		},
+		{
 			// Measured shape from ADR-0021: an alias prints its definition,
 			// not a path. Not something a pane may exec.
 			name:     "alias text is not a path",
