@@ -517,9 +517,25 @@ threads kept, or an approval based on nothing.
 The contract is an explicit argument, not an ambient hint. Both usage lines become:
 
 ```
-/review-pr  [PR_NUMBER] [--target <head-sha>]
+/review-pr  [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>]
 /approve-pr [PR_NUMBER] [--target <head-sha>]
 ```
+
+`/review-pr` takes the pair because it reads a diff and a diff needs both ends; its
+`review-package <base> <head>` call has no way to derive a merge base from a head.
+`/approve-pr` never reads a diff, so it takes `--target` alone. Given `--target`
+without `--base`, `/review-pr` stops and says it needs the base — it never guesses a
+base and never falls back to the checked-out branch's diff. **`--base` is the merge
+base, not the base branch's tip**: a tip-based diff shows commits merged into the
+base since the PR opened as if this PR reverted them, the reversed-changes failure
+[ADR-0022](../../decisions/ADR-0022-a-pr-review-targets-immutable-shas.md) §2
+rejects. `pr-review-target`'s `base:` line already prints a merge base.
+
+(This supersedes the brief's original single-flag `/review-pr … [--target]` form.
+That version left the command self-resolving the base with its own
+`pr-review-target --pr <n>` call — an extra fetch, and a base resolved separately
+from the reviewed head. Every caller already ran `pr-review-target` and already
+holds the base, so it passes what it has. Maintainer decision, 2026-08-07.)
 
 With `--target`: first resolve it — `git rev-parse --verify <sha>^{commit}` — and
 **stop with an error if it doesn't resolve** (never fall back to the working tree
@@ -646,7 +662,9 @@ reads the working tree:
    reviewed SHA even if a push races the submission itself:
    - Every run `APPROVE` → `/approve-pr <n> --target <head>` (its file
      verifications read `git show <head>:<path>`).
-   - Otherwise → `/review-pr <n> --target <head>` — first read every `report:`
+   - Otherwise → `/review-pr <n> --base <base> --target <head>` (the `base` from
+     step 1, so the posted review's diff is the same merge-base range the reviewers
+     read) — first read every `report:`
      file plus `devgeta task review-notes --branch <key> --rev <head>`, so the full
      cross-model findings (all severities, strengths, evidence) are in context, not
      just the one-line blocking entries. `/review-pr` dedups against the PR's

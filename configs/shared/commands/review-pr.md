@@ -13,7 +13,7 @@ This authorizes _posting without asking_, nothing else. The verdict is still you
 ## Usage
 
 ```
-/review-pr [PR_NUMBER] [--target <head-sha>]
+/review-pr [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>]
 ```
 
 The PR is resolved from the current branch unless you pass a number.
@@ -21,6 +21,8 @@ The PR is resolved from the current branch unless you pass a number.
 ### `--target <head-sha>` — reviewing code that isn't checked out
 
 Pass `--target` when the PR's code is not in the working tree: someone else's PR, a fork's PR, or any PR reviewed from an unrelated branch. It names the commit this review judges. **Without `--target`, everything below works exactly as it always has** — the working tree is the source, and nothing in this file changes.
+
+`--target` comes with `--base`. The PR's diff is `<merge base>..<head>`, and a merge base cannot be worked out from a head alone, so both shas are passed in. **Given `--target` without `--base`, stop and say you need the base sha.** Do not guess one, and do not fall back to the checked-out branch's diff — that diff describes different code, so the review would be posted against the wrong changes.
 
 With `--target`, three things change and nothing else:
 
@@ -32,7 +34,9 @@ With `--target`, three things change and nothing else:
 
    If that fails, stop and tell the user this clone doesn't have that commit (usually it was never fetched). **Never fall back to reading the working tree.** The tree holds different code, so a review of it would be posted as a review of the PR — findings about files the PR never touched, and real findings dropped because the tree lacks the file.
 
-2. **Every read of repo content resolves at that commit.** `git show <head-sha>:<path>` instead of opening the path on disk, and `git log <head-sha> -- <path>` instead of `git log <path>`. Same checks, same dedup rules, same verdict rules — only where the bytes come from changes. Step 2's `review-scope` and `branch-diff` describe the checked-out branch, so they don't apply here; the diff comes from `devgeta task review-package <base-sha> <head-sha>` instead — one call giving the commit list, the noise-filtered stat table, and the full diff of the reviewed range, which is also what tells you which lines can carry an inline comment in step 5. The base sha comes with the target: whoever hands you `--target` hands you the base too, and `devgeta task pr-review-target --pr <n>` prints both (`base:` and `head:`) when you have to resolve it yourself. Never invent a base — the wrong one turns other people's commits into findings against this PR.
+2. **Every read of repo content resolves at that commit.** `git show <head-sha>:<path>` instead of opening the path on disk, and `git log <head-sha> -- <path>` instead of `git log <path>`. Same checks, same dedup rules, same verdict rules — only where the bytes come from changes. Step 2's `review-scope` and `branch-diff` describe the checked-out branch, so they don't apply here; the diff comes from `devgeta task review-package <base-sha> <head-sha>` instead — one call giving the commit list, the noise-filtered stat table, and the full diff of the reviewed range, which is also what tells you which lines can carry an inline comment in step 5. The two shas are the ones you were handed: `<base-sha>` is the `--base` value, `<head-sha>` the `--target` value. Never invent a base — the wrong one turns other people's commits into findings against this PR.
+
+   **`--base` must be the merge base of the PR, not the tip of the base branch.** The tip looks close enough and is not: when the base branch moves on after the PR opens — the normal case on an active repo — a tip-based diff shows everything merged since as if this PR reverted it. Those read as real findings against work the author never touched. `devgeta task pr-review-target --pr <n>` prints the correct value on its `base:` line, and that value is already a merge base, so that is where a caller gets one.
 
 3. **The submit names the commit** — add `--commit <head-sha>` to the `devgeta task submit-review` call in step 6.
 
