@@ -70,7 +70,7 @@ func pinPaneShell(t *testing.T) string {
 // tmux.appendPaneCommand), so anything past that pair is the command tmux will
 // exec as the new pane's process. A false result means the call created a pane
 // with NO command - the shell layout's shape, where tmux just starts the pane's
-// shell. It is also what every pane-creating call looked like before ADR-0020,
+// shell. It is also what every pane-creating call looked like before ADR-0021,
 // so "false" is the assertion that catches a command silently going missing.
 func paneCommandArg(calls []commands.CommandParams, verb string) (string, bool) {
 	for _, c := range calls {
@@ -94,7 +94,7 @@ func paneCommandOf(call commands.CommandParams) (string, bool) {
 }
 
 // paneCreatingCalls returns the recorded tmux calls that bring a pane into
-// existence, in call order - the four verbs ADR-0020 makes responsible for
+// existence, in call order - the four verbs ADR-0021 makes responsible for
 // carrying their pane's command. A layout's panes are built strictly in order,
 // so the Nth of these calls is the call that created the Nth pane.
 func paneCreatingCalls(calls []commands.CommandParams) []commands.CommandParams {
@@ -114,13 +114,13 @@ func paneCreatingCalls(calls []commands.CommandParams) []commands.CommandParams 
 // assertNoSendKeys fails if any recorded tmux call is a send-keys. This is the
 // assertion that would fail if a pane's command quietly went back to being
 // TYPED into the pane instead of exec'd at its creation - the 1024-byte pty
-// input queue that silently swallowed a long --prompt, ADR-0020.
+// input queue that silently swallowed a long --prompt, ADR-0021.
 func assertNoSendKeys(t *testing.T, mockBase *commands.MockBaseCommand) {
 	t.Helper()
 	if slices.Contains(tmuxCommandOrder(mockBase), "send-keys") {
 		t.Errorf(
 			"a create path must type nothing into a pane - every pane's command is "+
-				"exec'd at creation (ADR-0020), calls: %+v",
+				"exec'd at creation (ADR-0021), calls: %+v",
 			mockBase.ExecCommandCalls,
 		)
 	}
@@ -141,7 +141,7 @@ func newLayoutTestWM(mockGitBase, mockTmuxBase *commands.MockBaseCommand) *Workt
 // captured id (never by index - see ActivePaneID's doc comment for why:
 // devgeta's own tmux.conf sets pane-base-index to 1).
 //
-// Two calls that used to be here are gone, and both are ADR-0020's doing: the
+// Two calls that used to be here are gone, and both are ADR-0021's doing: the
 // two send-keys that typed pane 0's and pane 1's commands into their panes. Each
 // command now rides the call that CREATES its pane, so there is no second step
 // and no pty in the path. One call is new: "show-options -gv default-shell",
@@ -924,7 +924,7 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 	}
 
 	// new-window itself carries the review command. The probe here is stubbed to
-	// find opencode WITHOUT resolving a path, so the pane takes ADR-0020's
+	// find opencode WITHOUT resolving a path, so the pane takes ADR-0021's
 	// interactive fallback - whose inner script is the same reviewer command the
 	// idle-shell-reuse branch types, `--agent` and all. A review that silently
 	// lost its agent flag would launch a plain coder session that looks identical
@@ -951,7 +951,7 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 // This branch is also the one place in the review path that still uses
 // send-keys, and it must keep doing so: the pane already exists and is running
 // the user's interactive shell, so there is no pane creation to exec the command
-// as (ADR-0020 part 4 - the test for membership is "is this pane new?"). The
+// as (ADR-0021 part 4 - the test for membership is "is this pane new?"). The
 // payload is therefore the TYPED form, pane.Command, which is what
 // testReviewCommand builds. No show-options appears in these sequences either:
 // this branch needs no shell, so paneShell is never reached.
@@ -1084,7 +1084,7 @@ func TestLaunchReviewReusesAnIdleShellPane(t *testing.T) {
 // ADR-0008), which is exactly the case an allowlist of idle shells must treat
 // as busy without recognizing the agent at all.
 //
-// This branch CREATES a pane, so ADR-0020 part 3 governs it even though the
+// This branch CREATES a pane, so ADR-0021 part 3 governs it even though the
 // window is already live - the test is "is this pane new?", not "is this window
 // live?". Three calls are therefore gone from the sequence below: the
 // ActivePaneID that used to read the new pane's id, the send-keys that typed the
@@ -1380,7 +1380,7 @@ func TestLaunchReviewInRepoUsesRealLocationNotConfigured(t *testing.T) {
 //
 // Two probes would not just be slow (up to two 5-second timeouts per pane); they
 // are two observations of a changing system and can DISAGREE, which would mean the
-// check verified something other than what ran - the property ADR-0020 exists to
+// check verified something other than what ran - the property ADR-0021 exists to
 // establish.
 func TestLaunchReviewProbesExactlyOnce(t *testing.T) {
 	repoSlug := "myrepo"
@@ -1472,7 +1472,7 @@ func TestLaunchReviewProbesExactlyOnce(t *testing.T) {
 }
 
 // longTestPrompt is a --prompt value well past the 1024-byte tty input queue
-// limit that ADR-0020 measured. Every byte past that limit was silently
+// limit that ADR-0021 measured. Every byte past that limit was silently
 // discarded by the terminal driver when the command was TYPED into the pane -
 // the tail of the command AND the trailing Enter - while `tmux send-keys` still
 // exited 0. The result was a window that looked correctly created, an AI coder
@@ -1500,7 +1500,7 @@ var longTestPrompt = strings.Repeat(
 // The third is the one worth spelling out: it reads as session setup rather than
 // pane setup, so it is easy to leave behind - and it is the path taken the FIRST
 // time a worktree is created for a repo, i.e. the case a user hits most. If it
-// alone kept typing, the bug would survive exactly where it hurts (ADR-0020).
+// alone kept typing, the bug would survive exactly where it hurts (ADR-0021).
 //
 // The window builders are called directly rather than through Create/CreateAt so
 // each case's tmux queue stays about pane creation instead of worktree plumbing;
@@ -1565,7 +1565,7 @@ func TestLongPromptSurvivesToThePaneCommandOnEveryCreatePath(t *testing.T) {
 			shell := pinPaneShell(t)
 			// A Found probe carrying a resolved path, so the pane takes the
 			// exec recipe - the production shape now that the probed token is
-			// the binary (ADR-0020's 2026-08-07 amendment).
+			// the binary (ADR-0021's 2026-08-07 amendment).
 			setShellCommandLookupPathFn(
 				t,
 				func(name string) (string, commands.ShellLookupResult) {
@@ -1610,7 +1610,7 @@ func TestLongPromptSurvivesToThePaneCommandOnEveryCreatePath(t *testing.T) {
 			// and asserting the raw text would only pass for an unquoted (broken)
 			// one. A truncation at the old 1024-byte boundary fails here, and so
 			// does any attempt to split the payload up to sneak under that limit,
-			// which ADR-0020 rules out.
+			// which ADR-0021 rules out.
 			if !strings.Contains(paneCmd, shellSingleQuote(longTestPrompt)) {
 				t.Errorf(
 					"the prompt did not survive into %s's pane command (%d bytes carried, "+
@@ -1735,7 +1735,7 @@ func TestCreatePathsNeverTypeIntoAPane(t *testing.T) {
 // probe's resolution its panes' created commands are built from.
 //
 // The probe is stubbed to find every tool but resolve NO path, which selects
-// ADR-0020's interactive fallback. That is the deliberate choice here: this test
+// ADR-0021's interactive fallback. That is the deliberate choice here: this test
 // is about which tmux call carries a command, and the fallback is the recipe that
 // keeps the pane's command human-readable in the assertions.
 func resolvedLayoutForTest(t *testing.T, name, prompt string) Layout {

@@ -451,7 +451,7 @@ func resolveTestLayout(t *testing.T, name string) worktree.Layout {
 // typedClaudeCommand is the claude layout's Pane.Command - the TYPED form devgeta
 // send-keys into a pane that already exists. It is the UN-ALIASED command (binary
 // plus env prefix), not "cc": preflight probes the binary, so typing the alias sent
-// a live pane something the check never verified (ADR-0020's 2026-08-07 amendment).
+// a live pane something the check never verified (ADR-0021's 2026-08-07 amendment).
 // Spelled out rather than read off the coder, so this expectation can fail.
 const typedClaudeCommand = "CLAUDE_CODE_NO_FLICKER=1 claude"
 

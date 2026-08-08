@@ -39,4 +39,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) — The review loop escalates instead of seeking consensus
 - [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md) — The review loop refuses the default branch, and the fix is a branch
 - [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) — A review covers the branch's working state, not just its committed history
-- [ADR-0020](ADR-0020-pane-commands-are-exec-d-not-typed.md) — A pane's command is exec'd at pane creation, not typed into the pane
+- [ADR-0021](ADR-0021-pane-commands-are-exec-d-not-typed.md) — A pane's command is exec'd at pane creation, not typed into the pane

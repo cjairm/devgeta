@@ -36,8 +36,8 @@ const splitVertical = "vertical"
 // "vertical" or "horizontal" for every subsequent pane.
 //
 // Command is the form TYPED into a pane that ALREADY EXISTS, which since
-// ADR-0020 is exactly two paths: ensureWindow's repair branch, and
-// launchReviewInLiveWindow's idle-shell reuse (ADR-0020 part 4). A pane devgeta
+// ADR-0021 is exactly two paths: ensureWindow's repair branch, and
+// launchReviewInLiveWindow's idle-shell reuse (ADR-0021 part 4). A pane devgeta
 // CREATES never receives it - it gets a different rendering, built by
 // creationCommand (launch.go) from the fields below and exec'd as the pane's
 // process. Two representations, both intentional; neither is a substitute for
@@ -107,7 +107,7 @@ type Layout struct {
 // is the ONE place the choice between them is made: an empty resolvedPath means
 // the probe produced no usable path, so the pane runs the interactive form,
 // which is what keeps an inconclusive probe from costing the pane anything
-// (ADR-0016's fail-open, ADR-0020 part 3's fallback). A resolved path takes the
+// (ADR-0016's fail-open, ADR-0021 part 3's fallback). A resolved path takes the
 // exec form.
 //
 // Every devgeta-owned pane goes through this rather than writing the branch
@@ -196,7 +196,7 @@ func shellPane(split string) Pane {
 // It returns a RESOLVED COPY of the layout: each checked pane's probe also
 // resolves the absolute path of the tool it found, and that path is written onto
 // the copy's pane so the pane's created command can be built from it. This is
-// ADR-0020's "one probe per pane per create" - the check and the launch share one
+// ADR-0021's "one probe per pane per create" - the check and the launch share one
 // answer instead of probing twice and possibly disagreeing. Nothing downstream
 // re-probes; creationCommand only reads what this wrote.
 //
@@ -380,7 +380,7 @@ func (l Layout) WithExtraPanes(commands []string) (Layout, error) {
 // hint ensureToolInstalled already gives for opencode/claude.
 func ensureNvimInstalled() (string, error) {
 	// nvim never had a cc/oc-style alias indirection: nvimCommand IS the binary,
-	// which is what every check probes and every launch names (ADR-0020 part 3,
+	// which is what every check probes and every launch names (ADR-0021 part 3,
 	// rule 1).
 	return ensureToolInstalled(nvimCommand)
 }
@@ -520,7 +520,7 @@ const posixShell = "/bin/sh"
 // Usable means an absolute path that stats as an existing, executable, regular
 // file. An absolute-path shape check alone is not enough for this value:
 // "/bin/zsh" that was uninstalled, or a $SHELL pointing at a directory, passes
-// a shape check and would sail into both interpolation sites (ADR-0020).
+// a shape check and would sail into both interpolation sites (ADR-0021).
 //
 // It takes its candidates as INPUT rather than reading $SHELL or tmux's
 // default-shell itself. Two reasons, both structural:
@@ -635,7 +635,7 @@ func lookupBuiltinReviewer(key string) (Reviewer, error) {
 // `opencode '--agent' '<name>' '--prompt' '<text>'`. It names the BINARY, not the
 // oc alias, even though it is typed at an interactive shell: preflight probes the
 // binary, and sending a live pane something the check never verified is what
-// ADR-0020's 2026-08-07 amendment removes. Reviewer launches are OpenCode-only by
+// ADR-0021's 2026-08-07 amendment removes. Reviewer launches are OpenCode-only by
 // design (see the cycle plan's scope boundary: the reviewer agents' permission:
 // frontmatter is enforced by OpenCode and ignored by Claude Code), so unlike
 // deriveLayoutFromAlias this does not accept an aiAlias.
@@ -651,7 +651,7 @@ func reviewCommandFor(opencode *OpenCodeCoder, reviewer Reviewer) string {
 // review path does its own preflight instead of going through validateLayout: it
 // used to call EnsureInstalled and throw the answer away, leaving its launches to
 // either probe a second time or drop the path and always fall back - the two
-// options ADR-0020 rules out. One constructor, one probe, and BOTH of
+// options ADR-0021 rules out. One constructor, one probe, and BOTH of
 // LaunchReviewInRepo's launches (the create branch with no live window, and the
 // live window's split) build from the same pane, so they cannot disagree about
 // what was verified.

@@ -100,7 +100,7 @@ func TestExecLaunchFormPerPaneKind(t *testing.T) {
 // TestNameLaunchIsTheUnaliasedCommandAndLeavesTheProgramUnquoted is the
 // counterpart to the binary form above. Two properties, both deliberate:
 //
-//   - The program is the BINARY name, never the cc/oc alias (ADR-0020's
+//   - The program is the BINARY name, never the cc/oc alias (ADR-0021's
 //     2026-08-07 amendment). These are the strings devgeta send-keys into a pane
 //     that already exists, so an alias here would send a live pane something
 //     preflight never checked.
@@ -288,7 +288,7 @@ func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 // `claude 'fix it'; exec '/bin/zsh'`, which tmux runs non-interactively - a shell
 // that reads no `.zshrc`, so it has neither its PATH repair nor any definition of
 // the name the user made themselves. That is exactly the case the interactive
-// recipe serves (ADR-0020 part 3), and routing on the kind the value already
+// recipe serves (ADR-0021 part 3), and routing on the kind the value already
 // carries is what makes the wrong pairing unrepresentable.
 func TestPaneCommandForRoutesOnLaunchKind(t *testing.T) {
 	tests := []struct {
@@ -365,7 +365,7 @@ func TestPaneCommandForNeverSendsANameThroughTheExecRecipe(t *testing.T) {
 
 // TestExecPaneCommandAppendsTrailingExec pins the whole recipe. The trailing
 // exec is what keeps today's pane lifetime: without it the pane closes when the
-// coder quits, and the last pane closing takes the window with it (ADR-0020
+// coder quits, and the last pane closing takes the window with it (ADR-0021
 // part 2).
 func TestExecPaneCommandAppendsTrailingExec(t *testing.T) {
 	launch := (&ClaudeCoder{}).execLaunch(testClaudePath, "fix issue 1082")
@@ -435,7 +435,7 @@ func TestInteractivePaneCommandWrapsScriptInTheUserShell(t *testing.T) {
 		{
 			// The value stays unquoted WITHIN the script (it is a command
 			// line), so its own quote has to survive the wrapper's quoting.
-			// Measured in ADR-0020: naive embedding ends the -ic wrapper early.
+			// Measured in ADR-0021: naive embedding ends the -ic wrapper early.
 			name:   "a --pane value containing a single quote",
 			script: `printf %s "it's fine"`,
 			shell:  testShell,
@@ -527,7 +527,7 @@ func TestInteractivePaneCommandOnABlankScriptIsEmpty(t *testing.T) {
 //
 // dirName is a subdirectory created under t.TempDir(); passing one with a space
 // in it puts the quoting of the interpolated path under test too, which is the
-// case ADR-0020 calls out ("/Users/Jane Doe/.local/bin/claude").
+// case ADR-0021 calls out ("/Users/Jane Doe/.local/bin/claude").
 func argvEchoFixture(t *testing.T, dirName, name string) string {
 	t.Helper()
 
@@ -583,7 +583,7 @@ func TestInteractivePaneCommandWrapperSurvivesARealShellParser(t *testing.T) {
 			script: (&ClaudeCoder{}).interactiveLaunch("it's fine").render(),
 		},
 		{
-			// ADR-0020 measured this exact value: a naive embedding ends the
+			// ADR-0021 measured this exact value: a naive embedding ends the
 			// -ic wrapper early and the command breaks.
 			name:   "a --pane value containing a single quote",
 			script: `printf %s "it's fine"`,

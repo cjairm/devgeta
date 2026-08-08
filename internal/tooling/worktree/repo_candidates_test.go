@@ -48,7 +48,7 @@ func okLookPath(t *testing.T) {
 // means; the bool maps onto the seam's Found/NotFound, with no path (nothing
 // here needs one). The third outcome — Inconclusive, a probe that proved
 // nothing (ADR-0016) — is the exception, via setShellCommandLookupFn; a
-// Found outcome carrying a resolved path (ADR-0020) is via
+// Found outcome carrying a resolved path (ADR-0021) is via
 // setShellCommandLookupPathFn.
 func setShellCommandExistsFn(t *testing.T, fn func(string) bool) {
 	t.Helper()
@@ -73,7 +73,7 @@ func setShellCommandLookupFn(t *testing.T, fn func(string) commands.ShellLookupR
 // setShellCommandLookupPathFn is setShellCommandLookupFn's path-carrying
 // form, for tests that need to assert (or drive) the resolved absolute path
 // a Found outcome carries — the value a pane launch execs directly instead
-// of relying on its own PATH (ADR-0020).
+// of relying on its own PATH (ADR-0021).
 func setShellCommandLookupPathFn(
 	t *testing.T,
 	fn func(name string) (string, commands.ShellLookupResult),

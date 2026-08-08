@@ -1,7 +1,7 @@
 // Pane command construction for panes devgeta creates.
 //
 // A pane's command reaches tmux as a shell-command (process arguments), not as
-// keystrokes typed into the pane - see ADR-0020 for why (the pty input queue
+// keystrokes typed into the pane - see ADR-0021 for why (the pty input queue
 // silently discards everything past 1024 bytes, so a long --prompt was lost
 // with tmux still reporting success). tmux hands that shell-command to a shell
 // as one string, so there is still no Go-side shell parser in between and every
@@ -14,10 +14,10 @@
 //     "CLAUDE_CODE_NO_FLICKER=1 claude", "opencode --prompt '...'", "nvim", or a
 //     raw --pane value. Exactly two paths still send it with send-keys, and both
 //     write into a pane that already exists: ensureWindow's repair branch, and
-//     launchReviewInLiveWindow's idle-shell reuse (ADR-0020 part 4). No create
+//     launchReviewInLiveWindow's idle-shell reuse (ADR-0021 part 4). No create
 //     path types anything. It names the BINARY, not the cc/oc alias: devgeta.zsh's alias is
 //     for the user to type, and a send-keys path that relied on it would launch
-//     something the preflight probe never checked (ADR-0020's 2026-08-07
+//     something the preflight probe never checked (ADR-0021's 2026-08-07
 //     amendment).
 //   - The recipes below are the form EXEC'd as a created pane's process. They
 //     are what a create path passes to tmux.
@@ -94,7 +94,7 @@ const (
 // interactivePaneCommand, which is where paneCommandFor routes it.
 //
 // It used to be aliasLaunch, and its program used to be the cc/oc devgeta alias.
-// It is the binary name now (ADR-0020's 2026-08-07 amendment): a send-keys path
+// It is the binary name now (ADR-0021's 2026-08-07 amendment): a send-keys path
 // launching the alias launched something the preflight probe - which checks the
 // binary - never verified, so a coder on PATH with no devgeta alias passed the
 // check and then failed in the pane.
@@ -103,7 +103,7 @@ const (
 // Quoting no longer BREAKS a plain binary name - `'claude'` is still resolved on
 // PATH - so this is a choice, with one case behind it: an interactive-form launch
 // is what a probe that answered with something non-path-shaped selects, and
-// "alias text" and "a shell function name" are exactly those answers (ADR-0020
+// "alias text" and "a shell function name" are exactly those answers (ADR-0021
 // part 3). In that case the user's own `alias claude=...` is what has to expand,
 // and a quoted program word suppresses alias expansion. Arguments are still
 // quoted; only the program word is special.
@@ -115,14 +115,14 @@ func nameLaunch(program string, args ...string) paneLaunch {
 // typed/interactive counterpart of binaryLaunchWithEnv, and what a coder recipe
 // that carries an env prefix needs in BOTH of its forms now that the typed form
 // is the binary rather than an alias that carried the prefix in its own
-// definition (ADR-0020's 2026-08-07 amendment).
+// definition (ADR-0021's 2026-08-07 amendment).
 func nameLaunchWithEnv(envPrefix, program string, args ...string) paneLaunch {
 	return withEnvPrefix(nameLaunch(program, args...), envPrefix)
 }
 
 // binaryLaunch builds a launch whose program is a resolved absolute path, for a
 // pane that execs the binary directly instead of relying on its own PATH
-// (ADR-0020: tmux runs a pane's shell-command non-interactively, which has no
+// (ADR-0021: tmux runs a pane's shell-command non-interactively, which has no
 // equivalent of zsh's ~/.zshenv PATH repair, and the probe's shell need not even
 // be the shell tmux launches).
 //
@@ -131,7 +131,7 @@ func nameLaunchWithEnv(envPrefix, program string, args ...string) paneLaunch {
 // path and would otherwise split into two words.
 //
 // An empty path is a caller bug, not a shell pane: a resolution that produced no
-// path must select the name form and the interactive recipe (ADR-0020 part 3 -
+// path must select the name form and the interactive recipe (ADR-0021 part 3 -
 // the resolved path is an optimization, and its absence is what the fallback
 // exists for), never hand "" over here. This constructor cannot refuse it - Go
 // has no non-empty string type and this value has no error channel - so the
@@ -152,7 +152,7 @@ func binaryLaunch(path string, args ...string) paneLaunch {
 // Both forms take a prefix now. While the typed form was the cc alias, the prefix
 // lived inside the alias DEFINITION, so an alias launch carrying a second one
 // would have double-set it and the prefix was deliberately kept off that
-// constructor. The typed form is the binary itself since ADR-0020's 2026-08-07
+// constructor. The typed form is the binary itself since ADR-0021's 2026-08-07
 // amendment, so it has to spell the prefix out exactly as the exec form does -
 // see nameLaunchWithEnv.
 func binaryLaunchWithEnv(envPrefix, path string, args ...string) paneLaunch {
@@ -185,12 +185,12 @@ func (l paneLaunch) isEmpty() bool { return l.kind == launchNone }
 // ASSIGNMENT, and `'CLAUDE_CODE_NO_FLICKER=1' claude` asks the shell for a command
 // literally named `CLAUDE_CODE_NO_FLICKER=1`. It needs no quoting either way -
 // every prefix is a devgeta constant in pkg/constants, never user data
-// (ADR-0020's quoting table).
+// (ADR-0021's quoting table).
 //
 // EVERY argument is quoted, flags included - so opencode's prompt form renders
 // as `opencode '--prompt' 'text'`, not `opencode --prompt 'text'`. Those are shell
 // equivalent (each is still exactly one word to the shell) and the uniform rule
-// is the point: ADR-0020 records that stating a quoting rule and then applying
+// is the point: ADR-0021 records that stating a quoting rule and then applying
 // it selectively already failed three times during its own review, and a
 // "don't quote things that look like flags" exception is precisely the kind of
 // judgement call that fails a fourth time. A flag never needs the exception,
@@ -243,9 +243,9 @@ func (l paneLaunch) render() string {
 // bash has no unconditional equivalent of zsh's `.zshenv` either ($BASH_ENV is
 // unset by default), so `claude 'fix it'; exec '/bin/zsh'` can die on `command
 // not found` for a tool that launches fine from the user's own shell - exactly
-// the case ADR-0020 part 3's interactive fallback exists to serve. In the other
+// the case ADR-0021 part 3's interactive fallback exists to serve. In the other
 // direction, a resolved absolute path needs none of the user's interactive
-// startup and should not pay for it (ADR-0020 rejects `-ic` as the default for
+// startup and should not pay for it (ADR-0021 rejects `-ic` as the default for
 // precisely that reason). Routing on the discriminator the value already carries
 // makes both mistakes unrepresentable rather than merely avoidable
 // (CLAUDE.md §4).
@@ -280,7 +280,7 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 //
 // It is the counterpart of Pane.Command, never a replacement for it: Command
 // stays the form TYPED into a pane that already exists (ensureWindow's repair
-// branch, launchReviewInLiveWindow's idle-shell reuse - ADR-0020 part 4).
+// branch, launchReviewInLiveWindow's idle-shell reuse - ADR-0021 part 4).
 //
 // Three kinds of pane, decided by what the pane's constructor put on it rather
 // than by inspecting its Command string:
@@ -289,7 +289,7 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 //     The launch closure is handed the probe's resolution and this pane's prompt
 //     text, and IT decides exec-vs-interactive by whether the path is empty
 //     (see layout.go's launchFor). That is the one probe's answer being spent,
-//     not a second lookup: ADR-0020 requires the command that runs to be built
+//     not a second lookup: ADR-0021 requires the command that runs to be built
 //     from the check's own result, and nothing here re-probes.
 //   - launch == nil with a non-empty Command - a user-authored --pane value. It
 //     goes to the interactive recipe UNPARSED and UNSPLIT (ADR-0011): it is a
@@ -326,7 +326,7 @@ func (p Pane) creationCommand(shell string) string {
 // The trailing `exec` preserves today's pane lifetime: exec'ing the command
 // alone would close the pane when it exits, and the last pane closing takes the
 // window with it - so quitting your coder would destroy the window instead of
-// dropping you at a shell (both measured, ADR-0020 part 2).
+// dropping you at a shell (both measured, ADR-0021 part 2).
 //
 // shell must come from resolveShell: it is interpolated into the command and
 // only that resolution guarantees it is an existing, executable, absolute path
@@ -347,7 +347,7 @@ func execPaneCommand(command, shell string) string {
 //	'<shell>' -ic '<script>; exec '<shell>' -i'
 //
 // Two kinds of script land here, and one mechanism serving both is deliberate
-// (ADR-0020 part 3) rather than one of them being a special case:
+// (ADR-0021 part 3) rather than one of them being a special case:
 //
 //   - A user-authored --pane value, passed to this function DIRECTLY. It is a
 //     command line the user wrote for their own shell and may use their own
@@ -361,7 +361,7 @@ func execPaneCommand(command, shell string) string {
 //     function name, the only shell where that definition exists at all. This is
 //     what keeps an inconclusive probe costing the pane nothing - ADR-0016's
 //     fail-open, preserved. It is NOT about devgeta's own cc/oc alias, which no
-//     devgeta launch has named since ADR-0020's 2026-08-07 amendment.
+//     devgeta launch has named since ADR-0021's 2026-08-07 amendment.
 //
 // Three quoting facts, each load-bearing:
 //
@@ -370,7 +370,7 @@ func execPaneCommand(command, shell string) string {
 //     must run two commands), but a single quote anywhere inside it would end
 //     the -ic wrapper early; quoting the assembled script keeps every character
 //     intact for the inner shell. Measured with --pane value
-//     `printf %s "it's fine"`: naive embedding breaks, this runs (ADR-0020).
+//     `printf %s "it's fine"`: naive embedding breaks, this runs (ADR-0021).
 //   - The shell is quoted at BOTH interpolation sites. Both are equally capable
 //     of breaking, and its value comes from $SHELL or tmux's default-shell -
 //     neither of which devgeta controls.

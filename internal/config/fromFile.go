@@ -597,7 +597,7 @@ func (gc *GlobalConfig) IsShellFeatureEnabled(featureName string) bool {
 //
 // The alias lines are here because a created tmux pane no longer resolves them:
 // it execs the coder's binary through a non-interactive shell, which has no
-// aliases at all (ADR-0020). devgeta.zsh's alias therefore stopped being the
+// aliases at all (ADR-0021). devgeta.zsh's alias therefore stopped being the
 // definition of how devgeta launches a coder and became a rendering of it -
 // see pkg/constants.CoderLaunch, which is the one definition behind both.
 type ShellTemplateData struct {

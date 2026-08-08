@@ -69,7 +69,7 @@ func TestClassifyShellLookup(t *testing.T) {
 			wantPath: "",
 			want:     ShellLookupFound,
 		},
-		// --- ADR-0020: path extraction ---
+		// --- ADR-0021: path extraction ---
 		{
 			// `command -v claude` for the binary case: the resolved absolute
 			// path, then the script's own leading \n, then the marker.
@@ -79,7 +79,7 @@ func TestClassifyShellLookup(t *testing.T) {
 			want:     ShellLookupFound,
 		},
 		{
-			// Measured shape from ADR-0020: an alias prints its definition,
+			// Measured shape from ADR-0021: an alias prints its definition,
 			// not a path. Not something a pane may exec.
 			name:     "alias text is not a path",
 			stdout:   "alias cc='CLAUDE_CODE_NO_FLICKER=1 claude'\n\n" + shellLookupMarker + "0\n",
@@ -145,7 +145,7 @@ func TestClassifyShellLookup(t *testing.T) {
 // known to exist. Fixture strings can't catch this: an earlier version of the
 // probe script redirected `command -v`'s stdout to /dev/null, so no amount of
 // parsing captured stdout could ever have recovered a path — only running the
-// real script proves the path reaches Go at all (ADR-0020).
+// real script proves the path reaches Go at all (ADR-0021).
 //
 // This is a narrow, deliberate exception to "tests never execute real
 // commands" (CLAUDE.md): it spawns /bin/sh, never devgeta's own commands, and
@@ -156,7 +156,7 @@ func TestDefaultShellCommandLookupResolvesRealPath(t *testing.T) {
 	// happens to have.
 	t.Setenv("SHELL", "/bin/sh")
 
-	// "sh" itself is guaranteed to exist and, per ADR-0020's measured table,
+	// "sh" itself is guaranteed to exist and, per ADR-0021's measured table,
 	// is an external binary with an absolute path — never a shell builtin or
 	// function, which would print a bare name instead.
 	path, result := defaultShellCommandLookup("sh")

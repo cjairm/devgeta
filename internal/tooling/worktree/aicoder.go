@@ -31,9 +31,9 @@ type AICoder interface {
 	// half-answer: the probe may have been inconclusive (ADR-0016 - it must
 	// never block a create), or `command -v` may have answered with something
 	// that is not a path at all (alias text, a function or builtin name). Every
-	// such outcome selects the interactive fallback (ADR-0020 part 3).
+	// such outcome selects the interactive fallback (ADR-0021 part 3).
 	//
-	// It returns the path rather than only an error because ADR-0020 requires
+	// It returns the path rather than only an error because ADR-0021 requires
 	// ONE probe per pane per create, with the command that runs built from that
 	// probe's answer. An error-only signature leaves only two options, and both
 	// break that: probe again at launch (two answers that can disagree, so the
@@ -55,7 +55,7 @@ type AICoder interface {
 	// BOTH are needed here, even though interactiveLaunch(p).render() is
 	// string-identical to PromptCommand(p) today. A created pane's command is a
 	// function of the preflight probe's resolution - a resolved path takes the
-	// exec form, no path takes the name form (ADR-0020 part 3) - and the code
+	// exec form, no path takes the name form (ADR-0021 part 3) - and the code
 	// that must express that, coderPane in layout.go, holds a coder only as an
 	// AICoder. With just execLaunch on the interface it could not reach the
 	// name form polymorphically, leaving two options that are both worse: a
@@ -82,7 +82,7 @@ type AICoder interface {
 // error-format shape instead of three hand-rolled copies of it.
 //
 // The returned path is what a created pane execs, so this probe is the SINGLE
-// one behind both the check and the launch (ADR-0020: one probe per pane per
+// one behind both the check and the launch (ADR-0021: one probe per pane per
 // create, and the command that runs is built from that probe's answer). It is
 // empty whenever the probe produced no path - a NotFound or Inconclusive
 // outcome, or a Found outcome whose output was not path-shaped (alias text, a
@@ -110,8 +110,8 @@ type AICoder interface {
 // binary is the tool's EXECUTABLE name (claude/opencode/nvim), never the cc/oc
 // alias, and the invariant "probe exactly what the pane will launch" holds on
 // EVERY path - not only the exec ones. A created pane execs the binary through
-// tmux's non-interactive shell, where an alias does not exist at all (ADR-0020
-// part 3, rule 1); and since ADR-0020's 2026-08-07 amendment the two paths that
+// tmux's non-interactive shell, where an alias does not exist at all (ADR-0021
+// part 3, rule 1); and since ADR-0021's 2026-08-07 amendment the two paths that
 // still TYPE a command into a live pane (the repair branch of ensureWindow,
 // launchReviewInLiveWindow's idle-shell reuse) send the binary too, so a pass
 // here guarantees they resolve as well. Probing the alias would also make this
@@ -126,7 +126,7 @@ type AICoder interface {
 // A coder installed OUTSIDE devgeta - one whose cc/oc alias was never written to
 // devgeta.zsh - passes this check and launches correctly on every path. While the
 // typed form was still the alias, that combination passed preflight and then
-// failed in the pane with `cc: command not found`; ADR-0020 accepted that gap and
+// failed in the pane with `cc: command not found`; ADR-0021 accepted that gap and
 // its amendment removes it.
 func ensureToolInstalled(binary string) (string, error) {
 	resolvedPath, result := commands.ShellCommandLookupFn(binary)
@@ -146,7 +146,7 @@ func ensureToolInstalled(binary string) (string, error) {
 			"binary", binary,
 		)
 		// No path, no error: the pane takes the interactive fallback, which
-		// leaves it exactly as well off as it is today (ADR-0016, ADR-0020).
+		// leaves it exactly as well off as it is today (ADR-0016, ADR-0021).
 		return "", nil
 	}
 	return resolvedPath, nil
@@ -158,7 +158,7 @@ func ensureToolInstalled(binary string) (string, error) {
 // form and the alias line cannot describe different commands.
 //
 // It spells the recipe out instead of naming the alias because a send-keys path
-// must launch what preflight probed - the binary (ADR-0020's 2026-08-07
+// must launch what preflight probed - the binary (ADR-0021's 2026-08-07
 // amendment). Nothing here depends on devgeta.zsh having been sourced.
 func recipeLaunch(recipe constants.CoderLaunch, args ...string) paneLaunch {
 	return nameLaunchWithEnv(recipe.EnvPrefix, recipe.Binary, args...)
@@ -179,8 +179,8 @@ func (o *OpenCodeCoder) Name() string { return constants.OpenCode }
 // recipe in pkg/constants, which also renders devgeta.zsh's `alias oc=` line.
 //
 // This is the form devgeta TYPES into a shell that already exists - today,
-// ensureWindow's repair branch (ADR-0020 part 4). It is not the `oc` alias,
-// and that is ADR-0020's 2026-08-07 amendment rather than an oversight: preflight
+// ensureWindow's repair branch (ADR-0021 part 4). It is not the `oc` alias,
+// and that is ADR-0021's 2026-08-07 amendment rather than an oversight: preflight
 // probes the BINARY, so typing the alias meant sending a live pane something the
 // check never verified - a user with opencode on PATH but no devgeta alias passed
 // preflight and then got `oc: command not found`. devgeta.zsh still ships the
@@ -228,14 +228,14 @@ func (o *OpenCodeCoder) interactiveLaunchWithAgent(agent, prompt string) paneLau
 }
 
 // execLaunch is the resolved-binary form: the pane execs binaryPath, so its own
-// PATH stops mattering (ADR-0020).
+// PATH stops mattering (ADR-0021).
 func (o *OpenCodeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
 	return o.execLaunchWithAgent(binaryPath, "", prompt)
 }
 
 // execLaunchWithAgent is execLaunch with a reviewer agent pinned - the review
 // window's create and split branches both exec the resolved opencode binary
-// rather than typing a command at a pane (ADR-0020 part 3).
+// rather than typing a command at a pane (ADR-0021 part 3).
 func (o *OpenCodeCoder) execLaunchWithAgent(binaryPath, agent, prompt string) paneLaunch {
 	return binaryLaunch(binaryPath, o.launchArgs(agent, prompt)...)
 }
@@ -257,7 +257,7 @@ func (o *OpenCodeCoder) launchArgs(agent, prompt string) []string {
 
 // EnsureInstalled checks the "opencode" BINARY - what every devgeta launch of
 // this coder names, exec'd or typed - not the oc alias, so a pass guarantees the
-// launch will resolve too (ADR-0020 part 3, rule 1, and its 2026-08-07
+// launch will resolve too (ADR-0021 part 3, rule 1, and its 2026-08-07
 // amendment).
 //
 // It returns the path the probe resolved for it. Probing the binary is what
@@ -282,8 +282,8 @@ func (c *ClaudeCoder) Name() string { return constants.Claude }
 // carry a different binary or a different environment.
 //
 // This is the form devgeta TYPES into a shell that already exists - today,
-// ensureWindow's repair branch (ADR-0020 part 4). It is not the `cc` alias:
-// see OpenCodeCoder.Command for why (ADR-0020's 2026-08-07 amendment). Because it
+// ensureWindow's repair branch (ADR-0021 part 4). It is not the `cc` alias:
+// see OpenCodeCoder.Command for why (ADR-0021's 2026-08-07 amendment). Because it
 // names the binary, it also has to spell the env prefix out - the alias
 // definition used to supply that.
 func (c *ClaudeCoder) Command() string { return constants.ClaudeLaunch.Command() }
@@ -308,7 +308,7 @@ func (c *ClaudeCoder) interactiveLaunch(prompt string) paneLaunch {
 }
 
 // execLaunch is the resolved-binary form: the pane execs binaryPath, so its own
-// PATH stops mattering (ADR-0020). It carries the same env prefix
+// PATH stops mattering (ADR-0021). It carries the same env prefix
 // interactiveLaunch does, from the same recipe.
 func (c *ClaudeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
 	return binaryLaunchWithEnv(

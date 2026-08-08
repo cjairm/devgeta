@@ -1,4 +1,4 @@
-# ADR-0020: A pane's command is exec'd at pane creation, not typed into the pane
+# ADR-0021: A pane's command is exec'd at pane creation, not typed into the pane
 
 **Status:** ACCEPTED (amended 2026-08-07 — see [Amendment](#amendment--2026-08-07-the-typed-form-is-the-un-aliased-command-too))
 **Date:** 2026-08-07

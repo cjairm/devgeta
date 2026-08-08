@@ -3,7 +3,7 @@ package constants
 // AI-coder launch recipes: the single definition of how devgeta launches a
 // coder, in BOTH forms it is launched in.
 //
-// Until ADR-0020 the only definition lived in devgeta.zsh's alias lines, and
+// Until ADR-0021 the only definition lived in devgeta.zsh's alias lines, and
 // everything that launched a coder typed the alias at an interactive shell -
 // which made the shell config the de facto source of truth. A pane devgeta
 // creates now execs the resolved binary instead (tmux runs a pane's
@@ -22,14 +22,14 @@ package constants
 //
 //   - Binary is the executable name. It is what the preflight probe resolves
 //     (`command -v <binary>` prints an absolute path for a binary, but only
-//     alias text for an alias - ADR-0020 part 3, rule 1) and what a created
+//     alias text for an alias - ADR-0021 part 3, rule 1) and what a created
 //     pane execs.
 //   - EnvPrefix is the environment assignment that launch needs, empty when it
 //     needs none. It is devgeta-owned and never interpolated from user data,
-//     which is why ADR-0020's quoting table embeds it unquoted.
+//     which is why ADR-0021's quoting table embeds it unquoted.
 //   - Alias is the short name devgeta writes into devgeta.zsh for the user to
 //     type by hand. devgeta itself no longer types it anywhere: since
-//     ADR-0020's 2026-08-07 amendment, every path that types a coder command
+//     ADR-0021's 2026-08-07 amendment, every path that types a coder command
 //     into a pane that already exists sends Command() - the un-aliased
 //     binary, plus EnvPrefix - instead.
 type CoderLaunch struct {

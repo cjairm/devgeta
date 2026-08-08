@@ -47,7 +47,7 @@ const (
 // matches reality; a bare exec.LookPath in dg's own process does not.
 //
 // The path exists so a pane can later exec the resolved binary directly
-// instead of relying on its own PATH (ADR-0020) — tmux runs a pane's
+// instead of relying on its own PATH (ADR-0021) — tmux runs a pane's
 // shell-command through a non-interactive shell, which has no equivalent of
 // zsh's ~/.zshenv PATH repair, and the probe's shell need not even be the
 // shell tmux launches. The path is empty on every outcome except Found: a
@@ -131,7 +131,7 @@ func defaultShellCommandLookup(name string) (string, ShellLookupResult) {
 // classifyShellLookup maps the probe's captured stdout onto the three-valued
 // result, plus the resolved path on a Found outcome. Pure so the decision
 // ADR-0016 exists for — only a lookup that PROVABLY RAN may report NotFound —
-// and the path extraction ADR-0020 depends on are both unit-testable without
+// and the path extraction ADR-0021 depends on are both unit-testable without
 // spawning a shell.
 //
 // The marker line is the proof the lookup ran. Its absence covers every way
@@ -175,7 +175,7 @@ func classifyShellLookup(stdout string) (string, ShellLookupResult) {
 // marker on a Found outcome (see classifyShellLookup): `command -v`'s own
 // resolved answer, possibly preceded by rc-file banner noise.
 //
-// `command -v` does not always print a path (ADR-0020): an alias prints
+// `command -v` does not always print a path (ADR-0021): an alias prints
 // `alias cc='…'`, a shell function or builtin prints its bare name, and none
 // of those are something a pane may exec. Requiring the leading "/" is a
 // shape check, not a safety check — the caller still has to shell-quote

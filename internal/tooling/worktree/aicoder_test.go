@@ -47,7 +47,7 @@ func TestResolveAICoder(t *testing.T) {
 
 // Command() is the TYPED form - what devgeta send-keys into a pane that already
 // exists - and it is the UN-ALIASED command: the binary, plus the recipe's env
-// prefix. Not "oc"/"cc" (ADR-0020's 2026-08-07 amendment): preflight probes the
+// prefix. Not "oc"/"cc" (ADR-0021's 2026-08-07 amendment): preflight probes the
 // binary, so typing the alias sent a live pane something the check never verified,
 // and a user with the coder on PATH but no devgeta alias got `cc: command not
 // found` after passing preflight.
@@ -95,7 +95,7 @@ func TestCommandMatchesTheInteractiveLaunchForm(t *testing.T) {
 // way rather than exempting anything that looks like a flag - see
 // paneLaunch.render. Same command to the shell; the bytes changed.
 //
-// The program word is the BINARY, not the cc/oc alias (ADR-0020's 2026-08-07
+// The program word is the BINARY, not the cc/oc alias (ADR-0021's 2026-08-07
 // amendment), and claude's carries the env prefix the alias definition used to
 // supply.
 func TestPromptCommandExactFormPerCoder(t *testing.T) {
@@ -178,7 +178,7 @@ func TestOpenCodePromptCommandWithAgent(t *testing.T) {
 //
 // The probed name is the BINARY (opencode/claude), not the oc/cc alias: a
 // created pane execs the binary, and only a binary makes `command -v` answer
-// with a path (ADR-0020 part 3, rule 1). A stub that answers for the alias
+// with a path (ADR-0021 part 3, rule 1). A stub that answers for the alias
 // instead would silently exercise the interactive fallback here rather than the
 // exec path.
 
@@ -266,7 +266,7 @@ func TestClaudeCoderEnsureInstalledMissing(t *testing.T) {
 }
 
 // TestEnsureInstalledReturnsTheProbesResolvedPath is the check-to-launch link
-// ADR-0020 requires: the path the probe resolved must come BACK from the check,
+// ADR-0021 requires: the path the probe resolved must come BACK from the check,
 // because that is the only way the pane can exec exactly what was verified
 // without probing a second time.
 func TestEnsureInstalledReturnsTheProbesResolvedPath(t *testing.T) {
@@ -300,7 +300,7 @@ func TestEnsureInstalledReturnsTheProbesResolvedPath(t *testing.T) {
 	}
 }
 
-// TestEnsureInstalledFoundWithNoPathIsNotAnError covers the outcome ADR-0020
+// TestEnsureInstalledFoundWithNoPathIsNotAnError covers the outcome ADR-0021
 // part 3 calls out as normal rather than exceptional: `command -v` answered, but
 // with something that is not a path (alias text, a shell function or builtin
 // name). That is "no path", never something to exec - and it must not fail the

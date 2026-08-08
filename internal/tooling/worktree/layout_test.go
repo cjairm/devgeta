@@ -14,7 +14,7 @@ import (
 
 // The TYPED commands the built-in coder layouts carry (Pane.Command) - the
 // UN-ALIASED form devgeta send-keys into a pane that already exists, i.e. the
-// binary plus any env prefix, never "oc"/"cc" (ADR-0020's 2026-08-07 amendment).
+// binary plus any env prefix, never "oc"/"cc" (ADR-0021's 2026-08-07 amendment).
 //
 // They are literals here rather than reads of constants.*Launch or of
 // Coder.Command(): deriving an expectation from the value under test could not
@@ -115,7 +115,7 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 }
 
 // TestBuiltinLayoutCheckedPanesAlsoLaunch closes a shape Pane still permits and
-// ADR-0020 forbids: check != nil with launch == nil and a non-empty Command.
+// ADR-0021 forbids: check != nil with launch == nil and a non-empty Command.
 // Such a pane probes, resolves an absolute path, and then routes through
 // creationCommand's --pane branch - DISCARDING the resolution and launching the
 // interactive name form instead. That is literally "resolves a path and then
@@ -132,7 +132,7 @@ func TestBuiltinLayoutCheckedPanesAlsoLaunch(t *testing.T) {
 				t.Errorf(
 					"layout %q pane %d has a check but no launch: it would probe, "+
 						"resolve a path, and then launch the interactive form anyway "+
-						"(ADR-0020)",
+						"(ADR-0021)",
 					name, i+1,
 				)
 			}
@@ -918,7 +918,7 @@ func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
 //
 // The program word is the "opencode" BINARY, not the "oc" alias: preflight probes
 // the binary, and typing the alias meant sending a live pane something the check
-// never verified (ADR-0020's 2026-08-07 amendment). It is followed by
+// never verified (ADR-0021's 2026-08-07 amendment). It is followed by
 // --agent <name> and the fixed review prompt, every argument single-quoted, flags
 // included, since this renders opencode's structured launch (see paneLaunch.render
 // for why the rule is uniform rather than "quote only the values").
@@ -1051,7 +1051,7 @@ func usableShellFixture(t *testing.T, name string) string {
 // TestResolveShellFallsBackToPosixShell covers every way a candidate can fail
 // the "usable" test. An absolute-path shape check alone would accept the first
 // three of these and interpolate them into a pane command at two sites, which is
-// why the check stats the file (ADR-0020).
+// why the check stats the file (ADR-0021).
 func TestResolveShellFallsBackToPosixShell(t *testing.T) {
 	dir := t.TempDir()
 
@@ -1112,7 +1112,7 @@ func TestResolveShellPrefersTheFirstUsableCandidate(t *testing.T) {
 // creationCommandsOf returns what each pane of layout would be created with, for
 // asserting the shape of a RESOLVED layout. It is the counterpart of commandsOf
 // (which reads the typed form, Pane.Command); the two are deliberately different
-// strings for the same pane - see ADR-0020 and launch.go's header.
+// strings for the same pane - see ADR-0021 and launch.go's header.
 func creationCommandsOf(t *testing.T, layout Layout, shell string) []string {
 	t.Helper()
 	out := make([]string, 0, len(layout.Panes))
@@ -1123,7 +1123,7 @@ func creationCommandsOf(t *testing.T, layout Layout, shell string) []string {
 }
 
 // countedProbe swaps the shell-lookup seam for one that COUNTS its invocations
-// and answers with resolve(name). The count is what proves ADR-0020's "one probe
+// and answers with resolve(name). The count is what proves ADR-0021's "one probe
 // per pane per create": a design that re-probes when the pane's command is built
 // passes every string assertion in this file and only fails here.
 func countedProbe(
@@ -1153,7 +1153,7 @@ func foundAt(paths map[string]string) func(string) (string, commands.ShellLookup
 
 // TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand is the core of this
 // step: whatever the ONE probe resolved has to be what the created pane runs.
-// Both branches are covered, because the fallback is the one ADR-0020 warns is
+// Both branches are covered, because the fallback is the one ADR-0021 warns is
 // easy to get wrong (a bare name in tmux's non-interactive shell is NOT today's
 // behavior - there is no alias and no repaired PATH there).
 func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
@@ -1222,7 +1222,7 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 				t.Errorf("pane command = %q, want %q", got[0], tt.want)
 			}
 			// The typed form is unchanged by any of this - it is what the repair
-			// path still sends into a pane that already exists (ADR-0020 part 4).
+			// path still sends into a pane that already exists (ADR-0021 part 4).
 			if resolved.Panes[0].Command != typedClaude+" 'fix issue 1082'" {
 				t.Errorf(
 					"the typed command must be unaffected, got %q",
@@ -1236,7 +1236,7 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 	}
 }
 
-// TestOneProbePerPanePerCreate pins the invariant ADR-0020 fixes as the
+// TestOneProbePerPanePerCreate pins the invariant ADR-0021 fixes as the
 // requirement rather than the signatures: one probe per pane per create, and
 // building the pane's command spends that answer rather than asking again.
 // Building the commands repeatedly must add no probes at all.

@@ -14,7 +14,7 @@ import (
 
 // TestShellConfigTemplateRendersCoderAliasesFromConstants pins devgeta.zsh's
 // cc/oc alias lines to the launch recipes in pkg/constants, which are also what
-// a created tmux pane execs (ADR-0020: the pane runs through a non-interactive
+// a created tmux pane execs (ADR-0021: the pane runs through a non-interactive
 // shell that has no aliases, so the recipe is the definition and the alias is a
 // rendering of it).
 //
@@ -212,7 +212,7 @@ func contiguousLinesFollowing(rendered, header string, count int) []string {
 func TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput(t *testing.T) {
 	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
 
-	for _, leaked := range []string{"pkg/constants", "ADR-0020", "non-interactive"} {
+	for _, leaked := range []string{"pkg/constants", "ADR-0021", "non-interactive"} {
 		if strings.Contains(rendered, leaked) {
 			t.Errorf("maintainer note mentioning %q reached the generated shell config", leaked)
 		}

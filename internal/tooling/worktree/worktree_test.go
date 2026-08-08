@@ -2533,7 +2533,7 @@ func TestCreateAt(t *testing.T) {
 		// The pane-0 command now RIDES new-session rather than following it as a
 		// send-keys: new-session creates the session's first window's first pane,
 		// so it is a pane-creating call and carries that pane's command
-		// (ADR-0020). This is the first-worktree-for-a-repo path, the one a user
+		// (ADR-0021). This is the first-worktree-for-a-repo path, the one a user
 		// hits most, which is why it is asserted here and not just for
 		// new-window.
 		sawPaneCommand := false

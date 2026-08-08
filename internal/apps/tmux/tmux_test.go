@@ -1785,7 +1785,7 @@ func TestSendKeysToPane(t *testing.T) {
 }
 
 // TestSendKeysLengthGuard proves every SendKeys* wrapper refuses a payload
-// the pty cannot deliver intact (ADR-0020, part 4) instead of handing it to
+// the pty cannot deliver intact (ADR-0021, part 4) instead of handing it to
 // tmux to be silently truncated. 1023 bytes is the last length that fits the
 // pty input queue alongside the trailing Enter; 1024 is the first length that
 // does not, so the guard's boundary sits exactly there. A rejected call must

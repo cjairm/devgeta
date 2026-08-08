@@ -148,7 +148,7 @@ func (t *Tmux) CreateSession(name, workdir string) error {
 //
 // command, when non-empty, is appended as the pane's shell-command (tmux execs
 // it as the pane's process rather than devgeta typing it in afterward - see
-// ADR-0020). An empty command produces the exact argument list this method
+// ADR-0021). An empty command produces the exact argument list this method
 // produced before command existed, so existing callers passing "" see
 // byte-identical behavior.
 func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command string) error {
@@ -159,7 +159,7 @@ func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command str
 // appendPaneCommand appends command as the final argv element when non-empty,
 // returning args unchanged when command is "". Shared by every tmux call that
 // creates a pane (CreateSessionWithWindow, CreateWindowInSession, CreateWindow,
-// SplitWindow) so the pane's shell-command (ADR-0020) is appended identically
+// SplitWindow) so the pane's shell-command (ADR-0021) is appended identically
 // everywhere instead of once per call site.
 func appendPaneCommand(args []string, command string) []string {
 	if command == "" {
@@ -175,7 +175,7 @@ func appendPaneCommand(args []string, command string) []string {
 // dragged to the new window, overriding a caller that decided to stay put.
 //
 // command, when non-empty, is appended as the pane's shell-command (see
-// ADR-0020). An empty command produces the exact argument list this method
+// ADR-0021). An empty command produces the exact argument list this method
 // produced before command existed.
 func (t *Tmux) CreateWindowInSession(session, name, workdir, command string) error {
 	args := []string{"new-window", "-d", "-t", session + ":", "-n", name, "-c", workdir}
@@ -514,7 +514,7 @@ func (t *Tmux) SwitchToSession(name string) error {
 }
 
 // maxSendKeysBytes is the largest send-keys payload guaranteed to reach a
-// pane intact. Measured on macOS/BSD (ADR-0020): the pty input queue backing
+// pane intact. Measured on macOS/BSD (ADR-0021): the pty input queue backing
 // an interactive pane is capped at 1024 bytes; a write that overflows it is
 // silently discarded by the terminal driver - including the trailing Enter
 // send-keys appends - while tmux itself still exits 0. 1023 bytes of command
@@ -524,7 +524,7 @@ const maxSendKeysBytes = 1023
 
 // checkSendKeysLength rejects a send-keys payload that the pty cannot
 // deliver intact, instead of handing it over to be silently cut in half (see
-// ADR-0020, part 4: any remaining send-keys path refuses to truncate).
+// ADR-0021, part 4: any remaining send-keys path refuses to truncate).
 // Chunking the payload into sub-limit writes is deliberately not an option
 // here - it keeps the data flowing through the terminal and reintroduces the
 // same timing-dependent silent loss this guard exists to remove.
@@ -533,7 +533,7 @@ func checkSendKeysLength(keys string) error {
 		return fmt.Errorf(
 			"send-keys payload is %d bytes, over the %d-byte tmux pty input queue limit; "+
 				"shorten it before sending - past this limit the terminal driver silently "+
-				"drops the excess and the trailing Enter, and tmux still reports success (ADR-0020)",
+				"drops the excess and the trailing Enter, and tmux still reports success (ADR-0021)",
 			len(keys),
 			maxSendKeysBytes,
 		)
@@ -579,7 +579,7 @@ func (t *Tmux) SendKeys(session, keys string) error {
 // explicit step (SwitchToWindow), so only a caller that asks for it gets it.
 //
 // command, when non-empty, is appended as the pane's shell-command (see
-// ADR-0020). An empty command produces the exact argument list this method
+// ADR-0021). An empty command produces the exact argument list this method
 // produced before command existed.
 func (t *Tmux) CreateWindow(name, workdir, command string) error {
 	args := []string{"new-window", "-d", "-n", name, "-c", workdir}
@@ -592,7 +592,7 @@ func (t *Tmux) CreateWindow(name, workdir, command string) error {
 // side by side (tmux's -h), "horizontal" means panes stacked (tmux's -v).
 //
 // command, when non-empty, is appended as the new pane's shell-command (see
-// ADR-0020). An empty command produces the exact argument list this method
+// ADR-0021). An empty command produces the exact argument list this method
 // produced before command existed.
 func (t *Tmux) SplitWindow(window, workdir, direction, command string) error {
 	var args []string
@@ -690,7 +690,7 @@ func (t *Tmux) KillWindow(name string) error {
 // It has no caller today. It was written to roll back a review launch that
 // failed after splitting a new pane, and that rollback no longer exists: the
 // pane's command is now an argument of the split that creates the pane, so
-// there is no second step left to fail after a pane exists (ADR-0020, and
+// there is no second step left to fail after a pane exists (ADR-0021, and
 // launchReviewInLiveWindow's doc comment).
 func (t *Tmux) KillPane(paneID string) error {
 	return t.ExecuteCommand("kill-pane", "-t", paneID)

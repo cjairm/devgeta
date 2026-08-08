@@ -317,7 +317,7 @@ func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force b
 // check also resolves the absolute path of the tool it verified, and that
 // resolution rides on the copy this returns. Discarding it would leave the
 // eventual pane launch with nothing to build from, forcing it to either probe a
-// second time or launch the bare name - the two outcomes ADR-0020 rules out. The
+// second time or launch the bare name - the two outcomes ADR-0021 rules out. The
 // returned layout is a copy, so calling this twice on one resolved layout (which
 // `dg ws` does: resolve once, create repeatedly) keeps each create independent.
 func validateLayout(layout Layout) (Layout, error) {
@@ -524,7 +524,7 @@ func (w *WorktreeManager) FollowWindow(windowName string) error {
 // holds the tmux wrapper; layout.go's resolveShell takes its candidates as
 // input precisely so it needs no tmux dependency of its own.
 //
-// The candidate order is ADR-0020's ladder: the user's $SHELL first, then
+// The candidate order is ADR-0021's ladder: the user's $SHELL first, then
 // tmux's own default-shell, with resolveShell's /bin/sh floor behind both. The
 // tmux query is a CANDIDATE, never a requirement - a failed or empty answer
 // simply drops it from the list. It is not an error, is not logged as one, and
@@ -553,7 +553,7 @@ func (w *WorktreeManager) paneShell() string {
 func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layout Layout) error {
 	// Pane 0's command goes to the call that CREATES pane 0, because that is
 	// the only place it can go: by the time buildWindowPanes runs, pane 0
-	// already exists (ADR-0020 - the command travels as process arguments, so
+	// already exists (ADR-0021 - the command travels as process arguments, so
 	// the 1024-byte pty input queue that silently ate a long --prompt is out
 	// of the path entirely).
 	shell := w.paneShell()
@@ -581,7 +581,7 @@ func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layou
 // (current session) or "session:window" (qualified, for a window that may not
 // be in the attached client's session). shell must come from paneShell.
 //
-// Pane 0 is deliberately not built here, and that is ADR-0020's shape rather
+// Pane 0 is deliberately not built here, and that is ADR-0021's shape rather
 // than a division of labor: a pane's command is exec'd BY the tmux call that
 // brings the pane into existence, and pane 0 was brought into existence by the
 // caller's window-creating call. So pane 0's command is the caller's to pass -
@@ -593,7 +593,7 @@ func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layou
 // writes into the pane's pty, whose input queue is capped at 1024 bytes on
 // macOS/BSD, and an overflowing write is discarded - the tail of the command
 // AND the trailing Enter - with tmux still exiting 0. A window came up looking
-// correct with a coder sitting at an empty session (ADR-0020).
+// correct with a coder sitting at an empty session (ADR-0021).
 func (w *WorktreeManager) buildWindowPanes(
 	target, wtPath, shell string,
 	layout Layout,
@@ -2011,7 +2011,7 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 	// reviewerPane validates reviewerKey and runs the review path's ONE opencode
 	// probe, keeping its resolution on the pane it returns (see reviewerPane).
 	// Both launches below build from this single pane, so the check and whatever
-	// runs cannot describe different things (ADR-0020).
+	// runs cannot describe different things (ADR-0021).
 	//
 	// A review is always launched via OpenCode, regardless of the worktree's own
 	// layout - a user whose default layout is claude/claude-nvim has never needed
@@ -2025,7 +2025,7 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 	// name - the created pane execs it, and the live-window branch types it. So an
 	// opencode installed outside devgeta - one whose "oc" alias was never written
 	// to devgeta.zsh - passes this check and launches correctly either way
-	// (ADR-0020's 2026-08-07 amendment; the older alias probe refused it outright).
+	// (ADR-0021's 2026-08-07 amendment; the older alias probe refused it outright).
 	pane, err := reviewerPane(reviewerKey)
 	if err != nil {
 		return err
@@ -2075,7 +2075,7 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 // It takes the whole reviewer Pane, not just a command string, so this branch and
 // LaunchReviewInRepo's create branch spend the SAME probe's resolution (see
 // reviewerPane). The two sub-branches then use DIFFERENT forms of that one pane,
-// and which form is decided by one question only - is this pane NEW? (ADR-0020
+// and which form is decided by one question only - is this pane NEW? (ADR-0021
 // part 4; asking "is the window live?" is what put this function's split branch
 // on the wrong side of the line in an earlier draft, since the function is named
 // for the window.)
@@ -2138,7 +2138,7 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 
 	// Reuse before creating. The TYPED form is correct here and only here: this
 	// pane already exists and is running the user's interactive shell, so there
-	// is no process to exec the command as (ADR-0020 part 4). No rollback branch
+	// is no process to exec the command as (ADR-0021 part 4). No rollback branch
 	// on purpose either - the pane already existed, so a failed send-keys leaves
 	// it exactly as it was, and killing it would destroy a pane devgeta did not
 	// create, and the user's shell with it.
@@ -2154,7 +2154,7 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 	}
 
 	// This pane is NEW, so its command is exec'd as the pane's process at
-	// creation, built from the resolution this pane already carries (ADR-0020
+	// creation, built from the resolution this pane already carries (ADR-0021
 	// part 3). The shell is resolved here rather than at the top of the function
 	// so the reuse branch above, which needs none, pays for none.
 	shell := w.paneShell()
@@ -2232,7 +2232,7 @@ func (w *WorktreeManager) createWindowWithLayout(
 	layout Layout,
 ) error {
 	session := TmuxSessionName(repoSlug)
-	// Both branches create pane 0, so both carry pane 0's command (ADR-0020:
+	// Both branches create pane 0, so both carry pane 0's command (ADR-0021:
 	// any tmux call that brings a pane into existence carries that pane's
 	// command). new-session is the one that reads like session setup rather
 	// than pane setup, and it is the FIRST worktree for a repo - the common

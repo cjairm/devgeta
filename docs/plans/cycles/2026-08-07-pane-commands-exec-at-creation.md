@@ -21,7 +21,7 @@ the Enter** — while `tmux send-keys` still exits 0. The window comes up lookin
 correct with an AI coder sitting at an empty session, and `dg wt create` reports
 success.
 
-[ADR-0020](../../decisions/ADR-0020-pane-commands-are-exec-d-not-typed.md)
+[ADR-0021](../../decisions/ADR-0021-pane-commands-are-exec-d-not-typed.md)
 (ACCEPTED) is the decision this cycle implements: **any tmux call that brings a
 pane into existence carries that pane's command**, as a shell-command (process
 arguments) instead of keystrokes. Read it before starting — it carries the
@@ -127,7 +127,7 @@ intact; the paths that legitimately send into an already-live pane keep
 ### Explicitly Out of Scope
 
 - Making **repair** able to carry a long command. It sends into a live pane by
-  nature; ADR-0020 bounds it with the 1023-byte guard and says a repair that ever
+  nature; ADR-0021 bounds it with the 1023-byte guard and says a repair that ever
   needs to carry a prompt needs its own decision.
 - Adding a prompt to repair (ADR-0011 already deferred this — re-sending a prompt
   starts a _new_ conversation, which is a different feature).
@@ -181,7 +181,7 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
 
 - In `SendKeysToWindow`, `SendKeysToWindowInSession`, `SendKeysToPane`,
   `SendKeys`: reject `len(keys) > 1023` with an error naming the limit and the
-  actual length. Cite ADR-0020 in the comment, with the reason (the pty input
+  actual length. Cite ADR-0021 in the comment, with the reason (the pty input
   queue discards the excess **and the Enter** while tmux exits 0).
 - Verify: `go test ./internal/apps/tmux/` — add a case at 1023 (accepted) and
   1024 (rejected).
@@ -260,7 +260,7 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
   This is the same boundary ADR-0011 drew for quoting, in a second place.
 
 - Both recipes end with the **same-shell trailing `exec`**, not just the
-  interactive one. ADR-0020 part 2 applies to every created pane, so a coder that
+  interactive one. ADR-0021 part 2 applies to every created pane, so a coder that
   quits leaves a shell behind whether or not a path resolved. Only the
   interactive fallback adds `-ic`:
 
@@ -271,7 +271,7 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
 
   where `<rendered launch>` is the structured value above, each element quoted.
 
-- Apply ADR-0020's quoting table exactly: resolved path quoted, prompt quoted,
+- Apply ADR-0021's quoting table exactly: resolved path quoted, prompt quoted,
   shell quoted at **both** interpolation sites, the assembled inner script quoted
   as a whole, `--pane` value unquoted _within_ its script.
 - The trailing `exec` must be inside the **same** shell invocation — a nested one
@@ -304,7 +304,7 @@ Bottom-up, so every step compiles and its tests pass before the next begins.
   (`worktree.go:1967`) before building its ad-hoc pane, and that call's result is
   currently discarded. Routing resolution only through `validateLayout` would
   leave the reviewer launch to re-probe or silently fall back — the exact
-  "one probe, one recipe" invariant ADR-0020 requires, broken in the one path
+  "one probe, one recipe" invariant ADR-0021 requires, broken in the one path
   that does its own checking.
 
   Give the reviewer a **single resolution-carrying constructor** used by both of
@@ -423,8 +423,8 @@ make lint
 | A resolved launch recipe leaks between worktrees (`dg ws` resolves once, creates repeatedly) | **Med**    | This is exactly what `Layout.clone` exists for. Add a test that creates twice from one resolved layout with different prompts and asserts independence. |
 | `Pane.check` signature change ripples through every constructor and its tests                | High       | Expected and desirable — the compiler enumerates the call sites. Do step 5 in one pass; do not add a compatibility shim.                                |
 | Ordered `ExecCommandResult` sequences get "fixed" until green rather than reasoned about     | **Med**    | Each sequence edit must correspond to a named change in tmux calls. If a test passes for a reason you can't state, it is not passing.                   |
-| Probing the binary instead of the alias changes preflight semantics                          | Low        | Accepted and recorded in ADR-0020: a coder installed outside devgeta now passes preflight and launches fine. Note it in the step-6 commit.              |
-| Falling back to `/bin/sh` yields a pane with no `cc`/`oc`                                    | Low        | Deliberate (ADR-0020): a badly broken environment fails visibly in the pane rather than blocking a create.                                              |
+| Probing the binary instead of the alias changes preflight semantics                          | Low        | Accepted and recorded in ADR-0021: a coder installed outside devgeta now passes preflight and launches fine. Note it in the step-6 commit.              |
+| Falling back to `/bin/sh` yields a pane with no `cc`/`oc`                                    | Low        | Deliberate (ADR-0021): a badly broken environment fails visibly in the pane rather than blocking a create.                                              |
 | Manual verification skipped because unit tests are green                                     | **Med**    | The original bug is invisible to mocked tests — it lives in a real pty. Section 6's manual list is not optional.                                        |
 
 ### Trade-offs Made
@@ -453,17 +453,17 @@ make lint
 
 **Reviewer notes:**
 
-Two things reviewers of ADR-0020 got wrong repeatedly and are worth checking here
+Two things reviewers of ADR-0021 got wrong repeatedly and are worth checking here
 too: **which call sites create a pane versus write to a live one** (answer it from
-`grep`, not memory — ADR-0020 part 4 has the table), and **every value
-interpolated into a pane command** (ADR-0020 rule 3 has the closed list; three
+`grep`, not memory — ADR-0021 part 4 has the table), and **every value
+interpolated into a pane command** (ADR-0021 rule 3 has the closed list; three
 separate findings landed there before it was made exhaustive).
 
 ---
 
 ## Notes for Implementers
 
-- **Read ADR-0020 first.** Its rules are measured, and several exist because an
+- **Read ADR-0021 first.** Its rules are measured, and several exist because an
   earlier draft asserted the opposite.
 - **Commit after each step** once its verify check passes.
 - **Manual verification is where this bug lives.** Mocked tests cannot see a pty.
