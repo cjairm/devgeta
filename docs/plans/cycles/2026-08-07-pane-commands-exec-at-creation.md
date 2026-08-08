@@ -389,10 +389,36 @@ make lint
 
 ### Manual (needs a real tmux; this is the bug's home turf)
 
-**Not yet recorded.** The maintainer is running this section's checks
-separately against a real tmux; results are not in as of this writing, so
-nothing below is checked off and this cycle's Done status does not claim
-manual verification passed.
+**Run and passed (2026-08-07).** The maintainer ran this section's checks against
+a real tmux and reported them working. Per-check results were not recorded
+individually, so treat the list below as "the maintainer confirmed this set",
+not as eight separately attested lines.
+
+Independently, the mechanism itself was verified on the same machine (macOS 25.6,
+tmux 3.5a, `/bin/zsh`) using a throwaway tmux server on a private socket — no
+devgeta install, no `dg configure`, no worktrees:
+
+| Claim                                                                | Result                                         |
+| -------------------------------------------------------------------- | ---------------------------------------------- |
+| 1800-byte command as a tmux shell-command at pane creation           | arrived **intact**                             |
+| trailing `exec <shell>` keeps the pane alive after the command exits | **holds**                                      |
+| same-shell `exec` preserves a `cd`                                   | **preserved**                                  |
+| nested form loses the `cd` (the construction part 2 rejects)         | **lost it**, matching part 2's measurement     |
+| the original bug, same payload via `send-keys`                       | **reproduced — never executed, tmux exited 0** |
+
+That last row is the one worth keeping: the failure this cycle removes was
+confirmed live on the hardware, not merely cited from the ADR.
+
+**Two things remain unattested by the independent check** — the review-launch
+branches (item 7) and `dg wt move`'s retarget (Regression Check) were exercised
+only by the maintainer's run, so if that run skipped either, they are unverified.
+
+A measurement that came out of this verification is recorded in
+[ADR-0021](../../decisions/ADR-0021-pane-commands-are-exec-d-not-typed.md)'s
+Positive and Negative sections: a `<shell> -ic` pane spends ~23s in `.zshrc`
+before its command runs on this machine, which is what `--pane` and the no-path
+fallback pay. Measure that path by waiting for the command, never with a fixed
+sleep — a 3-second sleep gave a false "the `cd` was lost" reading here.
 
 1. **The actual bug:** `dg wt create adr20-a --prompt "$(python3 -c "print('x '*900)")"`
    → the coder starts **with the full prompt**. This is >1800 bytes; before this

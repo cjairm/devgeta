@@ -580,7 +580,12 @@ but a reader grepping for `ReviewCommand` should look for those two instead.
   first instant; there is no window during which the pane is not ready to receive
   what devgeta is sending.
 - **Faster pane startup for devgeta-owned panes** — one non-interactive shell
-  instead of a full interactive `.zshrc`.
+  instead of a full interactive `.zshrc`. Measured after implementation, on the
+  author's machine (macOS 25.6, tmux 3.5a, zsh with pyenv/mise init): a
+  `<shell> -ic` pane spends **~23 seconds** in `.zshrc` before the pane's own
+  command runs at all. So this is not a marginal win for the devgeta-owned panes
+  that skip it — and the two paths that keep `-ic` pay it in full. See the
+  Negative section.
 - **When the probe resolves a path, launching stops depending on the pane's
   `PATH` at all, for every shell.** That closes a gap present in the current
   send-keys design too: bash and custom-shell users have no `.zshenv` to repair
@@ -607,6 +612,20 @@ but a reader grepping for `ReviewCommand` should look for those two instead.
 - **Two shell invocation modes to hold in mind** (non-interactive for
   devgeta-owned, interactive for `--pane`). Justified above, but it is a
   distinction a reader must learn.
+- **A `--pane` command waits out the user's whole interactive startup before it
+  begins.** Measured on the author's machine after implementation: **~23 seconds**
+  of `.zshrc` (pyenv/mise init) before the `-ic` pane's command ran. The pane looks
+  idle for that entire time, with nothing indicating it is still starting. This is
+  the accepted price of ADR-0011's asymmetry — a `--pane` value is the user's own
+  command line and must see their own aliases and functions — but the cost is
+  larger than "runs the user's startup" conveys, and it is worth knowing before
+  reaching for `--pane` for something time-sensitive. The no-path fallback pays the
+  same price, though it is now rare: the probe resolves the binary, so a pane only
+  falls back when the probe found no path at all.
+  A corollary for anyone testing this: measure the `-ic` recipe by **waiting for
+  the command to run**, not with a fixed sleep. A 3-second sleep produced a false
+  "the `cd` was lost" reading during verification, because `.zshrc` had not
+  finished yet.
 - **Repair still cannot carry a long command.** It sends into a live pane by
   nature. Bounded by the guard in part 4 rather than fixed; a repair that ever
   needs to carry a prompt needs its own decision.
