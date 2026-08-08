@@ -211,6 +211,15 @@ Never use a rejection to make a disagreement disappear because re-litigating it 
 inconvenient. It does not remove the finding from anyone's view — it turns into a
 pushback the human sees, and can undo, in the terminal report.
 
+**"Already raised" is never a resolution.** A finding is settled `fixed` only when the code
+changed, and `rejected` only with evidence that disproves it. That someone else already
+raised the same point — an earlier round, another reviewer this round, a comment on the PR —
+says nothing about whether the code is still wrong, so it can never be the grounds for
+settling anything. When two open ids are the same point and the point is real, fix it once
+and settle both `fixed`, citing the same change; never settle one on the grounds that the
+other exists. A finding left open keeps the loop out of step 3's clean approval, which is
+exactly what should happen while the problem is still in the code.
+
 When a subagent ran, whatever it reports, the journal is what counts: after it returns,
 re-read `devgeta task review-notes` yourself and treat that as the state of the round. A
 finding the subagent says it settled but the journal still lists under `open:` is not
@@ -277,6 +286,9 @@ The never-do list, which every dispatch carries:
   the round it is working on.
 - **Never commit, stage, or stash.** Uncommitted work is reviewable as it stands.
 - **Never open a new finding.** Reviewers do that; a fixer only settles what it was given.
+- **Never settle a finding because it is already known.** Duplicate of another id, already
+  discussed on the PR, raised in an earlier round — none of that is a fix or a
+  disproof. Settle on the code, or leave it open.
 - **Never retire another agent's provisional rejection.** Those two journal transitions
   are the human's alone and are named only in the terminal report below.
 - **Verify before settling `fixed`.** Run the tests covering the change and name the

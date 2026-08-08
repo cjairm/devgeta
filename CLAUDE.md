@@ -597,6 +597,23 @@ Quick reference to where things live:
 
 **Recent changes:**
 
+- Dedup no longer moves a review verdict (2026-08-07). A review approved a PR
+  whose missing route coverage was real: the finding was deduplicated against an
+  existing Copilot comment raising the same point, and "already raised" was then
+  read as "not blocking". `/review-pr` now states that dedup decides what you
+  post and never the verdict — dropped findings keep their severity into step 6,
+  and an entry dropped only because someone else raised the same still-live
+  point is never settled `answered` in the journal. Three verdict cases are
+  spelled out in `/review-pr` and `/approve-pr`: an unresolved blocker anyone
+  raised means no approval plus a comment naming the one outstanding item and
+  committing to approve once it's addressed; a live non-blocking comment means
+  `LGWC` approve naming who left it; a failing check means `LGWC` approve naming
+  the check (`/review-pr` doesn't fetch check status, so it defers that call to
+  `/approve-pr`). `/review-loop` gets the journal-side half — "already raised"
+  is never grounds to settle a finding, in step 4 and in the fix subagent's
+  never-do list. Four tests in `internal/apps/opencode/permissions_test.go` pin
+  the prose.
+
 - Agent memory is writable again (2026-08-07). Both permission layers denied
   `~/.claude/projects/<slug>/memory/`, Claude Code's per-project memory
   directory, so the agent could not write a memory file. Memory holds notes,
