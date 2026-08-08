@@ -35,7 +35,11 @@ why it no longer lives in `CLAUDE.md`.
   depending on the `cc`/`oc` shell alias — a created pane execs the coder's
   resolved binary path directly, and the alias devgeta still writes into
   `devgeta.zsh` is now rendered from the same `pkg/constants.CoderLaunch`
-  recipe the launch itself reads, so the two cannot drift.
+  recipe the launch itself reads, so the two cannot drift. One user-visible
+  consequence of that: the pre-create install check probes the **binary**
+  instead of the alias, so a coder installed outside devgeta now passes it and
+  launches correctly, and a failure there no longer means "devgeta never
+  configured this tool" — only that the tool does not resolve.
 
 - Dedup suppresses duplicate comments, never the verdict (2026-08-07). A review
   approved a PR whose missing route coverage was still live: the finding had

@@ -40,11 +40,10 @@ const (
 // process's PATH. When `dg ws` is launched from a non-login tmux pane whose
 // PATH was never repaired, that PATH can be truncated and miss tools that are
 // actually installed (e.g. ~/.local/bin/claude), producing a false "not
-// installed" error even though the coder would launch fine. Worktree windows
-// run their coder by sending shell commands to an interactive pane, which
-// sources ~/.zshenv (PATH self-repair) and ~/.zshrc (devgeta.zsh: the cc/oc
-// aliases). Resolving a tool the same way that pane will is the only check that
-// matches reality; a bare exec.LookPath in dg's own process does not.
+// installed" error even though the coder would launch fine. The user's own
+// interactive shell is where that tool provably resolves - its rc files add the
+// PATH entries dg's process is missing - so resolving the tool there is the
+// check that matches reality; a bare exec.LookPath in dg's own process does not.
 //
 // The path exists so a pane can later exec the resolved binary directly
 // instead of relying on its own PATH (ADR-0021) — tmux runs a pane's
@@ -76,10 +75,17 @@ const shellLookupMarker = "__DEVGETA_SHELL_LOOKUP_RC="
 // defaultShellCommandLookup runs `command -v <name>` in the user's interactive
 // shell and classifies the outcome (see classifyShellLookup).
 //
-//   - $SHELL, falling back to zsh, so it matches the login shell a pane runs.
-//   - -i makes the shell source ~/.zshrc (where devgeta.zsh defines cc/oc);
-//     ~/.zshenv (PATH repair) is sourced regardless of -i. Together this mirrors
-//     an interactive pane's view of both PATH and aliases.
+//   - $SHELL, falling back to zsh, so it matches the shell the user's own
+//     commands run in.
+//   - -i makes the shell read its interactive rc file (~/.zshrc, ~/.bashrc),
+//     which is where a user's PATH additions and their own aliases and functions
+//     live. Both matter: the PATH repair is what lets this probe see a tool dg's
+//     own truncated PATH cannot, and a user-defined name for the tool exists
+//     nowhere else - `command -v` reports one, and a non-path answer is what
+//     selects the pane's interactive fallback recipe (ADR-0021 part 3). It is
+//     NOT about devgeta's own cc/oc alias: nothing devgeta launches has named
+//     that since ADR-0021's 2026-08-07 amendment, and an alias answer is not
+//     path-shaped anyway (see lastPathLine).
 //   - name is passed as a positional argument ($1), never interpolated into the
 //     script string, so it can't be interpreted as shell syntax.
 //   - stdin is /dev/null so an interactive shell can never block on the tty;

@@ -132,8 +132,16 @@ drops you at a shell prompt in that pane; a bare exec'd command would close the
 pane, and the last pane closing takes the window with it. Both verified.
 
 So the pane command ends in `; exec <shell>` — verified to leave the window alive
-after the command exits. Today's behavior is preserved exactly; nobody loses a
-window because they quit their coder.
+after the command exits. The property this part exists for is preserved: quitting
+your coder still drops you at a shell in that pane, and nobody loses a window.
+
+One difference is **not** preserved, and it is accepted rather than fixed here:
+that shell is **non-login**, where tmux's own pane shell (an empty
+`default-command`) is a login shell. Both recipes are affected — `exec '<shell>'`
+and `<shell> -ic '…; exec '<shell>' -i'` — so a pane no longer reads
+`~/.zprofile` or `~/.profile`. See the Negative consequence "the pane's shell is
+no longer a login shell" for what that costs and why `-l` is not being added
+today.
 
 **The trailing `exec` must run in the same shell that ran the pane's command, not
 after a nested one.** This is not a stylistic choice — it decides whether a
@@ -626,6 +634,48 @@ but a reader grepping for `ReviewCommand` should look for those two instead.
   the command to run**, not with a fixed sleep. A 3-second sleep produced a false
   "the `cd` was lost" reading during verification, because `.zshrc` had not
   finished yet.
+- **The pane's shell is no longer a login shell.** Accepted deliberately, and it
+  is the one respect in which part 2 does not preserve today's behavior. tmux
+  with an empty `default-command` starts a pane's shell as a **login** shell;
+  both recipes here are non-login — `exec '<shell>'` (no `-l`) and
+  `<shell> -ic '…; exec '<shell>' -i'` (`-i`, not `-il`). So the shell you land
+  in after quitting the coder, and the shell a `--pane` value runs in, no longer
+  read `~/.zprofile` (macOS `path_helper`) or `~/.profile`.
+
+  This bites hardest on the supported Debian/Ubuntu platform, where `~/.profile`
+  — not `~/.bashrc` — is what puts `~/.local/bin` on `PATH`. A `--pane` value
+  that used to be typed into the pane's login **and** interactive shell now runs
+  under `-ic` without that entry, so a bootstrap command calling a tool installed
+  in `~/.local/bin` can fail in a pane where it used to work. devgeta's own
+  launches are unaffected when the probe resolved a path (they exec an absolute
+  path and need no `PATH` at all); the exposure is `--pane` values and the
+  no-path fallback.
+
+  **Adding `-l` is the obvious option and is deliberately NOT taken here.** It is
+  a separate decision with its own risks — a login shell re-runs profile files
+  that may print, prompt, or `exec` something else, and it lengthens an already
+  ~23-second interactive startup — and the maintainer has not made it. Recorded
+  as the option if this is ever revisited.
+
+  Note while reading the recipes: the trailing `exec` carries `-i` in the
+  interactive recipe and no flag in the exec recipe, which looks like an
+  inconsistency and is not load-bearing either way. A shell exec'd with **no
+  operands** onto the pane's tty is interactive regardless, by the POSIX rule
+  every supported shell follows. Measured (2026-08-07, macOS, pty allocated with
+  `script`, reading `$-` in the exec'd shell):
+
+  | Form                        | `$-` contains `i` |
+  | --------------------------- | ----------------- |
+  | `sh -c 'exec /bin/zsh'`     | yes               |
+  | `sh -c 'exec /bin/zsh -i'`  | yes               |
+  | `sh -c 'exec /bin/bash'`    | yes               |
+  | `sh -c 'exec /bin/bash -i'` | yes               |
+
+  So the `-i` in the interactive recipe is explicit rather than required; it is
+  there because that is the exact form measured in part 2's directory table,
+  while the exec recipe was measured without it. Each ships as it was verified —
+  that is the reason for the difference, not a distinction between the two cases.
+
 - **Repair still cannot carry a long command.** It sends into a live pane by
   nature. Bounded by the guard in part 4 rather than fixed; a repair that ever
   needs to carry a prompt needs its own decision.

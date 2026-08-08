@@ -90,13 +90,16 @@ type AICoder interface {
 // selects the interactive fallback, and none of them is an error on its own.
 //
 // It goes through commands.ShellCommandLookupFn, NOT commands.LookPathFn /
-// exec.LookPath, on purpose: a worktree window launches its coder by sending a
-// shell command to an interactive tmux pane, and that pane's PATH (repaired via
-// ~/.zshenv) can differ from dg's own process PATH when dg ws was started
-// from a non-login pane. Checking with exec.LookPath there gives a false "not
-// installed" for a tool that would actually launch fine. Resolving the tool the
-// same way the pane will is the only check that matches reality. The seam is
-// swappable in tests (see setShellCommandExistsFn), same as LookPathFn.
+// exec.LookPath, on purpose: dg's OWN process PATH is not the PATH the tool has
+// to be reachable from. When `dg ws` is started from a non-login tmux pane, that
+// PATH can be truncated and miss a tool that is installed (~/.local/bin/claude),
+// so exec.LookPath gives a false "not installed" for a coder that would launch
+// fine. A shell probe resolves the tool from the user's own shell, which repairs
+// its PATH the way that shell does it - not via any one file, since the mechanism
+// is shell-specific (zsh's ~/.zshenv has no bash equivalent, which is exactly why
+// ADR-0021 part 3 refuses to lean on it) - and it is what makes a resolved
+// absolute path available at all, so the pane needs no PATH of its own. The seam
+// is swappable in tests (see setShellCommandExistsFn), same as LookPathFn.
 //
 // Only a probe that PROVED the tool absent blocks the caller. An inconclusive
 // probe — the shell didn't answer within the deadline, or couldn't run at

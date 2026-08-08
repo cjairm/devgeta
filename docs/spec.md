@@ -324,7 +324,7 @@ A layout is a named, ordered set of tmux panes built when a worktree's window is
 
 `shell` is the plain option: a window and a shell already sitting in the worktree directory, with no AI coder and no editor started. Nothing is typed into the pane at all (not even an empty line), it has no tool to check for, and it takes no `--prompt` — a prompt needs an AI pane to launch, so `--prompt` with `--layout shell` is the same error `--layout nvim` gives. Repairing a `shell` worktree whose window still exists is a no-op, since the window already has its shell.
 
-Before any tmux window is touched, every pane's underlying tool is checked for installation; a layout referencing a missing tool fails with an actionable error and the worktree is not created. If a multi-pane window fails to build partway through (e.g. a later pane's split fails), the partially built window is killed and the worktree is rolled back — never left half-created.
+Before any tmux window is touched, every pane's underlying tool is checked for installation; a layout referencing a missing tool fails with an actionable error and the worktree is not created. The check probes the tool's **binary** (`claude`, `opencode`, `nvim`) in your interactive shell, not devgeta's `cc`/`oc` alias, so a coder you installed yourself — outside devgeta, with no devgeta alias — now passes the check and launches fine; the flip side is that this check no longer tells you whether devgeta configured the tool, only whether it resolves. If a multi-pane window fails to build partway through (e.g. a later pane's split fails), the partially built window is killed and the worktree is rolled back — never left half-created.
 
 **Worktree scan and layout config keys** (`global_config.yaml`, under `worktree:`):
 

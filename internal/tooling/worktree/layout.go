@@ -332,9 +332,13 @@ func (l Layout) WithPrompt(prompt string) (Layout, error) {
 //
 // An empty or whitespace-only command is an error. `--pane "$BOOTSTRAP"` with an
 // unset variable is a far likelier cause than a deliberate request for an idle
-// shell, and send-keys with an empty string would quietly produce a bare shell
-// pane that looks like the feature half-worked. Validation lives here rather
-// than in the CLI so every present and future caller inherits it.
+// shell, and an empty value would otherwise reach creationCommand as a pane with
+// no command at all - which is the shell pane's own shape, so the pane would come
+// up as a bare shell that looks like the feature half-worked (nothing send-keys a
+// --pane value any more; creationCommand's empty-Command branch and
+// interactivePaneCommand's blank-script guard are the two places it would be
+// swallowed). Validation lives here rather than in the CLI so every present and
+// future caller inherits it.
 //
 // These panes get no install check (check stays nil, which EnsureInstalled
 // skips) on purpose: the command can be a shell builtin, a compound, or a
@@ -494,16 +498,27 @@ const ReviewPrompt = "Review this branch against the default branch."
 // quote with the standard close/escape/reopen trick (quote, backslash,
 // quote, quote) - this closes the
 // current quoted string, appends an escaped literal single quote, then
-// reopens quoting for the rest of s. This is needed because a typed command
-// (reviewCommandFor's output, a pane's Command) is sent to a live tmux pane via
-// send-keys, which types it into an interactive shell exactly as written - unlike
-// a Go exec.Command argument list, there is no shell parser on devgeta's side to
-// lean on.
+// reopens quoting for the rest of s.
+//
+// It is needed because devgeta assembles shell command lines as STRINGS and
+// hands them to a shell whole, so there is no Go-side shell parser to lean on
+// the way an exec.Command argument list has. That is true of both delivery
+// mechanisms:
+//
+//   - A created pane's command, which tmux takes as a single shell-command and
+//     runs through a shell (launch.go's two recipes - the dominant reason this
+//     helper exists since ADR-0021, and the one ADR-0021 discharges as a closed
+//     list of every interpolated value).
+//   - A typed command sent to a live tmux pane with send-keys, which lands in an
+//     interactive shell exactly as written (ADR-0021 part 4's three paths, plus
+//     cdCommand's `cd <path>`).
 //
 // There is no existing shell-quoting helper in this codebase (internal/ and
-// pkg/ have no shellescape/shellquote hits) and this is the only call site,
-// so this stays a few lines here rather than pulling in a library - see
-// CLAUDE.md's "prefer existing over new."
+// pkg/ have no shellescape/shellquote hits), so this stays a few lines here
+// rather than pulling in a library - see CLAUDE.md's "prefer existing over
+// new." It is no longer a single call site: there are six, in four functions
+// (paneLaunch.render x2, execPaneCommand, interactivePaneCommand x2,
+// cdCommand).
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
