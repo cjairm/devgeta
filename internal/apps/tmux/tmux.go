@@ -684,9 +684,14 @@ func (t *Tmux) KillWindow(name string) error {
 
 // KillPane closes a specific pane by its tmux pane_id (e.g. "%12"). Pane ids
 // are unique server-wide, so no window or session qualification is needed -
-// the same property ActivePaneID and SelectPane already rely on. Used to
-// roll back a review launch that failed after splitting a new pane, without
-// touching the window or session that pane lived in.
+// the same property ActivePaneID and SelectPane already rely on. Killing one
+// pane leaves the window and session it lived in alone.
+//
+// It has no caller today. It was written to roll back a review launch that
+// failed after splitting a new pane, and that rollback no longer exists: the
+// pane's command is now an argument of the split that creates the pane, so
+// there is no second step left to fail after a pane exists (ADR-0020, and
+// launchReviewInLiveWindow's doc comment).
 func (t *Tmux) KillPane(paneID string) error {
 	return t.ExecuteCommand("kill-pane", "-t", paneID)
 }

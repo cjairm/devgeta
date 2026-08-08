@@ -12,9 +12,10 @@
 //
 //   - Pane.Command (layout.go) is the form TYPED into a live interactive shell -
 //     "CLAUDE_CODE_NO_FLICKER=1 claude", "opencode --prompt '...'", "nvim", or a
-//     raw --pane value. The repair path and `dg wt move`'s retarget still send
-//     exactly that with send-keys, because those panes already exist (ADR-0020
-//     part 4). It names the BINARY, not the cc/oc alias: devgeta.zsh's alias is
+//     raw --pane value. Exactly two paths still send it with send-keys, and both
+//     write into a pane that already exists: ensureWindow's repair branch, and
+//     launchReviewInLiveWindow's idle-shell reuse (ADR-0020 part 4). No create
+//     path types anything. It names the BINARY, not the cc/oc alias: devgeta.zsh's alias is
 //     for the user to type, and a send-keys path that relied on it would launch
 //     something the preflight probe never checked (ADR-0020's 2026-08-07
 //     amendment).
@@ -272,9 +273,14 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 
 // creationCommand returns the shell-command tmux should run as this pane's
 // process when devgeta CREATES the pane, using shell (which must come from
-// resolveShell). It is the counterpart of Pane.Command, never a replacement for
-// it: Command stays the form TYPED into a pane that already exists (the repair
-// path, `dg wt move`'s retarget - ADR-0020 part 4).
+// resolveShell). Every create path builds a pane's command through here and
+// hands it to the tmux call that brings the pane into existence -
+// CreateWindow / CreateWindowInSession / CreateSessionWithWindow for pane 0,
+// SplitWindow for every pane after it.
+//
+// It is the counterpart of Pane.Command, never a replacement for it: Command
+// stays the form TYPED into a pane that already exists (ensureWindow's repair
+// branch, launchReviewInLiveWindow's idle-shell reuse - ADR-0020 part 4).
 //
 // Three kinds of pane, decided by what the pane's constructor put on it rather
 // than by inspecting its Command string:

@@ -2508,13 +2508,13 @@ func TestCreateAt(t *testing.T) {
 				"",
 				nil,
 			), // ensureWindow list-windows (no window)
+			commands.ExecCommandResult("", "", nil), // show-options (paneShell)
 			commands.ExecCommandResult(
 				"",
 				"no such session",
 				os.ErrNotExist,
 			), // has-session → missing
-			commands.ExecCommandResult("", "", nil), // new-session
-			commands.ExecCommandResult("", "", nil), // send-keys
+			commands.ExecCommandResult("", "", nil), // new-session (pane 0 + its command)
 		)
 
 		wm := &WorktreeManager{
@@ -2530,24 +2530,34 @@ func TestCreateAt(t *testing.T) {
 		repoSlug := filepath.Base(repoRoot)
 		windowName := GetWindowName(repoSlug, "feat")
 		sawNewSession := false
-		sawSendKeys := false
+		// The pane-0 command now RIDES new-session rather than following it as a
+		// send-keys: new-session creates the session's first window's first pane,
+		// so it is a pane-creating call and carries that pane's command
+		// (ADR-0020). This is the first-worktree-for-a-repo path, the one a user
+		// hits most, which is why it is asserted here and not just for
+		// new-window.
+		sawPaneCommand := false
 		for _, call := range mockTmuxBase.ExecCommandCalls {
 			joined := strings.Join(call.Args, " ")
 			if strings.HasPrefix(joined, "new-session") &&
 				strings.Contains(joined, "-s "+TmuxSessionName(repoSlug)) &&
 				strings.Contains(joined, "-n "+windowName) {
 				sawNewSession = true
+				if strings.Contains(joined, "stub-cmd") {
+					sawPaneCommand = true
+				}
 			}
-			if strings.HasPrefix(joined, "send-keys") && strings.Contains(joined, "stub-cmd") {
-				sawSendKeys = true
+			if strings.HasPrefix(joined, "send-keys") {
+				t.Errorf("a create path must type nothing into a pane, calls: %+v",
+					mockTmuxBase.ExecCommandCalls)
 			}
 		}
 		if !sawNewSession {
 			t.Errorf("expected new-session for %q with window %q, calls: %+v",
 				repoSlug, windowName, mockTmuxBase.ExecCommandCalls)
 		}
-		if !sawSendKeys {
-			t.Errorf("expected AI coder command sent to the window, calls: %+v",
+		if !sawPaneCommand {
+			t.Errorf("expected new-session to carry the pane's command, calls: %+v",
 				mockTmuxBase.ExecCommandCalls)
 		}
 
@@ -2608,11 +2618,11 @@ func TestCreateAt(t *testing.T) {
 					nil,
 				), // worktreeStateIn: list-windows (no window)
 				commands.ExecCommandResult("", "", nil), // ensureWindow: list-windows (no window)
+				commands.ExecCommandResult("", "", nil), // show-options (paneShell)
 				commands.ExecCommandResult(
 					"", "no such session", os.ErrNotExist,
 				), // has-session -> missing
-				commands.ExecCommandResult("", "", nil), // new-session
-				commands.ExecCommandResult("", "", nil), // send-keys
+				commands.ExecCommandResult("", "", nil), // new-session (pane 0 + its command)
 			)
 
 			wm := &WorktreeManager{

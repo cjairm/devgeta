@@ -35,11 +35,13 @@ const splitVertical = "vertical"
 // for the first pane in a layout (there is nothing to split from yet) and
 // "vertical" or "horizontal" for every subsequent pane.
 //
-// Command is the form TYPED into a pane that ALREADY EXISTS - the repair path's
-// send-keys, `dg wt move`'s retarget (ADR-0020 part 4). A pane devgeta CREATES
-// gets a different rendering, built by creationCommand (launch.go) from the
-// fields below. Two representations, both intentional; neither is a substitute
-// for the other.
+// Command is the form TYPED into a pane that ALREADY EXISTS, which since
+// ADR-0020 is exactly two paths: ensureWindow's repair branch, and
+// launchReviewInLiveWindow's idle-shell reuse (ADR-0020 part 4). A pane devgeta
+// CREATES never receives it - it gets a different rendering, built by
+// creationCommand (launch.go) from the fields below and exec'd as the pane's
+// process. Two representations, both intentional; neither is a substitute for
+// the other.
 //
 // check, prompt and launch are the pane's three behaviors, and they are
 // unexported for the same reason: the exported shape of a Pane is just what tmux
@@ -172,9 +174,9 @@ func nvimExecLaunch(binaryPath, _ string) paneLaunch { return binaryLaunch(binar
 // already started in the worktree directory. All four of Pane's behaviors are
 // zero on purpose, and each says something:
 //
-//   - Command is empty, so no command is ever typed into the pane. The window
-//     builder skips send-keys entirely for a pane like this (see
-//     buildWindowPanes) rather than sending a bare Enter.
+//   - Command is empty, so there is nothing for ensureWindow's repair branch to
+//     type into a live window either - repairing a shell window is a no-op
+//     rather than a bare Enter pressed into whatever pane is active.
 //   - check is nil because there is nothing to install. A shell is the one
 //     "tool" every layout already depends on to run the others.
 //   - prompt is nil, so `--prompt` correctly rejects a shell-only layout

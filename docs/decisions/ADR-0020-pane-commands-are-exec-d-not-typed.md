@@ -478,6 +478,13 @@ answered here **mechanically instead**: this is every non-test call site of the
 | `ensureWindow` repair (:2112)                           | existing    | part 4 → send-keys |
 | `createWindowWithLayout`'s `sendKeys` (:2159)           | **created** | part 3 → exec      |
 
+The three **created** rows have since been implemented, so they are no longer
+`SendKeys*` call sites at all: `buildWindowFromLayout` and `createWindowWithLayout`
+pass pane 0's command to the window-creating call and `buildWindowPanes` passes
+every later pane's to `SplitWindow`, and `launchReviewInLiveWindow`'s split
+carries the review command. Re-deriving the table from the code today therefore
+yields only the three **existing** rows.
+
 `retargetWindowAfterMove` is the one an earlier draft missed: `dg wt move` sends
 `cd <newPath>` into each idle pane of the moved worktree's window. It is also the
 send-keys path with the **most realistic** shot at the 1024-byte limit, because
