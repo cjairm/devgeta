@@ -19,6 +19,8 @@ Your job is to **find and report** findings. Posting is downstream (`/review-pr`
 
 ## First: read what this branch already settled
 
+**When your launch prompt gives you a journal key and a revision** — reviewing a pull request whose code is not checked out here, for instance — append `--branch <key> --rev <sha>` to every `review-notes` and `review-note` command in this file, including the ones in the recording section at the end and the settle line you print in your report. The key names the journal to read and write; the revision is what a cited path is stamped against. Without them you reconcile against a different branch's settled decisions and file your findings under that branch's name. When the prompt names no key and no revision, run every command exactly as written.
+
 ```bash
 devgeta task review-notes
 ```
@@ -167,6 +169,8 @@ A review that only reports is forgotten when the session ends, and the next run 
 ```bash
 devgeta task review-note --open --at <path:line> --note "<the finding, in one line>"
 ```
+
+The scoped-journal rule under **First: read what this branch already settled** applies to these calls too: given a journal key and a revision, this one and the settle line below both carry `--branch <key> --rev <sha>`.
 
 Each call prints an id (`Noted n4`). Carry that id into the report next to its finding, so whoever answers closes the exact one.
 

@@ -391,12 +391,6 @@ func TestSharedAgentsInheritGlobalBashPolicy(t *testing.T) {
 // asymmetry is invisible in any single file, since each agent reads fine alone
 // and only a check over the set catches one of them missing a section.
 func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
-	agentDir := filepath.Join("..", "..", "..", "configs", "shared", "agents")
-	entries, err := os.ReadDir(agentDir)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", agentDir, err)
-	}
-
 	// Substrings, not whole lines: the surrounding prose differs per agent by
 	// design (each names its own subject), so this pins the contract each must
 	// carry without freezing how it is worded.
@@ -440,22 +434,140 @@ func TestReviewerAgentsReadTheJournalAndCanApprove(t *testing.T) {
 		},
 	}
 
+	forEachReviewerAgent(t, func(t *testing.T, body string) {
+		for _, req := range required {
+			if !strings.Contains(body, req.substr) {
+				t.Errorf("missing %q — %s", req.substr, req.why)
+			}
+		}
+	})
+}
+
+// TestReviewerAgentsScopeTheJournalWhenTargeted guards the clause that lets a
+// reviewer review something other than the checkout — a pull request whose head
+// is not on any local branch. The journal is keyed by branch name (ADR-0012
+// §5), so with unscoped commands the reviewer reads and writes the CHECKOUT's
+// journal: it reconciles against a different branch's settled decisions and
+// files this review's findings under that branch's name. A launch prompt cannot
+// fix that on its own — it contradicts the agent's own written instructions,
+// and the file wins.
+//
+// The clause has to reach EVERY journal call in the file, not just the read at
+// the top. Scoping some calls and not others is worse than scoping none,
+// because the round's findings then split across two journals and neither one
+// is the record.
+func TestReviewerAgentsScopeTheJournalWhenTargeted(t *testing.T) {
+	// The flag pair, quoted exactly as the agent files render it, so the check
+	// fails on a paraphrase that an agent could not copy verbatim.
+	const scopedFlags = "`--branch <key> --rev <sha>`"
+
+	// The clause's opening words and the fenced command it has to precede. Both
+	// are matched verbatim: the ordering check below is only meaningful if it
+	// finds the real clause and the real invocation, not a paraphrase.
+	const (
+		clauseOpening   = "**When your launch prompt gives you a journal key and a revision**"
+		fencedFirstRead = "```bash\ndevgeta task review-notes"
+	)
+
+	required := []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: clauseOpening,
+			why: "nothing tells the agent when to scope its journal calls, so a review " +
+				"of a target that is not the checkout lands in the checkout's journal",
+		},
+		{
+			substr: scopedFlags,
+			why:    "the agent is never told which flags carry the key and the revision",
+		},
+		{
+			substr: "every `review-notes` and `review-note` command in this file",
+			why: "the clause does not plainly reach every journal call, so the agent " +
+				"scopes some and not others and the round's findings split across " +
+				"two journals",
+		},
+		{
+			substr: "run every command exactly as written",
+			why: "the unprompted run — the ordinary branch review — is left ambiguous, " +
+				"which invites the agent to invent a key or a revision it was not given",
+		},
+	}
+
+	forEachReviewerAgent(t, func(t *testing.T, body string) {
+		for _, req := range required {
+			if !strings.Contains(body, req.substr) {
+				t.Errorf("missing %q — %s", req.substr, req.why)
+			}
+		}
+
+		// An agent acts on a file as it reads it, top to bottom, so the clause
+		// only governs the first journal read if it is above it. Presence alone
+		// is not enough — a clause sitting below the fence is read too late.
+		clauseAt := strings.Index(body, clauseOpening)
+		readAt := strings.Index(body, fencedFirstRead)
+		if readAt < 0 {
+			t.Fatalf(
+				"no fenced %q command — the first journal read has no home, so the "+
+					"scoped-journal clause has nothing to govern",
+				"devgeta task review-notes",
+			)
+		}
+		if clauseAt > readAt {
+			t.Errorf(
+				"the scoped-journal clause starting %q sits BELOW the first fenced "+
+					"`devgeta task review-notes` command; an agent that executes as it "+
+					"reads runs that unscoped read before it ever reaches the rule, so a "+
+					"review targeting another branch reads the CHECKOUT's journal instead "+
+					"of the target's — move the clause back above the fenced block",
+				clauseOpening,
+			)
+		}
+
+		// The journal WRITE commands sit ~150 lines below the clause, at the end
+		// of a long report. Restating the rule where they are is what stops a
+		// run from scoping its read and leaving its writes unscoped.
+		const recordHeading = "## Record the blocking"
+		i := strings.Index(body, recordHeading)
+		if i < 0 {
+			t.Fatalf("no %q section — the journal write commands have no home", recordHeading)
+		}
+		if !strings.Contains(body[i:], scopedFlags) {
+			t.Errorf(
+				"the %q section never repeats %s, so an agent that scoped its journal "+
+					"read can still write its findings to the checkout's journal",
+				recordHeading, scopedFlags,
+			)
+		}
+	})
+}
+
+// forEachReviewerAgent runs fn as a subtest for every
+// configs/shared/agents/*-reviewer.md file, handing it the file's full body.
+// The reviewer-agent guards all assert over the SET rather than over one file:
+// each agent reads fine alone, and only a check across all of them catches the
+// one that dropped a shared contract.
+func forEachReviewerAgent(t *testing.T, fn func(t *testing.T, body string)) {
+	t.Helper()
+	agentDir := filepath.Join("..", "..", "..", "configs", "shared", "agents")
+	entries, err := os.ReadDir(agentDir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", agentDir, err)
+	}
+
 	checked := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), "-reviewer.md") {
 			continue
 		}
+		data, err := os.ReadFile(filepath.Join(agentDir, e.Name()))
+		if err != nil {
+			t.Fatalf("failed to read agent %s: %v", e.Name(), err)
+		}
+		body := string(data)
 		t.Run(e.Name(), func(t *testing.T) {
-			data, err := os.ReadFile(filepath.Join(agentDir, e.Name()))
-			if err != nil {
-				t.Fatalf("failed to read agent: %v", err)
-			}
-			body := string(data)
-			for _, req := range required {
-				if !strings.Contains(body, req.substr) {
-					t.Errorf("missing %q — %s", req.substr, req.why)
-				}
-			}
+			fn(t, body)
 		})
 		checked++
 	}
