@@ -109,7 +109,7 @@ func TestPRReviewTarget(t *testing.T) {
 		// Nothing in the whole run may touch the checkout: no branch is
 		// created or moved, nothing is checked out, no stash. A review loop
 		// runs unattended, so the user's working tree must be exactly as they
-		// left it (ADR-0021 §1).
+		// left it (ADR-0022 §1).
 		for _, call := range gitBase.ExecCommandCalls {
 			for _, arg := range call.Args {
 				switch arg {
@@ -124,7 +124,7 @@ func TestPRReviewTarget(t *testing.T) {
 		// A fork PR differs only in fields this command deliberately does not
 		// read (headRefName, the head repository's owner): refs/pull/<n>/head
 		// is served by the UPSTREAM repo for forks too, which is the whole
-		// reason ADR-0021 chose it over the fork's own branch ref. So the
+		// reason ADR-0022 chose it over the fork's own branch ref. So the
 		// contract to pin is that the resolution is byte-identical to a
 		// same-repo PR — no fork remote, no second URL, no fork-only branch.
 		pm, ghBase, gitBase := newPRTargetSetup()
@@ -378,7 +378,7 @@ func TestPRReviewTarget(t *testing.T) {
 
 	t.Run("asks gh only for the base branch", func(t *testing.T) {
 		// headRefName and the head repository's owner are the fork-remote
-		// path ADR-0021 rejected; requesting them would be data with nowhere
+		// path ADR-0022 rejected; requesting them would be data with nowhere
 		// to go.
 		pm, ghBase, gitBase := newPRTargetSetup()
 		scriptTargetGh(ghBase, "octocat/hello", "main")

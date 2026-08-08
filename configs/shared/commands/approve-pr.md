@@ -64,6 +64,8 @@ So triage each live thread into one of two buckets:
 - **Blocker** — the code is wrong, unsafe, or loses data. Do not approve.
 - **Non-blocking** — a suggestion, nit, style preference, or optional improvement. Approve, and name it.
 
+**Who raised it never enters the triage.** A blocker is a blocker whether it came from you, a reviewer agent, Copilot, or a human — and whether it was raised once or three times. "Someone else already flagged this" is a reason not to repeat the comment; it is never a reason to downgrade it to non-blocking. Sorting by who spoke instead of by what's wrong is how a live blocker gets approved over.
+
 Approving over live non-blocking comments takes one thing beyond your own read: **a reviewer agent verdict of `APPROVE` already in this conversation** — from a `code-reviewer`/`document-reviewer`/`skill-reviewer` run, or another model's review sitting in context. That verdict is the judgment that the code has no blockers; it is what you are standing on when you say so on the PR. Without it you have no such basis — say the PR needs `/review-pr` first rather than approving over comments you haven't independently judged.
 
 Then confirm the resolved ones were actually fixed, not just replied to and forgotten:
@@ -88,6 +90,20 @@ A failing or errored check is often flaky, an unrelated job, or otherwise still 
 
 **Approve when both gates hold:** the PR is open, and nothing live is a blocker — a thread's concern is either handled (whether or not it's marked resolved) or non-blocking. Failing checks are noted, not blocking.
 
+Three cases cover almost every PR that reaches here:
+
+**1. An unresolved blocker someone else already raised → do NOT approve.** It doesn't matter that the point isn't yours, or that it's already sitting in a thread nobody acted on. Post one comment that says the rest looks good, names the outstanding item, and commits to approving once it's addressed — then stop:
+
+```bash
+devgeta task comment-pr --body "Everything looks good on my side except one thing: <the blocker in one line> — already flagged by <who>. I'll approve once that's addressed."
+```
+
+**2. A non-blocking comment or suggestion someone else left → LGWC: approve.** Approve and name who left it, so the author knows whose feedback to read. Say it's worth doing — you are passing it along, not dismissing it.
+
+**3. Failing checks with no code blocker → LGWC: approve, and name the failing check.** A red check is a signal for the user to judge, not a gate (see step 3). Name the specific job so the author can go look; don't withhold approval over it.
+
+To approve (cases 2 and 3, and every PR with nothing outstanding at all):
+
 ```bash
 devgeta task approve-pr --body "<body picked below>"
 ```
@@ -99,6 +115,7 @@ devgeta task approve-pr --body "<body picked below>"
 | No feedback was ever raised (no threads, no prior review notes) | `LGTM.` — plain, nothing more                                                                             |
 | Feedback was raised and addressed                               | `LGTM. Thanks for working on the suggestions 🔥` — vary the phrasing, keep it one line                    |
 | Comments are still open but none of them block                  | `LGWC; <who> left some comments worth addressing — I don't see anything blocking.` — **name the authors** |
+| Checks are red but nothing in the code blocks                   | `LGWC; <check name> is failing — worth a look, but nothing blocking in the code.` — **name the check**    |
 
 Name the people (and bots) whose comments are still open — the `review-threads`
 output gives you each commenter's login. Naming them is the whole point of the
@@ -112,12 +129,12 @@ LGWC; Copilot and @maria left a few suggestions — worth a look, but nothing bl
 
 Keep it to one line, and never dress a real blocker up as a comment.
 
-Don't paste the gate summary or per-thread detail into the PR — that belongs in the report to the user, not the review. If checks are red, mention it in one short clause (e.g. "LGTM — CI has a failing job worth a look") rather than withholding approval.
+Don't paste the gate summary or per-thread detail into the PR — that belongs in the report to the user, not the review. If checks are red, name the failing job in one short clause (e.g. `LGWC; the lint job is failing — worth a look, but nothing blocking in the code.`) rather than withholding approval.
 
-**If a real gate blocks** (a live concern that is a blocker, or a resolution that doesn't hold up), do **not** approve. Report it to the user; the author can clear it with `/address-feedback`. If a note on the PR is warranted, post one terse comment naming the concern itself — never "please resolve the threads":
+**If a real gate blocks** (a live concern that is a blocker, or a resolution that doesn't hold up), do **not** approve — whoever raised it. Report it to the user; the author can clear it with `/address-feedback`. Post one terse comment naming the concern itself — never "please resolve the threads" — and say you'll approve once it's addressed, so the author knows nothing else is outstanding:
 
 ```bash
-devgeta task comment-pr --body "<one short line naming what's left>"
+devgeta task comment-pr --body "Everything looks good on my side except one thing: <what's left in one line>. I'll approve once that's addressed."
 ```
 
 ## Output
@@ -139,7 +156,7 @@ Return only this terse summary to the user — keep it out of the PR itself:
 
 - This command never edits code and never runs a full review — that's `/review-pr`.
 - Post the verdict yourself, without asking — see "Authority to post" above. Reporting the decision back and waiting for a go-ahead leaves the PR exactly where it started.
-- Severity decides, not activity. A thread blocks when its concern is a blocker and still live in the code. A thread whose concern was fixed is not a blocker, and neither is an untouched suggestion or nit — approve with `LGWC` and name who left it. Resolving threads is the author's bookkeeping, not an approval gate.
+- Severity decides, not activity, and not authorship. A thread blocks when its concern is a blocker and still live in the code — no matter who raised it or how many times. A thread whose concern was fixed is not a blocker, and neither is an untouched suggestion or nit — approve with `LGWC` and name who left it. Resolving threads is the author's bookkeeping, not an approval gate.
 - Approving over live comments rests on a reviewer agent's `APPROVE` verdict in context. Without one, don't approve over them — point at `/review-pr` instead.
 - Failing CI is flagged, not a blocker — the user decides what to do about it.
 - Both the approval and any comment stay terse; the detail goes to the user, not the PR.

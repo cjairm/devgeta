@@ -17,7 +17,9 @@ This guide explains how to create new releases of devgeta using our automated Gi
 Before creating a release, ensure:
 
 - All intended changes are merged to `main`
-- Tests are passing: `go test ./...`
+- The **full** suite is passing: `go test ./...` — this is the one place the whole
+  suite is mandatory (day-to-day work runs targeted tests, so this run is the only
+  one that sees the entire tree). Never tag on a partial run.
 - Build succeeds locally: `go build -o devgeta main.go`
 - Documentation is up to date
 
@@ -68,6 +70,14 @@ tag with no message at all — which is exactly how a release page ends up
 empty. Don't push the commits first either: the squash counts commits ahead of
 `origin/main`, so after a push that count is 0 and the squash is skipped with
 no error.
+
+Both failures have already happened. Pushing before tagging is how **v1.9.0
+landed on a bare merge commit with 22 loose commits in `main`** — the tool
+reported "no unpushed commits", skipped the squash, and tagged HEAD as-is, with
+no error and no warning. A bare `git tag` is how a release page publishes empty;
+deleting the tag to retry does not delete the release, so it lingers as a
+permanent draft (see [Workflow Fails](#workflow-fails) for the correct retry
+order: delete the release first, then the tag).
 
 ### 5. Monitor the Release Workflow
 
@@ -227,7 +237,7 @@ If users report download failures:
 ### Pre-Release Checklist
 
 - [ ] All changes merged to `main`
-- [ ] Tests passing: `go test ./...`
+- [ ] Full suite passing: `go test ./...` (not a targeted subset)
 - [ ] Local build succeeds: `go build -o devgeta main.go`
 - [ ] Version number determined (semantic versioning)
 - [ ] CHANGELOG.md updated (if applicable)

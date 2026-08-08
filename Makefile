@@ -40,9 +40,11 @@ clean:
 	rm -f devgeta-darwin-arm64 devgeta-darwin-amd64 devgeta-linux-amd64
 	@echo "✓ Clean complete"
 
-# Run tests
+# Run the full test suite. This is the release gate (CLAUDE.md §9) — while
+# implementing, run the changed package plus its direct importers instead.
+# CLAUDE.md §6 "Which tests to run" has the go list query that produces that list.
 test:
-	@echo "Running tests..."
+	@echo "Running full test suite..."
 	go test -p 4 ./...
 	@echo "✓ Tests passed"
 
@@ -69,6 +71,6 @@ help:
 	@echo "  build-linux-amd64  - Build for Linux AMD64"
 	@echo "  build              - Build for current platform"
 	@echo "  clean              - Remove build artifacts"
-	@echo "  test               - Run test suite"
+	@echo "  test               - Run full test suite (release gate; use targeted go test while working)"
 	@echo "  lint               - Run code quality checks"
 	@echo "  help               - Show this help message"

@@ -3,7 +3,7 @@
 **Status:** ACCEPTED
 **Date:** 2026-08-06
 **Deciders:** cjairm
-**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)
+**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) (narrows the "Auto-retry a failed reviewer" alternative below), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)
 
 ---
 
@@ -320,6 +320,16 @@ Rejected for v1. A retry hides the difference between a flaky provider and a
 misconfigured one, and Step 0's probing found OpenCode's error text is generic
 (`"Unexpected server error"`) even for an unusable model — so a retry loop would have
 nothing reliable to decide on. Failures surface by name instead.
+
+**Revisited 2026-08-07 and narrowed, not reversed — see
+[ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md).** A real round came
+back as a bare `NO VERDICT` because a headless run auto-rejects a permission it cannot ask
+about, writes that only to stderr, and exits 0 with the agent loop dead and zero text events.
+`review-run` now retries **one** attempt, and only when the attempt produced **no report at
+all** — a structural fact of the event stream, so no error text is matched and this
+rejection's reasoning still stands for every failure that did produce output. A failed retry
+never overwrites the first attempt's outcome, so a misconfigured provider is still surfaced
+by name. The round layer is untouched: the loop still never re-runs a round.
 
 ### Parallel reviewers
 

@@ -122,6 +122,39 @@ The formal interface all apps implement:
 
 ---
 
+### [Agent Permission Matching](agent-permission-matching.md) — What the permission patterns actually match
+
+How the two AI agents resolve permission patterns at runtime, and where that
+differs from how they read:
+
+- `~/`-anchored patterns never fire on OpenCode — paths arrive project-relative, so 26 shipped deny rules are inert
+- `*` crosses `/`, so depth-based narrowing does not work and `dir/*` grants a whole subtree
+- The two agents' conflict resolution differs (first-match-by-action vs. longest-pattern-wins), so a carve-out expressible in one is impossible in the other
+- Why making the dead rules fire would re-break agent memory
+- How to probe any of this against the real binary instead of guessing
+
+**When to read:** Before adding, re-anchoring, or relying on any rule in `settings.json.tmpl` or `opencode.json.tmpl` — the parity test compares pattern strings and cannot tell you whether a pattern matches anything.
+
+**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
+
+---
+
+### [Agent Sync](agent-sync.md) — Which file holds which concern, for both agents
+
+The detail behind CLAUDE.md's one-line rule that a policy change goes into both
+agents:
+
+- The concern-by-concern table: permissions, formatting, redirects, activity state, config protection, scratch grant
+- What `permissions_test.go` enforces — and the trap that it compares pattern strings, not what they match
+- The deliberate differences: agent frontmatter is OpenCode-only, command frontmatter is inert in both, the lint feedback loop is Claude-only, `statusLine` has no OpenCode equivalent
+- Why a command that posts outward must grant its own authorization in prose
+
+**When to read:** Before changing anything under `configs/claude/` or `configs/opencode/`.
+
+**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
+
+---
+
 ### [Releasing](releasing.md) — Version management and GitHub Actions
 
 Complete release workflow:
@@ -235,4 +268,6 @@ If you're adding new guides:
 5. **Link to related guides** — Help developers navigate
 6. **Add to this README** — Update the index and quick start
 
-See [TEMPLATE.md](./TEMPLATE.md) for structure.
+There is no guide template — copy the structure of an existing guide instead;
+[testing-patterns.md](testing-patterns.md) is a good model for a long one,
+[error-handling.md](error-handling.md) for a short one.

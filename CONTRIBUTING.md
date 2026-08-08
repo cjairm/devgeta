@@ -58,7 +58,7 @@ make build-darwin-amd64    # macOS Intel
 make build-linux-amd64     # Linux/Debian/Ubuntu
 
 # Development
-make test                  # Run all tests
+make test                  # Full suite (~5.5 min) — release gate, not every change
 make lint                  # Format & analyze code
 make clean                 # Remove build artifacts
 
@@ -92,22 +92,50 @@ GOOS=linux GOARCH=amd64 go build -o devgeta-linux-amd64
 
 ## Testing
 
-### Run All Tests
+### Run the Tests for What You Changed
+
+This is the default. The full suite is ~2,500 tests in ~80 packages and takes
+about five and a half minutes cold — run the package you touched plus the
+packages that import it, and save the full run for the release gate.
 
 ```bash
-# Run all tests in the project
-go test ./...
-
-# Run tests with coverage report
-go test -cover ./...
-
-# Run specific package tests
+# Specific package
 go test ./internal/apps/neovim/
 
-# Verbose output (see each test)
-go test -v ./...
+# One test, while iterating
+go test -run TestInstall ./internal/apps/neovim/
 
-# Run with race detector (catch concurrency bugs)
+# Verbose output (see each test)
+go test -v ./internal/apps/neovim/
+
+# Which in-repo packages import what you touched (direct importers — don't use
+# .Deps, it is transitive and returns the slow root package for almost everything)
+go list -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}{{range .TestImports}} {{.}}{{end}}' ./... \
+  | grep 'devgeta/internal/apps/neovim' | cut -d' ' -f1
+# → internal/apps/neovim, internal/apps/registry, internal/tooling/terminal
+
+# Changed package + those importers — the pre-commit run
+go test ./internal/apps/neovim/ ./internal/apps/registry/ ./internal/tooling/terminal/
+```
+
+Include the root package (`go test .`) only when you changed something under
+`configs/` or a hook script — its tests cover only those, and they take 4.8
+minutes.
+
+### Run the Full Suite
+
+Required before tagging a release (see [CLAUDE.md §9](CLAUDE.md)), and worth it
+when a change touches something most of the tree depends on (`pkg/paths`,
+`internal/commands`, `internal/testutil`, embedded files under `configs/`).
+
+```bash
+# Full suite
+go test ./...
+
+# With coverage report
+go test -cover ./...
+
+# With race detector (catch concurrency bugs)
 go test -race ./...
 ```
 
@@ -174,7 +202,7 @@ Never commit before the feature is confirmed working end-to-end — tests writte
 
 - [ ] Feature verified manually (run the binary, exercise the golden path)
 - [ ] Tests added or updated — ask _"does this change need tests?"_ and write them before committing
-- [ ] `go test ./...` passes
+- [ ] Tests pass for the packages you changed and the packages that import them (the full `go test ./...` is the release gate, not a per-PR requirement)
 - [ ] Code builds without errors: `make build`
 - [ ] Lint passes: `make lint`
 - [ ] Commit messages are clear and descriptive

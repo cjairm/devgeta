@@ -271,7 +271,7 @@ func TestVerdictPathlessEntryNeverStale(t *testing.T) {
 	}
 }
 
-// --- revision mode (ADR-0021 §4) ---
+// --- revision mode (ADR-0022 §4) ---
 //
 // A pull request is reviewed from whatever branch the human happens to have
 // checked out, which usually does not contain the PR's files at all. Every

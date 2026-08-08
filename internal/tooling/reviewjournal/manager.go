@@ -36,7 +36,7 @@ type Manager struct {
 	Git   *git.Git
 	NowFn func() time.Time
 	// Rev pins the revision every stamp and freshness check resolves against
-	// (ADR-0021 §4). Empty — the default — means the working tree, which is
+	// (ADR-0022 §4). Empty — the default — means the working tree, which is
 	// what a branch review wants: the reviewer is looking at the checkout,
 	// uncommitted edits included.
 	//
@@ -55,7 +55,7 @@ func New(g *git.Git) *Manager {
 // NewAtRev builds a Manager that stamps and judges freshness at rev instead of
 // the working tree — for reviewing a commit that is not checked out, such as a
 // pull request's head, where the cited file may be absent from the checkout or
-// hold unrelated content (ADR-0021 §4).
+// hold unrelated content (ADR-0022 §4).
 //
 // A blank rev is the working tree, so this is the single place that decides
 // what "no revision given" means and callers can pass an optional --rev through
@@ -242,7 +242,7 @@ func (m *Manager) citeSource() string {
 // that is Rev itself — the reviewed commit, which is the only honest answer
 // when the checkout is on unrelated work. Rev reaches here already resolved to
 // a SHA (the task layer's verifyRev does that), so what lands in the journal is
-// the immutable commit ADR-0021 is named after and not a ref name that moves.
+// the immutable commit ADR-0022 is named after and not a ref name that moves.
 // Otherwise it is the checkout's HEAD, best-effort: an unborn branch has no
 // HEAD, and the stamp is human context, not the staleness signal.
 func (m *Manager) stampHead(repoDir string, e *Entry) {
@@ -466,7 +466,7 @@ const (
 // review — the next tick of a PR review passes the PR's new head — so stale
 // means "the pull request changed this file since the finding was written",
 // never "your checkout differs from the pull request", which is true of almost
-// every file and would mark the whole journal stale (ADR-0021 §4).
+// every file and would mark the whole journal stale (ADR-0022 §4).
 //
 // A lookup that FAILS also reads stale here, unlike stamp, which returns the
 // error. The asymmetry is deliberate, in the safe direction for each side. On

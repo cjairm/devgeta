@@ -133,7 +133,7 @@ type BaseCommandExecutor interface {
     // ... other methods
 }
 
-// In internal/apps/curl/curl.go
+// In internal/tooling/terminal/dev_tools/curl/curl.go
 type Curl struct {
     Cmd  cmd.Command
     Base cmd.BaseCommandExecutor  // Interface for testability
@@ -550,24 +550,49 @@ This test is only meaningful because `baseapp.Reinstall` skips a "not supported"
 
 ## 🚀 Running Tests
 
-```bash
-# Run all tests
-go test ./...
+**Run the targeted set, not the whole suite.** The suite is ~2,500 tests in ~80
+packages (~5.5 min cold). Day to day, run the package you changed plus the
+packages that import it; the full run is the release gate (CLAUDE.md §9).
 
-# Run specific package
-go test ./internal/apps/curl/
+```bash
+# Run specific subtest
+go test -run TestExecuteCommand/successful_execution ./internal/tooling/terminal/dev_tools/curl/
 
 # Run specific test
-go test -run TestExecuteCommand ./internal/apps/curl/
+go test -run TestExecuteCommand ./internal/tooling/terminal/dev_tools/curl/
 
-# Run specific subtest
-go test -run TestExecuteCommand/successful_execution ./internal/apps/curl/
+# Run specific package
+go test ./internal/tooling/terminal/dev_tools/curl/
+
+# Changed package + its importers — the pre-commit run
+go test ./internal/tooling/terminal/dev_tools/curl/ ./internal/tooling/terminal/
 
 # Verbose output
-go test -v ./internal/apps/curl/
+go test -v ./internal/tooling/terminal/dev_tools/curl/
 
 # With coverage
-go test -cover ./internal/apps/curl/
+go test -cover ./internal/tooling/terminal/dev_tools/curl/
+```
+
+Finding the importers — which in-repo packages import the one you changed:
+
+```bash
+go list -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}{{range .TestImports}} {{.}}{{end}}' ./... \
+  | grep 'devgeta/internal/tooling/terminal/dev_tools/curl' | cut -d' ' -f1
+# → internal/tooling/terminal/dev_tools/curl, internal/tooling/terminal
+```
+
+`.Imports` is direct importers; `.TestImports` catches packages that only pull
+yours into their tests. Don't substitute `.Deps` — it is transitive, so it
+returns the root `main` package for nearly everything, and the root package's
+tests take 4.8 minutes on their own. When the direct list is most of the repo —
+`pkg/paths` has 24 direct importers (71 transitive), and `internal/commands` and
+`internal/testutil` are similar — targeting has stopped paying for itself, so run
+the suite instead.
+
+```bash
+# Full suite — release gate, or a change with repo-wide blast radius
+go test ./...
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```

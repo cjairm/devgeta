@@ -44,6 +44,18 @@ func newRepoSetup(
 	branch string,
 ) (*TaskManager, string, *commands.MockBaseCommand) {
 	t.Helper()
+
+	// The snapshot pointer is inherited from whatever process runs the suite,
+	// and loadJournalForDisplay reads it on every review-notes call. A
+	// reviewer runs its own `go test ./...` from inside a round, where
+	// review-run has set this to that round's snapshot — so without clearing
+	// it here, these tests would display an unrelated external journal
+	// instead of the one they just wrote, and fail. Clearing it in the shared
+	// setup is what keeps a future test from having to remember. The handful
+	// of tests that need a pointer set it with their own t.Setenv after this
+	// call, which wins; both values are restored at cleanup.
+	t.Setenv(ReviewJournalSnapshotEnvVar, "")
+
 	root := t.TempDir()
 	gitDir := filepath.Join(root, ".git")
 	if err := os.MkdirAll(gitDir, 0o755); err != nil {
@@ -203,7 +215,7 @@ func TestReviewNoteOpenThenNotesShowsEntry(t *testing.T) {
 	}
 }
 
-// --- --rev: reviewing code that is not checked out (ADR-0021 §4) ---
+// --- --rev: reviewing code that is not checked out (ADR-0022 §4) ---
 
 // The reviewed file is not in the checkout at all — the ordinary case for a
 // pull request opened from someone else's branch. Without --rev the write is
@@ -267,7 +279,7 @@ func withRevAlias(t *testing.T, tm *TaskManager, ref, sha string) {
 	}
 }
 
-// ADR-0021's whole premise is that a review targets an IMMUTABLE commit, so
+// ADR-0022's whole premise is that a review targets an IMMUTABLE commit, so
 // what the journal records has to be one. A ref name written down verbatim
 // describes a different commit after the next fetch, and two ticks of the same
 // review would stamp the same text for two different states, leaving their
@@ -337,7 +349,7 @@ func TestReviewNoteOpenAtRevRejectsPathMissingAtThatRevision(t *testing.T) {
 }
 
 // A --rev this repository does not have is the likeliest real failure of the
-// whole feature: ADR-0021 fetches refs/pull/<n>/head, and a fetch that was
+// whole feature: ADR-0022 fetches refs/pull/<n>/head, and a fetch that was
 // skipped, failed, or mistyped leaves nothing to resolve against. It must fail
 // ONCE, naming the revision — never degrade into "your cited paths are wrong",
 // which would send an agent off rewriting correct paths, and never into "every

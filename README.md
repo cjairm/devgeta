@@ -355,7 +355,8 @@ make build-darwin-arm64    # macOS Apple Silicon
 make build-darwin-amd64    # macOS Intel
 make build-linux-amd64     # Linux/Debian/Ubuntu
 
-# Run tests
+# Run the full test suite (day to day, run the changed package plus its direct
+# importers instead — see CLAUDE.md §6, "Which tests to run")
 make test
 
 # Code quality checks

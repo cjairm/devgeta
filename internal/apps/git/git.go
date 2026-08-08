@@ -238,7 +238,7 @@ func (g *Git) FetchOriginTimeout(timeout time.Duration) error {
 // the remote: each refspec names its own destination, so the caller decides
 // exactly which refs are written and nothing else moves.
 //
-// Written for reviewing a pull request that is not checked out (ADR-0021 §1):
+// Written for reviewing a pull request that is not checked out (ADR-0022 §1):
 // a refspec such as "+refs/pull/12/head:refs/devgeta/pr/12/head" updates a
 // non-branch ref, so no local branch moves, no upstream tracking changes, and
 // the working tree is untouched. The leading "+" is what makes a second fetch
@@ -519,7 +519,7 @@ var ErrPathNotAtRev = errors.New("path does not exist at that revision")
 // repository at dir ("" = current directory), via
 // `git ls-tree --full-tree <rev> -- <path>`.
 //
-// It is HashObjectIn's counterpart for code that is not checked out (ADR-0021
+// It is HashObjectIn's counterpart for code that is not checked out (ADR-0022
 // §4). git resolves the tree entry itself, so nothing is stat'ed and nothing is
 // hashed, and the answer cannot be perturbed by what the caller happens to have
 // in its working tree — the whole point when the reviewed commit belongs to

@@ -1638,3 +1638,250 @@ func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 		)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Dedup suppresses duplicate comments. It never moves the verdict.
+//
+// A real review approved a PR whose route coverage was genuinely missing: the
+// finding was deduplicated against an existing Copilot comment that raised the
+// same point, and "already raised" was then read as "not blocking". Both
+// halves of that are wrong, and each is guarded below — the drop must not
+// change the verdict (review-pr step 6, approve-pr step 4), and it must not
+// close the journal entry that tracks the concern (review-pr step 3,
+// review-loop step 4).
+// ---------------------------------------------------------------------------
+
+// TestReviewPRDedupDoesNotDecideTheVerdict pins the separation itself in the
+// two places it can be lost: the dedup step, where a finding is dropped, and
+// the verdict step, which must weigh the dropped findings anyway.
+//
+// What this catches: the verdict step losing its "judge on the dropped ones
+// too" instruction, or the dedup step losing the rule that a still-live
+// duplicate is not settled in the journal — either one restores the approval
+// bug on its own.
+// What this does NOT catch: an agent dropping a finding and then forgetting it
+// despite the instruction. A substring check over prose cannot execute the
+// instructions (see TestCommittingCommandsDeclareStandingAuthorization).
+func TestReviewPRDedupDoesNotDecideTheVerdict(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	dedup := strings.ToLower(markdownSection(t, body, "### 3. Fetch existing threads and dedup"))
+	if !strings.Contains(dedup, "never decides the verdict") {
+		t.Errorf(
+			"%s step 3 no longer says dedup decides what you post but never the "+
+				"verdict — without that sentence, dropping a duplicate finding "+
+				"silently removes a blocker from the decision, which is the bug "+
+				"this rule exists to prevent",
+			path,
+		)
+	}
+	if !strings.Contains(dedup, "never settle an entry") {
+		t.Errorf(
+			"%s step 3 no longer forbids settling the journal entry of a finding "+
+				"dropped only because someone else raised the same still-live "+
+				"point. Settling it `answered` tells the next review the concern is "+
+				"gone, so the blocker disappears from the only record tracking it",
+			path,
+		)
+	}
+
+	verdict := strings.ToLower(markdownSection(t, body, "### 6. Submit one review"))
+	if !strings.Contains(verdict, "dedup dropped") {
+		t.Errorf(
+			"%s step 6 no longer requires the verdict to be judged on the findings "+
+				"dedup dropped as well as the ones posted — the drop list is exactly "+
+				"where a live blocker hides",
+			path,
+		)
+	}
+}
+
+// TestReviewPRNamesTheThreeVerdictCases keeps the three decided cases spelled
+// out where the verdict is picked, rather than left to inference from the
+// severity table. They are the cases that actually recur on a reviewed PR, and
+// the first one is the one that was getting decided wrongly.
+//
+// What this catches: any of the three cases being dropped from step 6, or case
+// 1 being softened from "do not approve" into an approval.
+// What this does NOT catch: the cases being present but misapplied to a real
+// PR — that is judgment, which prose states and no test here executes.
+func TestReviewPRNamesTheThreeVerdictCases(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	verdict := strings.ToLower(markdownSection(t, body, "### 6. Submit one review"))
+
+	if !strings.Contains(verdict, "do not approve") {
+		t.Errorf(
+			"%s step 6 no longer states that a live blocker someone else already "+
+				"raised means NOT approving. Whoever raised it, a blocker that is "+
+				"still in the code blocks",
+			path,
+		)
+	}
+	if !strings.Contains(verdict, "i'll approve once") {
+		t.Errorf(
+			"%s step 6 no longer tells the reviewer to say they will approve once "+
+				"the outstanding item is addressed. That clause is what makes the "+
+				"withheld approval actionable instead of a silent non-verdict",
+			path,
+		)
+	}
+	if !strings.Contains(verdict, "lgwc") {
+		t.Errorf(
+			"%s step 6 no longer names LGWC — approving while a non-blocking "+
+				"comment from someone else still stands is one of the three cases "+
+				"this step has to decide",
+			path,
+		)
+	}
+	if !strings.Contains(verdict, "pr-checks") {
+		t.Errorf(
+			"%s step 6 no longer says where failing CI is judged. This command "+
+				"does not fetch check status, so it must point at /approve-pr "+
+				"instead of leaving a red check to decide the verdict here",
+			path,
+		)
+	}
+}
+
+// TestReviewPRSubmitCommandLeavesTheVerdictOpen keeps the one runnable submit
+// command in step 6 free of a literal verdict. The three cases above it decide
+// `--event`, and case 1 requires `comment` for a blocker someone else already
+// raised — so a copyable command reading `--event request-changes` hands the
+// agent the exact stacked request-changes that case told it not to post, and
+// it is the last thing in the step a reader sees before acting.
+//
+// What this catches: the example regaining a hard-coded `--event` value, so
+// the command a reader copies contradicts the case they just read.
+// What this does NOT catch: the agent substituting the wrong verdict into the
+// placeholder — which verdict fits the PR is judgment, not a string.
+func TestReviewPRSubmitCommandLeavesTheVerdictOpen(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	verdict := markdownSection(t, body, "### 6. Submit one review")
+
+	const marker = "devgeta task submit-review"
+	start := strings.Index(verdict, marker)
+	if start < 0 {
+		t.Fatalf(
+			"%s step 6 no longer shows a %q command — this test guards the "+
+				"verdict that command carries",
+			path, marker,
+		)
+	}
+	command := verdict[start:]
+	if end := strings.Index(command, "```"); end >= 0 {
+		command = command[:end]
+	}
+
+	for _, event := range []string{"approve", "request-changes", "comment"} {
+		if strings.Contains(command, "--event "+event) {
+			t.Errorf(
+				"%s step 6 hard-codes `--event %s` in the submit command. The "+
+					"verdict is decided by the three cases above it — case 1 posts "+
+					"`comment` for a blocker someone else already raised — so a "+
+					"literal value here is copied over the case that was just read",
+				path, event,
+			)
+		}
+	}
+	if !strings.Contains(command, "--event <") {
+		t.Errorf(
+			"%s step 6's submit command no longer leaves `--event` as a "+
+				"placeholder to substitute. Without one, the reader has nothing "+
+				"marking the verdict as theirs to pick",
+			path,
+		)
+	}
+}
+
+// TestApprovePRVerdictIgnoresWhoRaisedIt guards the same separation at the
+// approving end. /approve-pr never dedups, but it reaches the identical wrong
+// answer by a shorter route: a thread it did not open, whose concern is a
+// blocker, gets sorted as somebody else's comment and approved over.
+//
+// What this catches: the "who raised it" rule leaving the triage step, or any
+// of the three decided cases leaving the decide step.
+// What this does NOT catch: a blocker being triaged as non-blocking despite
+// the rule — the severity call is judgment.
+func TestApprovePRVerdictIgnoresWhoRaisedIt(t *testing.T) {
+	path, body := readSharedCommand(t, "approve-pr.md")
+
+	gates := strings.ToLower(markdownSection(t, body, "### 3. Check the gates"))
+	if !strings.Contains(gates, "who raised it") {
+		t.Errorf(
+			"%s step 3 no longer says authorship stays out of the blocker/"+
+				"non-blocking triage. 'Someone else already flagged this' is a "+
+				"reason not to repeat a comment, never a reason to downgrade it",
+			path,
+		)
+	}
+
+	decide := strings.ToLower(markdownSection(t, body, "### 4. Decide"))
+	if !strings.Contains(decide, "do not approve") {
+		t.Errorf(
+			"%s step 4 no longer states that an unresolved blocker raised by "+
+				"someone else means NOT approving",
+			path,
+		)
+	}
+	if !strings.Contains(decide, "i'll approve once") {
+		t.Errorf(
+			"%s step 4 no longer carries the comment that names the outstanding "+
+				"item and commits to approving once it is addressed — the author "+
+				"otherwise cannot tell whether anything else is left",
+			path,
+		)
+	}
+	if !strings.Contains(decide, "lgwc") {
+		t.Errorf(
+			"%s step 4 no longer names LGWC for the two approve-anyway cases "+
+				"(a live non-blocking comment, and a failing check)",
+			path,
+		)
+	}
+	if !strings.Contains(decide, "check") {
+		t.Errorf(
+			"%s step 4 no longer covers failing checks. A red check is flagged and "+
+				"named, not treated as a gate — leaving it unstated invites the "+
+				"opposite",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopNeverSettlesOnAlreadyRaised is the journal-side half. The loop
+// posts no verdict, so the damage lands differently: a finding settled because
+// it duplicates another one leaves `open:` empty, and step 3 then reads an
+// all-APPROVE round as a clean approval while the code is still wrong.
+//
+// What this catches: the rule leaving step 4, or leaving the fix subagent's
+// never-do list — the dispatch carries that list verbatim, so a rule missing
+// there never reaches the agent doing the settling.
+// What this does NOT catch: a subagent settling on those grounds anyway.
+func TestReviewLoopNeverSettlesOnAlreadyRaised(t *testing.T) {
+	path, body := readSharedCommand(t, "review-loop.md")
+
+	triage := strings.ToLower(
+		markdownSection(t, body, "### 4. Otherwise, triage each open finding"),
+	)
+	if !strings.Contains(triage, "already raised") {
+		t.Errorf(
+			"%s step 4 no longer says that a point being already raised is never "+
+				"grounds for settling a finding. `fixed` needs a code change and "+
+				"`rejected` needs disproving evidence; a duplicate is neither",
+			path,
+		)
+	}
+
+	dispatch := strings.ToLower(markdownSection(t, body, "### 6. The fix subagent"))
+	if !strings.Contains(dispatch, "already known") {
+		t.Errorf(
+			"%s step 6's never-do list no longer forbids settling a finding "+
+				"because it is already known. The dispatch carries that list to the "+
+				"subagent, so a rule that is only in step 4 never reaches the agent "+
+				"that does the settling",
+			path,
+		)
+	}
+}

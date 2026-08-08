@@ -47,6 +47,8 @@ Read these **in order** before starting work:
 7. **Visual consistency** — Alacritty, tmux, Neovim, and the AI-coder configs share one palette (Gruvbox dark) and a transparency convention; a color/theme change in one must be mirrored in the others. See [docs/guides/theming.md](docs/guides/theming.md)
 8. **Everything general, never bespoke** — Every feature devgeta ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgeta's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — see the `release` redirect's `go.mod` gate in `configs/claude/task-redirect.sh` — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
 
+   **This applies to every change, not just new features.** A bug fix, a refactor, a doc tweak, a one-line default, a hook edit — each one is subject to the same test: _would this still make sense to someone who has never seen this repo?_ The rule runs in both directions, and the second is the one that gets missed: as well as not building one-off features for one user, never bend a shipped artifact to carry a devgeta-specific decision. Our test policy, our release chain, our branch conventions are **project law, not product** — they belong in `CLAUDE.md` and `docs/`, never inside something a stranger installs. The trap that keeps catching us is `configs/shared/`; see [§12](#anything-we-ship-is-built-for-strangers).
+
 ---
 
 ## 4. Non-negotiable rules
@@ -58,6 +60,7 @@ Hard constraints that override all other considerations:
 - Fix root causes, never symptoms. When something misbehaves, find the underlying cause and fix it so the problem cannot recur — a fix that only hides or defers the failure is not done.
 - Temporary fixes, workarounds, and hacks are not acceptable. If a proper fix is genuinely impossible right now, say so explicitly and get agreement on the gap before shipping anything less; never ship it silently.
 - Where a class of mistake keeps being possible, prefer making it structurally impossible (enforced by code) over documenting a convention people must remember.
+- **Nothing devgeta ships is customized for devgeta.** Every feature, bug fix, refactor, doc, config, hook, skill, alias, theme, and `dg task` subcommand is built for the people who install it — not for this repository, this maintainer, or the task in front of you. Before writing anything, apply the test in [principle 8](#3-product-principles): _would this still make sense to someone who has never seen this repo?_ If the answer is no, it does not ship — generalize it, or put it in `CLAUDE.md` / `docs/` where project-specific rules belong. This applies in both directions and to every size of change: no one-off features for one user, and no devgeta policy pushed into an artifact everybody installs.
 
 ### Security
 
@@ -160,9 +163,61 @@ Follow this order for every non-trivial change:
 1. **Implement** the feature or fix.
 2. **Verify manually** that it works end-to-end (run the binary, use the UI, confirm the golden path).
 3. **Add or update tests** — only after the feature is confirmed working. Tests written against a broken feature encode the wrong behavior.
-4. **Commit** once both manual verification and `go test ./...` pass.
+4. **Commit** once manual verification passes and the **targeted tests** for what you changed are green (see below — not the whole suite).
 
 > Before committing, always ask: _"Does this change have tests? Should it?"_ If the answer is yes and tests are missing, write them first. A working feature without tests is a regression waiting to happen.
+
+### Which tests to run
+
+**Run the targeted tests, not the whole suite.** The suite is ~2,500 tests across
+~80 packages and takes about five and a half minutes from a cold cache — paying
+that after every edit buys almost no signal. While implementing, run the package
+you changed plus the in-repo packages that import it:
+
+Don't guess at the importers — ask the toolchain. For a change in
+`internal/apps/claude`:
+
+```bash
+go list -f '{{.ImportPath}}{{range .Imports}} {{.}}{{end}}{{range .TestImports}} {{.}}{{end}}' ./... \
+  | grep 'devgeta/internal/apps/claude' | cut -d' ' -f1
+# → internal/apps/claude, internal/apps/registry, internal/tooling/terminal
+```
+
+Then run exactly that list — the whole set above takes 3.6s:
+
+```bash
+go test -run TestName ./internal/apps/claude/                                          # while iterating on one behavior
+go test ./internal/apps/claude/ ./internal/apps/registry/ ./internal/tooling/terminal/ # before committing
+```
+
+Use `.Imports` (direct importers), **not** `.Deps`. `.Deps` is transitive, so it
+lists the root `main` package for nearly every package in the repo — and the root
+package's tests are the bash-spawning hook tests, 4.8 minutes on their own. A
+transitive list turns every "targeted" run back into the full suite. If your
+change alters behavior that importers rely on rather than package internals, run
+one level further out as well.
+
+When the **root package** (`github.com/cjairm/devgeta`, i.e. `go test .`) shows up
+in the list, include it only if you changed something under `configs/` or one of
+the hook scripts. Its test files cover exactly that — embedded configs, the
+reviewer agents, and the `agent-config-guard` / `secret-guard` /
+`suppression-guard` / `task-redirect` / `agent-state` shells — and nothing about
+app or tooling logic, so for any other change it is 4.8 minutes of pure cost.
+
+The full `go test ./...` belongs in exactly two situations:
+
+- **Release — mandatory.** §9 step 1. Never tag on a partial run.
+- **A change whose blast radius is most of the tree.** `pkg/paths` has 24 direct
+  importers (71 transitive); `internal/commands` and `internal/testutil` are
+  similar. Anything under `configs/` is read by the embedded-config tests in the
+  root package, `internal/apps/claude`, and `internal/apps/opencode` — and the
+  root package is the slow one, so a config change costs most of a full run
+  anyway. In these cases run the suite and say that you did.
+
+Be honest about the trade this makes: a targeted run cannot catch cross-package
+interference, and it will not notice a test that only fails under the full
+suite's parallel load. Those surface at the release gate — which is why that gate
+stays a full run.
 
 ### Testing requirements
 
@@ -301,7 +356,10 @@ says "release" — or "commit, push and tag", or any subset of those words — r
 six steps below. Do not stop after committing, and do not ask which steps were
 meant; that question has been answered and asking again is friction:
 
-1. **Verify** — `go build ./...`, `make lint`, `go test ./...`. If any fail, stop
+1. **Verify** — `go build ./...`, `make lint`, and the **full** `go test ./...`.
+   This is the one place the whole suite is mandatory; day-to-day work runs
+   targeted tests (§6, "Which tests to run"), so this is the only run that sees
+   the entire tree. Never tag on a partial run. If any of the three fail, stop
    and report. Never tag over a red test.
 2. **Notes** — write the message file from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md).
 3. **Commit** — `git add` and `git commit` as **two separate commands**. A
@@ -315,57 +373,45 @@ meant; that question has been answered and asking again is friction:
 Only two things are still worth raising instead of deciding alone: a version bump
 the table above leaves genuinely ambiguous, and anything that failed step 1.
 
-Two ordering rules are load-bearing and have each already caused a bad release:
+Two ordering rules are load-bearing — each has already caused a bad release.
+[docs/guides/releasing.md](docs/guides/releasing.md) carries the incident detail
+and the retry order:
 
-- **Tag before pushing.** `devgeta task release` decides what to squash by counting
-  commits ahead of `origin/<default>`. Push first and that count is 0, so it
-  reports "no unpushed commits", skips the squash, and tags whatever HEAD is — no
-  error, no warning. This is how v1.9.0 landed on a bare merge commit with 22 loose
-  commits in `main`.
-- **Never run a bare `git tag`.** That creates a _lightweight_ tag with no message,
-  and the release workflow reads the release body out of the annotation — so the
-  release page publishes empty. Deleting a tag to retry does not delete its
-  release either; GitHub demotes that release to a permanent draft. See
-  [docs/guides/releasing.md](docs/guides/releasing.md) for the correct retry order.
+- **Tag before pushing.** `devgeta task release` counts commits ahead of
+  `origin/<default>` to decide what to squash. Push first and that count is 0, so
+  it skips the squash and tags whatever HEAD is — no error, no warning.
+- **Never run a bare `git tag`.** A lightweight tag has no message, and the
+  release workflow publishes the release body out of the annotation — so the page
+  comes out empty. Deleting the tag to retry does not delete the release; it
+  becomes a permanent draft.
 
 ### Push & tag workflow
 
-When pushing commits and creating a tag, **always squash multiple unpushed commits into one before tagging.** This keeps the git history clean and makes it easy for developers to understand what each tag/release includes. `devgeta task release` automates this flow — do not run the raw `git reset --soft` / `git tag` / `git push` sequence by hand.
+**Always squash the unpushed commits into one before tagging.** `devgeta task release`
+does that — never run the raw `git reset --soft` / `git tag` / `git push` sequence
+by hand.
 
-**Steps:**
-
-1. Write the release message to a file, starting from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md) and preserving context from each original commit as bullet points (summarize only if the combined list is too long to be readable). This file is not just a commit message: the release workflow reads it back out of the annotated tag and publishes it as the GitHub release body, and it is the **only** thing that puts content there — GitHub's auto-generated notes are built from merged pull requests, and devgeta tags straight from `main`.
-2. From a clean working tree on the default branch, run:
-
-   ```bash
-   devgeta task release <version> --message-file <file>
-   ```
-
-   This verifies the tree is clean, you're on the default branch, the message file is non-empty, and the tag doesn't already exist; counts commits ahead of `origin/<default>`; squashes 2+ of them into one commit using the message file; and creates an annotated tag with that same message. Nothing is pushed yet.
-
-3. Review the result, then push the commit and tag together — either re-run with `--push`, or run the `git push` command the tool prints.
-
-**Example:**
+Write the notes file first, from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md),
+preserving each original commit's context as bullets. It is not just a commit
+message: the workflow reads it back out of the annotated tag and publishes it as
+the GitHub release body, and it is the **only** thing that puts content there —
+GitHub's auto-generated notes come from merged pull requests, and devgeta tags
+straight from `main`. Then, from a clean tree on the default branch:
 
 ```bash
-cat > release-notes.txt <<'EOF'
-feat: add user profile and caching
-
-- Add user profile page with avatar upload
-- Implement Redis caching layer with 5-min TTL
-- Add profile API endpoints with validation
-EOF
-
 devgeta task release v0.11.0 --message-file release-notes.txt --push
 ```
 
-`version` must match `vMAJOR.MINOR.PATCH` exactly (no prerelease suffixes) — this is the tag policy from the table above, machine-enforced. Without `--push`, the final line states exactly what remains, e.g. `Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main --tags`.
-
-GitHub Actions builds and publishes automatically. See [docs/guides/releasing.md](docs/guides/releasing.md) for the full release process.
+`version` must match `vMAJOR.MINOR.PATCH` exactly, no prerelease suffixes —
+machine-enforced. Without `--push` nothing is pushed and the tool prints exactly
+what remains. What the command checks, what the workflow builds, and the retry
+order when a release goes wrong: [docs/guides/releasing.md](docs/guides/releasing.md).
 
 ---
 
 ## 10. Change discipline
+
+### Never silently
 
 Things that must never happen silently (always require explicit PR discussion and test):
 
@@ -376,10 +422,9 @@ Things that must never happen silently (always require explicit PR discussion an
 - Modifying what "terminal tools" category includes — users depend on this being stable
 - Changing installation paths or config directories — affects existing installations
 - Changing an AI agent's permissions or formatters in only one of the two agents — see [Keeping the two AI agents in sync](#keeping-the-two-ai-agents-in-sync)
+- Bending any shipped artifact — a config, hook, plugin, command, skill, alias, theme — to a devgeta-specific decision, in a change of any size; see [Anything we ship is built for strangers](#anything-we-ship-is-built-for-strangers)
 
----
-
-## 11. Spec-driven development
+### Spec-driven development
 
 When to write documentation **before** code:
 
@@ -446,19 +491,20 @@ func TestFeature(t *testing.T) {
 
 Where to find and add code:
 
-| Purpose                   | Location                       | Notes                                                                                                                                                                                                                 |
-| ------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **CLI commands**          | `cmd/`                         | Entry points; register in cmd/root.go                                                                                                                                                                                 |
-| **App modules**           | `internal/apps/{appname}/`     | 2 files per app: `{appname}.go` + `{appname}_test.go`                                                                                                                                                                 |
-| **Category coordinators** | `internal/tooling/`            | terminal, languages, databases, worktree                                                                                                                                                                              |
-| **Platform installers**   | `internal/commands/`           | Strategy implementations for Debian, Darwin                                                                                                                                                                           |
-| **Configuration logic**   | `internal/config/`             | Global state management                                                                                                                                                                                               |
-| **TUI components**        | `internal/tui/`                | TUIs live here; `internal/tui/components` is the shared toolkit (palette, hint bar, help overlay, filter field, list navigation) — new TUIs must be assembled from it, and logic needed by a second TUI moves into it |
-| **Shared utilities**      | `pkg/`                         | Logger, paths, file ops, constants, package mappings                                                                                                                                                                  |
-| **Embedded configs**      | `configs/`                     | Templates and static files (embedded at compile time)                                                                                                                                                                 |
-| **Tests**                 | `*_test.go` alongside impl     | Use testutil mocks; never execute real commands                                                                                                                                                                       |
-| **User docs**             | `docs/`                        | Feature docs, architecture, app guides, tooling details                                                                                                                                                               |
-| **Developer docs**        | `CLAUDE.md`, `CONTRIBUTING.md` | This file and contributor guide                                                                                                                                                                                       |
+| Purpose                    | Location                       | Notes                                                                                                                                                                                                                 |
+| -------------------------- | ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **CLI commands**           | `cmd/`                         | Entry points; register in cmd/root.go                                                                                                                                                                                 |
+| **App modules**            | `internal/apps/{appname}/`     | 2 files per app: `{appname}.go` + `{appname}_test.go`                                                                                                                                                                 |
+| **Category coordinators**  | `internal/tooling/`            | terminal, languages, databases, worktree                                                                                                                                                                              |
+| **Platform installers**    | `internal/commands/`           | Strategy implementations for Debian, Darwin                                                                                                                                                                           |
+| **Configuration logic**    | `internal/config/`             | Global state management                                                                                                                                                                                               |
+| **TUI components**         | `internal/tui/`                | TUIs live here; `internal/tui/components` is the shared toolkit (palette, hint bar, help overlay, filter field, list navigation) — new TUIs must be assembled from it, and logic needed by a second TUI moves into it |
+| **Shared utilities**       | `pkg/`                         | Logger, paths, file ops, constants, package mappings                                                                                                                                                                  |
+| **Embedded configs**       | `configs/`                     | Templates and static files (embedded at compile time)                                                                                                                                                                 |
+| **Shared agent artifacts** | `configs/shared/`              | Skills, commands, agents shipped to both AI coders **and to every user's other repos** — nothing here may carry a devgeta-specific decision (see below)                                                               |
+| **Tests**                  | `*_test.go` alongside impl     | Use testutil mocks; never execute real commands                                                                                                                                                                       |
+| **User docs**              | `docs/`                        | Feature docs, architecture, app guides, tooling details                                                                                                                                                               |
+| **Developer docs**         | `CLAUDE.md`, `CONTRIBUTING.md` | This file and contributor guide                                                                                                                                                                                       |
 
 ### Adding a new command
 
@@ -470,7 +516,7 @@ Where to find and add code:
 4. Add tests alongside implementation (`*_test.go`) using [docs/guides/testing-patterns.md](docs/guides/testing-patterns.md)
 5. Register in `cmd/root.go`
 6. Document in README.md and `docs/spec.md` if user-facing
-7. If substantial, create a cycle doc first (see section 10)
+7. If substantial, create a cycle doc first (see §10, "Spec-driven development")
 
 ### Adding a new app installer
 
@@ -488,74 +534,69 @@ Where to find and add code:
 3. Deploy with `dg configure <app> --force`
 4. If the config must satisfy a constraint imposed by an external tool (a plugin or program that parses, splices, or re-executes the value), enforce that constraint with a test against the embedded configs FS — a comment in the config alone will not survive future edits
 5. If the config governs an AI coding agent, apply the change to **both** agents — see below
+6. If the file lives under `configs/shared/skills/`, stop and read the next section first — it is almost certainly the wrong file to change
+
+### Anything we ship is built for strangers
+
+Everything under `configs/`, every command, hook, plugin, alias, theme, and
+`dg task` subcommand lands on machines that are not ours, in repos that are not
+this one — most not even Go. So **no change of any kind may bend a shipped
+artifact to a devgeta decision.** Not a feature, not a bug fix, not a one-line
+default, not a doc tweak. Before editing anything under `configs/`, ask: would
+this still make sense to someone who has never seen this repo? If not, the change
+belongs in `CLAUDE.md` or `docs/` — project law, not product ([principle 8](#3-product-principles),
+[§4 Engineering Discipline](#engineering-discipline)).
+
+Two places where the line is easy to cross:
+
+- **`configs/shared/skills/`** — these run inside other people's repositories,
+  which have no test suite of ours, no release gate, no branch conventions.
+  Putting our policy in one is not just useless there, it is a wrong instruction.
+  Most are also **vendored from upstream Superpowers** (see
+  [ADR-0015 §7](docs/decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md#7-vendored-skills-keep-tmp-knowingly)),
+  so local edits buy a merge conflict on every sync. `dg-worktree` is the
+  exception that shows the shape of a legitimate one: devgeta's own skill about
+  devgeta's own command.
+- **Devgeta's own process, when it has to be automated** — gate it so it can
+  never fire in a user's environment, the way the `release` redirect is gated on
+  `go.mod` in `configs/claude/task-redirect.sh`. Never ship it as a global
+  default.
 
 ### Keeping the two AI agents in sync
 
-Devgeta configures two AI coding agents, and they must behave the same. Every
-policy change goes into **both** files, expressed in each one's own format:
+Devgeta configures two AI coding agents, Claude Code and OpenCode, and they must
+behave the same. **Never add a deny/ask rule, a formatter language, or any other
+policy to one agent only** — `internal/apps/opencode/permissions_test.go` fails
+the build on asymmetry in either direction, and weakening it to land a one-sided
+change is not an option. If a rule can't be expressed in one agent, drop it from
+both. Deploy both after any change: `dg configure claude --force` **and**
+`dg configure opencode --force`.
 
-| Concern                 | Claude Code                                                       | OpenCode                                                                   |
-| ----------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Permissions             | `configs/claude/settings.json.tmpl`                               | `configs/opencode/opencode.json.tmpl`                                      |
-| Formatting on save      | `configs/claude/format.sh`                                        | `formatter` block in `opencode.json.tmpl`                                  |
-| Command redirects       | `configs/claude/task-redirect.sh`                                 | `configs/opencode/plugin/task-redirect.js`                                 |
-| Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                        |
-| Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor |
-| Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                               |
-| Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                         |
+Two traps that have each cost a debugging session:
 
-Rules:
+- That test compares pattern **strings**, not what they match — identical rules
+  can still enforce nothing (see
+  [docs/guides/agent-permission-matching.md](docs/guides/agent-permission-matching.md)).
+- Command frontmatter is ignored by both agents, so a command that posts outward
+  or acts unattended must grant that authorization **in its own prose**.
 
-- **Never add a deny/ask rule, or a formatter language, to one agent only.** The
-  two permission sets must stay the same rule for rule, and the two formatter
-  language lists must cover the same file extensions.
-- `internal/apps/opencode/permissions_test.go` enforces this and fails the build
-  on any asymmetry, in either direction. It is the reason the lists cannot drift
-  again — do not weaken it to land a one-sided change. If a rule genuinely cannot
-  be expressed in one agent, drop it from both.
-- Deploy both after any change: `dg configure claude --force` **and**
-  `dg configure opencode --force`.
-
-Accepted differences (deliberate, do not "fix" by halves):
-
-- **Agent frontmatter is enforced by OpenCode only; command frontmatter is
-  ignored by both.** Agent `.md` files use OpenCode's `permission:` schema;
-  Claude Code ignores it. OpenCode's `tools:` is `object<string, boolean>`,
-  Claude Code's is comma-separated — the two schemas can't share one key, so
-  the reviewer agents are read-only in OpenCode but unrestricted in Claude
-  Code. Command-level `permission:` and `tools:` blocks have no effect in
-  either agent. A command's permissions come from the agent it runs under,
-  which a command can select with `agent:`. Unifying this needs per-agent
-  frontmatter rendering from one policy source (an ADR-level change, not yet
-  made). Because of this, **a command that posts outward — to a PR, a ticket,
-  anywhere a human sees it — must grant that authorization in its own prose.**
-  The frontmatter that used to imply it was removed once it turned out to
-  enforce nothing, and with nothing in its place the agent falls back to asking
-  the human before every post. Say plainly in the command file that running it
-  _is_ the authorization and that the agent must not ask first;
-  `TestPostingCommandsDeclareStandingAuthorization` fails the build for a
-  posting command that doesn't. The same holds for a command that acts locally
-  without a further prompt — committing, pushing, or running unattended —
-  guarded by `TestCommittingCommandsDeclareStandingAuthorization` and
-  `TestReviewLoopRunsUnattendedWithoutAsking`.
-- **The lint feedback loop is Claude-only.** `format.sh` returns linter findings
-  via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
-  return context, and OpenCode surfaces LSP diagnostics instead.
-- **`statusLine` has no OpenCode equivalent.**
+Which file holds which concern, and the deliberate differences that must not be
+"fixed" by halves: [docs/guides/agent-sync.md](docs/guides/agent-sync.md).
 
 ---
 
 ## Quick Reference: Common Commands
 
-| Task        | Command                               | Location                                |
-| ----------- | ------------------------------------- | --------------------------------------- |
-| Build       | `make build`                          | Current platform                        |
-| Build all   | `make all`                            | darwin-arm64, darwin-amd64, linux-amd64 |
-| Test all    | `go test ./...`                       | All tests with coverage                 |
-| Test single | `go test -run TestName ./pkg/package` | Specific test                           |
-| Lint        | `make lint`                           | Format + vet                            |
-| Format      | `go fmt ./...`                        | Auto-format code                        |
-| Clean       | `make clean`                          | Remove binaries                         |
+| Task           | Command                                 | Location                                                                 |
+| -------------- | --------------------------------------- | ------------------------------------------------------------------------ |
+| Build          | `make build`                            | Current platform                                                         |
+| Build all      | `make all`                              | darwin-arm64, darwin-amd64, linux-amd64                                  |
+| Test (default) | `go test <changed pkg> <its importers>` | The day-to-day run — get the importer list from §6, "Which tests to run" |
+| Test single    | `go test -run TestName ./pkg/package`   | Specific test                                                            |
+| Test all       | `go test ./...`                         | Full suite, ~5.5 min — release gate (§9), not every edit                 |
+| Lint           | `make lint`                             | Format + vet                                                             |
+| Format         | `go fmt ./...`                          | Auto-format code                                                         |
+| Clean          | `make clean`                            | Remove binaries                                                          |
 
 ---
 
@@ -563,103 +604,34 @@ Accepted differences (deliberate, do not "fix" by halves):
 
 Quick reference to where things live:
 
-| Topic                  | Location                                     | Description                                                                                 |
-| ---------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| **Development Guides** | `docs/guides/README.md`                      | Index of all guides with quick-start by task                                                |
-| **Feature Spec**       | `docs/spec.md`                               | What features exist, architecture, edge cases, testing strategy                             |
-| **Testing Patterns**   | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                               |
-| **Error Handling**     | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                        |
-| **CLI Patterns**       | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                       |
-| **Task Design**        | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance |
-| **Cross-Platform**     | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                       |
-| **Theming**            | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule |
-| **Claude Code app**    | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                           |
-| **Releasing**          | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                        |
-| **Release notes**      | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body          |
-| **Migrations**         | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                             |
-| **Roadmap**            | `ROADMAP.md`                                 | Planned commands, future features, open questions                                           |
-| **Decisions**          | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                      |
-| **Contributing**       | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                       |
+| Topic                   | Location                                     | Description                                                                                                                   |
+| ----------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| **Development Guides**  | `docs/guides/README.md`                      | Index of all guides with quick-start by task                                                                                  |
+| **Feature Spec**        | `docs/spec.md`                               | What features exist, architecture, edge cases, testing strategy                                                               |
+| **Testing Patterns**    | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                                                                 |
+| **Error Handling**      | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                                                          |
+| **CLI Patterns**        | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                                                         |
+| **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                   |
+| **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders |
+| **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                       |
+| **Recent changes**      | `docs/recent-changes.md`                     | Prose summaries of recent work, last two releases only — the changelog that used to live at the bottom of this file           |
+| **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                         |
+| **Theming**             | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule                                   |
+| **Claude Code app**     | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                                                             |
+| **Releasing**           | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                                                          |
+| **Release notes**       | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body                                            |
+| **Migrations**          | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                                                               |
+| **Roadmap**             | `ROADMAP.md`                                 | Planned commands, future features, open questions                                                                             |
+| **Decisions**           | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                                                        |
+| **Contributing**        | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                                                         |
 
 ---
 
-## Recent Changes & Active Work
+## Recent changes
 
-**Last updated:** 2026-08-07
-
-**Recent changes:**
-
-- Agent memory is writable again (2026-08-07). Both permission layers denied
-  `~/.claude/projects/<slug>/memory/`, Claude Code's per-project memory
-  directory, so the agent could not write a memory file. Memory holds notes,
-  not permissions or hooks, so `agent-config-guard.sh`/`.js` clause 1 gained a
-  second exception beside `worktrees` (scoped to a file strictly under
-  `projects/<slug>/memory/`, `.claude`-only), and the settings floor's blanket
-  `Edit(~/.claude/**)` was replaced by an enumeration of the config surfaces
-  under that root — deny beats allow with no specificity tiebreak, so no
-  carve-out could re-open it otherwise. See
-  [ADR-0014](docs/decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)'s
-  memory amendment. Both agents changed symmetrically, and
-  `TestGlobalClaudeFloorLeavesMemoryWritable` stops the blanket coming back.
-
-- Review scope, output, and steering changed together (2026-08-07). A review now
-  covers the branch's **working state** — commits AND uncommitted work, untracked
-  files included — so `review-scope` and `branch-diff` diff `git diff <merge-base>`
-  (two dots, against the worktree) and `review-run` only refuses a branch with no
-  commits ahead **and** a clean tree. See
-  [ADR-0019](docs/decisions/ADR-0019-a-review-covers-the-branch-working-state.md);
-  `collectWorktreeDiff` is the single gather behind both `BranchDiff` and the
-  `dg ws` diff pane, so the two cannot drift. `review-run` also gained
-  `--note <text>` (the human's own emphasis for every reviewer of the round,
-  framed so it cannot narrow the review; forwarded by `/review-loop --note`),
-  dropped its trailing `open:` line (findings live in the journal — `review-notes`
-  is what lists them, and `/review-loop` reads its ids from there), and reports
-  progress **as it happens** via the new `CommandParams.OnStdoutLine`, which hands
-  a caller each stdout line while the child still runs. That progress is
-  **sampled**: at most one heartbeat every 30s
-  (`progressHeartbeatInterval`), naming the running counters and the tool call
-  that triggered it, because the line-per-tool-call version measured ~200 lines a
-  round that `/review-loop` captured and paid tokens for. The full stream is
-  behind the existing root `--verbose` flag — no new flag — which `cmd/task.go`
-  copies onto `TaskManager.Verbose`; every tool call is still counted while quiet,
-  so the closing line totals the whole run.
-
-- `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
-  (2026-07-31). `--prompt` starts the layout's AI coder already working on a
-  task; it is delivered as a **launch argument** (`cc '<text>'`,
-  `oc --prompt '<text>'`), never as keystrokes after the TUI boots — see
-  [ADR-0011](docs/decisions/ADR-0011-agent-prompt-as-launch-argument.md). It
-  errors on a layout with no AI pane rather than silently dropping the prompt.
-  `--pane` adds a shell pane beside the layout and its value is used **unquoted**
-  (it is a shell command line, so `'cd api && make dev'` works); an empty value
-  is rejected. Both are create-only — repair takes neither.
-  Implemented as transformations on a resolved `worktree.Layout`
-  (`WithPrompt`/`WithExtraPanes`), so no `Create`/`CreateAt`/TUI signature
-  changed. In the same change, `Layout`'s parallel `paneCheckers` slice was
-  folded into unexported `Pane.check`/`Pane.prompt` fields — a pane's command,
-  install check, and prompt form now come from one `AICoder` via `coderPane`,
-  which is why `Pane` is no longer comparable with `==`.
-
-**Recent specs completed:**
-
-- `specs/001-binary-dist-audit/` — Go embed, text/template for config generation
-- `specs/002-debian-package-fixes/` — Strategy pattern, package mappings, exponential backoff downloads
-
-**Active cycles:**
-
-- Check `docs/plans/cycles/` for current work (e.g., worktree UX improvements)
-
-**Known patterns:**
-
-- Strategy pattern for cross-platform installation
-- Interface-based testing with mock apps
-- YAML state management with global config
-- Embedded configs via Go `embed` package
-
----
-
-## Deprecation Note
-
-**AGENTS.md has been consolidated into this file.** OpenCode recognizes CLAUDE.md as the development guide (with AGENTS.md as fallback). All project-specific development practices are now documented here.
-
----
+Prose summaries of recent changes live in
+[docs/recent-changes.md](docs/recent-changes.md). They were moved out of this
+file because this one is loaded into every session, and a changelog is not
+context anyone needs up front. That file keeps only the last two releases —
+the permanent record is `docs/decisions/` (why), `docs/plans/cycles/` (what the
+work was), and git history.
