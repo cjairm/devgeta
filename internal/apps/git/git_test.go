@@ -2305,6 +2305,141 @@ func TestHashObjectIn(t *testing.T) {
 	})
 }
 
+// BlobAtRevIn exists to keep three answers apart that `rev-parse --verify
+// <rev>:<path>` collapsed into one exit-128 "Needed a single revision": the
+// path is not at that revision, the revision itself is broken, and the path
+// names something that is not a file. Each gets its own case here, because the
+// review journal's error messages — and whether it refuses a write at all —
+// turn on which one came back.
+func TestBlobAtRevIn(t *testing.T) {
+	newGit := func(stdout, stderr string, err error) (*Git, *commands.MockBaseCommand) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult(stdout, stderr, err)
+		return &Git{Cmd: commands.NewMockCommand(), Base: mockBase}, mockBase
+	}
+
+	t.Run("returns the blob sha for a file at the revision", func(t *testing.T) {
+		g, mockBase := newGit("100644 blob 44858168\tpkg/file.go\n", "", nil)
+
+		got, err := g.BlobAtRevIn("/repos/app", "9f2c1ab", "pkg/file.go")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "44858168" {
+			t.Fatalf("expected '44858168', got %q", got)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		// --full-tree is not cosmetic: without it ls-tree resolves the
+		// pathspec relative to the process's working directory, so a
+		// root-relative cite would resolve to nothing from any subdirectory.
+		for _, want := range []string{
+			"-C", "/repos/app", "ls-tree", "--full-tree", "9f2c1ab", "--",
+			":(literal)pkg/file.go",
+		} {
+			if !slices.Contains(last.Args, want) {
+				t.Errorf("expected %q in args %v", want, last.Args)
+			}
+		}
+	})
+
+	// This pins the ARGV string BlobAtRevIn builds, not git's own behavior —
+	// tests here never shell out, so nothing below observes what git does with
+	// the pathspec. It is worth pinning because of what the prefix is for, which
+	// is NOT globbing: ls-tree does no glob matching at all, and a name
+	// containing `*`, `?`, or `[` needs no protection from it. The prefix exists
+	// for a LEADING COLON, which git otherwise reads as pathspec magic —
+	// `ls-tree -- ':weird.go'` exits 0 with empty output, which BlobAtRevIn reads
+	// as ErrPathNotAtRev and reports as a typo in a cite that is perfectly
+	// correct. So: the path must reach git with the prefix, and unmangled.
+	t.Run("prefixes the cited path with :(literal) in the argv it builds", func(t *testing.T) {
+		g, mockBase := newGit("100644 blob 5ce0e9a\t:weird.go\n", "", nil)
+
+		got, err := g.BlobAtRevIn("", "9f2c1ab", ":weird.go")
+		if err != nil {
+			t.Fatalf("a path starting with a colon must still resolve: %v", err)
+		}
+		if got != "5ce0e9a" {
+			t.Fatalf("expected '5ce0e9a', got %q", got)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		if !slices.Contains(last.Args, ":(literal):weird.go") {
+			t.Errorf("the path must be sent as a literal pathspec, got args %v", last.Args)
+		}
+	})
+
+	// Exit 0 with no output is git saying the revision resolved and holds no
+	// such entry — the one outcome that is not a failure to look.
+	t.Run("reports a path absent at the revision as ErrPathNotAtRev", func(t *testing.T) {
+		g, _ := newGit("", "", nil)
+
+		_, err := g.BlobAtRevIn("", "9f2c1ab", "gone.go")
+		if !errors.Is(err, ErrPathNotAtRev) {
+			t.Fatalf("expected ErrPathNotAtRev, got %v", err)
+		}
+		if !strings.Contains(err.Error(), "gone.go") ||
+			!strings.Contains(err.Error(), "9f2c1ab") {
+			t.Errorf("error should name the path and the revision, got %v", err)
+		}
+	})
+
+	// A nonzero exit is a broken lookup, never absence — reporting it as
+	// absence would blame the caller's path for the caller's revision.
+	t.Run("a failed lookup is not ErrPathNotAtRev and quotes git", func(t *testing.T) {
+		g, _ := newGit("", "fatal: Not a valid object name deadbee", fmt.Errorf("exit 128"))
+
+		_, err := g.BlobAtRevIn("", "deadbee", "pkg/file.go")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if errors.Is(err, ErrPathNotAtRev) {
+			t.Fatal("a git failure must never be reported as an absent path")
+		}
+		if !strings.Contains(err.Error(), "Not a valid object name") {
+			t.Errorf("git's own diagnosis must reach the caller, got %v", err)
+		}
+	})
+
+	t.Run("a failure with no stderr still errors", func(t *testing.T) {
+		g, _ := newGit("", "", fmt.Errorf("exit 128"))
+
+		_, err := g.BlobAtRevIn("", "deadbee", "pkg/file.go")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if errors.Is(err, ErrPathNotAtRev) {
+			t.Fatal("a git failure must never be reported as an absent path")
+		}
+	})
+
+	// A directory resolves to a tree object and exits 0. Accepting it would
+	// stamp a review entry with a tree hash — the write ADR-0012 §3's typo
+	// guard exists to refuse, and which the working-tree path already refuses
+	// because `git hash-object` fails on a directory.
+	t.Run("refuses a path that is a tree, not a blob", func(t *testing.T) {
+		g, _ := newGit("040000 tree 35edf04b\tinternal/store\n", "", nil)
+
+		_, err := g.BlobAtRevIn("", "9f2c1ab", "internal/store")
+		if err == nil {
+			t.Fatal("a directory must not be accepted as a file")
+		}
+		if errors.Is(err, ErrPathNotAtRev) {
+			t.Fatal("a tree is present, just not a file — that is not absence")
+		}
+		if !strings.Contains(err.Error(), "tree") ||
+			!strings.Contains(err.Error(), "internal/store") {
+			t.Errorf("error should name the path and what it actually is, got %v", err)
+		}
+	})
+
+	t.Run("refuses output that names more than one entry", func(t *testing.T) {
+		g, _ := newGit("040000 tree aaa\tcmd\n040000 tree bbb\tdocs\n", "", nil)
+
+		if _, err := g.BlobAtRevIn("", "9f2c1ab", "*"); err == nil {
+			t.Fatal("a pathspec matching several entries must not be stamped as one file")
+		}
+	})
+}
+
 func TestShortHeadIn(t *testing.T) {
 	mockBase := commands.NewMockBaseCommand()
 	mockBase.SetExecCommandResult("abc1234\n", "", nil)

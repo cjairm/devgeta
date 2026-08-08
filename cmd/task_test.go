@@ -46,6 +46,7 @@ type mockTaskRunner struct {
 	reviewPackageErr     error
 
 	reviewNotesBranchArg string
+	reviewNotesRevArg    string
 	reviewNotesPathArg   bool
 	reviewNotesPruneArg  bool
 	reviewNotesCalled    bool
@@ -53,6 +54,7 @@ type mockTaskRunner struct {
 	reviewNotesErr       error
 
 	reviewNoteOpenBranchArg string
+	reviewNoteOpenRevArg    string
 	reviewNoteOpenCiteArg   string
 	reviewNoteOpenNoteArg   string
 	reviewNoteOpenCalled    bool
@@ -60,6 +62,7 @@ type mockTaskRunner struct {
 	reviewNoteOpenErr       error
 
 	reviewNoteSettleBranchArg string
+	reviewNoteSettleRevArg    string
 	reviewNoteSettleIDArg     string
 	reviewNoteSettleAsArg     string
 	reviewNoteSettleAtArg     string
@@ -164,27 +167,33 @@ func (m *mockTaskRunner) ReviewPackage(base, head, file string) (string, error) 
 	return m.reviewPackageRet, m.reviewPackageErr
 }
 
-func (m *mockTaskRunner) ReviewNotes(branch string, showPath, prune bool) (string, error) {
+func (m *mockTaskRunner) ReviewNotes(
+	branch, rev string,
+	showPath, prune bool,
+) (string, error) {
 	m.reviewNotesCalled = true
 	m.reviewNotesBranchArg = branch
+	m.reviewNotesRevArg = rev
 	m.reviewNotesPathArg = showPath
 	m.reviewNotesPruneArg = prune
 	return m.reviewNotesRet, m.reviewNotesErr
 }
 
-func (m *mockTaskRunner) ReviewNoteOpen(branch, cite, note string) (string, error) {
+func (m *mockTaskRunner) ReviewNoteOpen(branch, rev, cite, note string) (string, error) {
 	m.reviewNoteOpenCalled = true
 	m.reviewNoteOpenBranchArg = branch
+	m.reviewNoteOpenRevArg = rev
 	m.reviewNoteOpenCiteArg = cite
 	m.reviewNoteOpenNoteArg = note
 	return m.reviewNoteOpenRet, m.reviewNoteOpenErr
 }
 
 func (m *mockTaskRunner) ReviewNoteSettle(
-	branch, id, resolution, cite, note string,
+	branch, rev, id, resolution, cite, note string,
 ) (string, error) {
 	m.reviewNoteSettleCalled = true
 	m.reviewNoteSettleBranchArg = branch
+	m.reviewNoteSettleRevArg = rev
 	m.reviewNoteSettleIDArg = id
 	m.reviewNoteSettleAsArg = resolution
 	m.reviewNoteSettleAtArg = cite
@@ -605,6 +614,7 @@ func resetReviewNoteFlags(t *testing.T) {
 	t.Helper()
 	reset := func() {
 		taskReviewNotesBranchFlag, taskReviewNotesPathFlag, taskReviewNotesPruneFlag = "", false, false
+		taskReviewNotesRevFlag, taskReviewNoteRevFlag = "", ""
 		taskReviewNoteBranchFlag, taskReviewNoteOpenFlag, taskReviewNoteSettleFlag = "", false, false
 		taskReviewNoteRatifyFlag, taskReviewNoteReopenFlag = false, false
 		taskReviewNoteIDFlag, taskReviewNoteAsFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag = "", "", "", ""
@@ -659,6 +669,58 @@ func TestTask_ReviewNotes(t *testing.T) {
 			t.Error("--path must be declared mutually exclusive with --prune")
 		}
 	})
+
+	// --rev is what makes freshness mean anything for code that is not checked
+	// out (ADR-0021 §4): it must reach the task layer, and it must not be
+	// silently accepted beside the two flags that compute no freshness at all.
+	t.Run("passes --rev through", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNotesRet: "branch: pr/acme/api/213"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNotesBranchFlag = "pr/acme/api/213"
+		taskReviewNotesRevFlag = "9f2c1ab"
+
+		if err := taskReviewNotesCmd.RunE(taskReviewNotesCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewNotesRevArg != "9f2c1ab" {
+			t.Errorf("expected rev '9f2c1ab', got %q", mock.reviewNotesRevArg)
+		}
+	})
+
+	// Asserted by actually setting the flags and running cobra's validation,
+	// not by looking for an annotation key: an annotation-only check passes
+	// even when one of the two groups has been deleted, since the key is
+	// present as soon as ANY group names --rev.
+	t.Run("--rev excludes --path and --prune", func(t *testing.T) {
+		flags := taskReviewNotesCmd.Flags()
+		setFlag := func(t *testing.T, name, value string) {
+			t.Helper()
+			if err := flags.Set(name, value); err != nil {
+				t.Fatalf("setting --%s: %v", name, err)
+			}
+			t.Cleanup(func() { flags.Lookup(name).Changed = false })
+		}
+
+		for _, other := range []string{"path", "prune"} {
+			t.Run("with --"+other, func(t *testing.T) {
+				resetReviewNoteFlags(t)
+				setFlag(t, "rev", "9f2c1ab")
+				setFlag(t, other, "true")
+				if err := taskReviewNotesCmd.ValidateFlagGroups(); err == nil {
+					t.Errorf("--rev and --%s must be refused together, not silently ignored", other)
+				}
+			})
+		}
+
+		// The guard is only meaningful if --rev alone still validates.
+		resetReviewNoteFlags(t)
+		setFlag(t, "rev", "9f2c1ab")
+		if err := taskReviewNotesCmd.ValidateFlagGroups(); err != nil {
+			t.Errorf("--rev on its own must be accepted: %v", err)
+		}
+	})
 }
 
 func TestTask_ReviewNote(t *testing.T) {
@@ -683,6 +745,64 @@ func TestTask_ReviewNote(t *testing.T) {
 		}
 		if mock.reviewNoteSettleCalled {
 			t.Error("--open must not settle")
+		}
+	})
+
+	// --rev is what makes a review of code that is not checked out possible
+	// (ADR-0021 §4); it has to reach the task layer on both entry-creating
+	// paths or the entry is stamped against the wrong source.
+	t.Run("--rev reaches --open and --settle", func(t *testing.T) {
+		resetReviewNoteFlags(t)
+		mock := &mockTaskRunner{reviewNoteOpenRet: "Noted n1"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewNoteOpenFlag = true
+		taskReviewNoteRevFlag = "9f2c1ab"
+		taskReviewNoteAtFlag = "store.go:12"
+		taskReviewNoteNoteFlag = "write is not atomic"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewNoteOpenRevArg != "9f2c1ab" {
+			t.Errorf("expected rev '9f2c1ab' on --open, got %q", mock.reviewNoteOpenRevArg)
+		}
+
+		resetReviewNoteFlags(t)
+		taskReviewNoteSettleFlag = true
+		taskReviewNoteRevFlag = "9f2c1ab"
+		taskReviewNoteIDFlag = "n1"
+		taskReviewNoteAsFlag = "fixed"
+		taskReviewNoteNoteFlag = "atomic rename added"
+
+		if err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewNoteSettleRevArg != "9f2c1ab" {
+			t.Errorf("expected rev '9f2c1ab' on --settle, got %q", mock.reviewNoteSettleRevArg)
+		}
+	})
+
+	// Ratify and reopen never restamp, so a revision has nothing to act on
+	// there. Naming the mistake beats accepting the flag and ignoring it.
+	t.Run("--rev with --ratify or --reopen errors", func(t *testing.T) {
+		for _, mode := range []string{"ratify", "reopen"} {
+			resetReviewNoteFlags(t)
+			mock := &mockTaskRunner{}
+			restore := setupTaskMock(t, mock)
+			taskReviewNoteRevFlag = "9f2c1ab"
+			taskReviewNoteIDFlag = "n7"
+			taskReviewNoteRatifyFlag = mode == "ratify"
+			taskReviewNoteReopenFlag = mode == "reopen"
+
+			err := taskReviewNoteCmd.RunE(taskReviewNoteCmd, []string{})
+			if err == nil {
+				t.Errorf("--rev with --%s should error", mode)
+			}
+			if mock.reviewNoteRatifyCalled || mock.reviewNoteReopenCalled {
+				t.Errorf("--%s must not run with --rev", mode)
+			}
+			restore()
 		}
 	})
 

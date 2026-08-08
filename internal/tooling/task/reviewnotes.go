@@ -49,9 +49,53 @@ func (tm *TaskManager) journalBranch(branch string) (string, error) {
 	return current, nil
 }
 
+// verifyRev checks ONCE, before any entry is touched, that rev names a commit
+// this repository actually has — the failure ADR-0021's flow makes most likely,
+// since it fetches refs/pull/<n>/head and a skipped or failed fetch leaves
+// every later lookup with nothing to resolve against — and returns the commit
+// SHA it resolved to. A blank rev stays blank: that is working-tree mode, which
+// resolves nothing and must behave exactly as it did before --rev existed.
+//
+// It is a per-command check, not a per-entry one, for two reasons. Per entry it
+// would repeat one answer N times. And on the read path it is the only place
+// the problem CAN be reported at all: Verdict returns a bare string, so an
+// unverified bad rev would surface as "every entry is stale" — a silent lie
+// about the findings rather than an error about the revision.
+//
+// Callers use the RESOLVED sha from here, not the string the user typed. Every
+// stamp ADR-0021 writes is supposed to name an immutable commit, and a ref name
+// is not one: `--rev refs/pull/213/head` recorded verbatim describes a
+// different commit after the next fetch, and two ticks of the same review stamp
+// the same text for two different states, so the entries cannot be compared. A
+// caller that already passes a full SHA — pr-review-target does — resolves to
+// itself and is unaffected.
+func (tm *TaskManager) verifyRev(rev string) (string, error) {
+	if strings.TrimSpace(rev) == "" {
+		return "", nil
+	}
+	sha, err := tm.Git.ResolveCommit(rev)
+	if err != nil {
+		return "", fmt.Errorf(
+			"--rev %s does not name a commit in this repository — fetch it first "+
+				"(for a pull request: git fetch origin refs/pull/<n>/head): %w",
+			rev, err,
+		)
+	}
+	return sha, nil
+}
+
 // ReviewNotes prints branch's journal with each entry's freshness resolved
-// against the current working tree.
-func (tm *TaskManager) ReviewNotes(branch string, showPath, prune bool) (string, error) {
+// against the current working tree, or against rev when one is given.
+//
+// rev is what makes the freshness signal mean something for a review of code
+// that is not checked out (ADR-0021 §4): pass the revision under review NOW —
+// a pull request's current head — and [STALE] means "the pull request changed
+// this file since the finding was written". Against the working tree of an
+// unrelated checkout it would mean nothing but "you are not on that branch".
+func (tm *TaskManager) ReviewNotes(
+	branch, rev string,
+	showPath, prune bool,
+) (string, error) {
 	jm := reviewjournal.New(tm.Git)
 
 	if prune {
@@ -80,6 +124,18 @@ func (tm *TaskManager) ReviewNotes(branch string, showPath, prune bool) (string,
 	if showPath {
 		return jm.PathFor("", target)
 	}
+
+	// Only the freshness-resolving read below cares about the revision, so it is
+	// verified here rather than on entry: --prune deletes journals and --path
+	// prints a filename, and neither looks at an entry's content stamp. Cobra
+	// already refuses those flags alongside --rev, so this spares nobody but a
+	// direct programmatic caller — from a rev-parse that could not have changed
+	// the answer.
+	rev, err = tm.verifyRev(rev)
+	if err != nil {
+		return "", err
+	}
+	jm = reviewjournal.NewAtRev(tm.Git, rev)
 
 	j, err := loadJournalForDisplay(jm, target)
 	if err != nil {
@@ -181,9 +237,19 @@ func indentBlock(s string) string {
 // ReviewNoteOpen records an open question or finding, echoing its new id so the
 // caller can settle it later without re-reading the journal (task-design.md
 // mutation rule: verb + target, one line).
-func (tm *TaskManager) ReviewNoteOpen(branch, cite, note string) (string, error) {
+//
+// rev, when given, is the revision the cited path is stamped at instead of the
+// working tree — required when reviewing a commit that is not checked out,
+// where the cited file may be absent from the checkout or hold unrelated
+// content. The path must exist at that revision, exactly as it must exist in
+// the working tree otherwise (ADR-0012 §3).
+func (tm *TaskManager) ReviewNoteOpen(branch, rev, cite, note string) (string, error) {
 	if strings.TrimSpace(note) == "" {
 		return "", fmt.Errorf("--note is required and cannot be empty")
+	}
+	rev, err := tm.verifyRev(rev)
+	if err != nil {
+		return "", err
 	}
 	target, err := tm.journalBranch(branch)
 	if err != nil {
@@ -192,7 +258,7 @@ func (tm *TaskManager) ReviewNoteOpen(branch, cite, note string) (string, error)
 	if target == "" {
 		return "", fmt.Errorf("%s", noBranchSentinel)
 	}
-	id, err := reviewjournal.New(tm.Git).Open("", target, cite, note)
+	id, err := reviewjournal.NewAtRev(tm.Git, rev).Open("", target, cite, note)
 	if err != nil {
 		return "", err
 	}
@@ -200,10 +266,11 @@ func (tm *TaskManager) ReviewNoteOpen(branch, cite, note string) (string, error)
 }
 
 // ReviewNoteSettle settles an entry. With an id it closes that open entry (the
-// cite and its blob stamp carry over, so an answer can never retarget the
-// question it closes); without one it records an exchange that was never open.
+// cite carries over, so an answer can never retarget the question it closes);
+// without one it records an exchange that was never open. rev stamps the
+// conclusion at that revision instead of the working tree, as in ReviewNoteOpen.
 func (tm *TaskManager) ReviewNoteSettle(
-	branch, id, resolution, cite, note string,
+	branch, rev, id, resolution, cite, note string,
 ) (string, error) {
 	if !reviewjournal.ValidResolution(resolution) {
 		return "", fmt.Errorf(
@@ -214,6 +281,10 @@ func (tm *TaskManager) ReviewNoteSettle(
 	if strings.TrimSpace(note) == "" {
 		return "", fmt.Errorf("--note is required and cannot be empty")
 	}
+	rev, err := tm.verifyRev(rev)
+	if err != nil {
+		return "", err
+	}
 	target, err := tm.journalBranch(branch)
 	if err != nil {
 		return "", err
@@ -222,7 +293,7 @@ func (tm *TaskManager) ReviewNoteSettle(
 		return "", fmt.Errorf("%s", noBranchSentinel)
 	}
 
-	jm := reviewjournal.New(tm.Git)
+	jm := reviewjournal.NewAtRev(tm.Git, rev)
 	if strings.TrimSpace(id) != "" {
 		if cite != "" {
 			return "", fmt.Errorf(

@@ -38,9 +38,9 @@ type taskRunner interface {
 	ReviewScope(bodies bool) (string, error)
 	BranchDiff(file string) (string, error)
 	ReviewPackage(base, head, file string) (string, error)
-	ReviewNotes(branch string, showPath, prune bool) (string, error)
-	ReviewNoteOpen(branch, cite, note string) (string, error)
-	ReviewNoteSettle(branch, id, resolution, cite, note string) (string, error)
+	ReviewNotes(branch, rev string, showPath, prune bool) (string, error)
+	ReviewNoteOpen(branch, rev, cite, note string) (string, error)
+	ReviewNoteSettle(branch, rev, id, resolution, cite, note string) (string, error)
 	ReviewNoteRatify(branch, id string) (string, error)
 	ReviewNoteReopen(branch, id string) (string, error)
 	ReviewRun(reviewer, note string) (string, error)
@@ -249,10 +249,12 @@ an otherwise-excluded file.`,
 // review-notes / review-note flags (ADR-0012's review journal).
 var (
 	taskReviewNotesBranchFlag string
+	taskReviewNotesRevFlag    string
 	taskReviewNotesPathFlag   bool
 	taskReviewNotesPruneFlag  bool
 
 	taskReviewNoteBranchFlag string
+	taskReviewNoteRevFlag    string
 	taskReviewNoteOpenFlag   bool
 	taskReviewNoteSettleFlag bool
 	taskReviewNoteRatifyFlag bool
@@ -281,6 +283,10 @@ the answer against the exact question it closes.
 
 --branch targets another branch; omit it for the current one. A detached HEAD
 has no branch and therefore no journal.
+--rev decides staleness against that revision instead of the working tree. Pass
+it when reviewing code that is not checked out (a pull request's head), giving
+the revision under review RIGHT NOW: [STALE] then means "that revision changed
+this file since the finding was written", not "your checkout differs from it".
 --path prints the journal file's location, for hand-correcting a wrong entry.
 --prune deletes journals whose branch no longer exists locally or on the remote.
 
@@ -295,6 +301,7 @@ committed and never appears in a diff, and it is deleted with the branch by
 	RunE: func(cmd *cobra.Command, args []string) error {
 		out, err := newTaskManager().ReviewNotes(
 			taskReviewNotesBranchFlag,
+			taskReviewNotesRevFlag,
 			taskReviewNotesPathFlag,
 			taskReviewNotesPruneFlag,
 		)
@@ -342,10 +349,16 @@ given, the path must exist in the working tree — the command stamps the file's
 content hash itself, and refuses rather than writing an entry that claims to
 cite code but could never be checked against it.
 
---branch targets another branch; omit it for the current one.`,
+--branch targets another branch; omit it for the current one.
+--rev stamps the cited path at that revision instead of the working tree, and
+the path must exist THERE. Pass it when reviewing code that is not checked out
+(a pull request's head), where the cited file may be missing from your checkout
+or hold unrelated content. It applies to --open and --settle only; --ratify and
+--reopen do not restamp the entry at all.`,
 	Example: `  dg task review-note --open --at store.go:12 --note "write is not atomic"
   dg task review-note --settle --id n4 --as fixed --note "atomic rename added"
   dg task review-note --settle --as answered --note "yes, ctx is threaded through"
+  dg task review-note --open --branch pr/acme/api/213 --rev 9f2c1ab --at store.go:12 --note "write is not atomic"
   dg task review-note --ratify --id n7
   dg task review-note --reopen --id n7`,
 	Args: cobra.NoArgs,
@@ -357,11 +370,24 @@ cite code but could never be checked against it.
 		if (taskReviewNoteRatifyFlag || taskReviewNoteReopenFlag) && taskReviewNoteIDFlag == "" {
 			return fmt.Errorf("--ratify and --reopen require --id")
 		}
+		// Ratify and reopen deliberately leave the blob/head stamp alone — one
+		// confirms who an existing rejection belongs to, the other undoes a
+		// settlement — so there is nothing for a revision to stamp against.
+		// Accepting --rev there would silently do nothing.
+		if taskReviewNoteRevFlag != "" &&
+			(taskReviewNoteRatifyFlag || taskReviewNoteReopenFlag) {
+			return fmt.Errorf(
+				"--rev only applies to --open and --settle: --ratify and --reopen do not restamp the entry",
+			)
+		}
 		tm := newTaskManager()
 		switch {
 		case taskReviewNoteOpenFlag:
 			out, err := tm.ReviewNoteOpen(
-				taskReviewNoteBranchFlag, taskReviewNoteAtFlag, taskReviewNoteNoteFlag,
+				taskReviewNoteBranchFlag,
+				taskReviewNoteRevFlag,
+				taskReviewNoteAtFlag,
+				taskReviewNoteNoteFlag,
 			)
 			return emitPRResult(cmd, out, err)
 		case taskReviewNoteRatifyFlag:
@@ -373,6 +399,7 @@ cite code but could never be checked against it.
 		case taskReviewNoteSettleFlag:
 			out, err := tm.ReviewNoteSettle(
 				taskReviewNoteBranchFlag,
+				taskReviewNoteRevFlag,
 				taskReviewNoteIDFlag,
 				taskReviewNoteAsFlag,
 				taskReviewNoteAtFlag,
@@ -620,11 +647,20 @@ func init() {
 	taskReviewNotesCmd.Flags().
 		BoolVar(&taskReviewNotesPathFlag, "path", false, "Print the journal file's location instead of its contents")
 	taskReviewNotesCmd.Flags().
+		StringVar(&taskReviewNotesRevFlag, "rev", "", "Resolve staleness against this revision instead of the working tree (for reviewing code that is not checked out)")
+	taskReviewNotesCmd.Flags().
 		BoolVar(&taskReviewNotesPruneFlag, "prune", false, "Delete journals whose branch no longer exists locally or on the remote")
 	taskReviewNotesCmd.MarkFlagsMutuallyExclusive("path", "prune")
+	// --rev only steers freshness, which neither --path (prints a filename) nor
+	// --prune (deletes journals) computes. Refusing the combination beats
+	// accepting a flag and ignoring it.
+	taskReviewNotesCmd.MarkFlagsMutuallyExclusive("rev", "path")
+	taskReviewNotesCmd.MarkFlagsMutuallyExclusive("rev", "prune")
 
 	taskReviewNoteCmd.Flags().
 		StringVar(&taskReviewNoteBranchFlag, "branch", "", "Branch to write to (default: current)")
+	taskReviewNoteCmd.Flags().
+		StringVar(&taskReviewNoteRevFlag, "rev", "", "Stamp the cited path at this revision instead of the working tree (for reviewing code that is not checked out)")
 	taskReviewNoteCmd.Flags().
 		BoolVar(&taskReviewNoteOpenFlag, "open", false, "Record an entry that is still awaiting an answer")
 	// --settle is a bool with a separate --id rather than "--settle [id]" with an

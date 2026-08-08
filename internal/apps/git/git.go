@@ -506,6 +506,106 @@ func (g *Git) HashObjectIn(dir, path string) (string, error) {
 	return strings.TrimSpace(stdout), nil
 }
 
+// ErrPathNotAtRev reports the one BlobAtRevIn outcome that is not a failure to
+// look: the revision resolved fine and simply holds no entry at that path.
+//
+// It exists because callers have to tell that apart from a broken lookup, and
+// the two mean opposite things to a user — "your path is wrong" versus "your
+// revision is wrong". Match it with errors.Is; treat every other error as a
+// genuine failure whose cause is in the message.
+var ErrPathNotAtRev = errors.New("path does not exist at that revision")
+
+// BlobAtRevIn returns the git blob hash of path's content AS OF rev in the
+// repository at dir ("" = current directory), via
+// `git ls-tree --full-tree <rev> -- <path>`.
+//
+// It is HashObjectIn's counterpart for code that is not checked out (ADR-0021
+// §4). git resolves the tree entry itself, so nothing is stat'ed and nothing is
+// hashed, and the answer cannot be perturbed by what the caller happens to have
+// in its working tree — the whole point when the reviewed commit belongs to
+// someone else's pull request. The hashes the two return are comparable: both
+// are the blob id of the same bytes, so an entry stamped at one revision can be
+// checked against another.
+//
+// ls-tree, not `rev-parse --verify <rev>:<path>`, for two reasons that both
+// showed up as real defects:
+//
+//   - rev-parse collapses "the path is not at that revision" and "that revision
+//     does not exist" into one `fatal: Needed a single revision` / exit 128, so
+//     no caller can tell them apart. ls-tree separates them on the EXIT CODE —
+//     0 with empty output means definitively absent (ErrPathNotAtRev), nonzero
+//     means the lookup itself failed — which is a contract, not a message this
+//     code has to string-match out of git's UI text.
+//   - rev-parse resolves a DIRECTORY to its tree object and exits 0, so a cite
+//     naming a directory would be accepted and stamped with a tree hash — the
+//     exact write ADR-0012 §3's typo guard exists to refuse, and which the
+//     working-tree path already refuses because `git hash-object` fails on a
+//     directory. ls-tree names the object's type, so a non-blob is rejected
+//     here rather than silently recorded.
+//
+// --full-tree is load-bearing: without it ls-tree resolves pathspecs relative
+// to the process's working directory, so a cite would silently resolve to
+// nothing whenever `dg` runs from a subdirectory of the repo. Journal cites are
+// repository-root-relative, which is what --full-tree makes them mean.
+//
+// The `:(literal)` prefix is load-bearing too, but NOT because of globbing:
+// ls-tree does no glob matching whatsoever. Measured on git 2.51.1, `-- 'f*.go'`
+// matches nothing even when `f1.go` exists (`git ls-files` with that same
+// pathspec does match it), `:(glob)` is refused as "pathspec magic not supported
+// by this command", and a real `f[1].go` resolves to the same blob with or
+// without the prefix. Do not re-derive a globbing rationale from this argument
+// — it is not true of this command.
+//
+// What the prefix prevents is a LEADING COLON. `ls-tree -- ':weird.go'` reads
+// that colon as pathspec magic and returns exit 0 with empty output, which the
+// code below reads — correctly for every other input — as "definitively absent"
+// and turns into ErrPathNotAtRev. A journal cite naming a real file whose name
+// starts with `:` would then be reported as a typo at a revision where it plainly
+// exists, the one failure this whole function is shaped to avoid.
+// `:(literal):weird.go` returns its blob.
+func (g *Git) BlobAtRevIn(dir, rev, path string) (string, error) {
+	stdout, stderr, err := g.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "ls-tree", "--full-tree", rev, "--", ":(literal)"+path),
+	})
+	if err != nil {
+		// Fold git's own diagnosis into the error, as RunCapture does: it is
+		// the only thing that says WHICH of the lookup's inputs was bad.
+		if msg := strings.TrimSpace(stderr); msg != "" {
+			return "", fmt.Errorf("failed to read %s at %s: git: %s", path, rev, msg)
+		}
+		return "", fmt.Errorf("failed to read %s at %s: %w", path, rev, err)
+	}
+	out := strings.TrimSpace(stdout)
+	if out == "" {
+		return "", fmt.Errorf("%s at %s: %w", path, rev, ErrPathNotAtRev)
+	}
+	// Reachable, and not a glob case — `:(literal)` does not make one entry
+	// certain. A cite ending in a slash names a DIRECTORY's contents: measured on
+	// git 2.51.1, `:(literal)sub/` lists every blob under sub/, one line each,
+	// where `:(literal)sub` returns the single tree entry the type check below
+	// rejects. Stamping the first of several lines would silently record one
+	// file's hash under another path's name, so refuse instead and say how many
+	// matched.
+	if strings.Contains(out, "\n") {
+		return "", fmt.Errorf(
+			"failed to read %s at %s: it matches %d entries, not one file",
+			path, rev, strings.Count(out, "\n")+1,
+		)
+	}
+	// One entry, formatted "<mode> SP <type> SP <object> TAB <file>".
+	fields := strings.Fields(out)
+	if len(fields) < 3 {
+		return "", fmt.Errorf(
+			"failed to read %s at %s: unexpected git ls-tree output %q", path, rev, out,
+		)
+	}
+	if fields[1] != "blob" {
+		return "", fmt.Errorf("%s at %s is a %s, not a file", path, rev, fields[1])
+	}
+	return fields[2], nil
+}
+
 // RunCapture runs a git command and returns its stdout, for callers (e.g.
 // `dg task`) that need to parse output rather than just check for an error.
 func (g *Git) RunCapture(args ...string) (string, error) {

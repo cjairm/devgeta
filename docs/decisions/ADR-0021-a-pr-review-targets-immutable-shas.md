@@ -122,11 +122,43 @@ is why this decision has a fourth part instead of stopping at a filename.
 
 `reviewjournal.Manager` gains a revision mode, exposed as `--rev <sha>`:
 
-- **Stamp at a revision.** The cited path's blob comes from `git rev-parse <rev>:<path>` —
-  git resolves the blob directly, so there is no `os.Stat` and no hashing of a checkout file.
-  A path that does not exist **at that revision** fails the write, which preserves ADR-0012
-  §3's typo guard rather than weakening it.
-- **The head stamp is `<rev>`**, the reviewed commit, not the checkout's `HEAD`.
+- **Stamp at a revision.** The cited path's blob comes from
+  `git ls-tree --full-tree <rev> -- <path>` — git resolves the tree entry directly, so there
+  is no `os.Stat` and no hashing of a checkout file. A path that does not exist **at that
+  revision** fails the write, which preserves ADR-0012 §3's typo guard rather than weakening
+  it.
+
+  `ls-tree` rather than `rev-parse --verify <rev>:<path>`, which the first implementation
+  used, for two reasons found in review. `rev-parse` reports a missing path and an
+  unresolvable revision identically (`fatal: Needed a single revision`, exit 128), so a
+  `--rev` that was never fetched — this feature's likeliest real failure, since the flow
+  fetches `refs/pull/<n>/head` — would be reported as "your cited path does not exist",
+  sending an agent off rewriting correct paths. And `rev-parse` resolves a **directory** to a
+  tree object and exits 0, so a cite naming one would be stamped with a tree hash, the exact
+  write the typo guard exists to refuse. `ls-tree` separates the cases on the exit code
+  (nonzero = the lookup failed; exit 0 with empty output = definitively absent) and names the
+  object's type, so a non-blob is rejected. The cited path is passed as a `:(literal)`
+  pathspec, and **not** because of globbing: `git ls-tree` does no glob matching at all.
+  Measured on git 2.51.1, `ls-tree -- 'f*.go'` matches nothing even though `f1.go` exists
+  (`git ls-files` with that same pathspec matches it), `:(glob)` is rejected outright as
+  `pathspec magic not supported by this command`, and a real file named `f[1].go` resolves
+  to the same blob with or without the prefix. What the prefix actually prevents is a
+  **leading colon**: `ls-tree -- ':weird.go'` reads that colon as pathspec magic and returns
+  exit 0 with empty output — which this code, correctly for every other input, reads as
+  "definitively absent" and turns into "cited path `:weird.go` does not exist at `<rev>`".
+  That is exactly the misleading-absence failure the rest of this section exists to stop, so
+  a correct cite would be blamed as a typo. `:(literal):weird.go` resolves it.
+  `--rev` is also resolved and verified **once per command** with
+  `ResolveCommit`, before any entry is touched, so a revision this repository does not have
+  fails clearly instead of degrading into "every entry is stale" on the read path, where
+  `Verdict` returns a bare string and cannot report an error at all.
+
+- **The head stamp is the commit `<rev>` resolves to**, the reviewed commit, not the
+  checkout's `HEAD`. It is the resolved sha and never the caller's spelling: this decision
+  exists because a review must target something immutable, and a ref name — `refs/pull/213/head`,
+  a branch, `HEAD` — recorded verbatim starts describing a different commit at the next fetch,
+  making two ticks' entries incomparable. A caller that already passes a full sha resolves to
+  itself.
 - **Freshness compares against the current PR head.** The next tick passes the new head SHA,
   so "stale" means "the PR changed this file since the finding was raised" — never "your
   checkout differs from the PR", which is true of almost every file and would mark the whole

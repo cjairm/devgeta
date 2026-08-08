@@ -26,6 +26,22 @@ type fakeRepo struct {
 	gitDir   string
 	branches []string // "local" branches, for prune
 	remotes  []string
+	// revs is the committed history the checkout cannot show: rev -> path ->
+	// content, answered by `ls-tree <rev> -- <path>`. It is what makes
+	// a revision-mode test able to disagree with the working tree, which is
+	// the whole point of that mode.
+	revs map[string]map[string]string
+	// revTrees records paths that are DIRECTORIES at a revision. git answers
+	// those with a tree object and exit 0, so a fixture that only knew about
+	// blobs could not show whether the code rejects a cite naming a directory
+	// (ADR-0012 §3's typo guard) or stamps an entry with a tree hash.
+	revTrees map[string]map[string]bool
+	// revErrs makes a revision fail the way a broken lookup does — nonzero
+	// exit with git's message — as opposed to the exit-0-with-no-output that
+	// means "this revision genuinely has no such path". The two are different
+	// answers to different questions, and only a fixture that can produce both
+	// shapes can prove the code keeps them apart.
+	revErrs map[string]string
 }
 
 func newFakeRepo(t *testing.T) *fakeRepo {
@@ -48,6 +64,37 @@ func newFakeRepo(t *testing.T) *fakeRepo {
 		switch {
 		case slices.Contains(args, "--git-common-dir"):
 			return fr.gitDir + "\n", "", nil
+		// `ls-tree --full-tree <rev> -- <path>`, answered from fr.revs — the
+		// history a checkout cannot show. It reproduces all THREE shapes real
+		// git answers with, because the code under test now branches on which
+		// one it gets: a revision git cannot resolve fails with a nonzero
+		// exit, a resolvable revision with no such entry succeeds with EMPTY
+		// output, and a hit prints one "<mode> <type> <sha>\t<path>" line.
+		// Blobs are hashed with the same function as the hash-object case
+		// below so the two modes produce comparable blob ids, exactly as real
+		// git does.
+		case slices.Contains(args, "ls-tree"):
+			// The wrapper always sends the path as a `:(literal)` pathspec, so
+			// git treats it as an exact name rather than a glob. This fixture
+			// looks paths up exactly, which is that same semantics — stripping
+			// the prefix is how it reads the pathspec git would have honored.
+			rev, path := args[len(args)-3], strings.TrimPrefix(args[len(args)-1], ":(literal)")
+			if stderr, failing := fr.revErrs[rev]; failing {
+				return "", stderr, errors.New("exit 128")
+			}
+			tree, resolvable := fr.revs[rev]
+			if !resolvable {
+				return "", "fatal: Not a valid object name " + rev, errors.New("exit 128")
+			}
+			if fr.revTrees[rev][path] {
+				return "040000 tree 1111111\t" + path + "\n", "", nil
+			}
+			content, ok := tree[path]
+			if !ok {
+				return "", "", nil
+			}
+			sum := sha1.Sum([]byte(content))
+			return "100644 blob " + hex.EncodeToString(sum[:])[:7] + "\t" + path + "\n", "", nil
 		case slices.Contains(args, "hash-object"):
 			path := args[len(args)-1]
 			data, err := os.ReadFile(filepath.Join(fr.repoDir, path))
@@ -90,6 +137,63 @@ func (fr *fakeRepo) write(path, content string) {
 	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
 		fr.t.Fatalf("setup: %v", err)
 	}
+}
+
+// writeRev records path's content as of rev — the fake's equivalent of a
+// commit, reachable only through revision mode.
+func (fr *fakeRepo) writeRev(rev, path, content string) {
+	fr.t.Helper()
+	if fr.revs == nil {
+		fr.revs = map[string]map[string]string{}
+	}
+	if fr.revs[rev] == nil {
+		fr.revs[rev] = map[string]string{}
+	}
+	fr.revs[rev][path] = content
+}
+
+// writeRevTree records path as a DIRECTORY at rev. git answers a directory
+// with a tree object and exit 0, which is the shape that could sneak a
+// non-file cite past a guard built on "did the lookup succeed".
+func (fr *fakeRepo) writeRevTree(rev, path string) {
+	fr.t.Helper()
+	if fr.revTrees == nil {
+		fr.revTrees = map[string]map[string]bool{}
+	}
+	if fr.revTrees[rev] == nil {
+		fr.revTrees[rev] = map[string]bool{}
+	}
+	fr.revTrees[rev][path] = true
+	// A revision has to be resolvable before any of its entries mean
+	// anything; an unregistered one is answered as "not a valid object name".
+	if fr.revs == nil {
+		fr.revs = map[string]map[string]string{}
+	}
+	if fr.revs[rev] == nil {
+		fr.revs[rev] = map[string]string{}
+	}
+}
+
+// failRev makes every lookup at rev fail with stderr, the way git does when
+// the revision itself is the problem — never fetched, mistyped — or when the
+// repository is broken. An empty stderr models a git that failed without
+// saying anything, which is a different branch of the wrapper's error path.
+func (fr *fakeRepo) failRev(rev, stderr string) {
+	fr.t.Helper()
+	if fr.revErrs == nil {
+		fr.revErrs = map[string]string{}
+	}
+	fr.revErrs[rev] = stderr
+}
+
+// atRev returns a second Manager over the same fake repo, pinned to rev. It
+// shares the git wrapper and the clock, so a test can hold both modes at once
+// and show them disagreeing about the same journal.
+func (fr *fakeRepo) atRev(rev string) *Manager {
+	fr.t.Helper()
+	m := NewAtRev(fr.mgr.Git, rev)
+	m.NowFn = fr.mgr.NowFn
+	return m
 }
 
 func (fr *fakeRepo) journalPath(branch string) string {
@@ -164,6 +268,336 @@ func TestVerdictPathlessEntryNeverStale(t *testing.T) {
 	j, _ := fr.mgr.Load(fr.repoDir, "feat")
 	if got := fr.mgr.Verdict(fr.repoDir, *j.find(id)); got != FreshnessDateless {
 		t.Fatalf("pathless entry should have no verdict, got %q", got)
+	}
+}
+
+// --- revision mode (ADR-0021 §4) ---
+//
+// A pull request is reviewed from whatever branch the human happens to have
+// checked out, which usually does not contain the PR's files at all. Every
+// test below therefore makes the working tree disagree with the revision, and
+// asserts that the revision is what decides.
+
+// The checkout is dirty on the cited file, and the stamp ignores it entirely:
+// the blob is the revision's, not the edit's. The same entry read in
+// working-tree mode is stale, which is precisely why revision mode exists —
+// that verdict is about the checkout, not about the pull request.
+func TestStampAtRevIgnoresDirtyWorkingTree(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "client.go", "v1\n")
+	fr.write("client.go", "unrelated local edit\n")
+
+	rev := fr.atRev("9f2c1ab")
+	id, err := rev.Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+
+	j, err := rev.Load(fr.repoDir, "pr/acme/api/213")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	e := *j.find(id)
+	if got := rev.Verdict(fr.repoDir, e); got != FreshnessFresh {
+		t.Fatalf("entry stamped at the revision must be fresh there, got %q", got)
+	}
+	if got := fr.mgr.Verdict(fr.repoDir, e); got != FreshnessStale {
+		t.Fatalf("the dirty checkout must NOT be what the revision-mode entry was judged against;"+
+			" working-tree verdict was %q", got)
+	}
+	// The head stamp is the reviewed commit, not the checkout's HEAD (which
+	// the fixture reports as "abc1234").
+	if e.Head != "9f2c1ab" {
+		t.Errorf("head stamp = %q, want the reviewed revision 9f2c1ab", e.Head)
+	}
+}
+
+// The cited file is not in the checkout at all — the ordinary case when the
+// PR's branch was never fetched into the working tree. Working-tree mode
+// refuses this write; revision mode must accept it.
+func TestStampAtRevSucceedsWhenCitedFileIsAbsentFromTheCheckout(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "internal/store/store.go", "func Write() {}\n")
+
+	if _, err := fr.mgr.Open(
+		fr.repoDir, "pr/acme/api/213", "internal/store/store.go:1", "write is not atomic",
+	); err == nil {
+		t.Fatal("precondition: working-tree mode should refuse a path the checkout does not have")
+	}
+
+	rev := fr.atRev("9f2c1ab")
+	id, err := rev.Open(
+		fr.repoDir, "pr/acme/api/213", "internal/store/store.go:1", "write is not atomic",
+	)
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+	j, _ := rev.Load(fr.repoDir, "pr/acme/api/213")
+	if got := rev.Verdict(fr.repoDir, *j.find(id)); got != FreshnessFresh {
+		t.Fatalf("entry should be fresh at the revision it was stamped at, got %q", got)
+	}
+}
+
+// The checkout is on unrelated work and keeps moving underneath the review —
+// the file is edited, then deleted. Neither touches the verdict, because the
+// verdict never looks at the checkout in this mode.
+func TestVerdictAtRevIsUnaffectedByAnUnrelatedCheckout(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "client.go", "v1\n")
+	fr.write("client.go", "someone else's branch\n")
+
+	rev := fr.atRev("9f2c1ab")
+	id, err := rev.Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+	j, _ := rev.Load(fr.repoDir, "pr/acme/api/213")
+	e := *j.find(id)
+
+	fr.write("client.go", "still someone else's branch, edited\n")
+	if got := rev.Verdict(fr.repoDir, e); got != FreshnessFresh {
+		t.Fatalf("an unrelated checkout edit must not move the verdict, got %q", got)
+	}
+	if err := os.Remove(filepath.Join(fr.repoDir, "client.go")); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if got := rev.Verdict(fr.repoDir, e); got != FreshnessFresh {
+		t.Fatalf("deleting the checkout's copy must not move the verdict, got %q", got)
+	}
+}
+
+// ADR-0012 §3's typo guard, relocated: the path has to exist AT THE REVISION.
+// Existing in the working tree is not a substitute — that is exactly the
+// mistake a foreign-PR review would make.
+func TestOpenAtRevRejectsPathMissingAtThatRevisionWithoutWriting(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "client.go", "v1\n")
+	fr.write("typo.go", "this file exists locally, but not in the PR\n")
+
+	rev := fr.atRev("9f2c1ab")
+	_, err := rev.Open(fr.repoDir, "pr/acme/api/213", "typo.go:1", "oops")
+	if err == nil {
+		t.Fatal("expected an error for a path that does not exist at the revision")
+	}
+	if !strings.Contains(err.Error(), "typo.go") || !strings.Contains(err.Error(), "9f2c1ab") {
+		t.Errorf("error should name the path and the revision, got %v", err)
+	}
+	if _, statErr := os.Stat(fr.journalPath("pr/acme/api/213")); !os.IsNotExist(statErr) {
+		t.Error("no journal should have been written")
+	}
+
+	if _, err := rev.SettleDirect(
+		fr.repoDir, "pr/acme/api/213", ResolutionAnswered, "typo.go:1", "note",
+	); err == nil {
+		t.Fatal("SettleDirect must apply the same guard at the revision")
+	}
+}
+
+// Freshness is judged at the revision the CALLER passes now: the next tick of
+// a review passes the PR's new head, so stale means "the pull request changed
+// this file since the finding was written".
+func TestVerdictAtRevFlipsOnlyWhenTheRevisionChangesTheFile(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("aaa1111", "client.go", "v1\n")
+	// The author pushes twice: once touching another file, once rewriting the
+	// cited one.
+	fr.writeRev("bbb2222", "client.go", "v1\n")
+	fr.writeRev("ccc3333", "client.go", "v2 — retry loop rewritten\n")
+
+	first := fr.atRev("aaa1111")
+	id, err := first.Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+	j, _ := first.Load(fr.repoDir, "pr/acme/api/213")
+	e := *j.find(id)
+
+	if got := fr.atRev("bbb2222").Verdict(fr.repoDir, e); got != FreshnessFresh {
+		t.Fatalf("a new head that did not touch the cited file must stay fresh, got %q", got)
+	}
+	if got := fr.atRev("ccc3333").Verdict(fr.repoDir, e); got != FreshnessStale {
+		t.Fatalf("a new head that rewrote the cited file must be stale, got %q", got)
+	}
+}
+
+// Settling re-stamps at the revision the conclusion was formed against, and
+// tolerates a cited file the revision no longer has — the revision-mode twin
+// of "a finding can be fixed by deleting the file it cited".
+func TestSettleAtRevRestampsAtTheSettlingRevision(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("aaa1111", "client.go", "v1\n")
+	fr.writeRev("bbb2222", "client.go", "v2 — fixed\n")
+
+	id, err := fr.atRev("aaa1111").
+		Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+
+	settling := fr.atRev("bbb2222")
+	if err := settling.SettleByID(
+		fr.repoDir, "pr/acme/api/213", id, ResolutionFixed, "batched in one query",
+	); err != nil {
+		t.Fatalf("SettleByID at rev: %v", err)
+	}
+	j, _ := settling.Load(fr.repoDir, "pr/acme/api/213")
+	e := *j.find(id)
+	if e.Head != "bbb2222" {
+		t.Errorf("head stamp = %q, want the settling revision bbb2222", e.Head)
+	}
+	if got := settling.Verdict(fr.repoDir, e); got != FreshnessFresh {
+		t.Fatalf("a fix settled at the new head must read fresh there, got %q", got)
+	}
+
+	// A later head deletes the file the finding cited: settling must still
+	// succeed, keeping the previous stamp rather than dead-ending the entry.
+	fr.writeRev("ccc3333", "other.go", "x\n")
+	deleted := fr.atRev("ccc3333")
+	if err := deleted.Reopen(fr.repoDir, "pr/acme/api/213", id); err != nil {
+		t.Fatalf("Reopen: %v", err)
+	}
+	if err := deleted.SettleByID(
+		fr.repoDir, "pr/acme/api/213", id, ResolutionFixed, "file removed entirely",
+	); err != nil {
+		t.Fatalf("settling a finding whose file the revision deleted must succeed: %v", err)
+	}
+	j, _ = deleted.Load(fr.repoDir, "pr/acme/api/213")
+	after := *j.find(id)
+	if after.Blob != e.Blob || after.Head != e.Head {
+		t.Errorf("stamp should be untouched when the file is gone: got blob %q head %q, want %q %q",
+			after.Blob, after.Head, e.Blob, e.Head)
+	}
+	if got := deleted.Verdict(fr.repoDir, after); got != FreshnessStale {
+		t.Fatalf("a cited file the revision no longer has is stale, got %q", got)
+	}
+}
+
+// The three outcomes a revision lookup can have must stay three different
+// answers. Collapsing them — which is what `rev-parse --verify <rev>:<path>`
+// forced, since it reports a missing path and an unresolvable revision with
+// the same "Needed a single revision" / exit 128 — told an agent its CITATIONS
+// were wrong whenever its REVISION was wrong, so it would start rewriting
+// correct paths.
+func TestStampAtRevTellsAMissingPathApartFromABrokenLookup(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "client.go", "v1\n")
+	fr.failRev("deadbee", "fatal: Not a valid object name deadbee")
+	fr.failRev("brokenrepo", "") // git failed and said nothing
+
+	// 1. The revision resolves and has no such path: the path is the culprit.
+	_, err := fr.atRev("9f2c1ab").Open(fr.repoDir, "pr/acme/api/213", "typo.go:1", "oops")
+	if err == nil {
+		t.Fatal("a path absent at the revision must be refused")
+	}
+	if !strings.Contains(err.Error(), "does not exist") ||
+		!strings.Contains(err.Error(), "typo.go") {
+		t.Errorf("a missing path must be reported as a missing path, got %v", err)
+	}
+
+	// 2. The revision itself cannot be resolved: the REV is the culprit, and
+	// saying "cited path client.go does not exist" here would be a lie.
+	_, err = fr.atRev("deadbee").Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "n+1")
+	if err == nil {
+		t.Fatal("an unresolvable revision must be an error, never read as an absent path")
+	}
+	if strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("a bad revision must not be blamed on the cited path, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Not a valid object name") {
+		t.Errorf("git's own diagnosis must reach the user, got %v", err)
+	}
+
+	// 3. A generic git failure is still a failure, even with nothing on
+	// stderr to quote.
+	_, err = fr.atRev("brokenrepo").Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "n+1")
+	if err == nil {
+		t.Fatal("a git failure with no stderr must still be an error")
+	}
+	if strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("a broken lookup must not be reported as an absent path, got %v", err)
+	}
+
+	// None of the three wrote anything.
+	if _, statErr := os.Stat(fr.journalPath("pr/acme/api/213")); !os.IsNotExist(statErr) {
+		t.Error("no journal should have been written")
+	}
+}
+
+// A cite naming a DIRECTORY must be refused at a revision exactly as it is in
+// the working tree, where `git hash-object` fails on one. git resolves a
+// directory to a tree object and exits 0, so a guard built on "did the lookup
+// succeed" would accept it and stamp a permanent entry with a tree hash —
+// precisely the write ADR-0012 §3 exists to prevent.
+func TestStampAtRevRejectsACiteNamingADirectory(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRevTree("9f2c1ab", "internal/store")
+
+	// Working-tree mode refuses it: hash-object cannot hash a directory.
+	if err := os.MkdirAll(filepath.Join(fr.repoDir, "internal/store"), 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := fr.mgr.Open(
+		fr.repoDir, "pr/acme/api/213", "internal/store:12", "the whole package is wrong",
+	); err == nil {
+		t.Fatal("precondition: working-tree mode must refuse a cite naming a directory")
+	}
+
+	_, err := fr.atRev("9f2c1ab").Open(
+		fr.repoDir, "pr/acme/api/213", "internal/store:12", "the whole package is wrong",
+	)
+	if err == nil {
+		t.Fatal("revision mode must refuse a cite naming a directory too")
+	}
+	if !strings.Contains(err.Error(), "internal/store") || !strings.Contains(err.Error(), "tree") {
+		t.Errorf("error should name the path and what it actually is, got %v", err)
+	}
+	if _, statErr := os.Stat(fr.journalPath("pr/acme/api/213")); !os.IsNotExist(statErr) {
+		t.Error("no journal should have been written")
+	}
+}
+
+// Verdict deliberately does NOT inherit stamp's strictness: a lookup it cannot
+// complete reads stale. A wrongly-stale finding costs one re-verification
+// round; a wrongly-fresh one would hide a real change. Verdict also returns a
+// bare string and cannot report an error at all — a bad --rev is caught once,
+// up front, by the task layer.
+func TestVerdictAtRevReadsABrokenLookupAsStaleNotAnError(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.writeRev("9f2c1ab", "client.go", "v1\n")
+
+	rev := fr.atRev("9f2c1ab")
+	id, err := rev.Open(fr.repoDir, "pr/acme/api/213", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open at rev: %v", err)
+	}
+	j, _ := rev.Load(fr.repoDir, "pr/acme/api/213")
+	e := *j.find(id)
+
+	fr.failRev("deadbee", "fatal: Not a valid object name deadbee")
+	if got := fr.atRev("deadbee").Verdict(fr.repoDir, e); got != FreshnessStale {
+		t.Fatalf("an unresolvable revision must read stale on the freshness side, got %q", got)
+	}
+}
+
+// A blank revision is the working tree — the single place that decision is
+// made, so a caller can pass an optional --rev through unconditionally.
+func TestNewAtRevWithBlankRevIsWorkingTreeMode(t *testing.T) {
+	fr := newFakeRepo(t)
+	fr.write("client.go", "v1\n")
+
+	blank := fr.atRev("   ")
+	id, err := blank.Open(fr.repoDir, "feat", "client.go:42", "N+1 in the retry loop")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	j, _ := blank.Load(fr.repoDir, "feat")
+	e := *j.find(id)
+	if e.Head != "abc1234" {
+		t.Errorf("head stamp = %q, want the checkout's HEAD abc1234", e.Head)
+	}
+	fr.write("client.go", "v2-dirty\n")
+	if got := blank.Verdict(fr.repoDir, e); got != FreshnessStale {
+		t.Fatalf("a dirty edit must still be stale without a revision, got %q", got)
 	}
 }
 

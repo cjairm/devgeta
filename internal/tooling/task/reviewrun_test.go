@@ -1445,7 +1445,7 @@ func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
 				}
 				// Stand in for reviewer 1's own `review-note --open` process,
 				// which writes to the LIVE journal.
-				if _, err := tm.ReviewNoteOpen("", "", "reviewer-1 finding"); err != nil {
+				if _, err := tm.ReviewNoteOpen("", "", "", "reviewer-1 finding"); err != nil {
 					t.Fatalf("reviewer 1's write: %v", err)
 				}
 			},
@@ -1490,7 +1490,7 @@ func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
 func TestReviewRunSnapshotHidesWhatAPeerWroteThisRound(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
-	if _, err := tm.ReviewNoteOpen("", "", "round-start finding"); err != nil {
+	if _, err := tm.ReviewNoteOpen("", "", "", "round-start finding"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
@@ -1501,7 +1501,7 @@ func TestReviewRunSnapshotHidesWhatAPeerWroteThisRound(t *testing.T) {
 			onCall: func(t *testing.T, c commands.CommandParams) {
 				// Stand in for the reviewer's own `review-note --open`
 				// process, which writes to the LIVE journal.
-				if _, err := tm.ReviewNoteOpen("", "", "reviewer-1 finding"); err != nil {
+				if _, err := tm.ReviewNoteOpen("", "", "", "reviewer-1 finding"); err != nil {
 					t.Fatalf("reviewer 1's write: %v", err)
 				}
 			},
@@ -1529,7 +1529,7 @@ func TestReviewRunSnapshotHidesWhatAPeerWroteThisRound(t *testing.T) {
 	// Ids keep advancing in the LIVE journal while the reads stay frozen: the
 	// round-start entry and the one reviewer 1 wrote mid-round are both there,
 	// each with its own real id.
-	notes, err := tm.ReviewNotes("", false, false)
+	notes, err := tm.ReviewNotes("", "", false, false)
 	if err != nil {
 		t.Fatalf("ReviewNotes: %v", err)
 	}
@@ -1631,11 +1631,11 @@ func TestReviewRunPrintsOnlyVerdictLines(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
 	for _, note := range []string{"first", "second", "third"} {
-		if _, err := tm.ReviewNoteOpen("", "", note); err != nil {
+		if _, err := tm.ReviewNoteOpen("", "", "", note); err != nil {
 			t.Fatalf("setup: %v", err)
 		}
 	}
-	if _, err := tm.ReviewNoteSettle("", "n2", "fixed", "", "done"); err != nil {
+	if _, err := tm.ReviewNoteSettle("", "", "n2", "fixed", "", "done"); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("REQUEST CHANGES")})

@@ -10,6 +10,7 @@
 package reviewjournal
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -34,10 +35,35 @@ const journalPermission = 0o600
 type Manager struct {
 	Git   *git.Git
 	NowFn func() time.Time
+	// Rev pins the revision every stamp and freshness check resolves against
+	// (ADR-0021 §4). Empty — the default — means the working tree, which is
+	// what a branch review wants: the reviewer is looking at the checkout,
+	// uncommitted edits included.
+	//
+	// It is a field on the Manager rather than an argument to Open, Settle,
+	// and Verdict because it is a property of the whole review, not of one
+	// call: every entry written and every verdict computed in a given review
+	// must resolve against the same source, and a per-call argument is a
+	// per-call opportunity to pass a different one.
+	Rev string
 }
 
 func New(g *git.Git) *Manager {
 	return &Manager{Git: g, NowFn: time.Now}
+}
+
+// NewAtRev builds a Manager that stamps and judges freshness at rev instead of
+// the working tree — for reviewing a commit that is not checked out, such as a
+// pull request's head, where the cited file may be absent from the checkout or
+// hold unrelated content (ADR-0021 §4).
+//
+// A blank rev is the working tree, so this is the single place that decides
+// what "no revision given" means and callers can pass an optional --rev through
+// unconditionally.
+func NewAtRev(g *git.Git, rev string) *Manager {
+	m := New(g)
+	m.Rev = strings.TrimSpace(rev)
+	return m
 }
 
 // reviewDir resolves the journal directory for the repo containing repoDir,
@@ -166,26 +192,85 @@ func (m *Manager) save(repoDir string, j *Journal) error {
 	return nil
 }
 
-// stamp fills an entry's blob and head. A cite that names a file which does
-// not exist in the working tree fails without writing (ADR-0012 §3): a typo'd
-// path silently recorded as "no blob" would create an entry that never goes
-// stale while claiming to cite code. The head stamp is best-effort — an
-// unborn branch has no HEAD, and the stamp is human context, not the
-// staleness signal.
-func (m *Manager) stamp(repoDir string, e *Entry) error {
-	if file := e.CitedFile(); file != "" {
-		if _, err := os.Stat(filepath.Join(repoDir, file)); err != nil {
-			return fmt.Errorf("cited path %s does not exist in the working tree", file)
+// citeBlob resolves the cited path's blob identity from whatever source this
+// manager judges against — the working tree, or Rev when one is pinned. It is
+// the single place the two modes differ, so stamp, restamp, and Verdict all
+// get revision awareness from one function rather than three.
+//
+// The "not there at all" case returns ("", nil), not an error: both callers
+// have to handle it and they disagree about it — a stamp refuses (ADR-0012
+// §3's typo guard), a restamp tolerates it (a finding can be fixed by deleting
+// the file it cited). An error means the lookup itself broke, which is fatal
+// to every caller.
+func (m *Manager) citeBlob(repoDir, file string) (string, error) {
+	if m.Rev != "" {
+		blob, err := m.Git.BlobAtRevIn(repoDir, m.Rev, file)
+		// Only git's definitive "that revision has no such entry" is absence.
+		// Every other failure — an unfetched revision, a broken repository —
+		// is a failure to LOOK, and Prune's rule below applies here too: a
+		// failed check means "unknown", never "absent". Collapsing the two
+		// would answer a bad --rev with "cited path X does not exist", telling
+		// an agent its citations are wrong when its revision is what is wrong,
+		// so it would start rewriting correct paths.
+		if errors.Is(err, git.ErrPathNotAtRev) {
+			return "", nil
 		}
-		blob, err := m.Git.HashObjectIn(repoDir, file)
 		if err != nil {
-			return fmt.Errorf("failed to hash cited path %s: %w", file, err)
+			return "", err
 		}
-		e.Blob = blob
+		return blob, nil
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, file)); err != nil {
+		return "", nil
+	}
+	blob, err := m.Git.HashObjectIn(repoDir, file)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash cited path %s: %w", file, err)
+	}
+	return blob, nil
+}
+
+// citeSource names, for an error message, where a cited path was looked for.
+func (m *Manager) citeSource() string {
+	if m.Rev != "" {
+		return "at " + m.Rev
+	}
+	return "in the working tree"
+}
+
+// stampHead records which commit the entry was judged at. In revision mode
+// that is Rev itself — the reviewed commit, which is the only honest answer
+// when the checkout is on unrelated work. Rev reaches here already resolved to
+// a SHA (the task layer's verifyRev does that), so what lands in the journal is
+// the immutable commit ADR-0021 is named after and not a ref name that moves.
+// Otherwise it is the checkout's HEAD, best-effort: an unborn branch has no
+// HEAD, and the stamp is human context, not the staleness signal.
+func (m *Manager) stampHead(repoDir string, e *Entry) {
+	if m.Rev != "" {
+		e.Head = m.Rev
+		return
 	}
 	if head, err := m.Git.ShortHeadIn(repoDir); err == nil {
 		e.Head = head
 	}
+}
+
+// stamp fills an entry's blob and head. A cite that names a file which is not
+// there fails without writing (ADR-0012 §3): a typo'd path silently recorded
+// as "no blob" would create an entry that never goes stale while claiming to
+// cite code.
+func (m *Manager) stamp(repoDir string, e *Entry) error {
+	if file := e.CitedFile(); file != "" {
+		blob, err := m.citeBlob(repoDir, file)
+		if err != nil {
+			return err
+		}
+		if blob == "" {
+			return fmt.Errorf("cited path %s does not exist %s", file, m.citeSource())
+		}
+		e.Blob = blob
+	}
+	m.stampHead(repoDir, e)
 	return nil
 }
 
@@ -252,16 +337,22 @@ func (m *Manager) SettleByID(repoDir, branch, id, resolution, answer string) err
 
 // restamp refreshes an entry's blob and head as it is settled, tolerating a
 // cited file that no longer exists — a finding can be fixed by deleting the
-// file it cited. In that case the original stamp is kept and Verdict reads the
-// missing file as stale, which is the honest answer; failing the settle would
-// leave the exchange open forever with no way to close it.
+// file it cited. In that case the whole stamp is left as it was and Verdict
+// reads the missing file as stale, which is the honest answer; failing the
+// settle would leave the exchange open forever with no way to close it.
 func (m *Manager) restamp(repoDir string, e *Entry) error {
 	if file := e.CitedFile(); file != "" {
-		if _, err := os.Stat(filepath.Join(repoDir, file)); err != nil {
+		blob, err := m.citeBlob(repoDir, file)
+		if err != nil {
+			return err
+		}
+		if blob == "" {
 			return nil
 		}
+		e.Blob = blob
 	}
-	return m.stamp(repoDir, e)
+	m.stampHead(repoDir, e)
+	return nil
 }
 
 // Ratify accepts an agent's provisional rejection as a human decision
@@ -366,16 +457,31 @@ const (
 	FreshnessDateless = "" // pathless entry: no mechanical staleness
 )
 
-// Verdict computes an entry's freshness against the current working tree.
-// A cited file that no longer exists is stale, not an error: there is nothing
-// to hash against, and "the code this was judged on is gone" is exactly what
-// stale means (ADR-0012 acceptance gate).
+// Verdict computes an entry's freshness against the current working tree, or
+// against Rev when one is pinned. A cited file that no longer exists is stale,
+// not an error: there is nothing to compare against, and "the code this was
+// judged on is gone" is exactly what stale means (ADR-0012 acceptance gate).
+//
+// In revision mode the caller passes the CURRENT head of the thing under
+// review — the next tick of a PR review passes the PR's new head — so stale
+// means "the pull request changed this file since the finding was written",
+// never "your checkout differs from the pull request", which is true of almost
+// every file and would mark the whole journal stale (ADR-0021 §4).
+//
+// A lookup that FAILS also reads stale here, unlike stamp, which returns the
+// error. The asymmetry is deliberate, in the safe direction for each side. On
+// this side a wrongly-stale finding costs one re-verification round — the
+// reviewer agents are already told to re-check a stale entry and re-raise it
+// only if the problem is back — whereas wrongly-fresh would hide a real
+// change. Verdict also returns a bare string and structurally cannot report an
+// error; a bad --rev is caught once, up front, by the task layer, so it never
+// degrades into "every entry is stale" here.
 func (m *Manager) Verdict(repoDir string, e Entry) string {
 	file := e.CitedFile()
 	if file == "" || e.Blob == "" {
 		return FreshnessDateless
 	}
-	blob, err := m.Git.HashObjectIn(repoDir, file)
+	blob, err := m.citeBlob(repoDir, file)
 	if err != nil || blob != e.Blob {
 		return FreshnessStale
 	}
