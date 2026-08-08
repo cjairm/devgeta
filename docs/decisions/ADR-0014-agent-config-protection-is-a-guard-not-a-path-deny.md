@@ -99,7 +99,7 @@ path for devgeta's in-repo layout. `.opencode/worktrees/` is not a location
 anything writes to, so granting it an exception would widen the rule for no use
 case — while leaving OpenCode's project config reachable through a directory
 name an agent can simply create. Symmetry between the two agents is a goal for
-*policy*, not for exceptions with only one owner.
+_policy_, not for exceptions with only one owner.
 
 **Clauses 3 and 4 exist because the segment heuristic is both asymmetric and
 overridable.** Two separate problems:
@@ -115,7 +115,7 @@ entirely — the file containing the permission policy this ADR is about, plus t
 
 Clauses 3–4 then cover OpenCode's two extra config sources. Both were checked
 against the installed OpenCode 1.18.14 rather than assumed, because whether they
-*relocate* the root or *add* to it decides whether the guard can enforce them at
+_relocate_ the root or _add_ to it decides whether the guard can enforce them at
 all:
 
 ```
@@ -211,7 +211,7 @@ dependent on I/O, and still cannot block every edit.
 | `$OPENCODE_CONFIG_DIR/opencode.json`                                       | deny    | clause 3 — an additional root, not a relocated one    |
 | the file named by `$OPENCODE_CONFIG`, relative or symlinked                | deny    | clause 4 — resolved before comparison                 |
 | `$CLAUDE_CONFIG_DIR/settings.json` (relocated)                             | _n/a_   | §1a — the guard is not loaded there at all            |
-| `~/.config/opencode/opencode.json`                                         | deny    | clause 3 — no dotted segment for clause 2 to match     |
+| `~/.config/opencode/opencode.json`                                         | deny    | clause 3 — no dotted segment for clause 2 to match    |
 | `~/.config/opencode/plugin/secret-guard.js`                                | deny    | clause 3 — the guards' own directory                  |
 | `$XDG_CONFIG_HOME/opencode/opencode.json` (custom root)                    | deny    | clause 3 resolves the root, not a literal `~/.config` |
 
@@ -338,3 +338,82 @@ An honest documented limit beats a partial control that invites over-trust.
   symlink rows of the table are test cases in both files, not prose.
 - The Bash gap in §1 remains open and documented. Anyone reading this ADR as
   escalation prevention is reading it wrong; `/sandbox` is that control.
+
+## Amendment (2026-08-07) — agent memory is data, not configuration
+
+**Status:** ACCEPTED
+
+Both layers of this ADR denied Claude Code's per-project memory directory,
+`~/.claude/projects/<slug>/memory/`, so writing a memory file failed. Clause 1
+denied it (a `.claude` segment followed by `projects`, not `worktrees`), and
+the §3 floor's `Edit(~/.claude/**)` denied it independently.
+
+That directory holds notes the agent is **designed** to write, and nothing in
+it grants a permission, registers a hook, or defines an agent, command, or
+skill. Denying it blocked a feature without protecting anything this ADR is
+about. Both layers change.
+
+### Clause 1 gains a second exception
+
+The rule in §1 clause 1 now reads: a `.claude` segment not immediately
+followed by **either**
+
+- a `worktrees` segment, **or**
+- `projects` / one slug segment / `memory`, with a file strictly below it.
+
+Scoped exactly that tightly, on purpose. `projects/<slug>/` also holds session
+transcripts and stays denied; `memory` as a plain file with nothing under it
+stays denied; and a `.claude` segment appearing again anywhere below `memory/`
+is evaluated on its own, so `…/memory/.claude/settings.json` is still denied.
+Canonicalization already runs first, so `…/memory/../../settings.json` and a
+symlink out of `memory/` are denied for the same reason every other escape in
+§1's table is.
+
+Like `worktrees`, this exception is `.claude`-only. OpenCode has no equivalent
+directory, so granting `.opencode` one would widen clause 2 for no use case.
+
+| Path                                           | Outcome | Why                                   |
+| ---------------------------------------------- | ------- | ------------------------------------- |
+| `~/.claude/projects/<slug>/memory/MEMORY.md`   | allow   | the memory exception                  |
+| `~/.claude/projects/<slug>/memory/sub/note.md` | allow   | any depth below `memory/`             |
+| `~/.claude/projects/<slug>/settings.json`      | deny    | the exception is `memory/` only       |
+| `~/.claude/memory/x.md`                        | deny    | wrong shape — no `projects/<slug>/`   |
+| `~/.claude/projects/<slug>/memory`             | deny    | nothing strictly below `memory/`      |
+| `~/.claude/projects/<slug>/memory/.claude/…`   | deny    | the second `.claude` fails on its own |
+
+### The floor stops using a blanket `~/.claude/**`
+
+An allow carve-out cannot fix the floor — §1 already establishes that Claude
+Code evaluates deny before allow with no specificity tiebreak, and permission
+patterns have no negation operator. The deny simply must not match. So the
+global Claude root is now **enumerated** instead of swept:
+
+```
+Edit(~/.claude/*.json)      Edit(~/.claude/agents/**)     Edit(~/.claude/plugins/**)
+Edit(~/.claude/*.sh)        Edit(~/.claude/commands/**)   Edit(~/.claude/hooks/**)
+Edit(~/.claude/*.md)        Edit(~/.claude/skills/**)     Edit(~/.claude/lib/**)
+```
+
+The three extension patterns cover every direct child devgeta or Claude Code
+puts there — `settings.json`, `settings.local.json`, the global `CLAUDE.md`,
+and all seven deployed `*.sh` hook scripts. A bare `~/.claude/*` would have
+covered future direct children too, but a single-segment `*` next to the very
+directory this amendment is unblocking is the wrong place to rely on a matcher
+detail, so the shapes that provably cannot match `projects` were chosen
+instead.
+
+**This is a real narrowing of the floor**, and it is §4's rejected
+enumerate-and-maintain approach applied to one root. A new config-bearing
+subdirectory upstream adds under `~/.claude/` is not in the floor until
+someone adds it. That cost is accepted because §3 already assigns exactly this
+division of labor: the floor covers the enumerable never-edit set and survives
+the guard failing open; the **guard** is the default-deny layer that covers
+surface the tools have not shipped yet, and clause 1 still denies every such
+path. The alternative — keeping the blanket and leaving memory broken — trades
+a feature for coverage that only matters when `jq` is missing.
+
+`internal/apps/opencode/permissions_test.go`'s
+`TestGlobalClaudeFloorLeavesMemoryWritable` pins both halves: no `~/.claude/**`
+in either config, and every enumerated surface still denied — so the blanket
+cannot come back silently, and the enumeration cannot be deleted to "fix"
+memory a second time.

@@ -22,8 +22,14 @@
 # THE RULE (mirrored exactly in configs/opencode/plugin/agent-config-guard.js
 # — keep both in sync). Canonicalize the target path, then deny when it:
 #
-#   1. has a `.claude` segment NOT immediately followed by `worktrees`
-#      (Claude Code's own worktree location — ADR-0010);
+#   1. has a `.claude` segment NOT immediately followed by either
+#        a. `worktrees` (Claude Code's own worktree location — ADR-0010), or
+#        b. `projects/<one segment>/memory/` with a file below it — Claude
+#           Code's per-project memory directory. Memory files are notes the
+#           agent is DESIGNED to write; they carry no permission, hook, or
+#           definition surface, so denying them blocked a feature without
+#           protecting anything. Only `memory/` is excepted, not the rest of
+#           `projects/<slug>/`, and only for a file strictly under it;
 #   2. has ANY `.opencode` segment — no exception; nothing creates
 #      `.opencode/worktrees/`, so granting one would only widen the rule;
 #   3. falls under OpenCode's resolved global config root
@@ -229,15 +235,31 @@ split_segments() {
 	done
 }
 
+# A `.claude` segment is only harmless when what follows it is one of the two
+# known non-config subtrees. `..`/symlinks are already collapsed by
+# canonicalize, so an out-of-range index here means the path genuinely ends
+# there — an unset PATH_SEGS entry expands to "" and matches neither name.
+claude_segment_excepted() {
+	local idx="$1" n="$2"
+	# a. `.claude/worktrees/...` — an in-repo checkout of some repository.
+	[ "${PATH_SEGS[$((idx + 1))]:-}" = "worktrees" ] && return 0
+	# b. `.claude/projects/<slug>/memory/<file>` — agent-authored memory.
+	#    The `n` bound requires a file strictly BELOW memory/, so the
+	#    directory itself (and a plain file named `memory`) stays denied.
+	if [ "${PATH_SEGS[$((idx + 1))]:-}" = "projects" ] &&
+		[ "${PATH_SEGS[$((idx + 3))]:-}" = "memory" ] &&
+		[ "$((idx + 4))" -lt "$n" ]; then
+		return 0
+	fi
+	return 1
+}
+
 clause1_denied() {
 	split_segments "$1"
-	local n="${#PATH_SEGS[@]}" idx=0 next
+	local n="${#PATH_SEGS[@]}" idx=0
 	while [ "$idx" -lt "$n" ]; do
-		if [ "${PATH_SEGS[$idx]}" = ".claude" ]; then
-			next=$((idx + 1))
-			if [ "$next" -ge "$n" ] || [ "${PATH_SEGS[$next]}" != "worktrees" ]; then
-				return 0
-			fi
+		if [ "${PATH_SEGS[$idx]}" = ".claude" ] && ! claude_segment_excepted "$idx" "$n"; then
+			return 0
 		fi
 		idx=$((idx + 1))
 	done
@@ -290,7 +312,7 @@ clause4_denied() {
 CANON=$(canonicalize "$FILE_PATH" "$CWD")
 
 if clause1_denied "$CANON"; then
-	echo "Denies edits under .claude/ outside .claude/worktrees/ — an agent must not rewrite its own permissions, hooks, or definitions — $BYPASS_HINT" >&2
+	echo "Denies edits under .claude/ outside .claude/worktrees/ and .claude/projects/<slug>/memory/ — an agent must not rewrite its own permissions, hooks, or definitions — $BYPASS_HINT" >&2
 	exit 2
 fi
 if clause2_denied "$CANON"; then

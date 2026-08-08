@@ -252,6 +252,46 @@ make lint
 - **Docs corrected in the same cycle as the code.** CLAUDE.md's currency rule requires
   it, and the wrong sentence is what made the config look load-bearing.
 
+## 7b. Follow-up: the removal had a side effect nobody predicted (2026-08-07)
+
+Removing the blocks was correct — they enforced nothing — but the risk table above
+missed what they were doing anyway. The bash list read `"devgeta task *": allow`, and
+while OpenCode never acted on it, **the agent read it as durable authorization** to run
+the posting commands. With nothing in its place, the base instinct to confirm
+outward-facing actions took over: `/review-pr` and `/approve-pr` started coming back with
+a drafted verdict and "want me to post this?" instead of posting it themselves.
+
+Fix: state the authorization in prose, which is the only carrier left. Every shared
+command that invokes an outward `devgeta task` verb (`submit-review`, `approve-pr`,
+`comment-pr`, `create-pr`, `reply-thread`, `resolve-thread`, `request-review`) now
+carries an **"## Authority to post"** section saying that running the command _is_ the
+authorization and that the agent must not ask first. `smart-commit` and `review-loop`
+got the same statement scaled to what they do locally — with `review-loop`'s human-only
+ratification carve-out left intact.
+
+`TestPostingCommandsDeclareStandingAuthorization` guards it, deriving the covered files
+from the files themselves, so a new posting command fails the build until it declares
+the authorization too. Two siblings cover the commands that act without asking but never
+post, which that derivation cannot reach:
+`TestCommittingCommandsDeclareStandingAuthorization` (derived the same way, from a `git
+commit` or `git push` in the file's prose — `smart-commit`, and `create-pr`'s push) and
+`TestReviewLoopRunsUnattendedWithoutAsking` (per-file, since an unattended loop has no
+verb to derive from; it also pins the human-only ratification carve-out beside the grant,
+because the two are in tension).
+
+All three are substring checks over prose, and each says so in its own "What this does
+NOT catch" comment: none of them can tell correct wording from wording that reverses the
+meaning, and none can prove an agent obeys. That is a limit of the repo, not of these
+tests — a fresh-agent evaluation would have to run a live agent, and CLAUDE.md §6 forbids
+tests that execute real commands (the reviewer runs in
+`internal/tooling/task/reviewrun_test.go` script `opencode run` through a fixture for
+exactly this reason). Behavioral confidence here comes from using the commands, not from
+`go test`.
+
+The general lesson for this cycle: dead config is not inert. Before deleting a block
+that nothing enforces, ask what the _model_ reads it as, not only what the _runtime_
+does with it.
+
 ## 8. Cross-Model Review Notes
 
 - [ ] Domain context clear?

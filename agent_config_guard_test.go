@@ -134,6 +134,97 @@ func agentConfigGuardCases() []agentConfigGuardCase {
 			wantDeny: true,
 		},
 		{
+			name: "memory: ~/.claude/projects/<slug>/memory/MEMORY.md is allowed",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj", "memory"))
+				return j(home, ".claude", "projects", "-Users-me-proj", "memory", "MEMORY.md"), repo
+			},
+			wantDeny: false,
+		},
+		{
+			name: "memory: a nested file under memory/ is allowed",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj", "memory", "sub"))
+				return j(
+					home, ".claude", "projects", "-Users-me-proj", "memory", "sub", "note.md",
+				), repo
+			},
+			wantDeny: false,
+		},
+		{
+			name: "memory: the exception is memory/ only, not the rest of projects/<slug>/",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj"))
+				return j(home, ".claude", "projects", "-Users-me-proj", "settings.json"), repo
+			},
+			wantDeny: true,
+		},
+		{
+			name: "memory: memory/ must sit exactly one segment under projects/",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "memory"))
+				return j(home, ".claude", "memory", "x.md"), repo
+			},
+			wantDeny: true,
+		},
+		{
+			name: "memory: memory itself as a file, with nothing below it, stays denied",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj"))
+				return j(home, ".claude", "projects", "-Users-me-proj", "memory"), repo
+			},
+			wantDeny: true,
+		},
+		{
+			name: "memory: lexical .. escape out of memory/ is denied",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj", "memory"))
+				return j(
+					home, ".claude", "projects", "-Users-me-proj", "memory",
+					"..", "..", "..", "settings.json",
+				), repo
+			},
+			wantDeny: true,
+		},
+		{
+			name: "memory: a symlink under memory/ into ~/.claude/agents is denied",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(t, j(home, ".claude", "agents"))
+				mustMkdirAll(t, j(home, ".claude", "projects", "-Users-me-proj", "memory"))
+				mustSymlink(
+					t,
+					j(home, ".claude", "agents"),
+					j(home, ".claude", "projects", "-Users-me-proj", "memory", "link"),
+				)
+				return j(
+					home, ".claude", "projects", "-Users-me-proj", "memory", "link", "x.md",
+				), repo
+			},
+			wantDeny: true,
+		},
+		{
+			name: "memory: a nested .claude under memory/ is still evaluated on its own",
+			tool: "Write",
+			setup: func(t *testing.T, repo, home string) (string, string) {
+				mustMkdirAll(
+					t,
+					j(home, ".claude", "projects", "-Users-me-proj", "memory", ".claude"),
+				)
+				return j(
+					home, ".claude", "projects", "-Users-me-proj", "memory",
+					".claude", "settings.json",
+				), repo
+			},
+			wantDeny: true,
+		},
+		{
 			name: "row9: .opencode/agent/x.md",
 			tool: "Write",
 			setup: func(t *testing.T, repo, home string) (string, string) {

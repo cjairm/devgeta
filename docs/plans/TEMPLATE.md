@@ -35,11 +35,12 @@ What the implementer needs to know:
   - See [docs/guides/testing-patterns.md](../guides/testing-patterns.md) — always use `testutil.MockApp`, never execute real commands
   - Test files in `*_test.go` alongside implementations
 
-- **Commands to run tests:**
+- **Commands to run tests** (targeted — the packages this cycle touches and the
+  ones that import them; the full `go test ./...` is the release gate, not a
+  per-step run — see CLAUDE.md §6 "Which tests to run"):
   ```bash
   go test ./internal/tooling/worktree/
   go test ./cmd/
-  go test ./...                    # All tests
   make lint                         # Format + vet
   ```
 
@@ -74,13 +75,13 @@ One clear sentence: what does "done" look like?
 
 ### File Changes
 
-| Action | File Path                | Description                                          |
-|--------|--------------------------|------------------------------------------------------|
-| Modify | `cmd/worktree.go:50`     | Add `worktreeCreateCmd` subcommand definition        |
-| Create | `internal/tooling/worktree/worktree.go` | New WorktreeManager type with Create/List/Remove |
-| Create | `internal/tooling/worktree/worktree_test.go` | Unit tests (all mocked, no real commands) |
-| Modify | `cmd/root.go:line-X`     | Register worktree command                            |
-| Modify | `docs/spec.md`           | Document worktree feature in Features section        |
+| Action | File Path                                    | Description                                      |
+| ------ | -------------------------------------------- | ------------------------------------------------ |
+| Modify | `cmd/worktree.go:50`                         | Add `worktreeCreateCmd` subcommand definition    |
+| Create | `internal/tooling/worktree/worktree.go`      | New WorktreeManager type with Create/List/Remove |
+| Create | `internal/tooling/worktree/worktree_test.go` | Unit tests (all mocked, no real commands)        |
+| Modify | `cmd/root.go:line-X`                         | Register worktree command                        |
+| Modify | `docs/spec.md`                               | Document worktree feature in Features section    |
 
 ### Step-by-Step
 
@@ -148,16 +149,22 @@ Each step should be completable in 5-15 minutes. Start here:
 
 ### Automated Verification
 
+List the packages this cycle actually touches, plus the ones that import them —
+not `./...`. Get the importer list from the `go list` query in CLAUDE.md §6
+("Which tests to run") rather than guessing; for `internal/tooling/worktree` it
+is the five below. (If the cycle changes something most of the repo depends on,
+say so here and run the suite; that is the exception, not the default.)
+
 ```bash
-# Unit tests must pass
-go test ./internal/tooling/worktree/
-go test ./cmd/
+# Unit tests must pass — changed package + its direct importers
+go test ./internal/tooling/worktree/ ./internal/tooling/task/ ./internal/tui/worktree/ \
+        ./internal/tui/components/ ./cmd/
 
 # Format and vet must pass
 make lint
 
-# All tests with coverage
-go test ./... -cover
+# Coverage for the packages this cycle touches
+go test ./internal/tooling/worktree/ ./cmd/ -cover
 ```
 
 ### Manual Verification
@@ -179,11 +186,11 @@ go test ./... -cover
 
 ## 7. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|------|------------|-----------|
-| Tmux window naming conflicts | Low | Prefix with `wt-` and check for duplicates before create |
-| Git worktree path assumptions | Med | Test on both macOS and Linux with different repo structures |
-| Mock completeness hides bugs | Low | Verify commands don't execute real git/tmux in tests |
+| Risk                          | Likelihood | Mitigation                                                  |
+| ----------------------------- | ---------- | ----------------------------------------------------------- |
+| Tmux window naming conflicts  | Low        | Prefix with `wt-` and check for duplicates before create    |
+| Git worktree path assumptions | Med        | Test on both macOS and Linux with different repo structures |
+| Mock completeness hides bugs  | Low        | Verify commands don't execute real git/tmux in tests        |
 
 ### Trade-offs Made
 
@@ -214,6 +221,6 @@ Space for review feedback when handing off between sessions or models:
 
 - **Cycle document is your spec.** Update it if requirements change, but don't change scope without calling it out.
 - **Commit after each step.** Run `/smart-commit` once a step's verify check passes — keeps history granular and each commit leaves the system working.
-- **Verification must pass before "done."** Automated tests + manual checks + regression check.
+- **Verification must pass before "done."** Automated tests (targeted — see above) + manual checks + regression check.
 - **If you hit a risk, escalate immediately.** Don't try to handle it silently.
 - **Ask questions early.** Better to clarify now than discover issues at the end.

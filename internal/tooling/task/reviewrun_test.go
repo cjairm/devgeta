@@ -148,8 +148,16 @@ func withStatusFailure(t *testing.T, tm *TaskManager) {
 }
 
 // scriptedRun is one `opencode run` the fixture will answer, in order.
+//
+// One scriptedRun is one ATTEMPT, not one reviewer: a reviewer whose attempt
+// produces no report is retried once (reviewerAttempts), so such a reviewer
+// consumes two entries here.
 type scriptedRun struct {
 	stdout string
+	// stderr is what OpenCode wrote outside the event stream. It is where an
+	// auto-rejected permission request lands, and the only explanation a run
+	// that produced no report ever has.
+	stderr string
 	err    error
 	// onCall, when set, runs at the moment this reviewer is launched — the
 	// only place a test can observe what a reviewer would see mid-round.
@@ -178,13 +186,25 @@ func scriptOpenCode(
 		if run.onCall != nil {
 			run.onCall(t, c)
 		}
-		return run.stdout, "", run.err
+		return run.stdout, run.stderr, run.err
 	}
 	t.Cleanup(func() {
 		if calls != len(runs) {
 			t.Errorf("expected %d opencode run(s), got %d", len(runs), calls)
 		}
 	})
+}
+
+// retried returns the two scripted attempts ONE reviewer consumes when its run
+// produces no report: the same failure twice, which is what a permanent cause
+// (a rejected permission, an unusable model, a dead provider) actually does.
+//
+// Spelling it out at every call site is what keeps the retry visible in the
+// tests: a reviewer scripted with a single failing attempt would fail the
+// fixture's call-count check rather than quietly passing, which is how a
+// dropped retry gets caught.
+func retried(run scriptedRun) []scriptedRun {
+	return []scriptedRun{run, run}
 }
 
 // verifyNoStrayCommands asserts review-run never reached around the app
@@ -262,14 +282,9 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			nil,
 			"NO VERDICT",
 		},
-		{
-			// A run that exits 0 having said nothing at all still completed;
-			// it just stated no verdict.
-			"no verdict on empty output",
-			"",
-			nil,
-			"NO VERDICT",
-		},
+		// A run that exits 0 having said nothing at all is NOT in this table:
+		// it produces no report, which is retried and reported with a reason.
+		// See the no-report tests below.
 		{
 			// The verdict is the LAST status line: a report that revises its
 			// conclusion is taken at its conclusion.
@@ -612,10 +627,10 @@ func TestReviewRunClassifiesRealCodexDocumentReviewerCapture(t *testing.T) {
 func TestReviewRunErrorOutcomeFromErrorEvent(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2")
-	scriptOpenCode(t, ocBase, scriptedRun{
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
 		stdout: errorEvent("UnknownError", "Unexpected server error. Check server logs.") + "\n",
 		err:    errors.New("exit status 1"),
-	})
+	})...)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -633,7 +648,7 @@ func TestReviewRunErrorOutcomeFromErrorEvent(t *testing.T) {
 func TestReviewRunErrorOutcomeFromNonzeroExitAlone(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
-	scriptOpenCode(t, ocBase, scriptedRun{err: errors.New("exit status 127")})
+	scriptOpenCode(t, ocBase, retried(scriptedRun{err: errors.New("exit status 127")})...)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -651,7 +666,11 @@ func TestReviewRunErrorReasonIsTruncatedNotReworded(t *testing.T) {
 	long := strings.Repeat("provider said something very long. ", 10)
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
-	scriptOpenCode(t, ocBase, scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})
+	scriptOpenCode(
+		t,
+		ocBase,
+		retried(scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})...,
+	)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -685,7 +704,11 @@ func TestReviewRunErrorReasonTruncationIsRuneSafe(t *testing.T) {
 	long := strings.Repeat("é", maxReasonLen+10)
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
-	scriptOpenCode(t, ocBase, scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})
+	scriptOpenCode(
+		t,
+		ocBase,
+		retried(scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})...,
+	)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -708,7 +731,7 @@ func TestReviewRunErrorReasonTruncationIsRuneSafe(t *testing.T) {
 func TestReviewRunErrorOutcomeWhenNothingParses(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t)
-	scriptOpenCode(t, ocBase, scriptedRun{stdout: "opencode: command not found\n"})
+	scriptOpenCode(t, ocBase, retried(scriptedRun{stdout: "opencode: command not found\n"})...)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -744,15 +767,15 @@ func TestReviewRunIgnoresNonEventNoiseOnStdout(t *testing.T) {
 func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro", "anthropic/claude-opus-4-6")
-	scriptOpenCode(
-		t, ocBase,
-		scriptedRun{stdout: statusReport("REQUEST CHANGES")},
-		scriptedRun{
-			stdout: errorEvent("UnknownError", "Unexpected server error.") + "\n",
-			err:    errors.New("exit status 1"),
-		},
-		scriptedRun{stdout: statusReport("APPROVE")},
-	)
+	runs := []scriptedRun{{stdout: statusReport("REQUEST CHANGES")}}
+	// The middle reviewer produces no report, so it costs two attempts before
+	// the round moves on to the third.
+	runs = append(runs, retried(scriptedRun{
+		stdout: errorEvent("UnknownError", "Unexpected server error.") + "\n",
+		err:    errors.New("exit status 1"),
+	})...)
+	runs = append(runs, scriptedRun{stdout: statusReport("APPROVE")})
+	scriptOpenCode(t, ocBase, runs...)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {
@@ -767,6 +790,241 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 		t.Errorf("got:\n%s\nwant:\n%s", out, want)
 	}
 	verifyNoStrayCommands(t, tm)
+}
+
+// --- runs that produce no report -------------------------------------------
+
+// stepFinishWithReason renders a step_finish carrying OpenCode's own reason
+// for ending that step. "tool-calls" means the model still had work queued;
+// "stop" means it was done. (reviewprogress_test.go's stepFinishEvent carries
+// the step's cost instead — the two pin different fields of the same event.)
+func stepFinishWithReason(reason string) string {
+	return `{"type":"step_finish","part":{"type":"step-finish","reason":"` +
+		reason + `","cost":0}}`
+}
+
+// noReportCapture is the event stream of a run whose agent loop died mid-work:
+// steps that start, a tool that runs, and every step_finish — the LAST one
+// included — ending on "tool-calls" rather than "stop". Not one text event
+// anywhere, and the process still exits 0.
+//
+// This is the shape a real github-copilot/gpt-5.6-terra round produced, and
+// the reason this whole path exists: read only as an event stream it is
+// indistinguishable from a reviewer that chose to say nothing.
+func noReportCapture() string {
+	return strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		`{"type":"tool_use","part":{"type":"tool","tool":"read","callID":"c1",` +
+			`"state":{"input":{"filePath":"/Users/x/.claude/RTK.md"}}}}`,
+		stepFinishWithReason("tool-calls"),
+	}, "\n") + "\n"
+}
+
+// autoRejectStderr is the real line OpenCode writes — ANSI colour codes and
+// all — when a headless run rejects a permission it cannot ask a human about.
+// Copied from a captured run, not paraphrased.
+const autoRejectStderr = "\x1b[93m\x1b[1m! \x1b[0mpermission requested: " +
+	"external_directory (/Users/jair.mendez/.claude/*); auto-rejecting"
+
+// The regression test for the whole bug: a run that exits 0, writes no report,
+// and explains itself ONLY on stderr must report that explanation. A bare
+// "NO VERDICT" here is what cost a real multi-minute round with no way to tell
+// why it failed.
+func TestReviewRunNoReportReportsTheStderrReason(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "github-copilot/gpt-5.6-terra")
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: noReportCapture(),
+		stderr: autoRejectStderr,
+	})...)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	// The "!" is OpenCode's own severity marker, not decoration we added: only
+	// the ANSI escapes around it are stripped, and its words are kept verbatim.
+	want := "github-copilot/gpt-5.6-terra → NO VERDICT(! permission requested: " +
+		"external_directory (/Users/jair.mendez/.claude/*); auto-rejecting)"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+	verifyNoStrayCommands(t, tm)
+}
+
+// The reason is OpenCode's words, but the ANSI escapes it wraps them in must
+// never reach the outcome line: that line is a contract an agent parses, and
+// raw escape bytes in it are noise at best.
+func TestReviewRunNoReportReasonStripsANSIEscapes(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: noReportCapture(),
+		stderr: autoRejectStderr,
+	})...)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if strings.Contains(out, "\x1b") {
+		t.Errorf("outcome line still carries ANSI escapes: %q", out)
+	}
+	if !strings.Contains(out, "permission requested: external_directory") {
+		t.Errorf("expected OpenCode's own words in the reason, got:\n%s", out)
+	}
+}
+
+// With nothing on stderr, the last step's reason is the fallback: it cannot
+// name the cause, but it does distinguish "the loop ended mid-work" from "the
+// reviewer ran and chose to say nothing".
+func TestReviewRunNoReportFallsBackToTheStepReason(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, retried(scriptedRun{stdout: noReportCapture()})...)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if !strings.Contains(out, "tool-calls") {
+		t.Errorf("expected the last step reason in the outcome, got:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "OpenCode default model → NO VERDICT(") {
+		t.Errorf("expected a NO VERDICT outcome carrying a reason, got:\n%s", out)
+	}
+}
+
+// A run that ended "stop" having said nothing explains nothing about the
+// missing report, so the step reason is not worth printing — but the outcome
+// must still carry SOME reason rather than going back to a bare NO VERDICT.
+func TestReviewRunNoReportWithNothingToExplainItStillGivesAReason(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: `{"type":"step_start","part":{"type":"step-start"}}` + "\n" +
+			stepFinishWithReason(finishReasonStop) + "\n",
+	})...)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "OpenCode default model → NO VERDICT(" + noReportFallbackReason + ")"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// The retry's whole point: a first attempt that dies with no report is not the
+// reviewer's verdict, and a second attempt that works is what the round
+// reports.
+func TestReviewRunRetriesAReviewerThatProducedNoReport(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: noReportCapture(), stderr: autoRejectStderr},
+		scriptedRun{stdout: statusReport("APPROVE")},
+	)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "OpenCode default model → APPROVE"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+	verifyNoStrayCommands(t, tm)
+}
+
+// A reviewer that WROTE something has said its piece, even when what it wrote
+// names no verdict. Re-running it would pay twice to overwrite an opinion that
+// was already earned — the fixture's call count is what pins this.
+func TestReviewRunDoesNotRetryAReviewerThatReported(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{
+		stdout: textEvent("I read the diff and have no comment.") + "\n",
+	})
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	// A bare NO VERDICT, with no reason: the reviewer reported, so there is no
+	// failure to explain.
+	want := "OpenCode default model → NO VERDICT"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// A reviewer is retried once, never twice: two attempts bound what a
+// permanently broken provider can cost a round.
+func TestReviewRunRetriesAtMostOnce(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	// Exactly reviewerAttempts entries. A third attempt would trip the
+	// fixture's "unexpected extra opencode run" check.
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: noReportCapture(),
+		stderr: autoRejectStderr,
+	})...)
+
+	if _, err := tm.ReviewRun("", ""); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+}
+
+// When the retry fails too, the FIRST attempt's outcome is reported. A retry
+// that dies with nothing to say must not erase a first attempt that named a
+// real cause — that would lose the diagnosis exactly when it is needed.
+func TestReviewRunKeepsTheFirstOutcomeWhenTheRetryAlsoFails(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{
+			stdout: errorEvent("UnknownError", "Unexpected server error.") + "\n",
+			err:    errors.New("exit status 1"),
+		},
+		// The retry dies with nothing anywhere to explain it.
+		scriptedRun{},
+	)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	want := "OpenCode default model → ERROR(Unexpected server error.)"
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+// A stderr reason is folded onto one line and cut like any other reason: one
+// reviewer must stay one line in output an agent parses.
+func TestReviewRunNoReportReasonStaysOneLine(t *testing.T) {
+	long := strings.Repeat("opencode complained at length. ", 20)
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: noReportCapture(),
+		stderr: "first line\n" + long,
+	})...)
+
+	out, err := tm.ReviewRun("", "")
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if strings.Count(out, "\n") != 0 {
+		t.Errorf("one reviewer must stay one line, got:\n%s", out)
+	}
+	if !strings.HasSuffix(out, "…)") {
+		t.Errorf("expected a truncation marker on a long reason, got:\n%s", out)
+	}
 }
 
 // --- progress lines --------------------------------------------------------
@@ -874,11 +1132,9 @@ func TestReviewRunProgressUsesDefaultModelLabel(t *testing.T) {
 func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
 	tm, _, ocBase := newRepoSetup(t, "feat")
 	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
-	scriptOpenCode(
-		t, ocBase,
-		scriptedRun{err: errors.New("exit status 1")},
-		scriptedRun{stdout: statusReport("APPROVE")},
-	)
+	runs := retried(scriptedRun{err: errors.New("exit status 1")})
+	runs = append(runs, scriptedRun{stdout: statusReport("APPROVE")})
+	scriptOpenCode(t, ocBase, runs...)
 
 	var progress bytes.Buffer
 	tm.ProgressOut = &progress
@@ -891,9 +1147,14 @@ func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
 	if !strings.Contains(out, "ERROR(") {
 		t.Errorf("expected an ERROR outcome in the stdout contract, got:\n%s", out)
 	}
+	// The failed reviewer reads "(2s)" rather than "(1s)" purely because
+	// fixedClock advances on every call and the retry announcement stamps
+	// lastLine, costing one extra tick. Its elapsed time is still measured
+	// from construction to finished() — the retry does not double it.
 	wantProgress := strings.Join([]string{
 		"[1/2] openai/gpt-5.2: running",
-		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (1s)",
+		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) — no report, retrying once",
+		"[1/2] openai/gpt-5.2: ERROR(opencode run failed: exit status 1) (2s)",
 		"[2/2] google/gemini-3-pro: running",
 		"[2/2] google/gemini-3-pro: APPROVE (1s)",
 		"",
@@ -1559,12 +1820,12 @@ func TestReviewRunRemovesSnapshotAfterAReviewerFails(t *testing.T) {
 	withReviewers(t)
 
 	var seenPath string
-	scriptOpenCode(t, ocBase, scriptedRun{
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
 		err: errors.New("exit status 1"),
 		onCall: func(t *testing.T, c commands.CommandParams) {
 			seenPath = snapshotPointer(t, c)
 		},
-	})
+	})...)
 
 	out, err := tm.ReviewRun("", "")
 	if err != nil {

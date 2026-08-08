@@ -104,12 +104,12 @@ type reviewerRun struct {
 // real, final ids.
 //
 // While a reviewer runs, progress goes to progressWriter() (stderr by
-// default) as it happens — a start line, one line per tool call the reviewer
-// makes, and a closing line with the outcome — never to the returned string,
-// which stays the exact parseable contract docs/guides/task-design.md
-// governs. A multi-minute headless run against a real branch diff would
-// otherwise leave the caller watching silence with no way to tell working
-// from stuck.
+// default) as it happens — a start line, a sampled heartbeat while it works
+// (every tool call instead, under TaskManager.Verbose), and a closing line
+// with the outcome — never to the returned string, which stays the exact
+// parseable contract docs/guides/task-design.md governs. A multi-minute
+// headless run against a real branch diff would otherwise leave the caller
+// watching silence with no way to tell working from stuck.
 func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 	// Cheapest guards first: a bad --reviewer or a blank --note needs no git
 	// and no config.
@@ -164,23 +164,23 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 			progressOut,
 			fmt.Sprintf("[%d/%d]", i+1, len(runs)),
 			run.label,
+			tm.Verbose,
+			tm.now,
 		)
 		progress.started()
-		start := tm.now()
 
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
 		// throw away work already paid for.
-		stdout, runErr := tm.OpenCode.Run(opencode.RunOptions{
+		outcome := tm.runReviewerWithRetry(opencode.RunOptions{
 			Agent:        agent,
 			Model:        run.model,
 			Prompt:       prompt,
 			Timeout:      reviewRunTimeout,
 			Env:          []string{ReviewJournalSnapshotEnvVar + "=" + snapshot},
 			OnStdoutLine: progress.line,
-		})
-		outcome := classifyReviewerRun(stdout, runErr)
-		progress.finished(outcome, tm.now().Sub(start))
+		}, progress)
+		progress.finished(outcome)
 
 		// The branch is a precondition of the whole round, not just of its
 		// first moment, so it is re-checked after every reviewer.
@@ -191,6 +191,59 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 		lines = append(lines, fmt.Sprintf("%s → %s", run.label, outcome))
 	}
 	return strings.Join(lines, "\n"), nil
+}
+
+// reviewerAttempts is how many times one reviewer is launched before its
+// outcome is reported: the run, plus one retry.
+//
+// Only ONE retry, and only when the attempt produced no report at all. A
+// reviewer that wrote something — even something with no verdict in it — has
+// said its piece, and re-running it would pay a second time to overwrite an
+// opinion that was already earned. Two attempts also bound the worst case: a
+// reviewer that never reports costs at most twice its timeout, not an
+// unbounded chain of retries against a provider that is simply broken.
+const reviewerAttempts = 2
+
+// runReviewerWithRetry launches one reviewer and returns the outcome to
+// report for it, retrying once when an attempt produced no report at all.
+//
+// The retry exists because "no report" is usually not the reviewer's verdict —
+// it is the run failing in a way that leaves nothing to read. The case this was
+// built for is an auto-rejected permission request, which kills the agent loop
+// mid-work while the process still exits 0 (see noReportReason). A second
+// attempt is cheap next to the round it saves, and a permanent cause simply
+// fails the same way twice and gets reported with its reason instead of
+// silently.
+//
+// Progress reporting is deliberately shared across both attempts rather than
+// restarted: the tool count and cost on the closing line then cover everything
+// the reviewer actually spent, which is what a human wants to see after paying
+// for two attempts.
+//
+// When the retry fails too, the FIRST attempt's outcome is what gets reported,
+// not the second's. The retry is a rescue, not a second opinion on the failure:
+// it can replace the outcome only by producing a report. Letting a degenerate
+// second attempt overwrite the first would lose the diagnosis exactly when it
+// matters — a first attempt that failed with "ERROR(Unexpected server error…)"
+// followed by a retry that died with nothing on stderr would report the vaguer
+// of the two, throwing away the only words anyone had to go on.
+func (tm *TaskManager) runReviewerWithRetry(
+	opts opencode.RunOptions,
+	progress *reviewerProgress,
+) string {
+	var firstOutcome string
+	for attempt := 1; attempt <= reviewerAttempts; attempt++ {
+		res, runErr := tm.OpenCode.Run(opts)
+		outcome, reported := classifyReviewerRun(res, runErr)
+		if reported {
+			return outcome
+		}
+		if attempt == 1 {
+			firstOutcome = outcome
+			progress.retrying(outcome)
+		}
+	}
+	return firstOutcome
 }
 
 // checkBranchStillCheckedOut verifies HEAD is still on the branch the round
@@ -468,42 +521,113 @@ type ocEvent struct {
 	Error json.RawMessage `json:"error"`
 }
 
-// classifyReviewerRun maps one reviewer's run to exactly one outcome.
+// classifyReviewerRun maps one reviewer's run to exactly one outcome, and
+// reports whether the reviewer wrote a report at all.
 //
 // ERROR is decided by the error EVENT and the process exit status, never by
 // matching message text: a probe against the real binary showed an unusable
 // model produces a generic "Unexpected server error", with nothing in it
 // naming the actual cause, so any text match would be guessing.
-func classifyReviewerRun(stdout string, runErr error) string {
-	text, reason, parsedAny := scanRunEvents(stdout)
+//
+// The second return value, reported, is false when the run produced no
+// assistant text whatsoever. That is a distinct failure from "wrote a report
+// that named no verdict": it means the agent loop ended before the model ever
+// said anything, so there is nothing to read a verdict out of and nothing to
+// tell the human why. ReviewRun uses it to decide whether the attempt is worth
+// repeating — see runReviewerWithRetry.
+func classifyReviewerRun(res opencode.RunResult, runErr error) (outcome string, reported bool) {
+	text, reason, finishReason, parsedAny := scanRunEvents(res.Stdout)
+	reported = strings.TrimSpace(text) != ""
 	switch {
 	case reason != "":
-		return fmt.Sprintf("ERROR(%s)", reason)
+		return fmt.Sprintf("ERROR(%s)", reason), reported
 	case runErr != nil:
 		// Spawn failure, nonzero exit, or timeout with no error event to
 		// explain it — the wrapper's own message is all there is.
-		return fmt.Sprintf("ERROR(%s)", truncateReason(runErr.Error()))
-	case !parsedAny && strings.TrimSpace(stdout) != "":
+		return fmt.Sprintf("ERROR(%s)", truncateReason(runErr.Error())), reported
+	case !parsedAny && strings.TrimSpace(res.Stdout) != "":
 		// Output that is not the event stream at all. Note this needs
 		// EVERY line to be unreadable: a shell that prints its own warning
 		// before opencode's first event (zoxide's, in the Step 0 probe
 		// captures) must not be mistaken for a failed run.
-		return fmt.Sprintf("ERROR(%s)", truncateReason(firstNonBlankLine(stdout)))
+		return fmt.Sprintf("ERROR(%s)", truncateReason(firstNonBlankLine(res.Stdout))), reported
 	}
 	if verdict := lastStatusVerdict(text); verdict != "" {
-		return verdict
+		return verdict, reported
 	}
-	return outcomeNoVerdict
+	if !reported {
+		// The failure this whole path exists for: exit 0, no error event, and
+		// not one word from the model. Reporting a bare NO VERDICT here is what
+		// made a real round unexplainable — see noReportReason.
+		return fmt.Sprintf(
+			"%s(%s)",
+			outcomeNoVerdict,
+			noReportReason(res.Stderr, finishReason),
+		), false
+	}
+	return outcomeNoVerdict, true
 }
 
+// noReportFallbackReason is used when a run wrote no report and left nothing
+// anywhere to explain it — no stderr, and no step reason. It states that
+// plainly rather than inventing a cause.
+const noReportFallbackReason = "the reviewer wrote no report and opencode gave no reason"
+
+// noReportReason explains a run that produced no assistant text at all.
+//
+// stderr comes first because it is where the real cause is written and where
+// nothing else looks. A headless run auto-rejects any permission it cannot ask
+// a human about, and says so ONLY there:
+//
+//	! permission requested: external_directory (/Users/x/.claude/*); auto-rejecting
+//
+// That line never appears as an event, the process still exits 0, and the
+// agent loop dies mid-work — which is how a paid multi-minute round came back
+// as a bare "NO VERDICT" with no reason anywhere.
+//
+// The step reason is the fallback: OpenCode ends every step with why it
+// stopped, and a final step that ends on "tool-calls" rather than "stop" means
+// the loop quit while the model still had work queued. That does not name the
+// cause the way stderr does, but it does distinguish "ended mid-work" from
+// "ran and chose to say nothing", which is the next most useful thing to tell
+// a human.
+//
+// Both are OpenCode's own words, cut to length — never reworded or guessed at,
+// the same rule truncateReason follows for a provider error message.
+func noReportReason(stderr, finishReason string) string {
+	if cleaned := strings.TrimSpace(stripANSI(stderr)); cleaned != "" {
+		return truncateReason(cleaned)
+	}
+	// "stop" is a normal ending, so it explains nothing about a missing report
+	// and is not worth printing; anything else is.
+	if finishReason != "" && finishReason != finishReasonStop {
+		return truncateReason(fmt.Sprintf(
+			"the agent loop ended while it still had work queued (last step reason: %s)",
+			finishReason,
+		))
+	}
+	return noReportFallbackReason
+}
+
+// finishReasonStop is the step_finish reason for a step that ended normally,
+// because the model was done rather than because it was cut off. Any other
+// final reason on a run that produced no report means the loop stopped while
+// the model still had work queued — see noReportReason.
+const finishReasonStop = "stop"
+
 // scanRunEvents walks the NDJSON stream once and returns the assistant's
-// concatenated text, the first error event's reason (empty if none), and
-// whether any line parsed as an event at all.
+// concatenated text, the first error event's reason (empty if none), the LAST
+// step_finish reason seen (empty if none), and whether any line parsed as an
+// event at all.
 //
 // Text is concatenated rather than examined per event because the assistant's
 // message arrives in chunks that can split a line — including the
 // `**Status:**` line — anywhere.
-func scanRunEvents(stdout string) (text, reason string, parsedAny bool) {
+//
+// The last step reason is kept rather than the first because it is the one
+// that describes how the run ENDED. A healthy run ends "stop"; every step
+// before it legitimately ends "tool-calls" while the model works.
+func scanRunEvents(stdout string) (text, reason, finishReason string, parsedAny bool) {
 	var sb strings.Builder
 	for _, line := range strings.Split(stdout, "\n") {
 		line = strings.TrimSpace(line)
@@ -527,9 +651,30 @@ func scanRunEvents(stdout string) (text, reason string, parsedAny bool) {
 			if reason == "" {
 				reason = errorEventReason(ev.Error)
 			}
+		case "step_finish":
+			var part struct {
+				Reason string `json:"reason"`
+			}
+			if json.Unmarshal(ev.Part, &part) == nil && part.Reason != "" {
+				finishReason = part.Reason
+			}
 		}
 	}
-	return sb.String(), reason, parsedAny
+	return sb.String(), reason, finishReason, parsedAny
+}
+
+// ansiEscapePattern matches the ANSI escape sequences OpenCode wraps its
+// stderr warnings in — the real auto-reject line arrives as
+// "\x1b[93m\x1b[1m! \x1b[0mpermission requested: ...".
+//
+// They are stripped before a reason reaches the outcome line because that line
+// is a parseable contract an agent reads (docs/guides/task-design.md), and raw
+// escape bytes in it are noise at best and a broken parse at worst.
+var ansiEscapePattern = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+
+// stripANSI removes those sequences, leaving OpenCode's own words untouched.
+func stripANSI(s string) string {
+	return ansiEscapePattern.ReplaceAllString(s, "")
 }
 
 // errorEventReason extracts OpenCode's own words from an error event. It
