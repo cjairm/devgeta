@@ -503,3 +503,36 @@ separate findings landed there before it was made exhaustive).
 - **Manual verification is where this bug lives.** Mocked tests cannot see a pty.
 - **Do not chunk a send-keys payload** to sneak under the cap — explicitly ruled
   out by the ADR and by the request that started this work.
+
+---
+
+## Deferred Follow-ups
+
+Raised by this cycle's reviews, triaged as non-blocking, and deliberately not done.
+None affects behavior today. Each carries the coupling that makes it safe to pick up —
+those warnings are the reason this list is written down rather than rediscovered.
+
+1. **A `Layout` accessor for pane 0's created command.** `buildWindowFromLayout`,
+   `createWindowWithLayout`, and `ensureWindow` each index `layout.Panes[0]` unguarded.
+   The count went from one site to three during this cycle, all relying on
+   `validateLayout`'s caller-side emptiness check, so the invariant is now spread rather
+   than held in one place. No reachable panic today: all four `validateLayout` call sites
+   gate on `len(Panes) > 0`, and `LaunchReviewInRepo` builds a one-pane layout.
+   **Coupling:** the accessor must return pane 0's _created_ command and must **not**
+   absorb `ensureWindow`'s `Panes[0].Command == ""` test — that one reads the **typed**
+   form, which is a different string (see ADR-0021's 2026-08-07 amendment).
+
+2. **Split `window_build_test.go`.** It is ~66 KB after this cycle. Its helpers are
+   shared rather than copy-pasted, so it is coherent as it stands; the next addition of
+   comparable size should move the review-launch tests into their own file.
+
+3. **Make `paneShell`'s tmux query conditional.** It issues `show-options -gv
+default-shell` unconditionally, so a shell-layout create pays a tmux round trip plus a
+   stat whose result is interpolated nowhere, and the query is wasted whenever `$SHELL`
+   is already usable (`resolveShell` short-circuits on the first usable candidate).
+   Deliberate today: querying unconditionally keeps the ordered `ExecCommandResult`
+   sequences in `window_build_test.go` independent of the machine's `$SHELL`.
+   **Coupling:** `TestPaneShellCandidateLadder` asserts the query **is** issued, so
+   making it conditional must update that test — and that test is the only thing pinning
+   which candidates `paneShell` supplies, so weakening it silently un-pins the shell
+   ladder that every created pane's command interpolates.
