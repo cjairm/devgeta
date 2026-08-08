@@ -186,14 +186,13 @@ alias cat="bat"
 */ -}}
 {{if or .Opencode .Claude}}
 # ---- AI coders ----
-{{end}}
-{{if .Opencode}}
+{{- end}}
+{{- if .Opencode}}
 {{.OpenCodeAlias}}
-{{end}}
-
-{{if .Claude}}
+{{- end}}
+{{- if .Claude}}
 {{.ClaudeAlias}}
-{{end}}
+{{- end}}
 # ============================================================================
 # End of Devgeta Configuration
 # ============================================================================

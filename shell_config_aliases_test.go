@@ -124,6 +124,87 @@ func TestShellConfigCoderSectionHeaderRendersForEitherCoder(t *testing.T) {
 	}
 }
 
+// TestShellConfigCoderSectionIsContiguous pins the AI-coders section's shape
+// against its neighbors (e.g. the Eza block a few lines above it): a header
+// immediately followed by its alias line(s), with no blank line in between.
+//
+// Before this, each `{{if}}` body started with its own leading newline and
+// each `{{end}}` was followed by one, so the section rendered as header, a
+// blank line, `alias oc=...`, two more blank lines, then `alias cc=...` (and,
+// for a claude-only install, header then three blank lines before `alias
+// cc=...`). Whitespace-trimming markers (`{{-` / `-}}`) on the section's
+// three `{{if}}`/`{{end}}` pairs fixed the spacing without changing which
+// lines render - see configs/templates/devgeta.zsh.tmpl.
+func TestShellConfigCoderSectionIsContiguous(t *testing.T) {
+	tests := []struct {
+		name     string
+		features config.ShellFeatures
+		want     []string
+	}{
+		{
+			"both",
+			config.ShellFeatures{Opencode: true, Claude: true},
+			[]string{
+				"# ---- AI coders ----",
+				`alias oc="opencode"`,
+				`alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"`,
+			},
+		},
+		{
+			"opencode only",
+			config.ShellFeatures{Opencode: true},
+			[]string{
+				"# ---- AI coders ----",
+				`alias oc="opencode"`,
+			},
+		},
+		{
+			"claude only",
+			config.ShellFeatures{Claude: true},
+			[]string{
+				"# ---- AI coders ----",
+				`alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"`,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rendered := renderEmbeddedShellConfig(t, tt.features)
+			got := contiguousLinesFollowing(rendered, "# ---- AI coders ----", len(tt.want))
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf(
+					"AI-coders section rendered as %q, want the header immediately "+
+						"followed by %q with no blank line between them",
+					got, tt.want,
+				)
+			}
+		})
+	}
+}
+
+// contiguousLinesFollowing returns header and the count-1 non-empty lines
+// immediately after it in rendered, stopping (and returning a short slice) at
+// the first blank line - so a caller comparing against a want slice sees
+// exactly where a blank line crept back in.
+func contiguousLinesFollowing(rendered, header string, count int) []string {
+	lines := strings.Split(rendered, "\n")
+	for i, line := range lines {
+		if line != header {
+			continue
+		}
+		got := []string{header}
+		for _, line := range lines[i+1:] {
+			if len(got) >= count || line == "" {
+				break
+			}
+			got = append(got, line)
+		}
+		return got
+	}
+	return nil
+}
+
 // TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput: the template
 // explains WHY its alias lines are rendered from pkg/constants, and that
 // explanation is for whoever edits the template - it must not be shipped into

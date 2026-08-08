@@ -106,9 +106,12 @@ func TestExecLaunchFormPerPaneKind(t *testing.T) {
 //     preflight never checked.
 //   - The program word is left unquoted. That no longer BREAKS a plain binary
 //     name (`'claude'` still resolves on PATH), but this form is what a probe
-//     answering with alias text or a shell-function name selects, and in that
-//     case the user's OWN definition of the name has to expand - which a quoted
-//     program word suppresses. Arguments stay quoted either way.
+//     answering with alias text or a shell-function name selects. The rule
+//     rests on the alias case alone: quoting would suppress ALIAS expansion -
+//     the user's own `alias claude=...` would no longer run - but a shell
+//     FUNCTION of the same name is still found whether its name is quoted or
+//     not, and quoting never suppresses PATH lookup either way. Arguments stay
+//     quoted either way.
 func TestNameLaunchIsTheUnaliasedCommandAndLeavesTheProgramUnquoted(t *testing.T) {
 	tests := []struct {
 		name   string

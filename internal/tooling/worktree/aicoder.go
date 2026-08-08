@@ -178,8 +178,8 @@ func (o *OpenCodeCoder) Name() string { return constants.OpenCode }
 // name, plus any environment prefix the recipe carries - read off the launch
 // recipe in pkg/constants, which also renders devgeta.zsh's `alias oc=` line.
 //
-// This is the form devgeta TYPES into a shell that already exists (a repaired
-// window, `dg wt move`'s retarget - ADR-0020 part 4). It is not the `oc` alias,
+// This is the form devgeta TYPES into a shell that already exists - today,
+// ensureWindow's repair branch (ADR-0020 part 4). It is not the `oc` alias,
 // and that is ADR-0020's 2026-08-07 amendment rather than an oversight: preflight
 // probes the BINARY, so typing the alias meant sending a live pane something the
 // check never verified - a user with opencode on PATH but no devgeta alias passed
@@ -281,8 +281,8 @@ func (c *ClaudeCoder) Name() string { return constants.Claude }
 // same two values. So the alias a user types and the command devgeta runs cannot
 // carry a different binary or a different environment.
 //
-// This is the form devgeta TYPES into a shell that already exists (a repaired
-// window, `dg wt move`'s retarget - ADR-0020 part 4). It is not the `cc` alias:
+// This is the form devgeta TYPES into a shell that already exists - today,
+// ensureWindow's repair branch (ADR-0020 part 4). It is not the `cc` alias:
 // see OpenCodeCoder.Command for why (ADR-0020's 2026-08-07 amendment). Because it
 // names the binary, it also has to spell the env prefix out - the alias
 // definition used to supply that.

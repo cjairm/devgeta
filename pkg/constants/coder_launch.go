@@ -28,8 +28,10 @@ package constants
 //     needs none. It is devgeta-owned and never interpolated from user data,
 //     which is why ADR-0020's quoting table embeds it unquoted.
 //   - Alias is the short name devgeta writes into devgeta.zsh for the user to
-//     type by hand, and the form still TYPED into panes that already exist
-//     (the repair path, `dg wt move`'s retarget - ADR-0020 part 4).
+//     type by hand. devgeta itself no longer types it anywhere: since
+//     ADR-0020's 2026-08-07 amendment, every path that types a coder command
+//     into a pane that already exists sends Command() - the un-aliased
+//     binary, plus EnvPrefix - instead.
 type CoderLaunch struct {
 	Alias     string
 	Binary    string

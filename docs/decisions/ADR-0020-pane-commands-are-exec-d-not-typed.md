@@ -70,11 +70,11 @@ is worse.
 
 Every `send-keys` path carries the cap, but they are not equally at risk:
 
-| Path                                               | Command sent                     | Risk today                       |
-| -------------------------------------------------- | -------------------------------- | -------------------------------- |
-| `buildWindowPanes` — pane launch                   | `cc '<prompt>'` / `--pane` value | **Real.** User text, unbounded.  |
-| `ensureWindow` repair (worktree.go:2112)           | `cc` / `oc`, bare                | None today — short, no prompt.   |
-| `launchReviewInLiveWindow` (worktree.go:2052/2074) | `ReviewCommand`, fixed prompt    | None today — fixed short string. |
+| Path                                               | Command sent                                                                 | Risk today                       |
+| -------------------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------- |
+| `buildWindowPanes` — pane launch                   | `cc '<prompt>'` / `--pane` value                                             | **Real.** User text, unbounded.  |
+| `ensureWindow` repair (worktree.go:2112)           | `cc` / `oc`, bare                                                            | None today — short, no prompt.   |
+| `launchReviewInLiveWindow` (worktree.go:2052/2074) | `ReviewCommand`, fixed prompt (renamed since — see the 2026-08-07 amendment) | None today — fixed short string. |
 
 This table describes the code as it stood when this ADR was written. The two
 send-keys paths no longer send `cc`/`oc`: see the 2026-08-07 amendment below.
@@ -415,7 +415,8 @@ rule.
 
 "devgeta-owned commands" is not only the built-in layouts. `LaunchReviewInRepo`
 has a **create** branch — the no-live-window case — that builds its own one-pane
-layout from `ReviewCommand`, i.e. `oc --agent <reviewer> --prompt '<text>'`, and
+layout from `ReviewCommand` (renamed since — see the 2026-08-07 amendment),
+i.e. `oc --agent <reviewer> --prompt '<text>'`, and
 sends it through `createWindowWithLayout` like any other pane. It carries the
 `oc` alias, so once created panes stop being interactive it breaks exactly the
 same way a coder pane would, and it is a create path, so exec applies to it.
@@ -545,6 +546,14 @@ means "devgeta never configured this tool."
   shell, governed by part 4's 1023-byte guard.
 - **The negative consequence "a user who redefined `cc`/`oc` themselves no longer
   changes what devgeta launches"** now applies to the typed paths as well.
+
+**Naming note, unrelated to the decision above.** Part 3 and the Context table
+refer to `ReviewCommand`, the reviewer's typed command as this ADR named it at
+the time. That name never shipped: the review path's command construction was
+split into `lookupBuiltinReviewer` (resolves the reviewer registered under a
+key) and `reviewCommandFor` (renders its typed command), both in `layout.go`.
+The narrative above is left as written — it describes the code as it stood —
+but a reader grepping for `ReviewCommand` should look for those two instead.
 
 ## Consequences
 
