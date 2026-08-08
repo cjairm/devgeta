@@ -720,6 +720,20 @@ func sendKeysTarget(calls []commands.CommandParams, wantKeys string) (string, bo
 	return "", false
 }
 
+// testReviewCommand builds the TYPED review command for key the same way
+// reviewerPane does (lookupBuiltinReviewer, then reviewCommandFor), so the
+// send-keys assertions below compare against the production string rather than a
+// second copy of it. It probes nothing: reviewCommandFor is the probe-free half of
+// reviewerPane.
+func testReviewCommand(t *testing.T, key string) string {
+	t.Helper()
+	reviewer, err := lookupBuiltinReviewer(key)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	return reviewCommandFor(&OpenCodeCoder{}, reviewer)
+}
+
 // TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath proves that, when
 // the worktree's window doesn't exist yet, LaunchReviewInRepo drives the same
 // create-if-missing path ensureWindow's own no-window branch uses
@@ -766,10 +780,7 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 		}
 	}
 
-	reviewCmd, err := ReviewCommand("code")
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	reviewCmd := testReviewCommand(t, "code")
 	if !callsContain(mockTmuxBase.ExecCommandCalls, "send-keys", reviewCmd) {
 		t.Errorf("expected send-keys to carry the review command %q, calls: %+v",
 			reviewCmd, mockTmuxBase.ExecCommandCalls)
@@ -790,10 +801,7 @@ func TestLaunchReviewReusesAnIdleShellPane(t *testing.T) {
 	windowName := GetWindowName(repoSlug, name)
 	session := "some-session"
 
-	reviewCmd, err := ReviewCommand("code")
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	reviewCmd := testReviewCommand(t, "code")
 
 	t.Run("single idle pane is reused, nothing is split", func(t *testing.T) {
 		mockTmuxBase := commands.NewMockBaseCommand()
@@ -984,10 +992,7 @@ func TestLaunchReviewLiveWindowSplitsNewPane(t *testing.T) {
 		}
 	}
 
-	reviewCmd, err := ReviewCommand("code")
-	if err != nil {
-		t.Fatalf("setup: %v", err)
-	}
+	reviewCmd := testReviewCommand(t, "code")
 
 	// The review command's send-keys must target the new pane id (%2)
 	// directly - never "session:window", which tmux would resolve to
@@ -1065,10 +1070,7 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 		t.Fatal("expected an error when send-keys fails after a successful split")
 	}
 
-	reviewCmd, cmdErr := ReviewCommand("code")
-	if cmdErr != nil {
-		t.Fatalf("setup: %v", cmdErr)
-	}
+	reviewCmd := testReviewCommand(t, "code")
 
 	// Even on the failing path, the attempted send-keys must have been
 	// pane-targeted (%2), not "session:window" - proving the fix applies
@@ -1115,8 +1117,8 @@ func TestLaunchReviewLiveWindowFailureAfterSplitKillsOnlyNewPane(t *testing.T) {
 }
 
 // TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall proves an unknown reviewer
-// key's error from ReviewCommand propagates before any git or tmux state is
-// touched.
+// key's error from lookupBuiltinReviewer propagates before any git or tmux state
+// is touched.
 func TestLaunchReviewUnknownKeyFailsBeforeAnyTmuxCall(t *testing.T) {
 	mockGitBase := commands.NewMockBaseCommand()
 	mockTmuxBase := commands.NewMockBaseCommand()

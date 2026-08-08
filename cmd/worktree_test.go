@@ -448,6 +448,13 @@ func resolveTestLayout(t *testing.T, name string) worktree.Layout {
 	return layout
 }
 
+// typedClaudeCommand is the claude layout's Pane.Command - the TYPED form devgeta
+// send-keys into a pane that already exists. It is the UN-ALIASED command (binary
+// plus env prefix), not "cc": preflight probes the binary, so typing the alias sent
+// a live pane something the check never verified (ADR-0020's 2026-08-07 amendment).
+// Spelled out rather than read off the coder, so this expectation can fail.
+const typedClaudeCommand = "CLAUDE_CODE_NO_FLICKER=1 claude"
+
 func paneCommands(layout worktree.Layout) []string {
 	commands := make([]string, 0, len(layout.Panes))
 	for _, pane := range layout.Panes {
@@ -468,7 +475,8 @@ func TestApplyCreateLayoutOptions(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if commands := paneCommands(got); len(commands) != 1 || commands[0] != "cc" {
+		if commands := paneCommands(got); len(commands) != 1 ||
+			commands[0] != typedClaudeCommand {
 			t.Errorf("expected the unmodified claude layout, got %v", commands)
 		}
 	})
@@ -483,7 +491,7 @@ func TestApplyCreateLayoutOptions(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		want := []string{"cc 'fix the bug'", "make finit"}
+		want := []string{typedClaudeCommand + " 'fix the bug'", "make finit"}
 		commands := paneCommands(got)
 		if len(commands) != len(want) {
 			t.Fatalf("expected %v, got %v", want, commands)

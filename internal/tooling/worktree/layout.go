@@ -70,7 +70,8 @@ const splitVertical = "vertical"
 //
 // promptText is stored alongside Command rather than derived from it because the
 // two forms need the prompt differently: Command needs it already rendered into
-// the alias string ("cc 'fix it'"), while the exec form needs the RAW text so it
+// the typed string ("CLAUDE_CODE_NO_FLICKER=1 claude 'fix it'"), while the exec
+// form needs the RAW text so it
 // can quote it as its own argv element. Recovering the raw text by unquoting
 // Command would be parsing devgeta's own output back, and would break on the
 // escape path (an embedded single quote).
@@ -109,9 +110,10 @@ type Layout struct {
 //
 // Every devgeta-owned pane goes through this rather than writing the branch
 // itself: the fallback is the case the ADR calls easy to get wrong (launching the
-// bare name in tmux's non-interactive shell is NOT today's behavior - there is no
-// alias and no repaired PATH there), so there is exactly one copy of it to be
-// right.
+// bare name in tmux's NON-interactive shell is not the same as launching it in
+// the user's own - that shell reads no `.zshrc`, so it gets none of its PATH
+// repair, and none of the user's own aliases or functions either), so there is
+// exactly one copy of it to be right.
 func launchFor(
 	interactiveForm func(prompt string) paneLaunch,
 	execForm func(binaryPath, prompt string) paneLaunch,
@@ -159,11 +161,10 @@ func nvimPane(split string) Pane {
 // second, structural guard on the same mistake - the one that holds even if a
 // caller hands a prompt to a launch closure directly.
 //
-// The interactive form is an aliasLaunch even though "nvim" is a bare binary
-// name, not an alias: the shell running it still has to resolve it, which is the
-// property aliasLaunch names (an unquoted program word, routed to the
-// interactive recipe).
-func nvimInteractiveLaunch(string) paneLaunch { return aliasLaunch(nvimCommand) }
+// The interactive form is a nameLaunch: the shell running it has to resolve
+// "nvim" itself, which is the property that name form describes (an unquoted
+// program word, routed to the interactive recipe).
+func nvimInteractiveLaunch(string) paneLaunch { return nameLaunch(nvimCommand) }
 
 func nvimExecLaunch(binaryPath, _ string) paneLaunch { return binaryLaunch(binaryPath) }
 
@@ -306,8 +307,9 @@ func (l Layout) WithPrompt(prompt string) (Layout, error) {
 
 	out := l.clone()
 	// Both forms of the prompt are recorded, because the two representations
-	// need it differently: Command gets it RENDERED into the typed alias string
-	// (`cc 'fix it'`), while a created pane's exec form needs the RAW text so it
+	// need it differently: Command gets it RENDERED into the typed string
+	// (`CLAUDE_CODE_NO_FLICKER=1 claude 'fix it'`), while a created pane's exec
+	// form needs the RAW text so it
 	// can quote it as its own argv element. See Pane's doc comment on why the raw
 	// text is not recovered from Command by unquoting it.
 	out.Panes[target].Command = out.Panes[target].prompt(prompt)
@@ -375,8 +377,8 @@ func (l Layout) WithExtraPanes(commands []string) (Layout, error) {
 // "terminal" category (see internal/tooling/terminal/terminal.go), matching the
 // hint ensureToolInstalled already gives for opencode/claude.
 func ensureNvimInstalled() (string, error) {
-	// nvim has no cc/oc-style alias indirection to begin with: nvimCommand IS
-	// the binary, which is what every check now probes (ADR-0020 part 3,
+	// nvim never had a cc/oc-style alias indirection: nvimCommand IS the binary,
+	// which is what every check probes and every launch names (ADR-0020 part 3,
 	// rule 1).
 	return ensureToolInstalled(nvimCommand)
 }
@@ -490,10 +492,11 @@ const ReviewPrompt = "Review this branch against the default branch."
 // quote with the standard close/escape/reopen trick (quote, backslash,
 // quote, quote) - this closes the
 // current quoted string, appends an escaped literal single quote, then
-// reopens quoting for the rest of s. This is needed because ReviewCommand's
-// output is sent to a live tmux pane via send-keys, which types it into an
-// interactive shell exactly as written - unlike a Go exec.Command argument
-// list, there is no shell parser on devgeta's side to lean on.
+// reopens quoting for the rest of s. This is needed because a typed command
+// (reviewCommandFor's output, a pane's Command) is sent to a live tmux pane via
+// send-keys, which types it into an interactive shell exactly as written - unlike
+// a Go exec.Command argument list, there is no shell parser on devgeta's side to
+// lean on.
 //
 // There is no existing shell-quoting helper in this codebase (internal/ and
 // pkg/ have no shellescape/shellquote hits) and this is the only call site,
@@ -529,11 +532,12 @@ const posixShell = "/bin/sh"
 //     function at all.
 //
 // One honest consequence of the floor: falling all the way to /bin/sh means the
-// interactive-shell fallback recipe cannot reproduce the cc/oc aliases, because
-// /bin/sh never had them. That combination - no resolved binary path AND no
-// usable user shell - is a badly broken environment, and the pane reports it
-// itself when the command fails to resolve. Blocking the create pre-emptively
-// would be worse (ADR-0011, ADR-0016).
+// interactive-shell fallback recipe runs the coder's bare name in a shell that is
+// not the user's, so it gets neither their `.zshrc` PATH repair nor any
+// definition of that name they made themselves. That combination - no resolved
+// binary path AND no usable user shell - is a badly broken environment, and the
+// pane reports it itself when the command fails to resolve. Blocking the create
+// pre-emptively would be worse (ADR-0011, ADR-0016).
 func resolveShell(candidates ...string) string {
 	for _, candidate := range candidates {
 		if isUsableShell(candidate) {
@@ -592,8 +596,8 @@ func BuiltinReviewerChoices() []ReviewerChoice {
 // It exists so that everything which needs a Reviewer gets it from a lookup that
 // can FAIL, rather than from a second index into the registry whose safety
 // depends on some earlier call having validated the key. reviewerPane used to do
-// exactly that (`builtinReviewers()[key].Agent` after ReviewCommand), and a map
-// miss there yields a zero Reviewer with an empty Agent - which builds an
+// exactly that (`builtinReviewers()[key].Agent` after a separate command build),
+// and a map miss there yields a zero Reviewer with an empty Agent - which builds an
 // opencode launch with no --agent at all, i.e. a plain coder session that looks
 // like a review. Structural rather than comment-guarded (CLAUDE.md §4).
 func lookupBuiltinReviewer(key string) (Reviewer, error) {
@@ -608,9 +612,16 @@ func lookupBuiltinReviewer(key string) (Reviewer, error) {
 }
 
 // reviewCommandFor renders reviewer's TYPED command - the form sent to a pane
-// that already exists, via send-keys. It is the single author of that string for
-// both callers that need it (ReviewCommand, from a key; reviewerPane, from the
-// reviewer it already looked up), so neither can drift from the other.
+// that already exists, via send-keys. It is the pure, probe-free half of
+// reviewerPane, kept separate so the exact command can be pinned by a test
+// without a shell lookup.
+//
+// It takes the coder rather than building its own so a reviewer pane's typed
+// command and its two launch closures all come from ONE OpenCodeCoder. A second
+// instance would be harmless today (the type is stateless and zero-size), but a
+// pane's behaviors sharing state with anything outside that pane is exactly what
+// Layout.clone's invariant asks a reader to check for, and threading the coder
+// through means there is nothing to check.
 //
 // The command is built by OpenCodeCoder.promptCommandWithAgent, which is also
 // what PromptCommand (the --prompt flag's path) delegates to - so the
@@ -619,37 +630,15 @@ func lookupBuiltinReviewer(key string) (Reviewer, error) {
 //
 // That author renders opencode's structured launch (see launch.go), which quotes
 // every argument uniformly - so this emits
-// `oc '--agent' '<name>' '--prompt' '<text>'`. Same command to the shell as the
-// older `oc --agent <name> --prompt '<text>'`; see paneLaunch.render for why the
-// flags are quoted too.
-func reviewCommandFor(reviewer Reviewer) string {
-	opencode := &OpenCodeCoder{}
+// `opencode '--agent' '<name>' '--prompt' '<text>'`. It names the BINARY, not the
+// oc alias, even though it is typed at an interactive shell: preflight probes the
+// binary, and sending a live pane something the check never verified is what
+// ADR-0020's 2026-08-07 amendment removes. Reviewer launches are OpenCode-only by
+// design (see the cycle plan's scope boundary: the reviewer agents' permission:
+// frontmatter is enforced by OpenCode and ignored by Claude Code), so unlike
+// deriveLayoutFromAlias this does not accept an aiAlias.
+func reviewCommandFor(opencode *OpenCodeCoder, reviewer Reviewer) string {
 	return opencode.promptCommandWithAgent(reviewer.Agent, ReviewPrompt)
-}
-
-// ReviewCommand returns the reviewer agent's TYPED command - the form sent to a
-// pane that already exists, via send-keys - for the reviewer registered under
-// key ("code", "document", or "skill"), or an error if key is not a registered
-// reviewer.
-//
-// It is the pure, probe-free half of reviewerPane, which is the constructor a
-// review launch actually goes through (and which builds the same string for its
-// pane's Command, from the same two helpers). Keeping it separate means the exact
-// command can be pinned by a test without a shell lookup.
-//
-// The command names the "oc" devgeta alias rather than the raw binary because it
-// is TYPED into a live interactive shell (ADR-0020 part 4); that alias comes from
-// the launch recipe in pkg/constants, which also renders devgeta.zsh's alias
-// line. Reviewer launches are OpenCode-only by design (see the cycle plan's scope
-// boundary: the reviewer agents' permission: frontmatter is enforced by OpenCode
-// and ignored by Claude Code), so unlike deriveLayoutFromAlias this does not
-// accept an aiAlias.
-func ReviewCommand(key string) (string, error) {
-	reviewer, err := lookupBuiltinReviewer(key)
-	if err != nil {
-		return "", err
-	}
-	return reviewCommandFor(reviewer), nil
 }
 
 // reviewerPane builds the pane that launches the reviewer agent registered under
@@ -689,7 +678,7 @@ func reviewerPane(key string) (Pane, error) {
 	}
 
 	return Pane{
-		Command: reviewCommandFor(reviewer),
+		Command: reviewCommandFor(opencode, reviewer),
 		launch: launchFor(
 			func(prompt string) paneLaunch {
 				return opencode.interactiveLaunchWithAgent(agent, prompt)

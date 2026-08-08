@@ -32,6 +32,12 @@ import (
 //     AliasLine().
 //   - Change a recipe's binary, alias or env prefix while the template still
 //     holds an old literal, and the same comparison fails.
+//   - Change a recipe AND AliasLine() together (or hardcode today's value back
+//     into the template) and the two comparisons above still agree with each
+//     other - the template's placeholder IS AliasLine(), so on its own that pair
+//     can only catch template drift. The LITERAL expectation beside each recipe is
+//     what makes the deployed line itself the thing under test, and it fails here,
+//     where a reader looks, rather than incidentally in the worktree package.
 //   - Move an alias line outside its {{if}} guard, and the all-features-off
 //     render below reports it.
 //
@@ -40,23 +46,35 @@ import (
 // struct field it cannot find, so a data change that orphaned a guard would
 // error here rather than silently emitting nothing.
 func TestShellConfigTemplateRendersCoderAliasesFromConstants(t *testing.T) {
-	recipes := []constants.CoderLaunch{constants.OpenCodeLaunch, constants.ClaudeLaunch}
+	recipes := []struct {
+		recipe constants.CoderLaunch
+		// wantLine is the exact line that must reach a user's devgeta.zsh. It is
+		// spelled out rather than derived so that changing the recipe, or
+		// AliasLine()'s rendering, is a deliberate edit here too.
+		wantLine string
+	}{
+		{constants.OpenCodeLaunch, `alias oc="opencode"`},
+		{constants.ClaudeLaunch, `alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"`},
+	}
 
 	enabled := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
-	for _, recipe := range recipes {
-		lines := aliasLinesFor(enabled, recipe.Alias)
+	for _, tt := range recipes {
+		lines := aliasLinesFor(enabled, tt.recipe.Alias)
 		if len(lines) != 1 {
 			t.Errorf(
 				"expected exactly one `alias %s=` line in the rendered shell config, got %q",
-				recipe.Alias, lines,
+				tt.recipe.Alias, lines,
 			)
 			continue
 		}
-		if lines[0] != recipe.AliasLine() {
+		if lines[0] != tt.recipe.AliasLine() {
 			t.Errorf(
 				"rendered alias line is %q, want the launch recipe's %q",
-				lines[0], recipe.AliasLine(),
+				lines[0], tt.recipe.AliasLine(),
 			)
+		}
+		if lines[0] != tt.wantLine {
+			t.Errorf("rendered alias line is %q, want exactly %q", lines[0], tt.wantLine)
 		}
 	}
 
@@ -64,12 +82,58 @@ func TestShellConfigTemplateRendersCoderAliasesFromConstants(t *testing.T) {
 	// catches an alias line written outside its {{if}} guard, which would
 	// otherwise still match above.
 	disabled := renderEmbeddedShellConfig(t, config.ShellFeatures{})
-	for _, recipe := range recipes {
-		if lines := aliasLinesFor(disabled, recipe.Alias); len(lines) != 0 {
+	for _, tt := range recipes {
+		if lines := aliasLinesFor(disabled, tt.recipe.Alias); len(lines) != 0 {
 			t.Errorf(
 				"`alias %s=` must only be rendered when the coder's feature is enabled, got %q",
-				recipe.Alias, lines,
+				tt.recipe.Alias, lines,
 			)
+		}
+	}
+}
+
+// TestShellConfigCoderSectionHeaderRendersForEitherCoder covers the one-coder
+// installs. The `# ---- AI coders ----` header used to sit inside the opencode
+// guard, so a claude-only user got a bare `alias cc=` line while every other
+// section in the generated file carried its header.
+func TestShellConfigCoderSectionHeaderRendersForEitherCoder(t *testing.T) {
+	const header = "# ---- AI coders ----"
+
+	tests := []struct {
+		name     string
+		features config.ShellFeatures
+		wantHead bool
+	}{
+		{"opencode only", config.ShellFeatures{Opencode: true}, true},
+		{"claude only", config.ShellFeatures{Claude: true}, true},
+		{"both", config.ShellFeatures{Opencode: true, Claude: true}, true},
+		{"neither", config.ShellFeatures{}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rendered := renderEmbeddedShellConfig(t, tt.features)
+			if got := strings.Contains(rendered, header); got != tt.wantHead {
+				t.Errorf("rendered contains %q = %v, want %v", header, got, tt.wantHead)
+			}
+			if strings.Count(rendered, header) > 1 {
+				t.Errorf("expected at most one %q header, got %d", header,
+					strings.Count(rendered, header))
+			}
+		})
+	}
+}
+
+// TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput: the template
+// explains WHY its alias lines are rendered from pkg/constants, and that
+// explanation is for whoever edits the template - it must not be shipped into
+// every user's generated devgeta.zsh as `#` comments.
+func TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput(t *testing.T) {
+	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+
+	for _, leaked := range []string{"pkg/constants", "ADR-0020", "non-interactive"} {
+		if strings.Contains(rendered, leaked) {
+			t.Errorf("maintainer note mentioning %q reached the generated shell config", leaked)
 		}
 	}
 }

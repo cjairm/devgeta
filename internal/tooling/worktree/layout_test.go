@@ -12,6 +12,18 @@ import (
 	"github.com/cjairm/devgeta/internal/config"
 )
 
+// The TYPED commands the built-in coder layouts carry (Pane.Command) - the
+// UN-ALIASED form devgeta send-keys into a pane that already exists, i.e. the
+// binary plus any env prefix, never "oc"/"cc" (ADR-0020's 2026-08-07 amendment).
+//
+// They are literals here rather than reads of constants.*Launch or of
+// Coder.Command(): deriving an expectation from the value under test could not
+// fail. aicoder_test.go pins the same two strings directly against each coder.
+const (
+	typedOpenCode = "opencode"
+	typedClaude   = "CLAUDE_CODE_NO_FLICKER=1 claude"
+)
+
 // --- built-in layout shapes ---
 
 func TestBuiltinLayoutShapes(t *testing.T) {
@@ -24,7 +36,7 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 		{
 			name: "opencode",
 			wantPanes: []Pane{
-				{Command: "oc", Split: ""},
+				{Command: typedOpenCode, Split: ""},
 			},
 			wantChecks:   1,
 			wantLaunches: 1,
@@ -32,7 +44,7 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 		{
 			name: "claude",
 			wantPanes: []Pane{
-				{Command: "cc", Split: ""},
+				{Command: typedClaude, Split: ""},
 			},
 			wantChecks:   1,
 			wantLaunches: 1,
@@ -40,7 +52,7 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 		{
 			name: "claude-nvim",
 			wantPanes: []Pane{
-				{Command: "cc", Split: ""},
+				{Command: typedClaude, Split: ""},
 				{Command: "nvim", Split: "vertical"},
 			},
 			wantChecks:   2,
@@ -106,7 +118,7 @@ func TestBuiltinLayoutShapes(t *testing.T) {
 // ADR-0020 forbids: check != nil with launch == nil and a non-empty Command.
 // Such a pane probes, resolves an absolute path, and then routes through
 // creationCommand's --pane branch - DISCARDING the resolution and launching the
-// interactive alias form instead. That is literally "resolves a path and then
+// interactive name form instead. That is literally "resolves a path and then
 // launches something else", which the ADR says is not an implementation of its
 // decision.
 //
@@ -171,7 +183,7 @@ func TestResolveLayoutAliasBeatsDefaultLayoutAndDefaultAI(t *testing.T) {
 			layout.Name,
 		)
 	}
-	if len(layout.Panes) != 1 || layout.Panes[0].Command != "oc" {
+	if len(layout.Panes) != 1 || layout.Panes[0].Command != typedOpenCode {
 		t.Errorf("expected single-pane opencode layout, got %+v", layout.Panes)
 	}
 }
@@ -209,7 +221,7 @@ func TestResolveLayoutDefaultAIOnlyDerivesSinglePaneLayout(t *testing.T) {
 	if layout.Name != "claude" {
 		t.Errorf("expected derived layout name 'claude', got %q", layout.Name)
 	}
-	if len(layout.Panes) != 1 || layout.Panes[0].Command != "cc" {
+	if len(layout.Panes) != 1 || layout.Panes[0].Command != typedClaude {
 		t.Errorf("expected single-pane claude layout, got %+v", layout.Panes)
 	}
 	if layout.Panes[0].Split != "" {
@@ -227,7 +239,7 @@ func TestResolveLayoutEmptyEverythingFallsBackToOpencode(t *testing.T) {
 	if layout.Name != "opencode" {
 		t.Errorf("expected fallback layout 'opencode', got %q", layout.Name)
 	}
-	if len(layout.Panes) != 1 || layout.Panes[0].Command != "oc" {
+	if len(layout.Panes) != 1 || layout.Panes[0].Command != typedOpenCode {
 		t.Errorf("expected single-pane opencode layout, got %+v", layout.Panes)
 	}
 }
@@ -440,9 +452,9 @@ func TestWithPromptRetargetsCoderPane(t *testing.T) {
 		layout       string
 		wantCommands []string
 	}{
-		{"opencode", []string{"oc '--prompt' 'fix the bug'"}},
-		{"claude", []string{"cc 'fix the bug'"}},
-		{"claude-nvim", []string{"cc 'fix the bug'", "nvim"}},
+		{"opencode", []string{typedOpenCode + " '--prompt' 'fix the bug'"}},
+		{"claude", []string{typedClaude + " 'fix the bug'"}},
+		{"claude-nvim", []string{typedClaude + " 'fix the bug'", "nvim"}},
 	}
 
 	for _, tt := range tests {
@@ -579,7 +591,7 @@ func TestWithPromptQuotesEmbeddedSingleQuote(t *testing.T) {
 		t.Fatalf("WithPrompt returned error: %v", err)
 	}
 
-	want := `cc 'it'\''s broken'`
+	want := typedClaude + ` 'it'\''s broken'`
 	if got.Panes[0].Command != want {
 		t.Errorf("got command %q, want %q", got.Panes[0].Command, want)
 	}
@@ -598,7 +610,7 @@ func TestWithExtraPanesAppendsInOrder(t *testing.T) {
 		t.Fatalf("WithExtraPanes returned error: %v", err)
 	}
 
-	wantCommands := []string{"cc", "make finit", "npm run dev"}
+	wantCommands := []string{typedClaude, "make finit", "npm run dev"}
 	gotCommands := commandsOf(got)
 	if len(gotCommands) != len(wantCommands) {
 		t.Fatalf("expected %d panes, got %v", len(wantCommands), gotCommands)
@@ -722,7 +734,7 @@ func TestTransformationsDoNotMutateSourceLayout(t *testing.T) {
 			t.Fatalf("WithPrompt returned error: %v", err)
 		}
 
-		if layout.Panes[0].Command != "cc" {
+		if layout.Panes[0].Command != typedClaude {
 			t.Errorf("source layout was mutated: pane 0 command is now %q", layout.Panes[0].Command)
 		}
 	})
@@ -756,7 +768,7 @@ func TestTransformationsDoNotMutateSourceLayout(t *testing.T) {
 			t.Fatalf("WithPrompt returned error: %v", err)
 		}
 
-		if layout.Panes[0].Command != "cc" {
+		if layout.Panes[0].Command != typedClaude {
 			t.Errorf("source layout was mutated: pane 0 command is now %q", layout.Panes[0].Command)
 		}
 		if got.Panes[0].Command == layout.Panes[0].Command {
@@ -782,7 +794,7 @@ func TestWithPromptThenWithExtraPanesCompose(t *testing.T) {
 		t.Fatalf("WithExtraPanes returned error: %v", err)
 	}
 
-	want := []string{"cc 'fix the bug'", "make finit"}
+	want := []string{typedClaude + " 'fix the bug'", "make finit"}
 	gotCommands := commandsOf(got)
 	if len(gotCommands) != len(want) {
 		t.Fatalf("expected %v, got %v", want, gotCommands)
@@ -898,16 +910,19 @@ func TestBuiltinReviewerChoicesOrderAndLabels(t *testing.T) {
 
 // --- review pane command ---
 
-// TestReviewCommandBuildsExpectedCommand asserts the exact command string
-// for every registered reviewer key: the "oc" alias from OpenCodeCoder.Command
-// (this is the TYPED form, sent to a pane that already exists), not a hardcoded
-// "oc" and not the "opencode" binary a created pane execs, followed by
-// --agent <name> and the fixed review prompt. Every argument is single-quoted, flags included, since this renders
-// opencode's structured launch (see paneLaunch.render for why the rule is
-// uniform rather than "quote only the values").
-func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
-	wantOpenCodeToken := (&OpenCodeCoder{}).Command()
-
+// TestReviewCommandForBuildsExpectedCommand asserts the exact TYPED command - the
+// form sent to a pane that already exists - for every registered reviewer key,
+// through the two helpers reviewerPane itself goes through (lookupBuiltinReviewer
+// then reviewCommandFor), so this stays the drift pin for that string without a
+// shell probe.
+//
+// The program word is the "opencode" BINARY, not the "oc" alias: preflight probes
+// the binary, and typing the alias meant sending a live pane something the check
+// never verified (ADR-0020's 2026-08-07 amendment). It is followed by
+// --agent <name> and the fixed review prompt, every argument single-quoted, flags
+// included, since this renders opencode's structured launch (see paneLaunch.render
+// for why the rule is uniform rather than "quote only the values").
+func TestReviewCommandForBuildsExpectedCommand(t *testing.T) {
 	tests := []struct {
 		key       string
 		wantAgent string
@@ -919,28 +934,33 @@ func TestReviewCommandBuildsExpectedCommand(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.key, func(t *testing.T) {
-			got, err := ReviewCommand(tt.key)
+			reviewer, err := lookupBuiltinReviewer(tt.key)
 			if err != nil {
-				t.Fatalf("ReviewCommand(%q) returned error: %v", tt.key, err)
+				t.Fatalf("lookupBuiltinReviewer(%q) returned error: %v", tt.key, err)
 			}
 
-			want := wantOpenCodeToken + " '--agent' " + shellSingleQuote(tt.wantAgent) +
+			got := reviewCommandFor(&OpenCodeCoder{}, reviewer)
+			want := typedOpenCode + " '--agent' " + shellSingleQuote(tt.wantAgent) +
 				" '--prompt' 'Review this branch against the default branch.'"
 			if got != want {
-				t.Errorf("ReviewCommand(%q) = %q, want %q", tt.key, got, want)
+				t.Errorf("reviewCommandFor(%q) = %q, want %q", tt.key, got, want)
 			}
 		})
 	}
 }
 
-// TestReviewCommandUnknownKeyErrors mirrors lookupBuiltinLayout's "unknown
-// name" contract: an invalid reviewer key must error, not silently build a
-// command for a zero-value Reviewer (which would send `oc --agent
-// --prompt '...'` - a broken command - to a live tmux pane).
-func TestReviewCommandUnknownKeyErrors(t *testing.T) {
-	_, err := ReviewCommand("nonexistent")
+// TestLookupBuiltinReviewerUnknownKeyErrors mirrors lookupBuiltinLayout's "unknown
+// name" contract: an invalid reviewer key must error, not hand back a zero-value
+// Reviewer, which would build `opencode --agent --prompt '...'` - a broken command
+// - and send it to a live tmux pane.
+func TestLookupBuiltinReviewerUnknownKeyErrors(t *testing.T) {
+	_, err := lookupBuiltinReviewer("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for unknown reviewer key, got nil")
+	}
+	if got := err.Error(); !strings.Contains(got, "nonexistent") ||
+		!strings.Contains(got, "code") {
+		t.Errorf("expected the error to name the bad key and list the valid ones, got %q", got)
 	}
 }
 
@@ -1155,13 +1175,15 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 			// The probe answered, but with something that is not path-shaped -
 			// `command -v claude` printing a bare name because claude is a
 			// shell function or wrapper rather than a file on PATH. Found, no
-			// path. The pane must then get the cc ALIAS through an INTERACTIVE
-			// shell, which is the only shell that has it.
+			// path. The pane must then run the bare name through an INTERACTIVE
+			// shell - the only one with the user's .zshrc PATH repair, and with
+			// whatever function or alias made the probe answer that way.
 			name: "a Found outcome with no path takes the interactive fallback",
 			resolve: func(string) (string, commands.ShellLookupResult) {
 				return "", commands.ShellLookupFound
 			},
-			want: `'/bin/zsh' -ic 'cc '\''fix issue 1082'\''; exec '\''/bin/zsh'\'' -i'`,
+			want: `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude '\''fix issue 1082'\''; ` +
+				`exec '\''/bin/zsh'\'' -i'`,
 		},
 		{
 			// ADR-0016: an inconclusive probe proved nothing, so it must neither
@@ -1170,7 +1192,8 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 			resolve: func(string) (string, commands.ShellLookupResult) {
 				return "", commands.ShellLookupInconclusive
 			},
-			want: `'/bin/zsh' -ic 'cc '\''fix issue 1082'\''; exec '\''/bin/zsh'\'' -i'`,
+			want: `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude '\''fix issue 1082'\''; ` +
+				`exec '\''/bin/zsh'\'' -i'`,
 		},
 	}
 
@@ -1200,7 +1223,7 @@ func TestEnsureInstalledCarriesTheProbesPathIntoThePaneCommand(t *testing.T) {
 			}
 			// The typed form is unchanged by any of this - it is what the repair
 			// path still sends into a pane that already exists (ADR-0020 part 4).
-			if resolved.Panes[0].Command != "cc 'fix issue 1082'" {
+			if resolved.Panes[0].Command != typedClaude+" 'fix issue 1082'" {
 				t.Errorf(
 					"the typed command must be unaffected, got %q",
 					resolved.Panes[0].Command,
@@ -1377,7 +1400,8 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 	if firstCmd != wantFirst {
 		t.Errorf("first create's command = %q, want %q", firstCmd, wantFirst)
 	}
-	wantSecond := `'/bin/zsh' -ic 'cc '\''second task'\''; exec '\''/bin/zsh'\'' -i'`
+	wantSecond := `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude '\''second task'\''; ` +
+		`exec '\''/bin/zsh'\'' -i'`
 	if secondCmd != wantSecond {
 		t.Errorf("second create's command = %q, want %q", secondCmd, wantSecond)
 	}
@@ -1403,7 +1427,7 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 
 	// And the source is still pristine: no prompt, no resolution, so a fourth
 	// create starts from the same clean state the first one did.
-	if source.Panes[0].Command != "cc" {
+	if source.Panes[0].Command != typedClaude {
 		t.Errorf("the shared layout was mutated: command is now %q", source.Panes[0].Command)
 	}
 	if source.Panes[0].promptText != "" {
@@ -1415,9 +1439,9 @@ func TestResolvedLayoutDoesNotLeakBetweenCreates(t *testing.T) {
 			source.Panes[0].resolvedPath,
 		)
 	}
-	if got := source.Panes[0].creationCommand(
-		testShell,
-	); got != `'/bin/zsh' -ic 'cc; exec '\''/bin/zsh'\'' -i'` {
+	wantSource := `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude; ` +
+		`exec '\''/bin/zsh'\'' -i'`
+	if got := source.Panes[0].creationCommand(testShell); got != wantSource {
 		t.Errorf("the shared layout's own pane command changed: %q", got)
 	}
 }
@@ -1440,14 +1464,15 @@ func TestReviewerPaneProbesOnceAndCarriesTheResolution(t *testing.T) {
 		t.Fatalf("expected exactly 1 probe for a reviewer launch, got %d", *calls)
 	}
 
-	// The typed form, for the idle-shell-reuse branch's send-keys, is exactly
-	// what ReviewCommand builds - the two must not drift.
-	wantTyped, err := ReviewCommand("code")
+	// The typed form, for the idle-shell-reuse branch's send-keys, is exactly what
+	// reviewCommandFor builds - the two must not drift.
+	reviewer, err := lookupBuiltinReviewer("code")
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
+	wantTyped := reviewCommandFor(&OpenCodeCoder{}, reviewer)
 	if pane.Command != wantTyped {
-		t.Errorf("pane.Command = %q, want ReviewCommand's %q", pane.Command, wantTyped)
+		t.Errorf("pane.Command = %q, want reviewCommandFor's %q", pane.Command, wantTyped)
 	}
 
 	// The created form execs the resolved binary, with the reviewer agent still
@@ -1485,7 +1510,8 @@ func TestReviewerPaneProbesOnceAndCarriesTheResolution(t *testing.T) {
 
 // TestReviewerPaneFallsBackWhenNoPathResolves: the review launch gets the same
 // interactive fallback every other devgeta-owned pane gets, so an inconclusive
-// probe costs it nothing (ADR-0016) and the oc alias still resolves.
+// probe costs it nothing (ADR-0016) and the bare "opencode" still resolves in the
+// user's own shell.
 func TestReviewerPaneFallsBackWhenNoPathResolves(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -1505,7 +1531,7 @@ func TestReviewerPaneFallsBackWhenNoPathResolves(t *testing.T) {
 			}
 
 			got := pane.creationCommand(testShell)
-			want := `'/bin/zsh' -ic 'oc '\''--agent'\'' '\''code-reviewer'\'' ` +
+			want := `'/bin/zsh' -ic 'opencode '\''--agent'\'' '\''code-reviewer'\'' ` +
 				`'\''--prompt'\'' '\''Review this branch against the default branch.'\''; ` +
 				`exec '\''/bin/zsh'\'' -i'`
 			if got != want {

@@ -1975,10 +1975,11 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 	// error anywhere.
 	//
 	// The probed token is the "opencode" BINARY (see
-	// OpenCodeCoder.EnsureInstalled), because that is what the created pane execs.
-	// So an opencode installed outside devgeta - one whose "oc" alias was never
-	// written to devgeta.zsh - now passes this check and launches fine, where the
-	// older alias probe refused it (ADR-0020 accepts that trade deliberately).
+	// OpenCodeCoder.EnsureInstalled), because that is what both launches below
+	// name - the created pane execs it, and the live-window branch types it. So an
+	// opencode installed outside devgeta - one whose "oc" alias was never written
+	// to devgeta.zsh - passes this check and launches correctly either way
+	// (ADR-0020's 2026-08-07 amendment; the older alias probe refused it outright).
 	pane, err := reviewerPane(reviewerKey)
 	if err != nil {
 		return err

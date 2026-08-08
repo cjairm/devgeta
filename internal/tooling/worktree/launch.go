@@ -11,9 +11,13 @@
 // interchangeable:
 //
 //   - Pane.Command (layout.go) is the form TYPED into a live interactive shell -
-//     "cc", "oc --prompt '...'", "nvim", or a raw --pane value. The repair path
-//     and `dg wt move`'s retarget still send exactly that with send-keys,
-//     because those panes already exist (ADR-0020 part 4).
+//     "CLAUDE_CODE_NO_FLICKER=1 claude", "opencode --prompt '...'", "nvim", or a
+//     raw --pane value. The repair path and `dg wt move`'s retarget still send
+//     exactly that with send-keys, because those panes already exist (ADR-0020
+//     part 4). It names the BINARY, not the cc/oc alias: devgeta.zsh's alias is
+//     for the user to type, and a send-keys path that relied on it would launch
+//     something the preflight probe never checked (ADR-0020's 2026-08-07
+//     amendment).
 //   - The recipes below are the form EXEC'd as a created pane's process. They
 //     are what a create path passes to tmux.
 //
@@ -52,9 +56,9 @@ type paneLaunch struct {
 // launchKind records which KIND of program a launch names. It is not a quoting
 // style knob: it decides how the program word is rendered AND which recipe the
 // launch runs under (see paneCommandFor), and getting it backwards breaks the
-// launch in a way no mocked test would notice - an alias does not exist in the
-// non-interactive shell tmux runs a pane command in, and an unquoted resolved
-// path splits on the first space inside it.
+// launch in a way no mocked test would notice - a bare name gets no PATH repair
+// in the non-interactive shell tmux runs a pane command in, and an unquoted
+// resolved path splits on the first space inside it.
 //
 // Its zero value carries a second load-bearing property: "empty" is the zero
 // KIND, not a property of the other fields. Every constructor below sets a
@@ -74,30 +78,45 @@ const (
 	// gets the shell tmux would have started anyway.
 	launchNone launchKind = iota
 
-	// launchAlias names a program the shell running it must resolve - a devgeta
-	// shell alias ("cc"/"oc") or a bare binary name ("nvim"). See aliasLaunch.
-	launchAlias
+	// launchName names a program the shell running it must resolve for itself -
+	// a bare command name ("claude", "opencode", "nvim"). See nameLaunch.
+	launchName
 
 	// launchBinary names a resolved absolute path a pane execs directly. See
 	// binaryLaunch.
 	launchBinary
 )
 
-// aliasLaunch builds a launch whose program is a NAME the shell running it must
-// resolve: a devgeta shell alias ("cc"/"oc", which devgeta.zsh defines from its
-// launch recipe in pkg/constants) or a bare binary name ("nvim").
+// nameLaunch builds a launch whose program is a NAME the shell running it must
+// resolve for itself: "claude", "opencode", "nvim". This is the form typed into
+// (or run by) an interactive shell - Pane.Command, and the inner script of
+// interactivePaneCommand, which is where paneCommandFor routes it.
 //
-// The program is deliberately NOT quoted. A shell does not expand an alias that
-// was quoted - `'cc' 'text'` looks for a command literally named cc and fails,
-// while `cc 'text'` expands the alias - so quoting here would break the exact
-// case this form exists to serve. Arguments are still quoted; only the program
-// word is special.
+// It used to be aliasLaunch, and its program used to be the cc/oc devgeta alias.
+// It is the binary name now (ADR-0020's 2026-08-07 amendment): a send-keys path
+// launching the alias launched something the preflight probe - which checks the
+// binary - never verified, so a coder on PATH with no devgeta alias passed the
+// check and then failed in the pane.
 //
-// This is the form typed into (or run by) an interactive shell: Pane.Command,
-// and the inner script of interactivePaneCommand - which is also where
-// paneCommandFor routes it, because that is the only shell that has the alias.
-func aliasLaunch(program string, args ...string) paneLaunch {
-	return paneLaunch{kind: launchAlias, program: program, args: args}
+// The program word is NOT quoted, and the reason changed with the rename.
+// Quoting no longer BREAKS a plain binary name - `'claude'` is still resolved on
+// PATH - so this is a choice, with one case behind it: an interactive-form launch
+// is what a probe that answered with something non-path-shaped selects, and
+// "alias text" and "a shell function name" are exactly those answers (ADR-0020
+// part 3). In that case the user's own `alias claude=...` is what has to expand,
+// and a quoted program word suppresses alias expansion. Arguments are still
+// quoted; only the program word is special.
+func nameLaunch(program string, args ...string) paneLaunch {
+	return paneLaunch{kind: launchName, program: program, args: args}
+}
+
+// nameLaunchWithEnv is nameLaunch plus a devgeta-owned environment prefix - the
+// typed/interactive counterpart of binaryLaunchWithEnv, and what a coder recipe
+// that carries an env prefix needs in BOTH of its forms now that the typed form
+// is the binary rather than an alias that carried the prefix in its own
+// definition (ADR-0020's 2026-08-07 amendment).
+func nameLaunchWithEnv(envPrefix, program string, args ...string) paneLaunch {
+	return withEnvPrefix(nameLaunch(program, args...), envPrefix)
 }
 
 // binaryLaunch builds a launch whose program is a resolved absolute path, for a
@@ -111,7 +130,7 @@ func aliasLaunch(program string, args ...string) paneLaunch {
 // path and would otherwise split into two words.
 //
 // An empty path is a caller bug, not a shell pane: a resolution that produced no
-// path must select the alias form and the interactive recipe (ADR-0020 part 3 -
+// path must select the name form and the interactive recipe (ADR-0020 part 3 -
 // the resolved path is an optimization, and its absence is what the fallback
 // exists for), never hand "" over here. This constructor cannot refuse it - Go
 // has no non-empty string type and this value has no error channel - so the
@@ -126,16 +145,23 @@ func binaryLaunch(path string, args ...string) paneLaunch {
 
 // binaryLaunchWithEnv is binaryLaunch plus a devgeta-owned environment prefix
 // (today only claude's, constants.ClaudeLaunch.EnvPrefix - the same value that
-// renders into devgeta.zsh's `alias cc=` line, so the alias and the exec'd
-// command cannot carry different environments).
+// renders into devgeta.zsh's `alias cc=` line, so the alias a user types and the
+// command devgeta runs cannot carry different environments).
 //
-// The prefix is only available on the binary form on purpose: an alias launch
-// runs the devgeta alias, which already carries its own env prefix in its
-// definition, so an alias launch with a second prefix would be double-setting
-// it. Keeping the prefix out of aliasLaunch's signature makes that
-// unrepresentable rather than merely discouraged (CLAUDE.md §4).
+// Both forms take a prefix now. While the typed form was the cc alias, the prefix
+// lived inside the alias DEFINITION, so an alias launch carrying a second one
+// would have double-set it and the prefix was deliberately kept off that
+// constructor. The typed form is the binary itself since ADR-0020's 2026-08-07
+// amendment, so it has to spell the prefix out exactly as the exec form does -
+// see nameLaunchWithEnv.
 func binaryLaunchWithEnv(envPrefix, path string, args ...string) paneLaunch {
-	launch := binaryLaunch(path, args...)
+	return withEnvPrefix(binaryLaunch(path, args...), envPrefix)
+}
+
+// withEnvPrefix attaches a devgeta-owned environment assignment to a launch. It
+// is the one writer of that field, shared by the two WithEnv constructors so
+// neither can set it differently.
+func withEnvPrefix(launch paneLaunch, envPrefix string) paneLaunch {
 	launch.envPrefix = envPrefix
 	return launch
 }
@@ -154,8 +180,14 @@ func (l paneLaunch) isEmpty() bool { return l.kind == launchNone }
 // render turns the launch into a shell command line: the env prefix, the
 // program, then every argument, joined by spaces.
 //
+// The env prefix is emitted unquoted, and it has to be: it is a shell variable
+// ASSIGNMENT, and `'CLAUDE_CODE_NO_FLICKER=1' claude` asks the shell for a command
+// literally named `CLAUDE_CODE_NO_FLICKER=1`. It needs no quoting either way -
+// every prefix is a devgeta constant in pkg/constants, never user data
+// (ADR-0020's quoting table).
+//
 // EVERY argument is quoted, flags included - so opencode's prompt form renders
-// as `oc '--prompt' 'text'`, not `oc --prompt 'text'`. Those are shell
+// as `opencode '--prompt' 'text'`, not `opencode --prompt 'text'`. Those are shell
 // equivalent (each is still exactly one word to the shell) and the uniform rule
 // is the point: ADR-0020 records that stating a quoting rule and then applying
 // it selectively already failed three times during its own review, and a
@@ -173,9 +205,9 @@ func (l paneLaunch) render() string {
 	}
 	// An EMPTY program word is quoted whichever kind it is, so it survives as a
 	// literal word the shell then fails to resolve. Left unquoted it disappears
-	// from the command line entirely: aliasLaunch("") renders to "" (the vanish
+	// from the command line entirely: nameLaunch("") renders to "" (the vanish
 	// isEmpty's kind check exists to prevent, reached one layer down), and
-	// aliasLaunch("", "fix issue 1082") renders to " 'fix issue 1082'", which
+	// nameLaunch("", "fix issue 1082") renders to " 'fix issue 1082'", which
 	// makes the PROMPT the command being run. Quoting it mirrors what
 	// binaryLaunch("") already did and keeps a caller bug loud in the pane
 	// rather than silent. No production launch can hit this - every program
@@ -197,17 +229,20 @@ func (l paneLaunch) render() string {
 // process for launch, choosing the recipe from the launch's KIND:
 //
 //	launchBinary -> execPaneCommand        - <rendered>; exec '<shell>'
-//	launchAlias  -> interactivePaneCommand - '<shell>' -ic '<rendered>; exec '<shell>' -i'
+//	launchName   -> interactivePaneCommand - '<shell>' -ic '<rendered>; exec '<shell>' -i'
 //	launchNone   -> ""                     - no command; the pane keeps the shell
 //	                                         tmux would have started anyway
 //
 // This is the only place a launch is paired with a recipe, which is the point:
 // the two are NOT interchangeable, and the wrong pairing used to be something
-// any caller could write. tmux runs a pane's shell-command through a
-// NON-INTERACTIVE shell (measured: flags `569X`, no `i`), which has no aliases -
-// so an alias launch sent through the exec recipe emits `cc 'fix it'; exec
-// '/bin/zsh'` and dies on `command not found`, which is exactly the case
-// ADR-0020 part 3's interactive fallback exists to serve. In the other
+// any caller could write. A name launch is one whose program NOTHING has resolved
+// - it is what a probe that came back without a path selects - and tmux runs a
+// pane's shell-command through a NON-INTERACTIVE shell (measured: flags `569X`,
+// no `i`), which reads no `.zshrc` and therefore gets none of its PATH repair.
+// bash has no unconditional equivalent of zsh's `.zshenv` either ($BASH_ENV is
+// unset by default), so `claude 'fix it'; exec '/bin/zsh'` can die on `command
+// not found` for a tool that launches fine from the user's own shell - exactly
+// the case ADR-0020 part 3's interactive fallback exists to serve. In the other
 // direction, a resolved absolute path needs none of the user's interactive
 // startup and should not pay for it (ADR-0020 rejects `-ic` as the default for
 // precisely that reason). Routing on the discriminator the value already carries
@@ -224,7 +259,7 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 	switch launch.kind {
 	case launchBinary:
 		return execPaneCommand(launch.render(), shell)
-	case launchAlias:
+	case launchName:
 		return interactivePaneCommand(launch.render(), shell)
 	default:
 		// launchNone: the shell pane. Passing no command at all is what gives
@@ -279,7 +314,7 @@ func (p Pane) creationCommand(shell string) string {
 //
 // paneCommandFor is its only caller, and deliberately so: it takes the rendered
 // string rather than a paneLaunch so that "which recipe does this launch get"
-// is answered in exactly one place (see paneCommandFor for why an alias launch
+// is answered in exactly one place (see paneCommandFor for why a name launch
 // must never reach this recipe).
 //
 // The trailing `exec` preserves today's pane lifetime: exec'ing the command
@@ -313,10 +348,14 @@ func execPaneCommand(command, shell string) string {
 //     aliases and functions, so running it non-interactively would silently
 //     change what it means. It is not a paneLaunch and is never turned into one:
 //     ADR-0011 keeps it unparsed and unsplit.
-//   - A devgeta-owned alias-form launch, when the preflight probe could not
-//     resolve an absolute path, routed here by paneCommandFor. The alias (cc/oc)
-//     only exists in an interactive shell, so this is what keeps an inconclusive
-//     probe costing the pane nothing - ADR-0016's fail-open, preserved.
+//   - A devgeta-owned NAME-form launch, when the preflight probe could not
+//     resolve an absolute path, routed here by paneCommandFor. The interactive
+//     shell is what gives that bare name the `.zshrc` PATH repair the probe's own
+//     shell had - and, when the probe's non-path answer was alias text or a shell
+//     function name, the only shell where that definition exists at all. This is
+//     what keeps an inconclusive probe costing the pane nothing - ADR-0016's
+//     fail-open, preserved. It is NOT about devgeta's own cc/oc alias, which no
+//     devgeta launch has named since ADR-0020's 2026-08-07 amendment.
 //
 // Three quoting facts, each load-bearing:
 //

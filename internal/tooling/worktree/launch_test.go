@@ -97,33 +97,48 @@ func TestExecLaunchFormPerPaneKind(t *testing.T) {
 	}
 }
 
-// TestAliasLaunchLeavesTheProgramUnquoted is the counterpart trap to the binary
-// form above, and it is the one a mocked test would otherwise accept while the
-// real thing broke: a shell does NOT expand an alias that was quoted, so
-// `'cc' 'text'` fails with "command not found: cc" where `cc 'text'` works.
-// Arguments are still quoted in this form.
-func TestAliasLaunchLeavesTheProgramUnquoted(t *testing.T) {
+// TestNameLaunchIsTheUnaliasedCommandAndLeavesTheProgramUnquoted is the
+// counterpart to the binary form above. Two properties, both deliberate:
+//
+//   - The program is the BINARY name, never the cc/oc alias (ADR-0020's
+//     2026-08-07 amendment). These are the strings devgeta send-keys into a pane
+//     that already exists, so an alias here would send a live pane something
+//     preflight never checked.
+//   - The program word is left unquoted. That no longer BREAKS a plain binary
+//     name (`'claude'` still resolves on PATH), but this form is what a probe
+//     answering with alias text or a shell-function name selects, and in that
+//     case the user's OWN definition of the name has to expand - which a quoted
+//     program word suppresses. Arguments stay quoted either way.
+func TestNameLaunchIsTheUnaliasedCommandAndLeavesTheProgramUnquoted(t *testing.T) {
 	tests := []struct {
 		name   string
 		launch paneLaunch
 		want   string
 	}{
-		{"claude alias, no prompt", (&ClaudeCoder{}).interactiveLaunch(""), "cc"},
-		{"claude alias with prompt", (&ClaudeCoder{}).interactiveLaunch("fix it"), `cc 'fix it'`},
-		{"opencode alias, no prompt", (&OpenCodeCoder{}).interactiveLaunch(""), "oc"},
 		{
-			"opencode alias with prompt",
+			"claude, no prompt, env prefix spelled out",
+			(&ClaudeCoder{}).interactiveLaunch(""),
+			"CLAUDE_CODE_NO_FLICKER=1 claude",
+		},
+		{
+			"claude with prompt",
+			(&ClaudeCoder{}).interactiveLaunch("fix it"),
+			`CLAUDE_CODE_NO_FLICKER=1 claude 'fix it'`,
+		},
+		{"opencode, no prompt", (&OpenCodeCoder{}).interactiveLaunch(""), "opencode"},
+		{
+			"opencode with prompt",
 			(&OpenCodeCoder{}).interactiveLaunch("fix it"),
-			`oc '--prompt' 'fix it'`,
+			`opencode '--prompt' 'fix it'`,
 		},
 		{
-			"opencode alias with a reviewer agent",
+			"opencode with a reviewer agent",
 			(&OpenCodeCoder{}).interactiveLaunchWithAgent("skill-reviewer", "fix it"),
-			`oc '--agent' 'skill-reviewer' '--prompt' 'fix it'`,
+			`opencode '--agent' 'skill-reviewer' '--prompt' 'fix it'`,
 		},
-		// nvim has no alias - it is a bare binary name - but it goes through the
-		// same form, and for the same reason: the shell has to resolve it.
-		{"nvim as a bare name", aliasLaunch(nvimCommand), "nvim"},
+		// nvim goes through the same form, for the same reason: the shell running
+		// it has to resolve the name itself.
+		{"nvim as a bare name", nameLaunch(nvimCommand), "nvim"},
 	}
 
 	for _, tt := range tests {
@@ -134,10 +149,15 @@ func TestAliasLaunchLeavesTheProgramUnquoted(t *testing.T) {
 			}
 			if strings.HasPrefix(got, "'") {
 				t.Errorf(
-					"alias-form program must not be quoted "+
-						"(quoting suppresses alias expansion), got %q",
+					"name-form program (or its env prefix) must not be quoted, got %q",
 					got,
 				)
+			}
+			for _, alias := range []string{"cc ", "oc "} {
+				if strings.HasPrefix(got, alias) || got == strings.TrimSpace(alias) {
+					t.Errorf("the typed form must name the binary, not the %q alias: %q",
+						strings.TrimSpace(alias), got)
+				}
 			}
 		})
 	}
@@ -191,7 +211,7 @@ func TestALaunchWithArgumentsButNoProgramDoesNotVanish(t *testing.T) {
 		},
 		{"claude's exec form with no path", (&ClaudeCoder{}).execLaunch("", prompt)},
 		{"opencode's exec form with no path", (&OpenCodeCoder{}).execLaunch("", prompt)},
-		{"alias launch with no program", aliasLaunch("", prompt)},
+		{"name launch with no program", nameLaunch("", prompt)},
 	}
 
 	for _, tt := range launches {
@@ -225,8 +245,8 @@ func TestALaunchWithArgumentsButNoProgramDoesNotVanish(t *testing.T) {
 //
 // The render() assertion is not redundant with isEmpty(). Emptiness being the
 // kind only stops a launch from REPORTING itself empty; a launch can still render
-// to "" and vanish anyway, which is what aliasLaunch("") did while the program
-// word was left unquoted for every alias launch. So this loop asserts both, and
+// to "" and vanish anyway, which is what nameLaunch("") did while the program
+// word was left unquoted for every name launch. So this loop asserts both, and
 // it is the assertion that pins the quoting of an empty program word.
 func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 	zero := paneLaunch{}
@@ -237,7 +257,8 @@ func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 		t.Errorf("the zero launch must render to \"\", got %q", got)
 	}
 	for _, launch := range []paneLaunch{
-		aliasLaunch(""),
+		nameLaunch(""),
+		nameLaunchWithEnv(constants.ClaudeLaunch.EnvPrefix, ""),
 		binaryLaunch(""),
 		binaryLaunchWithEnv(constants.ClaudeLaunch.EnvPrefix, ""),
 	} {
@@ -260,11 +281,12 @@ func TestZeroLaunchIsTheOnlyEmptyLaunch(t *testing.T) {
 // --- routing a launch to its recipe ---
 
 // TestPaneCommandForRoutesOnLaunchKind pins the pairing that used to be the
-// caller's to get right. An ALIAS launch handed to the exec recipe emits
-// `cc 'fix it'; exec '/bin/zsh'`, which tmux runs non-interactively - where cc
-// does not exist. That is exactly the case the interactive recipe serves
-// (ADR-0020 part 3), and routing on the kind the value already carries is what
-// makes the wrong pairing unrepresentable.
+// caller's to get right. A NAME launch handed to the exec recipe emits
+// `claude 'fix it'; exec '/bin/zsh'`, which tmux runs non-interactively - a shell
+// that reads no `.zshrc`, so it has neither its PATH repair nor any definition of
+// the name the user made themselves. That is exactly the case the interactive
+// recipe serves (ADR-0020 part 3), and routing on the kind the value already
+// carries is what makes the wrong pairing unrepresentable.
 func TestPaneCommandForRoutesOnLaunchKind(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -278,13 +300,14 @@ func TestPaneCommandForRoutesOnLaunchKind(t *testing.T) {
 				`'fix it'; exec '/bin/zsh'`,
 		},
 		{
-			name:   "an alias launch gets the interactive recipe",
+			name:   "a name launch gets the interactive recipe",
 			launch: (&ClaudeCoder{}).interactiveLaunch("fix it"),
-			want:   `'/bin/zsh' -ic 'cc '\''fix it'\''; exec '\''/bin/zsh'\'' -i'`,
+			want: `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude '\''fix it'\''; ` +
+				`exec '\''/bin/zsh'\'' -i'`,
 		},
 		{
-			name:   "a bare binary name is an alias launch too",
-			launch: aliasLaunch(nvimCommand),
+			name:   "nvim's bare name is a name launch too",
+			launch: nameLaunch(nvimCommand),
 			want:   `'/bin/zsh' -ic 'nvim; exec '\''/bin/zsh'\'' -i'`,
 		},
 		{
@@ -306,30 +329,31 @@ func TestPaneCommandForRoutesOnLaunchKind(t *testing.T) {
 	}
 }
 
-// TestPaneCommandForNeverSendsAnAliasThroughTheExecRecipe is the negative form
+// TestPaneCommandForNeverSendsANameThroughTheExecRecipe is the negative form
 // of the routing test, written against the shape rather than the bytes: whatever
-// the alias form renders to, it must arrive wrapped in the interactive shell and
+// the name form renders to, it must arrive wrapped in the interactive shell and
 // must NOT arrive as the bare `<command>; exec '<shell>'` the exec recipe
 // produces.
-func TestPaneCommandForNeverSendsAnAliasThroughTheExecRecipe(t *testing.T) {
-	aliasLaunches := []paneLaunch{
+func TestPaneCommandForNeverSendsANameThroughTheExecRecipe(t *testing.T) {
+	nameLaunches := []paneLaunch{
 		(&ClaudeCoder{}).interactiveLaunch("fix it"),
 		(&OpenCodeCoder{}).interactiveLaunch("fix it"),
 		(&OpenCodeCoder{}).interactiveLaunchWithAgent("code-reviewer", ReviewPrompt),
-		aliasLaunch(nvimCommand),
+		nameLaunch(nvimCommand),
 	}
 
-	for _, launch := range aliasLaunches {
+	for _, launch := range nameLaunches {
 		got := paneCommandFor(launch, testShell)
 		if got == execPaneCommand(launch.render(), testShell) {
 			t.Errorf(
-				"alias launch %q got the exec recipe (%q), which runs "+
-					"non-interactively where the alias does not exist",
+				"name launch %q got the exec recipe (%q), which runs "+
+					"non-interactively - no .zshrc PATH repair, and none of the "+
+					"user's own definitions of that name",
 				launch.render(), got,
 			)
 		}
 		if !strings.HasPrefix(got, shellSingleQuote(testShell)+" -ic ") {
-			t.Errorf("alias launch must be wrapped in the interactive shell, got %q", got)
+			t.Errorf("name launch must be wrapped in the interactive shell, got %q", got)
 		}
 	}
 }
@@ -382,7 +406,7 @@ func TestExecPaneCommandOnABlankCommandIsEmpty(t *testing.T) {
 // --- recipe 2: the interactive fallback / --pane pane command ---
 
 // TestInteractivePaneCommandWrapsScriptInTheUserShell pins the fallback recipe
-// exactly, for both of the scripts that land in it: a devgeta alias-form launch
+// exactly, for both of the scripts that land in it: a devgeta name-form launch
 // (used when the preflight probe resolved no absolute path) and a user-authored
 // --pane command line.
 func TestInteractivePaneCommandWrapsScriptInTheUserShell(t *testing.T) {
@@ -393,10 +417,11 @@ func TestInteractivePaneCommandWrapsScriptInTheUserShell(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "alias-form fallback for a coder pane",
+			name:   "name-form fallback for a coder pane",
 			script: (&ClaudeCoder{}).interactiveLaunch("fix it").render(),
 			shell:  testShell,
-			want:   `'/bin/zsh' -ic 'cc '\''fix it'\''; exec '\''/bin/zsh'\'' -i'`,
+			want: `'/bin/zsh' -ic 'CLAUDE_CODE_NO_FLICKER=1 claude '\''fix it'\''; ` +
+				`exec '\''/bin/zsh'\'' -i'`,
 		},
 		{
 			name:   "a compound --pane value keeps both commands",
@@ -551,7 +576,7 @@ func TestInteractivePaneCommandWrapperSurvivesARealShellParser(t *testing.T) {
 		script string
 	}{
 		{
-			name:   "a devgeta alias-form launch with a quoted prompt",
+			name:   "a devgeta name-form launch with a quoted prompt",
 			script: (&ClaudeCoder{}).interactiveLaunch("it's fine").render(),
 		},
 		{

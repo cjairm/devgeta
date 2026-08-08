@@ -42,9 +42,9 @@ type AICoder interface {
 	EnsureInstalled() (string, error)
 
 	// interactiveLaunch and execLaunch are this coder's two launch forms as
-	// structured values (see launch.go's paneLaunch): the alias form a shell
-	// resolves, and the resolved-binary form a created pane execs. Both take an
-	// empty prompt to mean "no opening prompt".
+	// structured values (see launch.go's paneLaunch): the NAME form a shell
+	// resolves for itself, and the resolved-binary form a created pane execs. Both
+	// take an empty prompt to mean "no opening prompt".
 	//
 	// They are interface methods for the same reason PromptCommand is one
 	// (ADR-0011): a coder added later cannot be registered without deciding
@@ -55,10 +55,10 @@ type AICoder interface {
 	// BOTH are needed here, even though interactiveLaunch(p).render() is
 	// string-identical to PromptCommand(p) today. A created pane's command is a
 	// function of the preflight probe's resolution - a resolved path takes the
-	// exec form, no path takes the alias form (ADR-0020 part 3) - and the code
+	// exec form, no path takes the name form (ADR-0020 part 3) - and the code
 	// that must express that, coderPane in layout.go, holds a coder only as an
 	// AICoder. With just execLaunch on the interface it could not reach the
-	// alias form polymorphically, leaving two options that are both worse: a
+	// name form polymorphically, leaving two options that are both worse: a
 	// type switch on the concrete coder (what ADR-0011's argument above
 	// rejects), or building the fallback from the PromptCommand STRING and
 	// handing it to interactivePaneCommand directly - which bypasses
@@ -108,23 +108,26 @@ type AICoder interface {
 // "opencode is not installed" with an install suggestion that fixed nothing.
 //
 // binary is the tool's EXECUTABLE name (claude/opencode/nvim), never the cc/oc
-// alias. The invariant is unchanged - probe exactly what the pane will launch -
-// but what the pane launches changed: a created pane execs the binary through
+// alias, and the invariant "probe exactly what the pane will launch" holds on
+// EVERY path - not only the exec ones. A created pane execs the binary through
 // tmux's non-interactive shell, where an alias does not exist at all (ADR-0020
-// part 3, rule 1). Probing the alias would also make this function unable to
-// resolve a path, because `command -v oc` prints `alias oc=opencode`, which is
-// not path-shaped.
+// part 3, rule 1); and since ADR-0020's 2026-08-07 amendment the two paths that
+// still TYPE a command into a live pane (the repair branch of ensureWindow,
+// launchReviewInLiveWindow's idle-shell reuse) send the binary too, so a pass
+// here guarantees they resolve as well. Probing the alias would also make this
+// function unable to resolve a path, because `command -v oc` prints
+// `alias oc=opencode`, which is not path-shaped.
 //
-// Two consequences of that flip, both deliberate:
+// One consequence of taking the binary is deliberate: the error has nothing left
+// to name but the binary, so this takes one argument instead of a (token,
+// displayName) pair. The pair existed only because the probed token was an alias
+// the message should not mention.
 //
-//   - A coder installed OUTSIDE devgeta (so its cc/oc alias was never written to
-//     devgeta.zsh) now passes this check, and launches fine, because the pane
-//     execs the binary rather than the alias. The check is more accurate; anyone
-//     who read a failure here as "devgeta never configured this tool" loses that
-//     signal. ADR-0020 accepts this explicitly.
-//   - There is nothing left to name in the error but the binary, so this takes
-//     one argument instead of a (token, displayName) pair. The pair existed only
-//     because the probed token was an alias the message should not mention.
+// A coder installed OUTSIDE devgeta - one whose cc/oc alias was never written to
+// devgeta.zsh - passes this check and launches correctly on every path. While the
+// typed form was still the alias, that combination passed preflight and then
+// failed in the pane with `cc: command not found`; ADR-0020 accepted that gap and
+// its amendment removes it.
 func ensureToolInstalled(binary string) (string, error) {
 	resolvedPath, result := commands.ShellCommandLookupFn(binary)
 	switch result {
@@ -149,22 +152,40 @@ func ensureToolInstalled(binary string) (string, error) {
 	return resolvedPath, nil
 }
 
+// recipeLaunch builds the NAME-form launch for a coder's launch recipe: the
+// recipe's binary name plus its environment prefix, which is exactly what that
+// recipe's devgeta.zsh alias expands to. Both coders go through it, so the typed
+// form and the alias line cannot describe different commands.
+//
+// It spells the recipe out instead of naming the alias because a send-keys path
+// must launch what preflight probed - the binary (ADR-0020's 2026-08-07
+// amendment). Nothing here depends on devgeta.zsh having been sourced.
+func recipeLaunch(recipe constants.CoderLaunch, args ...string) paneLaunch {
+	return nameLaunchWithEnv(recipe.EnvPrefix, recipe.Binary, args...)
+}
+
 // OpenCodeCoder implements AICoder for OpenCode
 type OpenCodeCoder struct{}
 
-func (o *OpenCodeCoder) Name() string { return "opencode" }
+// Name is also the name of the single-pane layout this coder derives
+// (deriveLayoutFromAlias -> Layout.Name, matched against builtinLayoutNames), so
+// it is sourced from the app-name constant rather than from the launch recipe's
+// Binary: a layout name and a binary name happen to be the same string today and
+// must not be coupled into one.
+func (o *OpenCodeCoder) Name() string { return constants.OpenCode }
 
-// Command returns the devgeta shell alias (oc), not the raw binary. It is read
-// off the launch recipe in pkg/constants, which also renders devgeta.zsh's
-// `alias oc=` line - so the alias a user types and the binary a pane execs come
-// from one definition rather than from a shell config this package would have to
-// stay in step with by hand (ADR-0020).
+// Command returns the UN-ALIASED command that launches opencode - the binary
+// name, plus any environment prefix the recipe carries - read off the launch
+// recipe in pkg/constants, which also renders devgeta.zsh's `alias oc=` line.
 //
-// This is the form typed into an interactive shell (a repaired window, `dg wt
-// move`'s retarget), where that alias is defined. A pane devgeta CREATES no
-// longer uses it: it execs the resolved binary (see execLaunch, and ADR-0020 for
-// why a created pane cannot rely on an alias existing).
-func (o *OpenCodeCoder) Command() string { return constants.OpenCodeLaunch.Alias }
+// This is the form devgeta TYPES into a shell that already exists (a repaired
+// window, `dg wt move`'s retarget - ADR-0020 part 4). It is not the `oc` alias,
+// and that is ADR-0020's 2026-08-07 amendment rather than an oversight: preflight
+// probes the BINARY, so typing the alias meant sending a live pane something the
+// check never verified - a user with opencode on PATH but no devgeta alias passed
+// preflight and then got `oc: command not found`. devgeta.zsh still ships the
+// alias, for the user to type; devgeta itself no longer depends on it.
+func (o *OpenCodeCoder) Command() string { return constants.OpenCodeLaunch.Command() }
 
 // PromptCommand launches opencode with prompt as its opening message, using
 // opencode's --prompt flag ("prompt to use" in its --help).
@@ -174,36 +195,36 @@ func (o *OpenCodeCoder) PromptCommand(prompt string) string {
 
 // promptCommandWithAgent is the single author of opencode's
 // launch-with-a-prompt form, shared by PromptCommand (no agent) and
-// layout.go's ReviewCommand (which pins a reviewer agent). Before this existed
+// layout.go's reviewCommandFor (which pins a reviewer agent). Before this existed
 // the `--prompt '<quoted>'` fragment had two authors; CLAUDE.md's DRY rule
 // requires the extraction happen in the change that introduces the second use.
 //
-// It renders the structured alias-form launch, so the argument shape now has
+// It renders the structured name-form launch, so the argument shape now has
 // one author across BOTH representations (this typed string and the exec'd pane
 // command) rather than one per representation.
 //
 // The arguments are single-quoted because the returned string is typed into an
 // interactive shell verbatim by tmux send-keys - there is no Go-side shell
 // parser to lean on. See ADR-0011. The flags are quoted too, which is why this
-// now emits `oc '--prompt' '<text>'` rather than `oc --prompt '<text>'`: same
-// command to the shell, uniform rule (see paneLaunch.render).
+// emits `opencode '--prompt' '<text>'` rather than `opencode --prompt '<text>'`:
+// same command to the shell, uniform rule (see paneLaunch.render).
 func (o *OpenCodeCoder) promptCommandWithAgent(agent, prompt string) string {
 	return o.interactiveLaunchWithAgent(agent, prompt).render()
 }
 
-// interactiveLaunch is the alias form: the oc alias, resolved by an interactive
-// shell.
+// interactiveLaunch is the name form: the opencode binary NAME, left for the
+// shell running it to resolve.
 func (o *OpenCodeCoder) interactiveLaunch(prompt string) paneLaunch {
 	return o.interactiveLaunchWithAgent("", prompt)
 }
 
 // interactiveLaunchWithAgent is interactiveLaunch with a reviewer agent pinned,
-// for the review launches (see layout.go's ReviewCommand). Claude has no
+// for the review launches (see layout.go's reviewCommandFor). Claude has no
 // equivalent: reviewer launches are OpenCode-only by design, because the
 // reviewer agents' permission: frontmatter is enforced by OpenCode and ignored
 // by Claude Code.
 func (o *OpenCodeCoder) interactiveLaunchWithAgent(agent, prompt string) paneLaunch {
-	return aliasLaunch(o.Command(), o.launchArgs(agent, prompt)...)
+	return recipeLaunch(constants.OpenCodeLaunch, o.launchArgs(agent, prompt)...)
 }
 
 // execLaunch is the resolved-binary form: the pane execs binaryPath, so its own
@@ -213,8 +234,8 @@ func (o *OpenCodeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
 }
 
 // execLaunchWithAgent is execLaunch with a reviewer agent pinned - the review
-// window's create and split branches both exec opencode rather than typing the
-// oc alias at a pane (ADR-0020 part 3).
+// window's create and split branches both exec the resolved opencode binary
+// rather than typing a command at a pane (ADR-0020 part 3).
 func (o *OpenCodeCoder) execLaunchWithAgent(binaryPath, agent, prompt string) paneLaunch {
 	return binaryLaunch(binaryPath, o.launchArgs(agent, prompt)...)
 }
@@ -234,9 +255,10 @@ func (o *OpenCodeCoder) launchArgs(agent, prompt string) []string {
 	return args
 }
 
-// EnsureInstalled checks the "opencode" BINARY - what a created pane execs -
-// not the oc alias, so a pass guarantees the pane launch will resolve too
-// (ADR-0020 part 3, rule 1).
+// EnsureInstalled checks the "opencode" BINARY - what every devgeta launch of
+// this coder names, exec'd or typed - not the oc alias, so a pass guarantees the
+// launch will resolve too (ADR-0020 part 3, rule 1, and its 2026-08-07
+// amendment).
 //
 // It returns the path the probe resolved for it. Probing the binary is what
 // makes that path non-empty in practice: `command -v opencode` prints an
@@ -249,20 +271,22 @@ func (o *OpenCodeCoder) EnsureInstalled() (string, error) {
 // ClaudeCoder implements AICoder for Claude Code
 type ClaudeCoder struct{}
 
-func (c *ClaudeCoder) Name() string { return "claude" }
+// Name is the app-name constant rather than the launch recipe's Binary, for the
+// reason spelled out on OpenCodeCoder.Name: this is also a layout name.
+func (c *ClaudeCoder) Name() string { return constants.Claude }
 
-// Command returns the devgeta shell alias (cc), not the raw binary. It is read
-// off the launch recipe in pkg/constants, which also renders devgeta.zsh's
-// `alias cc=` line from the same binary and env prefix - so the alias carries
-// exactly what a created pane execs, by construction rather than by two places
-// agreeing (ADR-0020).
+// Command returns the UN-ALIASED command that launches Claude Code -
+// `CLAUDE_CODE_NO_FLICKER=1 claude` - read off the launch recipe in
+// pkg/constants, which also renders devgeta.zsh's `alias cc=` line from those
+// same two values. So the alias a user types and the command devgeta runs cannot
+// carry a different binary or a different environment.
 //
-// This is the form typed into an interactive shell (a repaired window, `dg wt
-// move`'s retarget), where that alias is defined. A pane devgeta CREATES no
-// longer uses it: it execs the binary and spells the env var out itself (see
-// execLaunch, and ADR-0020 for why a created pane cannot rely on an alias
-// existing).
-func (c *ClaudeCoder) Command() string { return constants.ClaudeLaunch.Alias }
+// This is the form devgeta TYPES into a shell that already exists (a repaired
+// window, `dg wt move`'s retarget - ADR-0020 part 4). It is not the `cc` alias:
+// see OpenCodeCoder.Command for why (ADR-0020's 2026-08-07 amendment). Because it
+// names the binary, it also has to spell the env prefix out - the alias
+// definition used to supply that.
+func (c *ClaudeCoder) Command() string { return constants.ClaudeLaunch.Command() }
 
 // PromptCommand launches Claude Code with prompt as its opening message.
 // Claude takes the prompt POSITIONALLY (`claude [options] [command] [prompt]`,
@@ -275,17 +299,17 @@ func (c *ClaudeCoder) PromptCommand(prompt string) string {
 	return c.interactiveLaunch(prompt).render()
 }
 
-// interactiveLaunch is the alias form: the cc alias, resolved by an interactive
-// shell. No environment prefix, because the alias definition already carries
-// CLAUDE_CODE_NO_FLICKER=1 itself.
+// interactiveLaunch is the name form: the claude binary NAME, left for the shell
+// running it to resolve, WITH the no-flicker env prefix spelled out. The prefix is
+// explicit in both forms now - while this form named the cc alias, the alias
+// definition carried it.
 func (c *ClaudeCoder) interactiveLaunch(prompt string) paneLaunch {
-	return aliasLaunch(c.Command(), c.launchArgs(prompt)...)
+	return recipeLaunch(constants.ClaudeLaunch, c.launchArgs(prompt)...)
 }
 
 // execLaunch is the resolved-binary form: the pane execs binaryPath, so its own
-// PATH stops mattering (ADR-0020). This is the one launch that needs the env
-// prefix spelled out, because exec'ing the binary directly bypasses the alias
-// that used to supply it.
+// PATH stops mattering (ADR-0020). It carries the same env prefix
+// interactiveLaunch does, from the same recipe.
 func (c *ClaudeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
 	return binaryLaunchWithEnv(
 		constants.ClaudeLaunch.EnvPrefix,
@@ -310,8 +334,9 @@ func (c *ClaudeCoder) launchArgs(prompt string) []string {
 	return []string{prompt}
 }
 
-// EnsureInstalled checks the "claude" BINARY - what a created pane execs - not
-// the cc alias, for the reasons spelled out on OpenCodeCoder.EnsureInstalled.
+// EnsureInstalled checks the "claude" BINARY - what every devgeta launch of this
+// coder names - not the cc alias, for the reasons spelled out on
+// OpenCodeCoder.EnsureInstalled.
 func (c *ClaudeCoder) EnsureInstalled() (string, error) {
 	return ensureToolInstalled(constants.ClaudeLaunch.Binary)
 }

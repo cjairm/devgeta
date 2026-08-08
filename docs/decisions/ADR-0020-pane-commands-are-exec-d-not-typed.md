@@ -1,6 +1,6 @@
 # ADR-0020: A pane's command is exec'd at pane creation, not typed into the pane
 
-**Status:** ACCEPTED
+**Status:** ACCEPTED (amended 2026-08-07 — see [Amendment](#amendment--2026-08-07-the-typed-form-is-the-un-aliased-command-too))
 **Date:** 2026-08-07
 **Deciders:** cjairm
 **Related:** [ADR-0011](ADR-0011-agent-prompt-as-launch-argument.md), [ADR-0016](ADR-0016-inconclusive-tool-probe-fails-open.md)
@@ -75,6 +75,9 @@ Every `send-keys` path carries the cap, but they are not equally at risk:
 | `buildWindowPanes` — pane launch                   | `cc '<prompt>'` / `--pane` value | **Real.** User text, unbounded.  |
 | `ensureWindow` repair (worktree.go:2112)           | `cc` / `oc`, bare                | None today — short, no prompt.   |
 | `launchReviewInLiveWindow` (worktree.go:2052/2074) | `ReviewCommand`, fixed prompt    | None today — fixed short string. |
+
+This table describes the code as it stood when this ADR was written. The two
+send-keys paths no longer send `cc`/`oc`: see the 2026-08-07 amendment below.
 
 The bounded ones are bounded by accident, not by construction. `dg task review-run`
 is unaffected on a different ground: it execs the reviewer as a child process
@@ -326,6 +329,11 @@ the binary means that case now passes — and launches fine, because the pane ex
 the binary rather than the alias. The check gets _more_ accurate, but anyone
 relying on it to detect "devgeta never configured this tool" loses that signal.
 
+> **Amended 2026-08-07.** "Launches fine" held only for panes devgeta creates;
+> the send-keys paths still typed the alias, so that install passed preflight and
+> then failed in the pane. The typed form is the un-aliased command now, which
+> retires that half of this consequence. The lost signal remains.
+
 #### The probe's result must reach the launch, so the check is not error-only
 
 "The check probes exactly what the pane will exec" is only a real guarantee if
@@ -489,6 +497,54 @@ data loss into a loud failure.
 **No chunked sending.** Splitting a payload to sneak under the cap keeps the
 data flowing through the terminal, depends on the reader draining between chunks,
 and reintroduces exactly the timing-dependent silent loss this ADR removes.
+
+**What these paths type is the un-aliased command, not `cc`/`oc`** — see the
+amendment below. The delivery mechanism is unchanged: still `send-keys`, still
+into a live interactive shell, with no `exec` and no resolved path.
+
+## Amendment — 2026-08-07: the typed form is the un-aliased command too
+
+This amends an **accepted** decision rather than restating what it always said.
+As written, part 3 flipped the preflight probe from the `cc`/`oc` alias to the
+binary and left part 4's send-keys paths typing the alias.
+
+**What changed.** `AICoder.Command()` — the form devgeta types into a pane that
+already exists — is now the coder's **un-aliased command**: `opencode`, and
+`CLAUDE_CODE_NO_FLICKER=1 claude` (the env prefix spelled out, since the alias
+definition used to supply it). Everything derived from it follows:
+`PromptCommand`, the interactive-form launch builder, and the reviewer's typed
+command. Both send-keys paths — `ensureWindow`'s repair branch and
+`launchReviewInLiveWindow`'s idle-shell reuse — therefore send the binary.
+
+**Why.** "The check verifies what the launch runs" was the property part 3 claimed
+to strengthen, and after the probe flip it held only on the exec paths. A user with
+the coder on `PATH` but no devgeta alias — installed outside devgeta, the shell
+feature flag off, or a shell that predates `dg configure` — **passed** preflight
+and then got `cc: command not found` in the pane, where before the flip they were
+refused with an actionable message. The typed form now resolves with or without
+devgeta.zsh having been sourced, so the invariant holds on every path.
+
+**What this retires.** The consequence recorded at the end of part 3's probe
+section — that probing the binary lets a coder installed outside devgeta pass
+preflight, "and launches fine, because the pane execs the binary rather than the
+alias" — was only true for created panes. That gap is now **gone**, not merely
+documented: the same install launches correctly on the typed paths too. What
+remains of that consequence is only the lost signal: a failure here no longer
+means "devgeta never configured this tool."
+
+**What does not change.**
+
+- **`devgeta.zsh` still ships the alias**, still rendered from the same
+  `pkg/constants` recipe. Users type `cc`/`oc` themselves; devgeta no longer does.
+- **The create-path interactive fallback keeps `-ic`.** Its justification is no
+  longer alias expansion but the one part 3's fallback section already gave: a
+  bare name in tmux's non-interactive shell has no `.zshrc` PATH repair (and bash
+  has no unconditional `.zshenv` equivalent), and when the probe's non-path answer
+  was alias text or a function name, the user's own definition exists only there.
+- **The delivery mechanism.** These are still `send-keys` into a live interactive
+  shell, governed by part 4's 1023-byte guard.
+- **The negative consequence "a user who redefined `cc`/`oc` themselves no longer
+  changes what devgeta launches"** now applies to the typed paths as well.
 
 ## Consequences
 

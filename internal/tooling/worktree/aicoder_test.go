@@ -45,19 +45,41 @@ func TestResolveAICoder(t *testing.T) {
 	}
 }
 
-// Command() returns the devgeta shell alias, not the raw binary, so the launch
-// recipe stays defined once in devgeta.zsh (see the Command() doc comments).
+// Command() is the TYPED form - what devgeta send-keys into a pane that already
+// exists - and it is the UN-ALIASED command: the binary, plus the recipe's env
+// prefix. Not "oc"/"cc" (ADR-0020's 2026-08-07 amendment): preflight probes the
+// binary, so typing the alias sent a live pane something the check never verified,
+// and a user with the coder on PATH but no devgeta alias got `cc: command not
+// found` after passing preflight.
+//
+// The literals are spelled out rather than read off constants.*Launch: this is the
+// pin, and deriving it from the value under test could not fail.
 func TestOpenCodeCoderCommand(t *testing.T) {
 	coder := &OpenCodeCoder{}
-	if coder.Command() != "oc" {
-		t.Errorf("expected command 'oc', got %q", coder.Command())
+	if coder.Command() != "opencode" {
+		t.Errorf("expected command 'opencode', got %q", coder.Command())
 	}
 }
 
 func TestClaudeCoderCommand(t *testing.T) {
 	coder := &ClaudeCoder{}
-	if coder.Command() != "cc" {
-		t.Errorf("expected command 'cc', got %q", coder.Command())
+	if want := "CLAUDE_CODE_NO_FLICKER=1 claude"; coder.Command() != want {
+		t.Errorf("expected command %q, got %q", want, coder.Command())
+	}
+}
+
+// TestCommandMatchesTheInteractiveLaunchForm pins the two representations of the
+// typed form to each other. Command() reads the recipe's Command() while
+// interactiveLaunch builds a structured launch from the recipe's parts, so this is
+// the assertion that keeps those two derivations from drifting - a recipe whose
+// value gains a space, or an env prefix rendered differently by one of them, shows
+// up here.
+func TestCommandMatchesTheInteractiveLaunchForm(t *testing.T) {
+	for _, coder := range []AICoder{&OpenCodeCoder{}, &ClaudeCoder{}} {
+		if got, want := coder.interactiveLaunch("").render(), coder.Command(); got != want {
+			t.Errorf("%s: interactiveLaunch(\"\").render() = %q, want Command()'s %q",
+				coder.Name(), got, want)
+		}
 	}
 }
 
@@ -68,10 +90,14 @@ func TestClaudeCoderCommand(t *testing.T) {
 // installed binaries, 2026-07-31; see ADR-0011). These assert the exact strings
 // so a "cleanup" that unifies them fails here.
 //
-// opencode's flags are quoted (`oc '--prompt' '<text>'`) since PromptCommand
+// opencode's flags are quoted (`opencode '--prompt' '<text>'`) since PromptCommand
 // started rendering the structured launch, which quotes every argument the same
 // way rather than exempting anything that looks like a flag - see
 // paneLaunch.render. Same command to the shell; the bytes changed.
+//
+// The program word is the BINARY, not the cc/oc alias (ADR-0020's 2026-08-07
+// amendment), and claude's carries the env prefix the alias definition used to
+// supply.
 func TestPromptCommandExactFormPerCoder(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -79,25 +105,35 @@ func TestPromptCommandExactFormPerCoder(t *testing.T) {
 		prompt string
 		want   string
 	}{
-		{"opencode uses --prompt", &OpenCodeCoder{}, "fix the bug", "oc '--prompt' 'fix the bug'"},
-		{"claude takes the prompt positionally", &ClaudeCoder{}, "fix the bug", "cc 'fix the bug'"},
+		{
+			"opencode uses --prompt",
+			&OpenCodeCoder{},
+			"fix the bug",
+			"opencode '--prompt' 'fix the bug'",
+		},
+		{
+			"claude takes the prompt positionally, after its env prefix",
+			&ClaudeCoder{},
+			"fix the bug",
+			"CLAUDE_CODE_NO_FLICKER=1 claude 'fix the bug'",
+		},
 		{
 			"opencode quotes an embedded single quote",
 			&OpenCodeCoder{},
 			"it's broken",
-			`oc '--prompt' 'it'\''s broken'`,
+			`opencode '--prompt' 'it'\''s broken'`,
 		},
 		{
 			"claude quotes an embedded single quote",
 			&ClaudeCoder{},
 			"it's broken",
-			`cc 'it'\''s broken'`,
+			`CLAUDE_CODE_NO_FLICKER=1 claude 'it'\''s broken'`,
 		},
 		{
 			"shell metacharacters stay inert",
 			&ClaudeCoder{},
 			"$(rm -rf /); echo hi",
-			`cc '$(rm -rf /); echo hi'`,
+			`CLAUDE_CODE_NO_FLICKER=1 claude '$(rm -rf /); echo hi'`,
 		},
 	}
 
@@ -111,20 +147,21 @@ func TestPromptCommandExactFormPerCoder(t *testing.T) {
 }
 
 // promptCommandWithAgent is the one author of opencode's launch-with-a-prompt
-// form, shared by PromptCommand (no agent) and layout.go's ReviewCommand (with
+// form, shared by PromptCommand (no agent) and layout.go's reviewCommandFor (with
 // one). This pins both branches so the shared helper can't drift from either
 // caller's needs.
 func TestOpenCodePromptCommandWithAgent(t *testing.T) {
 	coder := &OpenCodeCoder{}
 
 	withAgent := coder.promptCommandWithAgent("code-reviewer", "review it")
-	if want := "oc '--agent' 'code-reviewer' '--prompt' 'review it'"; withAgent != want {
-		t.Errorf("got %q, want %q", withAgent, want)
+	wantWithAgent := "opencode '--agent' 'code-reviewer' '--prompt' 'review it'"
+	if withAgent != wantWithAgent {
+		t.Errorf("got %q, want %q", withAgent, wantWithAgent)
 	}
 
 	// An empty agent must omit the flag entirely, not emit a bare "--agent".
 	noAgent := coder.promptCommandWithAgent("", "review it")
-	if want := "oc '--prompt' 'review it'"; noAgent != want {
+	if want := "opencode '--prompt' 'review it'"; noAgent != want {
 		t.Errorf("got %q, want %q", noAgent, want)
 	}
 	if strings.Contains(noAgent, "--agent") {
