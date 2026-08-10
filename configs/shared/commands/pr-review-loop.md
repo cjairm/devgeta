@@ -1,5 +1,5 @@
 ---
-description: Use when a pull request should be watched and answered unattended — one invocation is one tick that reads the PR's review state and, when a review is requested of you, runs the reviewer agents over the PR's own diff and posts exactly one review or approval
+description: Use when a pull request should be watched and answered unattended — one invocation is one tick that reads the PR's review state and, when a review is requested of you, runs the reviewer agents over the PR's own diff and posts at most one review or approval
 ---
 
 Watch one pull request and answer a review request on it. **One invocation is one tick:**
@@ -35,7 +35,8 @@ narrows what gets reviewed.
 
 **Repetition belongs to the driver, not to this file.** On Claude Code, `/loop <interval>
 /pr-review-loop [n] [types]`. On OpenCode, run a tick by hand. Either way, the review runs
-at most once per tick and at most one review is posted per tick.
+at most once per tick and at most one review is posted per tick — step 9's single re-ask is
+the only repeat of the posting step.
 
 ## Authority to post
 
@@ -82,7 +83,8 @@ read, and an escalation is still reported to the human instead of decided for th
 - `devgeta task current-pr` — the current branch's PR number, when none was passed.
 - `/review-pr <n> --base <base> --target <head> --journal <key>` and
   `/approve-pr <n> --target <head>` — the posting step. Exactly one of them runs per tick
-  (step 8). `/review-pr` gets the journal key because it may settle findings and must settle
+  (step 8), and step 9's single re-ask is the only repeat of either. `/review-pr` gets the
+  journal key because it may settle findings and must settle
   them in this PR's journal; `/approve-pr` never reads or writes the journal, so it takes no
   key.
 
@@ -322,9 +324,9 @@ Step 6 chose the path. Run **one** of these two commands, **once**:
   close an id in whatever journal the checkout happens to have.
 
 Never run both. Never run either twice — the single exception is step 9's one re-ask, which
-is the same `/approve-pr` invocation and is bounded there. A tick posts one review or one
-approval, and both commands post exactly one thing each, so this is the whole of what
-reaches the PR.
+is the same `/approve-pr` invocation and is bounded there. Each invocation posts exactly one
+thing, so the whole of what reaches the PR is one review or one approval — plus, on that
+re-ask path only, the decline the first `/approve-pr` already posted.
 
 Both commands stamp the posted review with the reviewed commit, so what lands on GitHub
 names the sha it judged even if a push races the submission itself.
