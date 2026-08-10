@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-06
 **Estimated Duration:** ~8 hours (after the sibling cycle's review-run lands)
-**Status:** Approved — awaiting implementation
+**Status:** Implementation complete and committed — Step 6 (manual end-to-end) and the
+final whole-branch review are both still outstanding
 
 ---
 
@@ -133,13 +134,15 @@ no-third-undocumented-outcome rule as the sibling cycle.
 
 ### In Scope
 
-- [ ] ADR: trigger and driver — poll GitHub's `reviewRequests` state rather than
+- [x] ADR: trigger and driver — poll GitHub's `reviewRequests` state rather than
       webhooks/events; idempotent tick + external driver rather than a stateful
       watcher; personal-request-only filter (write before implementation, §11)
-- [ ] ADR: review target for a PR that isn't checked out — read-only fetch of
+      → [ADR-0021](../../decisions/ADR-0021-pr-review-trigger-is-a-polled-state-read.md)
+- [x] ADR: review target for a PR that isn't checked out — read-only fetch of
       `refs/pull/<n>/head`, merge-base-correct range, immutable SHAs; the PR-scoped
       journal key; and `review-run`'s explicit-range mode (write before
       implementation, §11)
+      → [ADR-0022](../../decisions/ADR-0022-a-pr-review-targets-immutable-shas.md)
 - [x] gh wrapper method: `AuthenticatedLogin()` (`gh api user --jq .login`) — the
       account the request must name. The PR side needed no new wrapper method: the
       existing `PRView(prNumber, fields...)` already selects fields, so the state read
@@ -159,49 +162,59 @@ no-third-undocumented-outcome rule as the sibling cycle.
       context every later step reads — reviewer runs, journal stamps, type
       selection, finding verification, and posting all key off it, never off the
       working tree
-- [ ] Ref cleanup on a terminal tick: the tick command deletes
+- [x] Ref cleanup on a terminal tick: the tick command deletes
       `refs/devgeta/pr/<n>/head` and `.../base` when the loop reaches any terminal
       state (approved, closed, or escalated), mirroring how `review-notes --prune`
       cleans journals. The refs must survive the tick that created them — later
       steps read them and they pin the objects against a concurrent `git gc` — so
       the delete belongs to whoever owns the loop's end, not to `pr-review-target`
-- [ ] Revision-aware journal mode: extend `reviewjournal.Manager` so stamping and
+- [x] Revision-aware journal mode: extend `reviewjournal.Manager` so stamping and
       freshness resolve against a given commit (`<rev>:<path>` blob lookup) instead
       of the working tree, exposed as `--rev <sha>` on `review-note`/`review-notes`
-- [ ] Extend `review-run` (once the sibling lands it) with explicit-range mode:
+- [x] Extend `review-run` (once the sibling lands it) with explicit-range mode:
       `--base <sha> --head <sha> --journal <key> --report-dir <dir>` — reviews that
       range instead of current-branch-vs-default, journals under the key **at the
       head revision**, persists each run's full report into the dir, and skips the
       default-branch refusal (which guards current-branch semantics this mode
       doesn't use). `--reviewer` stays as the sibling defined it and is what selects
       code/document/skill
-- [ ] Target-aware posting: `review-pr.md` and `approve-pr.md` gain a clause — when
+- [x] Target-aware posting: `review-pr.md` and `approve-pr.md` gain a clause — when
       the invocation supplies an explicit review target, every "read the cited
       file" verification uses `git show <head-sha>:<path>`, never the working tree,
-      and the final submit passes the reviewed SHA as the review's commit anchor
-- [ ] `--commit <sha>` on `dg task submit-review` and `dg task approve-pr` — plumbed
+      and the final submit passes the reviewed SHA as the review's commit anchor.
+      **Widened during implementation:** `/review-pr` takes `--base <merge-base-sha>`
+      alongside `--target`, because it reads a diff and a diff needs both ends — the
+      maintainer decision recorded in the parenthetical at the end of Step 4c
+- [x] `--commit <sha>` on `dg task submit-review` and `dg task approve-pr` — plumbed
       to the REST review payload's `commit_id`, so the posted review is attributed
       to the SHA that was actually reviewed (the approve path routes through the
       existing `CreateReview` REST call when `--commit` is given)
-- [ ] Target-aware reviewer agents: the three
+- [x] Target-aware reviewer agents: the three
       `configs/shared/agents/*-reviewer.md` files gain a scoped-journal clause —
       when the launch prompt supplies a journal key and revision, every
       `review-notes`/`review-note` call carries `--branch <key> --rev <sha>` — plus
       a guard test asserting the clause is present in all three
-- [ ] Reviewer-type selection: the loop takes explicit types (`code`, `doc`,
+- [x] Reviewer-type selection: the loop takes explicit types (`code`, `document`,
       `skill`), repeatable — each selected type runs through `review-run` (so each
       type × each configured model is one reviewer run, all sequential). Omitted →
-      the agent judges the type(s) from the diff, the default decided earlier
-- [ ] `configs/shared/commands/pr-review-loop.md` — the agent-side tick: the §5
+      the agent judges the type(s) from the diff, the default decided earlier.
+      The three values are exactly `worktree.BuiltinReviewerChoices()`'s registry
+      keys, forwarded to `review-run --reviewer` with no translation — the shipped
+      command refuses an unknown type rather than mapping a near-miss like `doc`
+      onto `document`, because a friendlier second vocabulary can drift from the one
+      the runner validates against
+- [x] `configs/shared/commands/pr-review-loop.md` — the agent-side tick: the §5
       decision table, then the two-step flow when triggered. Written **without** any
       dead frontmatter key, and **with** a standing-authorization section (running
       the command authorizes the whole unattended watch, posting included)
-- [ ] `--note <text>` on the loop, forwarded verbatim to every `review-run` of every
+- [x] `--note <text>` on the loop, forwarded verbatim to every `review-run` of every
       tick — the same emphasis-not-narrowing contract `/review-loop --note` has
-- [ ] Guard tests for the new command in `internal/apps/opencode/permissions_test.go`,
+- [x] Guard tests for the new command in `internal/apps/opencode/permissions_test.go`,
       mirroring the `/review-loop` family: unattended authorization present, types
       forwarded as `--reviewer`, `--note` forwarded
-- [ ] Docs: `docs/spec.md` feature entry, command documented
+      (`TestPRReviewLoopRunsUnattendedWithoutAsking`,
+      `TestPRReviewLoopForwardsReviewerTypes`, `TestPRReviewLoopForwardsTheNote`)
+- [x] Docs: `docs/spec.md` feature entry, command documented
 
 ### Explicitly Out of Scope
 
@@ -622,14 +635,14 @@ the tick forwards the selected types as `--reviewer` (analog of
 `TestReviewLoopForwardsReviewerSelector`), and the tick forwards `--note` (analog of
 `TestReviewLoopForwardsTheNote`).
 
-Usage: `/pr-review-loop [pr-number] [code|doc|skill ...] [--note <text>]` — the
+Usage: `/pr-review-loop [pr-number] [code|document|skill ...] [--note <text>]` — the
 `--note` text is the human's own emphasis, forwarded verbatim to every `review-run`
 invocation of every tick (same semantics as `/review-loop --note`: extra context,
 never a narrowing of the review). The PR number is optional
 and resolves from the current branch's PR when omitted (`devgeta task current-pr`,
 the same inference every PR command already does); pass it only when watching a PR
 whose branch isn't the checkout. The types name which reviewer agents run; more than
-one is allowed (`code doc` is two `review-run` invocations, one per type; each run
+one is allowed (`code document` is two `review-run` invocations, one per type; each run
 covers every configured model internally). Types omitted → the agent judges the
 type(s) from what the PR changes.
 
@@ -658,7 +671,7 @@ reads the working tree:
    report — never review a possibly-stale ref.
 2. `devgeta task pr-view --pr <n>` for the PR's purpose and linked ticket.
 3. Resolve reviewer types: the ones passed to the loop, else judge from the target's
-   `files:` list (`code` for code, `doc` for docs, `skill` for agent
+   `files:` list (`code` for code, `document` for docs, `skill` for agent
    skills/commands; mixed → the matching set).
 4. `SCRATCH=$(devgeta task scratch)` — the reports' home for this tick.
 5. Per type, run the cross-model review:
@@ -751,7 +764,7 @@ On a real PR in a work repo (from its checkout), with two configured models:
    the merge-base range, posts one review
 4. Posted review clears `requested:` (verify with `pr-review-state`)
 5. Press re-request with no new commits → next tick reviews again
-6. `/pr-review-loop <n> code doc` on a mixed PR → both agents run, both under each
+6. `/pr-review-loop <n> code document` on a mixed PR → both agents run, both under each
    model; one blocking finding from either lens blocks approval
 7. A first-trigger review where every run approves → `/approve-pr` posts, tick
    reports approved and stops immediately — the loop never listens past an approval
@@ -774,10 +787,22 @@ On a real PR in a work repo (from its checkout), with two configured models:
     rather than `APPROVED`), and nothing else here probes it live
 15. Merge the PR → tick reports closed, stops
 
-### Step 7: Docs + close out
+### Step 7: Docs + close out — DONE for the docs half (2026-08-10)
 
-`docs/spec.md` entry, check off this doc, status → Done. Deploy both agents:
+`docs/spec.md` entry, check off this doc, then deploy both agents:
 `dg configure claude --force` and `dg configure opencode --force`.
+
+What is done: the `docs/spec.md` entry (the `/pr-review-loop` narrative, the
+`--target`/`--base`/`--commit` flags on the posting commands and their two task
+subcommands) and the check-off above.
+
+What is **not** done, so the header status is not `Done`:
+
+- Step 6's fifteen-point live sequence has not been run.
+- The final whole-branch review (most capable model) has not been run.
+- The two `dg configure --force` deploys are deliberately deferred: they would
+  overwrite the maintainer's live agent configuration from an unmerged branch, so
+  they belong after the branch merges, not to this step.
 
 ## 6. Verification Plan
 
@@ -832,21 +857,22 @@ Step 6's fifteen-point live sequence, plus:
 
 ## 7. Risks & Trade-offs
 
-| Risk                                                     | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| -------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Poll misses the moment (interval latency)                | High       | Inherent to polling; a review minutes late is fine. Interval is the driver's choice (`/loop 10m` typical); API budgets are orders of magnitude above this use                                                                                                                                                                                                                                                                                                        |
-| Long wall-clock per trigger (types × models, sequential) | High       | Same deliberate trade as the sibling: sequential buys journal-write safety and cross-run dedup; the tick runs unattended, so wall-clock costs no human time                                                                                                                                                                                                                                                                                                          |
-| `/approve-pr` declines and the loop retries forever      | Med        | One approve-only re-ask (backed by the all-`APPROVE` verdict, per `approve-pr.md`'s own basis rule), then terminal: escalated. Steps 6.9–6.10 force both paths live                                                                                                                                                                                                                                                                                                  |
-| Stale or wrong diff reviewed                             | Med        | `pr-review-target` fetches on every triggered tick and returns immutable SHAs over a merge-base range; a fetch failure aborts the tick instead of reviewing stale                                                                                                                                                                                                                                                                                                    |
-| Tick reads the checkout instead of the target somewhere  | Med        | The review target is the single context: journal stamps at `--rev <head>`, posting verifies via `git show <head>:<path>`, type selection reads `files:`; Manual tests 4–5 run the whole flow from a branch that lacks the PR's files                                                                                                                                                                                                                                 |
-| Journal cross-contamination with the checkout branch     | Med        | PR-scoped `--journal`/`--branch` key on every journal call; Manual test 4 asserts both directions                                                                                                                                                                                                                                                                                                                                                                    |
-| Sibling's `review-run` design shifts under this cycle    | Med        | Sequencing gate: Step 4b here starts only after the sibling's Step 4 merges; the range mode is additive, so drift surfaces as a rebase, not a redesign                                                                                                                                                                                                                                                                                                               |
-| `/loop` session dies (reboot, close)                     | Med        | Accepted by design decision; GitHub keeps the state, so restarting the loop loses nothing                                                                                                                                                                                                                                                                                                                                                                            |
-| Author pushes while a tick is mid-review                 | Med        | Step 5.7 re-checks state + head immediately before posting and posts nothing on any change; the still-pending request makes the next tick review the new head. The submit itself stamps `--commit <reviewed-sha>` — no atomic submit exists in GitHub's API, so a push racing the final call still lands, but attributed to the old SHA (outdated markers, stale-approval dismissal) instead of silently claiming the new head. Steps 6.11–6.13 force all of it live |
-| Author re-requests while a tick is mid-review            | Low        | Next tick sees `requested: yes` again and re-fetches; the pre-post head check above covers the pushed-commits case                                                                                                                                                                                                                                                                                                                                                   |
-| PR-scoped journals accumulate                            | Low        | `review-notes --prune` already deletes journals whose branch does not exist locally or on the remote — a `pr/...` key never will, so they prune on request                                                                                                                                                                                                                                                                                                           |
-| Fetched `refs/devgeta/pr/<n>/*` accumulate               | Low        | Step 5.10 deletes both refs on every terminal tick (approved/closed/escalated). They are keyed by PR number and reused per tick, so growth tracks distinct PRs reviewed, not ticks; a mid-tick kill leaks one pair, removable with `git update-ref -d`                                                                                                                                                                                                               |
-| Team review requests don't name the user                 | Low        | Deliberate: personal request only — the rule the user applies manually                                                                                                                                                                                                                                                                                                                                                                                               |
+| Risk                                                                               | Likelihood | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ---------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Poll misses the moment (interval latency)                                          | High       | Inherent to polling; a review minutes late is fine. Interval is the driver's choice (`/loop 10m` typical); API budgets are orders of magnitude above this use                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Long wall-clock per trigger (types × models, sequential)                           | High       | Same deliberate trade as the sibling: sequential buys journal-write safety and cross-run dedup; the tick runs unattended, so wall-clock costs no human time                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `/approve-pr` declines and the loop retries forever                                | Med        | One approve-only re-ask (backed by the all-`APPROVE` verdict, per `approve-pr.md`'s own basis rule), then terminal: escalated. Steps 6.9–6.10 force both paths live                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Stale or wrong diff reviewed                                                       | Med        | `pr-review-target` fetches on every triggered tick and returns immutable SHAs over a merge-base range; a fetch failure aborts the tick instead of reviewing stale                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Tick reads the checkout instead of the target somewhere                            | Med        | The review target is the single context: journal stamps at `--rev <head>`, posting verifies via `git show <head>:<path>`, type selection reads `files:`; Manual tests 4–5 run the whole flow from a branch that lacks the PR's files                                                                                                                                                                                                                                                                                                                                                                                          |
+| Approval posted over a still-open finding from an earlier round at the same commit | Med        | **Accepted, not mitigated — maintainer decision, 2026-08-07.** Step 5.6 aggregates reviewer verdicts only; neither it nor `/approve-pr` reads the PR's journal. So round 1 can post `REQUEST CHANGES` with findings opened, the author can re-request with no new commits, and reviewer non-determinism can swing round 2 to all-`APPROVE` over blockers that are still open at the same reviewed SHA. The sibling `/review-loop` guards exactly this shape (`TestReviewLoopCleanApprovalRequiresNothingOpen`); this loop deliberately does not. Shipped as written — a journal check is not to be added without asking again |
+| Journal cross-contamination with the checkout branch                               | Med        | PR-scoped `--journal`/`--branch` key on every journal call; Manual test 4 asserts both directions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| Sibling's `review-run` design shifts under this cycle                              | Med        | Sequencing gate: Step 4b here starts only after the sibling's Step 4 merges; the range mode is additive, so drift surfaces as a rebase, not a redesign                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `/loop` session dies (reboot, close)                                               | Med        | Accepted by design decision; GitHub keeps the state, so restarting the loop loses nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Author pushes while a tick is mid-review                                           | Med        | Step 5.7 re-checks state + head immediately before posting and posts nothing on any change; the still-pending request makes the next tick review the new head. The submit itself stamps `--commit <reviewed-sha>` — no atomic submit exists in GitHub's API, so a push racing the final call still lands, but attributed to the old SHA (outdated markers, stale-approval dismissal) instead of silently claiming the new head. Steps 6.11–6.13 force all of it live                                                                                                                                                          |
+| Author re-requests while a tick is mid-review                                      | Low        | Next tick sees `requested: yes` again and re-fetches; the pre-post head check above covers the pushed-commits case                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| PR-scoped journals accumulate                                                      | Low        | `review-notes --prune` already deletes journals whose branch does not exist locally or on the remote — a `pr/...` key never will, so they prune on request                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Fetched `refs/devgeta/pr/<n>/*` accumulate                                         | Low        | Step 5.10 deletes both refs on every terminal tick (approved/closed/escalated). They are keyed by PR number and reused per tick, so growth tracks distinct PRs reviewed, not ticks; a mid-tick kill leaks one pair, removable with `git update-ref -d`                                                                                                                                                                                                                                                                                                                                                                        |
+| Team review requests don't name the user                                           | Low        | Deliberate: personal request only — the rule the user applies manually                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 
 ### Trade-offs Made
 
@@ -862,7 +888,7 @@ Step 6's fifteen-point live sequence, plus:
   resolution, verdict parsing, and output contract — the §6 DRY defect. The range
   mode also generalizes `review-run` beyond PRs (any historical range), which is the
   §3.8 direction.
-- **Types × models is a matrix, all sequential.** "code doc" under two models is four
+- **Types × models is a matrix, all sequential.** "code document" under two models is four
   runs. Accepted: the reviewers share one journal (so later runs see earlier
   entries), and the tick is unattended.
 - **Stop at approval, not at merge.** Decided: after the user's `APPROVE` stands
@@ -871,13 +897,17 @@ Step 6's fifteen-point live sequence, plus:
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Domain context clear?
-- [ ] Engineer context sufficient?
-- [ ] Objective unambiguous?
-- [ ] Scope locked?
-- [ ] Steps actionable?
-- [ ] Verification executable?
-- [ ] Risks realistic?
+All seven were answered in Round 7's **APPROVE** (see the notes below), after Rounds
+1–6 fixed seventeen findings. They cover the plan document only; the branch's own
+final whole-branch review has not been run yet.
+
+- [x] Domain context clear?
+- [x] Engineer context sufficient?
+- [x] Objective unambiguous?
+- [x] Scope locked?
+- [x] Steps actionable?
+- [x] Verification executable?
+- [x] Risks realistic?
 
 **Reviewer notes:**
 
@@ -900,7 +930,7 @@ and all fixed:
 Round 2 (2026-08-06) — maintainer direction, superseding two earlier choices: the
 review step is the **same cross-model review** used on local branches (reuse
 `review-run` + `review.reviewers`, not a single Claude subagent), and reviewer
-type(s) are **selectable at launch** (repeatable `code|doc|skill`, auto-judged only
+type(s) are **selectable at launch** (repeatable `code|document|skill`, auto-judged only
 when omitted). This reversed §8 of the previous revision — the `review-run`
 convergence marked "speculative" there is now the design — and added the sequencing
 gate on the sibling cycle's Steps 2–4 plus the explicit-range mode (Step 4).

@@ -823,25 +823,26 @@ trackers):
 **Pull request subcommands** (via `gh`; data-returning ones are formatted by `jq`
 into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
 
-| Subcommand              | Args / Flags                                  | Description                                                                                               |
-| ----------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all` | Render PR review threads as compact markdown (default: unresolved)                                        |
-| `resolve-thread`        | `<id>`                                        | Mark a review thread resolved                                                                             |
-| `unresolve-thread`      | `<id>`                                        | Reopen a resolved review thread                                                                           |
-| `reply-thread`          | `<id> <body>`                                 | Reply to a review thread                                                                                  |
-| `create-pr`             | `--title` (req), `--body`, `--base`           | Open a PR from the current branch; prints the URL                                                         |
-| `update-pr-description` | `--pr N`, `--body` (req)                      | Replace a PR's description                                                                                |
-| `approve-pr`            | `--pr N`, `--body`                            | Approve a PR                                                                                              |
-| `request-changes-pr`    | `--pr N`, `--body` (req)                      | Request changes on a PR                                                                                   |
-| `request-review`        | `--pr N`, `<reviewer>...` (req)               | Re-request review (adds reviewers back to the requested list)                                             |
-| `comment-pr`            | `--pr N`, `--body` (req)                      | Post a top-level PR comment                                                                               |
-| `merge-pr`              | `--pr N`, `--method squash\|merge\|rebase`    | Merge a PR (default: squash)                                                                              |
-| `pr-view`               | `--pr N`                                      | Compact PR summary (number, title, state, mergeable, review, branch)                                      |
-| `pr-checks`             | `--pr N`                                      | CI check status, one line per check; failing checks get an indented log digest appended (see below)       |
-| `pr-review-target`      | `--pr N`                                      | Immutable review target for a PR: merge-base/head SHAs, journal key, noise-filtered file list (see below) |
-| `pr-review-state`       | `--pr N`                                      | Whether a PR wants a review from you right now: `pr:` / `requested:` / `my-review:` (see below)           |
-| `current-pr`            | —                                             | PR number for the current branch                                                                          |
-| `current-repo`          | —                                             | Current repository as `owner/name`                                                                        |
+| Subcommand              | Args / Flags                                                                                                                      | Description                                                                                                                                                                                                                                                                                                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all`                                                                                     | Render PR review threads as compact markdown (default: unresolved)                                                                                                                                                                                                                                                                                                            |
+| `resolve-thread`        | `<id>`                                                                                                                            | Mark a review thread resolved                                                                                                                                                                                                                                                                                                                                                 |
+| `unresolve-thread`      | `<id>`                                                                                                                            | Reopen a resolved review thread                                                                                                                                                                                                                                                                                                                                               |
+| `reply-thread`          | `<id> <body>`                                                                                                                     | Reply to a review thread                                                                                                                                                                                                                                                                                                                                                      |
+| `create-pr`             | `--title` (req), `--body`, `--base`                                                                                               | Open a PR from the current branch; prints the URL                                                                                                                                                                                                                                                                                                                             |
+| `update-pr-description` | `--pr N`, `--body` (req)                                                                                                          | Replace a PR's description                                                                                                                                                                                                                                                                                                                                                    |
+| `submit-review`         | `--pr N`, `--event approve\|request-changes\|comment` (req), `--body`, `--body-file <f>`, `--comments-file <f>`, `--commit <sha>` | Post one review — verdict, optional Markdown body, optional inline comments anchored to diff lines — in a single REST submission. `--comments-file` is a JSON array of `{"path","line","body"}` (optionally `"start_line"`, `"side"`). A `request-changes` or `comment` review needs a body or inline comments; `approve` may have neither. `--commit` anchors it (see below) |
+| `approve-pr`            | `--pr N`, `--body`, `--body-file <f>`, `--commit <sha>`                                                                           | Approve a PR. `--commit` anchors the approval (see below) and switches the call to the same REST reviews endpoint, because `gh pr review` cannot carry a commit id; without it the plain `gh` route is unchanged                                                                                                                                                              |
+| `request-changes-pr`    | `--pr N`, `--body` (req)                                                                                                          | Request changes on a PR                                                                                                                                                                                                                                                                                                                                                       |
+| `request-review`        | `--pr N`, `<reviewer>...` (req)                                                                                                   | Re-request review (adds reviewers back to the requested list)                                                                                                                                                                                                                                                                                                                 |
+| `comment-pr`            | `--pr N`, `--body` (req)                                                                                                          | Post a top-level PR comment                                                                                                                                                                                                                                                                                                                                                   |
+| `merge-pr`              | `--pr N`, `--method squash\|merge\|rebase`                                                                                        | Merge a PR (default: squash)                                                                                                                                                                                                                                                                                                                                                  |
+| `pr-view`               | `--pr N`                                                                                                                          | Compact PR summary (number, title, state, mergeable, review, branch)                                                                                                                                                                                                                                                                                                          |
+| `pr-checks`             | `--pr N`                                                                                                                          | CI check status, one line per check; failing checks get an indented log digest appended (see below)                                                                                                                                                                                                                                                                           |
+| `pr-review-target`      | `--pr N`                                                                                                                          | Immutable review target for a PR: merge-base/head SHAs, journal key, noise-filtered file list (see below)                                                                                                                                                                                                                                                                     |
+| `pr-review-state`       | `--pr N`                                                                                                                          | Whether a PR wants a review from you right now: `pr:` / `requested:` / `my-review:` (see below)                                                                                                                                                                                                                                                                               |
+| `current-pr`            | —                                                                                                                                 | PR number for the current branch                                                                                                                                                                                                                                                                                                                                              |
+| `current-repo`          | —                                                                                                                                 | Current repository as `owner/name`                                                                                                                                                                                                                                                                                                                                            |
 
 For every PR subcommand, `--pr` defaults to the current branch's PR when omitted.
 Review-thread output is paginated across all threads (`gh api graphql --paginate`).
@@ -958,6 +959,231 @@ the re-request button puts them back. So one field answers "is a review wanted",
 that could go stale after a session dies or a review is submitted from another
 machine. See
 [ADR-0021](decisions/ADR-0021-pr-review-trigger-is-a-polled-state-read.md).
+
+**`--commit <sha>` on `submit-review` and `approve-pr`.** Both put the sha in the
+REST review payload's `commit_id`, so the posted review names the commit that was
+actually read. This matters when the reviewed code is not the checkout — a PR
+reviewed from an unrelated branch, where `pr-review-target` fixed the head SHA
+minutes before the submit.
+
+It is **attribution, not enforcement.** GitHub does not reject a review whose
+`commit_id` is behind the PR's current head; this API has no atomic submit, so
+nothing here stops an author pushing between the read and the post. What it buys is
+that a review landing late is visibly stamped with the commit it judged instead of
+silently claiming the new head: inline comments hang off the reviewed diff (GitHub
+marks them outdated once the head moves), the review record carries the sha, and
+branch protection's dismiss-stale-approvals has one to key off.
+
+Passing it to `approve-pr` changes the route, not just the payload: `gh pr review
+--approve` has no way to carry a commit id, so an anchored approval is delegated to
+`submit-review`'s REST call, while an unanchored one keeps the existing `gh` route
+byte-for-byte. The common case therefore gains no new failure modes — it needs
+neither owner/repo resolution nor a payload file.
+
+**`/pr-review-loop` — the PR review tick.**
+`configs/shared/commands/pr-review-loop.md` is the agent-side driver that watches one
+pull request and answers a review request on it, assembled from the three pieces
+above: `pr-review-state` for the trigger, `pr-review-target` for the immutable
+review target, and `review-run`'s explicit-range mode for the reviewers. It is the
+PR-side counterpart to `/review-loop` — the same cross-model reviewers, the same
+journal — with two deliberate differences: it reviews and posts, never fixes (that
+is the author's `/address-feedback`, or `/review-loop` on their side), and it has no
+round cap of its own, because a "round" here is triggered from outside. GitHub's
+re-request button is the round counter, so `review.rounds` does not apply.
+
+**The trigger is GitHub's own state, polled — not an event, and not a local log.** A
+tick reads `pr-review-state` once and acts on that read; presence in the PR's
+`reviewRequests` is the entire trigger, and submitting any review removes the user
+from it. Nothing is stored between ticks, so running a tick twice, by hand, or after
+a crash is always safe ([ADR-0021](decisions/ADR-0021-pr-review-trigger-is-a-polled-state-read.md)).
+
+```
+/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--note <text>]
+```
+
+`PR_NUMBER` is optional and resolves from the current branch's PR (`current-pr`) when
+omitted — pass it for the normal case of watching someone else's PR, whose branch is
+not the checkout. The PR does not have to be checked out at all: every step reads the
+fetched refs, so no branch is created, switched, stashed, or committed and the working
+tree is never the source. That matters more here than usual, because a tick can fire
+while the human is mid-edit in the same clone.
+
+The bare words are reviewer types, and more than one is allowed — `code document` is
+two reviewer runs, one per type, each covering every configured model internally. The
+three values are exactly `code`, `document`, and `skill`, the keys
+`review-run --reviewer` validates against, forwarded with no translation. **There is
+no `doc` shorthand:** an unknown type stops the tick before any state is read rather
+than being mapped onto a near-miss, because a friendlier second vocabulary here could
+drift from the one the runner validates against. Types omitted is normal, not an
+error — they are judged from the target's `files:` list. `--note <text>` is the
+human's own emphasis, forwarded verbatim to every reviewer run of the tick; it adds
+context and never narrows what gets reviewed, the same contract `/review-loop --note`
+has.
+
+**One invocation is one tick.** Repetition belongs to the driver: on Claude Code,
+`/loop <interval> /pr-review-loop [n] [types]`; on OpenCode, a tick is run by hand.
+Either way the review runs at most once per tick and at most one review is posted per
+tick. Running the command **is** the
+authorization for the whole tick — the state read, the fetch, the reviewer runs, and
+the posting step — so the tick never pauses to ask whether to post; a watch that
+stops for a go-ahead each interval costs exactly the attention it exists to save.
+
+The state read selects **exactly one** row of this table, evaluated top to bottom,
+first match wins:
+
+| `pr:`             | `requested:` | `my-review:`  | Action                                        |
+| ----------------- | ------------ | ------------- | --------------------------------------------- |
+| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop   |
+| `draft`           | any          | any           | Wait — a formal review on a draft is noise    |
+| `open`            | `yes`        | any           | **Review** (the action below)                 |
+| `open`            | `no`         | `approved`    | **Terminal: approved.** Report, stop the loop |
+| `open`            | `no`         | anything else | Wait — the ball is with the author            |
+
+**Draft is checked before the request state on purpose:** a requested draft waits. A
+draft is work the author is still shaping, and a formal review posted on it is noise
+they did not ask to receive yet, request button or not. Most ticks land on a wait row,
+which is why they are cheap — no fetch, no reviewer, nothing posted.
+
+Two consequences of reading current state rather than a local log look like bugs and
+are neither. A colleague who answers the request first removes the user from the
+request list, so the next tick simply waits. And a dismissed approval reports
+`my-review: none`, so the loop keeps watching an approval GitHub already threw away
+instead of stopping on it.
+
+The **review** action, in order — nothing in it reads the working tree. (Numbered 1–7
+here, condensed from the command file's own steps 3–9: step 1 below is its step 3, and
+from step 4 below on the file's number is two higher — the aggregation is its step 6,
+the pre-post re-check its step 7.)
+
+1. `pr-review-target --pr <n>` gives the `base`/`head` SHAs, the `journal:` key, and
+   the `files:` list. Its failure ends the tick with that error; there is no fallback
+   to the refs already on disk and none to the checkout. Every later step reuses these
+   values rather than re-resolving a ref name itself, because a review takes minutes
+   and a name resolved twice inside that window can mean two different commits — step 5
+   resolves the head again deliberately, to catch exactly that. `pr-view` then supplies
+   the PR's purpose and linked ticket, read before any code.
+2. Types are fixed — the ones passed, else judged from `files:` (`code` for code,
+   `document` for docs and prose, `skill` for agent skills and commands; a mixed PR
+   takes the matching set). `files: (none)` — an empty range, or one entirely filtered
+   as noise — ends the tick as `nothing to review`: no reviewer, nothing posted, refs
+   kept. It is its own status word rather than a wait, because nothing is pending on
+   anyone; the request stays pending, so the tick report is what tells the human to
+   look themselves.
+3. One `review-run` per type, in range mode:
+   `review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"`
+   (plus `--note` when one was given), against a `scratch` directory allocated for
+   this tick. The runs happen in the main session, not a subagent — the verdict lines
+   are the one thing a tick must never take second-hand — and each line's `report:`
+   field is parsed from the **right**, since a reason inside `ERROR(<reason>)` can
+   contain that same sequence.
+4. **Aggregate every run's verdict once,** across every type times every model. Any
+   single `ERROR(<reason>)` or `NO VERDICT` → **terminal: escalated**, naming the
+   failing run and its reason verbatim: never approve on a run that did not complete,
+   and never re-run it, because `review-run` already relaunched a reviewer that
+   produced no report once inside the same run. Every run `APPROVE` → the approval
+   path. Anything else → the review path. One blocking outcome from one run is enough;
+   the runs are independent opinions, not votes to tally.
+5. **Re-check the state and the head immediately before posting** — the reviewer runs
+   took minutes. `pr-review-state` must still land on the Review row, or the world
+   moved (merged, closed, went draft, or someone else answered) and posting now would
+   be duplicate or unsolicited; take the row the fresh state selects instead.
+   `pr-review-target`'s `head` must still equal the sha the reviewers read, or the
+   author pushed mid-review and an approval would cover commits no reviewer saw.
+   **Either condition failing means post nothing.** The request is still pending, so
+   the next tick reviews the new head from scratch — an author pushing repeatedly
+   defers the review, which is the correct outcome rather than starvation.
+6. **Post through the unchanged posting commands,** exactly one of them, exactly once:
+   `/approve-pr <n> --target <head>` when every run approved, otherwise
+   `/review-pr <n> --base <base> --target <head>` — both SHAs from step 1, so the
+   posted review's diff is the same merge-base range the reviewers read. Before
+   `/review-pr` the tick reads every `report:` file and
+   `review-notes --branch <key> --rev <head>`, because the reports carry the full
+   cross-model findings (every severity, the strengths, the evidence) while the journal
+   carries only the blocking entries as one-liners — a review composed from the
+   one-liners alone throws most of what was found away.
+7. **The approval path has one outcome to read.** `/approve-pr` prints
+   `## PR #<num> — <approved | not approved>`. `approved` → **terminal: approved**, and
+   the loop stops there, including on the very first trigger; it never keeps listening
+   past an approval it posted. `not approved` → **one re-ask, approve-only** — this
+   branch is only reachable when every run said `APPROVE`, which is exactly the basis
+   `approve-pr.md` names for approving over live non-blocking comments, so the tick
+   invokes it once more stating that verdict and expecting an approval whose body is
+   `LGWC; <who/what remains>`, naming the leftover non-blocking comments — not a
+   re-review, and not a comment. Approved on the re-ask → terminal: approved; still not approved → **terminal:
+   escalated**, since it is standing on a blocker every run missed. **Never a third
+   ask:** a decline leaves `requested:` at `yes`, so asking forever would post forever.
+   The review path has nothing to parse — posting any review removes the user from the
+   request list, so the next tick waits and the author's re-request is the next trigger.
+
+**Cleanup is two things with two different scopes,** and the first runs far more often
+than the second. The **scratch directory** goes on every completed exit of the review
+action — approved, escalated, the head moved or the state changed at step 5, a review
+posted, or a submit that failed (a failed submit prints the review into the tick report
+_before_ cleaning, so nothing is lost). The **fetched refs**
+(`refs/devgeta/pr/<n>/head` and `.../base`) go only on the three exits that are
+terminal for the loop — approved, closed, or escalated — including a terminal row
+reached straight from the table, where a previous tick may have left them. They cannot
+go earlier: every step from the target read onward reads them, and holding them is what
+keeps a concurrent `git gc` from collecting the commits under review. A non-terminal
+exit keeps them, because the next tick reviews the same PR. Neither cleanup can cover
+the process being killed mid-tick — a dead process runs no cleanup — and the two
+leftovers are bounded differently. Every tick allocates its **own** scratch directory
+(`os.MkdirTemp` under the scratch root), so ten killed ticks leave ten of them; what
+bounds those is age, not the PR — the stale-directory prune drops an allocation older
+than 24 hours, and it runs from both agents' `ForceConfigure`, meaning
+`dg configure --force` or a first install, never from a `SoftConfigure` that finds its
+marker file. The **refs** are keyed by PR number and reused every tick, so a killed
+tick leaks one pair (`git update-ref -d`) and the leftovers are bounded by the number
+of distinct PRs reviewed, not by ticks.
+
+The tick reports in at most three lines under one status word —
+`waiting | nothing to review | reviewed | approved | closed | escalated | head moved`
+— and on a terminal exit says the watch is over explicitly, because stopping the driver
+is the human's or the harness's action, not the command's. It never edits code, never
+resolves threads, never re-requests reviewers, and never settles a finding it did not go
+through `/review-pr` to settle.
+
+**One accepted risk, decided rather than overlooked.** The aggregation in step 4 reads
+reviewer verdicts only. Neither it nor `/approve-pr` reads the PR's journal, so an
+approval can be posted while findings from an earlier round are still open **at the same
+reviewed commit**: round 1 posts `REQUEST CHANGES` and opens findings, the author
+re-requests with no new commits, and reviewer non-determinism swings round 2 to
+all-`APPROVE`. The sibling `/review-loop` guards exactly this shape
+(`TestReviewLoopCleanApprovalRequiresNothingOpen`, from a real incident); this loop
+deliberately does not. That asymmetry was raised in review and **adjudicated by the
+maintainer (2026-08-07) as ship-as-is** — a known, documented risk, not a defect, and
+not to be "fixed" without asking again.
+
+**`--target` and `--base` on the posting commands.** `/review-pr` and `/approve-pr`
+gained the flags this loop needs, and **without them both files behave word-for-word as
+they always have** — the working tree is the source and nothing changes:
+
+```
+/review-pr  [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>]
+/approve-pr [PR_NUMBER] [--target <head-sha>]
+```
+
+`--target` names the commit the review judges, for code that is not in the working
+tree. With it, three things change and nothing else: the sha is resolved first with
+`git rev-parse --verify <head-sha>^{commit}` and **a failure stops the command** —
+never a silent fall back to the working tree, which holds different code, so a finding
+would be checked against something the PR never contained; every read of repo content
+resolves at that commit — `git show <head-sha>:<path>` in both, plus
+`git log <head-sha> -- <path>` where `/review-pr` needs a path's own history — with the
+same checks, dedup rules, and verdict rules as before; and the submit passes
+`--commit <head-sha>`, which is the attribution described above and not a lock.
+
+`/review-pr` takes `--base` alongside `--target` because it reads a diff and a diff
+needs both ends — a merge base cannot be worked out from a head alone. **Given
+`--target` without `--base` it stops and says it needs the base sha**, guessing neither
+that nor the checked-out branch's diff. `--base` must be the PR's **merge base**, not
+the base branch's tip: once the base branch moves on after the PR opens, a tip-based
+diff renders everything merged since as if this PR reverted it, and those read as real
+findings against work the author never touched. `pr-review-target`'s `base:` line
+already prints a merge base. With `--target`, `review-scope` and `branch-diff` do not
+apply at all — both describe the checked-out branch — so the diff comes from
+`review-package <base-sha> <head-sha>`, which is also what says which lines can carry
+an inline comment. `/approve-pr` never reads a diff, so it takes `--target` alone.
 
 **Release management subcommand** (automates the CLAUDE.md §9 push-and-tag flow):
 
