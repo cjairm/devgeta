@@ -1946,13 +1946,49 @@ func TestReviewRunPointsEveryReviewerAtTheSameSnapshot(t *testing.T) {
 	if len(pointers) != 2 || pointers[0] != pointers[1] {
 		t.Fatalf("expected one shared snapshot pointer, got %v", pointers)
 	}
-	// It is the path the journal package owns, not one review-run invented.
-	want, err := reviewjournal.New(tm.Git).SnapshotPathFor("", "feat")
+	// It is a path the journal package owns, not one review-run invented — and
+	// only the prefix is predictable, because each invocation writes its own
+	// uniquely named snapshot so two overlapping rounds cannot collide.
+	prefix, err := reviewjournal.New(tm.Git).SnapshotPrefixFor("", "feat")
 	if err != nil {
-		t.Fatalf("SnapshotPathFor: %v", err)
+		t.Fatalf("SnapshotPrefixFor: %v", err)
 	}
-	if pointers[0] != want {
-		t.Errorf("expected the snapshot at %s, got %s", want, pointers[0])
+	if !strings.HasPrefix(pointers[0], prefix) {
+		t.Errorf("expected a snapshot under %s, got %s", prefix, pointers[0])
+	}
+	if pointers[0] == prefix {
+		t.Errorf("the snapshot must carry a per-invocation name, got the bare prefix %s", prefix)
+	}
+}
+
+// Two rounds that overlap on the same journal must not share a snapshot file.
+// One shared name meant the second round's write replaced the first round's
+// frozen view, and the first round to finish deleted the file the other round's
+// reviewers were still reading — which drops them back to the LIVE journal
+// (loadJournalForDisplay), losing isolation exactly when two rounds are running
+// at once.
+func TestReviewRunSnapshotsDoNotCollideAcrossRounds(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t)
+
+	var pointers []string
+	for round := 1; round <= 2; round++ {
+		scriptOpenCode(t, ocBase, scriptedRun{
+			stdout: statusReport("APPROVE"),
+			onCall: func(t *testing.T, c commands.CommandParams) {
+				pointers = append(pointers, snapshotPointer(t, c))
+			},
+		})
+		if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
+			t.Fatalf("round %d: ReviewRun: %v", round, err)
+		}
+	}
+
+	if len(pointers) != 2 {
+		t.Fatalf("expected one snapshot pointer per round, got %v", pointers)
+	}
+	if pointers[0] == pointers[1] {
+		t.Errorf("two rounds on the same journal shared one snapshot path %s", pointers[0])
 	}
 }
 
@@ -2526,12 +2562,13 @@ func TestReviewRunRangeModeJournalsUnderTheKeyNotTheBranch(t *testing.T) {
 	}
 
 	jm := reviewjournal.New(tm.Git)
-	wantSnapshot, err := jm.SnapshotPathFor("", testRangeJournalKey)
+	wantPrefix, err := jm.SnapshotPrefixFor("", testRangeJournalKey)
 	if err != nil {
-		t.Fatalf("SnapshotPathFor: %v", err)
+		t.Fatalf("SnapshotPrefixFor: %v", err)
 	}
-	if pointer != wantSnapshot {
-		t.Errorf("reviewer was pointed at %s, want the key's snapshot %s", pointer, wantSnapshot)
+	if !strings.HasPrefix(pointer, wantPrefix) {
+		t.Errorf("reviewer was pointed at %s, want a snapshot of the key under %s",
+			pointer, wantPrefix)
 	}
 	// The branch's own journal must not exist at all: range mode never touches it.
 	branchJournal, err := jm.PathFor("", "feat")

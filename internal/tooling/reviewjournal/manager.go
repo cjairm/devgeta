@@ -19,6 +19,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 // journalPermission is the mode for both the journal and its round-start
@@ -122,34 +123,58 @@ func (m *Manager) Load(repoDir, branch string) (*Journal, error) {
 // happening to fail.
 const snapshotSuffix = ".snapshot"
 
-// SnapshotPathFor returns the path of branch's round-start snapshot: one
-// deterministic name per branch, in the same directory as the journal.
+// snapshotUniqueSeparator joins a journal's shared snapshot prefix to the part
+// that makes one round's snapshot its own file.
 //
-// There is no round number in the name. review-run writes the snapshot when
-// a round starts and removes it when that round ends — including on its
-// failure paths — relying on the invariant that only one `review-run`
-// invocation runs against a given branch at a time. A per-round name would
-// not help two overlapping invocations either, since both could be round 1;
-// avoiding that requires not running review-run twice on the same branch at
-// once, not a naming scheme here.
-func (m *Manager) SnapshotPathFor(repoDir, branch string) (string, error) {
+// It is "+" for the same reason the report filename's separator is (see
+// reviewerReportName in internal/tooling/task/reviewrun.go): EncodeBranch keeps
+// only [A-Za-z0-9._-] and percent-encodes every other byte, so "+" is a byte an
+// encoded journal name can never contain. That makes prefix matching exact
+// rather than approximate — "<enc A>.snapshot+" can only ever be the start of a
+// snapshot of A, never of A's journal file and never of another branch's
+// snapshot, however the two names happen to nest (a branch literally called
+// "feat.snapshot" is the case that would otherwise be ambiguous). Delete relies
+// on that, so the separator is what keeps it from removing files it does not own.
+const snapshotUniqueSeparator = "+"
+
+// SnapshotPrefixFor returns the prefix every round-start snapshot of branch's
+// journal shares — the journal's own name, plus snapshotSuffix, plus
+// snapshotUniqueSeparator — in the same directory as the journal.
+//
+// It deliberately names no single file: each `review-run` invocation writes its
+// OWN snapshot (see WriteSnapshot), so "the snapshot path" for a branch does not
+// exist. What this is for is finding ALL of a journal's snapshots, which is what
+// Delete does.
+func (m *Manager) SnapshotPrefixFor(repoDir, branch string) (string, error) {
 	path, err := m.PathFor(repoDir, branch)
 	if err != nil {
 		return "", err
 	}
-	return snapshotPathOf(path), nil
+	return snapshotPrefixOf(path), nil
 }
 
-// snapshotPathOf derives a journal's snapshot path from the journal path
-// itself, so a caller that already resolved one (Delete) does not pay a second
-// git call to resolve the other, and the two paths cannot be derived by two
-// different rules.
-func snapshotPathOf(journalPath string) string {
-	return strings.TrimSuffix(journalPath, ".md") + snapshotSuffix
+// snapshotPrefixOf derives that prefix from the journal path itself, so a caller
+// that already resolved one (Delete) does not pay a second git call to resolve
+// the other, and the two cannot be derived by two different rules.
+func snapshotPrefixOf(journalPath string) string {
+	return strings.TrimSuffix(journalPath, ".md") + snapshotSuffix + snapshotUniqueSeparator
 }
 
-// WriteSnapshot serializes branch's journal as it stands right now to the
-// snapshot path, and returns that path.
+// WriteSnapshot serializes branch's journal as it stands right now to a
+// snapshot file of its own, and returns that path.
+//
+// The name is unique per invocation, not one deterministic name per journal.
+// Two `review-run` invocations against the same journal key CAN overlap — two
+// ticks of the review loop on one pull request, or a human running review-run
+// by hand while a loop is mid-round on the same branch — and with one shared
+// name they would trash each other: the second write would replace the first
+// round's frozen view with a later one, and whichever round ended first would
+// delete the file out from under the other round's still-running reviewers,
+// which then silently fall back to the LIVE journal (loadJournalForDisplay in
+// internal/tooling/task/reviewnotes.go). That loses round isolation in exactly
+// the situation it exists for. Per-round numbering would not have fixed it —
+// both invocations can be round 1 — so the unique part comes from the
+// filesystem itself, via reserveSnapshotPath.
 //
 // A branch with no journal file yet is not a special case here, deliberately:
 // Load already reports a missing file as an empty journal, and that empty
@@ -162,12 +187,54 @@ func (m *Manager) WriteSnapshot(repoDir, branch string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path, err := m.SnapshotPathFor(repoDir, branch)
+	journalPath, err := m.PathFor(repoDir, branch)
+	if err != nil {
+		return "", err
+	}
+	path, err := reserveSnapshotPath(journalPath)
 	if err != nil {
 		return "", err
 	}
 	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
+		// Safe to remove: the reservation is this invocation's own name, so it
+		// cannot be a file another round's reviewers are reading.
+		if rmErr := os.Remove(path); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.L().Debugw(
+				"failed to remove the reserved round-start snapshot path after a failed write",
+				"path", path, "error", rmErr,
+			)
+		}
 		return "", fmt.Errorf("failed to write the round-start review snapshot: %w", err)
+	}
+	return path, nil
+}
+
+// reserveSnapshotPath claims one unused snapshot filename beside journalPath
+// and returns it.
+//
+// os.CreateTemp is what makes the name unique, rather than a pid or a timestamp
+// woven into it: it creates the file exclusively, so two processes cannot walk
+// away holding the same name at all. A pid-and-random name would only be
+// unlikely to collide, and CLAUDE.md §4 prefers the mistake being structurally
+// impossible over being improbable. The directory is created first because
+// CreateTemp needs it to exist — WriteFileAtomic would have made it, but only
+// after a name had already been chosen inside it.
+func reserveSnapshotPath(journalPath string) (string, error) {
+	dir := filepath.Dir(journalPath)
+	if err := os.MkdirAll(dir, files.DirPermission); err != nil {
+		return "", fmt.Errorf("failed to create the review directory %s: %w", dir, err)
+	}
+	f, err := os.CreateTemp(dir, filepath.Base(snapshotPrefixOf(journalPath))+"*")
+	if err != nil {
+		return "", fmt.Errorf("failed to reserve a round-start review snapshot: %w", err)
+	}
+	path := f.Name()
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf(
+			"failed to close the reserved round-start review snapshot %s: %w",
+			path,
+			err,
+		)
 	}
 	return path, nil
 }
@@ -488,24 +555,53 @@ func (m *Manager) Verdict(repoDir string, e Entry) string {
 	return FreshnessFresh
 }
 
-// Delete removes branch's journal AND its round-start snapshot. A file that
-// never existed is success — callers (the worktree teardown) only care that
+// Delete removes branch's journal AND every round-start snapshot of it. A file
+// that never existed is success — callers (the worktree teardown) only care that
 // nothing of the branch's review memory remains.
 //
-// The snapshot is deleted here rather than left to Prune because Prune only
-// looks at "*.md" and would never see it: review-run removes its own snapshot
+// Snapshots are deleted here rather than left to Prune because Prune only
+// looks at "*.md" and would never see them: review-run removes its own snapshot
 // on every exit path, but a hard-killed run leaves one behind, and without
 // this that orphan would outlive the branch forever — making the promise that
 // removing a worktree deletes the journal "so memory does not accumulate for
-// work that no longer exists" (docs/spec.md) quietly false.
+// work that no longer exists" (docs/spec.md) quietly false. "Every" rather than
+// "the one" because each invocation writes its own name (WriteSnapshot), so a
+// journal can have any number of orphans and a single derived path would clean
+// up at most one of them.
 func (m *Manager) Delete(repoDir, branch string) error {
 	path, err := m.PathFor(repoDir, branch)
 	if err != nil {
 		return err
 	}
-	for _, p := range []string{path, snapshotPathOf(path)} {
-		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove the review journal: %w", err)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove the review journal: %w", err)
+	}
+	return removeSnapshotsOf(path)
+}
+
+// removeSnapshotsOf deletes every round-start snapshot belonging to one journal.
+//
+// It matches on the journal's snapshot prefix, which ends in
+// snapshotUniqueSeparator — a byte no encoded journal name can contain — so the
+// match is exact: no journal file and no other branch's snapshot can start with
+// it. That is why this can delete by prefix at all instead of having to know
+// each snapshot's full name.
+func removeSnapshotsOf(journalPath string) error {
+	dir := filepath.Dir(journalPath)
+	prefix := filepath.Base(snapshotPrefixOf(journalPath))
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("failed to list review journals: %w", err)
+	}
+	for _, de := range entries {
+		if de.IsDir() || !strings.HasPrefix(de.Name(), prefix) {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, de.Name())); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove the round-start review snapshot: %w", err)
 		}
 	}
 	return nil

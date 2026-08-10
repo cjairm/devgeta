@@ -1126,6 +1126,119 @@ func TestDeleteRemovesTheRoundStartSnapshotToo(t *testing.T) {
 	}
 }
 
+// The collision a per-journal snapshot name allowed. Two review-run
+// invocations CAN overlap on one journal — two ticks of the review loop on the
+// same pull request, or a human running review-run by hand while a loop is
+// mid-round on the branch. With one deterministic name per journal, the second
+// round's write replaced the first round's frozen view, and whichever round
+// ended first deleted the file the other round's reviewers were still reading,
+// dropping them back to the live journal. So each invocation gets its own file:
+// its content stays its own, and one round's cleanup cannot touch another's.
+func TestWriteSnapshotGivesEveryInvocationItsOwnFile(t *testing.T) {
+	fr := newFakeRepo(t)
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "round-A finding"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	roundA, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+
+	// A finding lands in the live journal while round A is still running, then a
+	// second round starts against the same journal.
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "mid-round finding"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	roundB, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+	if roundA == roundB {
+		t.Fatalf("two rounds got one snapshot path: %s", roundA)
+	}
+
+	read := func(path string) string {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		return string(data)
+	}
+	if got := read(roundA); !strings.Contains(got, "round-A finding") ||
+		strings.Contains(got, "mid-round finding") {
+		t.Errorf("round A's snapshot must still hold round A's state:\n%s", got)
+	}
+	if got := read(roundB); !strings.Contains(got, "mid-round finding") {
+		t.Errorf("round B's snapshot must hold the state at its own start:\n%s", got)
+	}
+
+	// Round B finishes first and removes its own snapshot, the way review-run
+	// does on every exit path. Round A's reviewers are still reading theirs.
+	if err := os.Remove(roundB); err != nil {
+		t.Fatalf("removing round B's snapshot: %v", err)
+	}
+	if got := read(roundA); !strings.Contains(got, "round-A finding") {
+		t.Errorf("round B's cleanup took round A's snapshot with it:\n%s", got)
+	}
+}
+
+// Delete must sweep EVERY snapshot of the journal, not one derived name: each
+// invocation writes its own file, so a hard-killed run can leave any number of
+// orphans that Prune ("*.md" only) will never see. And it must sweep no more
+// than that — "feat.snapshot" is a legal branch name, so its own journal and
+// snapshots are what a looser prefix match would destroy along with "feat"'s.
+func TestDeleteRemovesEverySnapshotAndOnlyTheJournalsOwn(t *testing.T) {
+	fr := newFakeRepo(t)
+	survivors := map[string]string{}
+	for _, b := range []string{"feat", "feat.snapshot", "other"} {
+		if _, err := fr.mgr.Open(fr.repoDir, b, "", "q"); err != nil {
+			t.Fatalf("Open(%s): %v", b, err)
+		}
+		snapshot, err := fr.mgr.WriteSnapshot(fr.repoDir, b)
+		if err != nil {
+			t.Fatalf("WriteSnapshot(%s): %v", b, err)
+		}
+		if b != "feat" {
+			survivors[b] = snapshot
+		}
+	}
+	// A second, orphaned snapshot of "feat" — what a hard-killed round leaves.
+	orphan, err := fr.mgr.WriteSnapshot(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("WriteSnapshot: %v", err)
+	}
+
+	if err := fr.mgr.Delete(fr.repoDir, "feat"); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	prefix, err := fr.mgr.SnapshotPrefixFor(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("SnapshotPrefixFor: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(prefix))
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	for _, de := range entries {
+		if strings.HasPrefix(filepath.Join(filepath.Dir(prefix), de.Name()), prefix) {
+			t.Errorf("snapshot %s outlived the journal it belongs to", de.Name())
+		}
+	}
+	if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+		t.Errorf("the orphaned snapshot must be gone too, stat gave: %v", err)
+	}
+	for branch, snapshot := range survivors {
+		if _, err := os.Stat(fr.journalPath(branch)); err != nil {
+			t.Errorf("journal for %s must survive: %v", branch, err)
+		}
+		if _, err := os.Stat(snapshot); err != nil {
+			t.Errorf("snapshot for %s must survive: %v", branch, err)
+		}
+	}
+}
+
 func TestDeleteLeavesOtherBranchesAlone(t *testing.T) {
 	fr := newFakeRepo(t)
 	if _, err := fr.mgr.Open(fr.repoDir, "feat-a", "", "q"); err != nil {
