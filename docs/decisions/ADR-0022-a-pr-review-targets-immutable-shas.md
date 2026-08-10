@@ -225,10 +225,14 @@ else's PR.
   has several branches of behavior, and it is why each skipped refusal and the
   SHAs-only scope are pinned by their own tests.
 - **The journal now has two keying schemes.** A reader of `reviewjournal` has to know that a
-  key may be a branch name or a `pr/...` key, and that a `pr/...` journal is not cleaned up
-  by branch teardown — it persists in the clone's git directory until `review-notes --prune`
-  runs. ADR-0012 already accepted this cost for PRs reviewed without a checkout; the explicit
-  key makes it more common.
+  key may be a branch name or a `pr/...` key, and that a `pr/...` journal has no cleanup
+  path: branch teardown does not see it, and `review-notes --prune` deliberately skips it —
+  "does a branch by this name exist?" answers "gone" for every PR key, so pruning them by
+  that test would delete an open PR's settled findings mid-review. It persists in the clone's
+  git directory until someone deletes it by hand, and deciding it automatically would mean
+  asking GitHub whether the PR is still open, which that local command does not do. ADR-0012
+  already accepted the leftover-journal cost for PRs reviewed without a checkout; the
+  explicit key makes it more common.
 - **Uncommitted work on the PR author's side is invisible**, by definition. A PR review sees
   pushed commits only. That is correct, but it is a real asymmetry with how ADR-0019 treats
   your own branch, and reviewers must not be told the two are the same.

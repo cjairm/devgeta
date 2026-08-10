@@ -2410,29 +2410,91 @@ func TestReviewRunRangeModeRefusesACommitThisCloneLacks(t *testing.T) {
 	}
 }
 
-// A report directory that cannot be created is refused up front for the same
-// reason: it would otherwise be discovered only after a round's worth of
+// A report directory reports cannot be written to is refused up front for the
+// same reason: it would otherwise be discovered only after a round's worth of
 // reports had been produced with nowhere to go.
+//
+// All three shapes of unusable count. The second is the one os.MkdirAll cannot
+// see: it returns success for a directory that already exists whatever its
+// permissions, so a check built on MkdirAll alone would launch the round and
+// waste the first reviewer's minutes before failing on its report.
+//
+// The third is the one creating a file cannot see. A probe that only created and
+// closed an empty file would prove an inode can be made, not that report bytes
+// can be stored and committed — the failure a full disk or an exhausted quota
+// actually produces. Those are not stageable in a unit test without root, so this
+// stands in for them by blocking the probe at the same step they block it: the
+// content has nowhere to land, while creating a file in the directory still
+// works. Create-and-close passes this; a real report write does not.
 func TestReviewRunRangeModeRefusesAnUnusableReportDir(t *testing.T) {
-	tm, ocBase, rng := newRangeSetup(t, "feat")
-	withReviewers(t)
-	scriptOpenCode(t, ocBase) // no reviewer may be launched
-
-	// A path whose parent is a regular file: MkdirAll cannot create it.
-	blocker := filepath.Join(t.TempDir(), "not-a-dir")
-	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
+	tests := []struct {
+		name     string
+		reportIn func(t *testing.T) string
+	}{
+		{
+			name: "cannot be created",
+			reportIn: func(t *testing.T) string {
+				t.Helper()
+				// A path whose parent is a regular file: MkdirAll cannot create it.
+				blocker := filepath.Join(t.TempDir(), "not-a-dir")
+				if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+					t.Fatalf("setup: %v", err)
+				}
+				return filepath.Join(blocker, "reports")
+			},
+		},
+		{
+			name: "exists but rejects writes",
+			reportIn: func(t *testing.T) string {
+				t.Helper()
+				if os.Geteuid() == 0 {
+					t.Skip("root ignores directory permissions, so this case cannot be staged")
+				}
+				dir := filepath.Join(t.TempDir(), "reports")
+				if err := os.MkdirAll(dir, 0o500); err != nil {
+					t.Fatalf("setup: %v", err)
+				}
+				// Restored so the temp dir's own cleanup can remove it again.
+				t.Cleanup(func() {
+					if err := os.Chmod(dir, 0o700); err != nil {
+						t.Logf("failed to restore permissions on %s: %v", dir, err)
+					}
+				})
+				return dir
+			},
+		},
+		{
+			name: "accepts new files but the write cannot land",
+			reportIn: func(t *testing.T) string {
+				t.Helper()
+				dir := filepath.Join(t.TempDir(), "reports")
+				// A directory sitting where the probe's content must be committed.
+				// Creating files in dir still succeeds, so a probe that stopped at
+				// creating one would call this directory usable.
+				if err := os.MkdirAll(reportProbePath(dir), 0o700); err != nil {
+					t.Fatalf("setup: %v", err)
+				}
+				return dir
+			},
+		},
 	}
-	rng.ReportDir = filepath.Join(blocker, "reports")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, ocBase, rng := newRangeSetup(t, "feat")
+			withReviewers(t)
+			scriptOpenCode(t, ocBase) // no reviewer may be launched
+			rng.ReportDir = tt.reportIn(t)
 
-	_, err := tm.ReviewRun("", "", rng)
-	if err == nil {
-		t.Fatal("expected an unusable --report-dir to be refused")
-	}
-	for _, want := range []string{"--report-dir", rng.ReportDir} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("expected %q in the error, got: %v", want, err)
-		}
+			_, err := tm.ReviewRun("", "", rng)
+			if err == nil {
+				t.Fatal("expected an unusable --report-dir to be refused")
+			}
+			for _, want := range []string{"--report-dir", rng.ReportDir} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected %q in the error, got: %v", want, err)
+				}
+			}
+		})
 	}
 }
 

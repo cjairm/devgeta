@@ -1196,6 +1196,30 @@ func TestPruneNeverDeletesWhenTheBranchCheckFails(t *testing.T) {
 	}
 }
 
+// A PR-scoped key is not a branch name, so the branch-existence test says
+// nothing about it: no branch is ever called "pr/acme/api/213", so an open
+// PR's journal would be deleted by the first prune after its first review
+// round, losing every settled finding while the PR is still being reviewed.
+func TestPruneKeepsPRScopedJournals(t *testing.T) {
+	fr := newFakeRepo(t)
+	for _, key := range []string{PRKey("acme", "api", "213"), "fix/gone"} {
+		if _, err := fr.mgr.Open(fr.repoDir, key, "", "q"); err != nil {
+			t.Fatalf("Open(%s): %v", key, err)
+		}
+	}
+
+	removed, err := fr.mgr.Prune(fr.repoDir)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if !slices.Equal(removed, []string{"fix/gone"}) {
+		t.Fatalf("expected only the dead branch pruned, got %v", removed)
+	}
+	if _, err := os.Stat(fr.journalPath(PRKey("acme", "api", "213"))); err != nil {
+		t.Errorf("an open PR's journal must survive prune: %v", err)
+	}
+}
+
 func TestPruneOnMissingDirIsNoOp(t *testing.T) {
 	fr := newFakeRepo(t)
 	removed, err := fr.mgr.Prune(fr.repoDir)

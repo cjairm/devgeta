@@ -29,6 +29,33 @@ func ValidResolution(s string) bool {
 	return s == ResolutionRejected || s == ResolutionAnswered || s == ResolutionFixed
 }
 
+// PRKeyPrefix opens the journal keys that name a pull request instead of a
+// branch (ADR-0022 §4). A PR reviewed without a checkout — a fork's, or one
+// reviewed from an unrelated worktree — has no local branch to key on, so its
+// findings are filed under "pr/<owner>/<repo>/<number>".
+//
+// The prefix lives here, beside the two functions that write and recognize it,
+// because the journal's two key namespaces have to agree on one literal:
+// whoever creates a PR key and whoever has to tell a PR key apart from a
+// branch (Prune, which may only apply its branch-existence test to branches)
+// must not each carry their own copy of "pr/".
+//
+// A branch could in principle be named "pr/acme/api/213". That collision is
+// harmless in both directions: the two would share one journal, and Prune
+// keeps the file either way.
+const PRKeyPrefix = "pr/"
+
+// PRKey builds the PR-scoped journal key for a pull request.
+func PRKey(owner, repo, number string) string {
+	return fmt.Sprintf("%s%s/%s/%s", PRKeyPrefix, owner, repo, number)
+}
+
+// IsPRKey reports whether a journal key names a pull request rather than a
+// branch.
+func IsPRKey(key string) bool {
+	return strings.HasPrefix(key, PRKeyPrefix)
+}
+
 // AgentNotePrefix marks a settle note as the coding agent's own provisional
 // rejection, never a human's (ADR-0017 §6). It is the single source of truth
 // for the literal — code, tests, and docs must reference this constant

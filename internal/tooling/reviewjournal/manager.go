@@ -515,6 +515,17 @@ func (m *Manager) Delete(repoDir, branch string) error {
 // remote, returning the decoded branch names removed. Undecodable filenames
 // are skipped, never deleted — an unreadable name is a reason to look, not to
 // destroy.
+//
+// PR-scoped keys are skipped for the same reason. "Does a branch by this name
+// exist?" is not a question about a pull request: no branch is ever called
+// "pr/<owner>/<repo>/<n>", so the check answers "gone" for every PR journal,
+// including one whose review is mid-flight — the first prune after a PR
+// review's first round would delete the settled findings the next tick reads,
+// and the loop would re-raise everything the human already answered. Judging a
+// PR key by the only signal that could settle it (whether the PR is still
+// open) means asking GitHub, which this local, offline command does not do;
+// until something does, keeping the file is the safe direction, and it is the
+// same trade the branch checks already make above.
 func (m *Manager) Prune(repoDir string) ([]string, error) {
 	dir, err := m.reviewDir(repoDir)
 	if err != nil {
@@ -534,7 +545,7 @@ func (m *Manager) Prune(repoDir string) ([]string, error) {
 			continue
 		}
 		branch, err := DecodeBranch(name)
-		if err != nil {
+		if err != nil || IsPRKey(branch) {
 			continue
 		}
 		// A failed check means "unknown", never "absent". Treating an error as

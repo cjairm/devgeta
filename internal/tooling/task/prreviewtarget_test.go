@@ -184,16 +184,17 @@ func TestPRReviewTarget(t *testing.T) {
 		}
 
 		// mergeBaseSHA reaches the output from the merge-base call and from
-		// nowhere else: the run resolves exactly one ref by name, the head.
-		// That is the structural reason a base tip cannot be printed here —
-		// the code never asks for one — so the guard is these three positive
-		// assertions (base value, merge-base operands, diff range), not a
-		// negative check against a tip SHA no scripted call can return.
+		// nowhere else: the run resolves exactly one ref by name, the head,
+		// and reuses that SHA. That is the structural reason a base tip cannot
+		// be printed here — the code never asks for one — so the guard is
+		// these three positive assertions (base value, merge-base operands,
+		// diff range), not a negative check against a tip SHA no scripted call
+		// can return.
 		if !strings.Contains(out, "base: "+mergeBaseSHA) {
 			t.Fatalf("expected the merge base as base, got:\n%s", out)
 		}
 		mb := gitArgs(t, gitBase, 2)
-		wantMB := []string{"merge-base", "refs/devgeta/pr/213/base", "refs/devgeta/pr/213/head"}
+		wantMB := []string{"merge-base", "refs/devgeta/pr/213/base", prHeadSHA}
 		if !slices.Equal(mb, wantMB) {
 			t.Fatalf("unexpected merge-base args %v, want %v", mb, wantMB)
 		}
@@ -206,6 +207,73 @@ func TestPRReviewTarget(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run(
+		"pairs the base with the head it resolved, not a ref that moved after",
+		func(t *testing.T) {
+			// The refs under refs/devgeta/pr/<n>/ are LOCAL and mutable: every fetch
+			// of this PR force-updates them. A review loop runs unattended on an
+			// interval, so a second tick — or a human running the command by hand —
+			// can fetch the same PR while this run sits between resolving the head
+			// and asking for the merge base.
+			//
+			// The mock models exactly that, the way git would: once the head has
+			// been resolved, the ref NAME points at a force-pushed head that was
+			// rebased onto a newer base, so a merge base asked for by name comes
+			// back as rebasedBaseSHA — a commit that is not an ancestor of the head
+			// this run captured and prints. Pairing the two would emit a
+			// `base..head` range describing no single diff, which is the guarantee
+			// ADR-0022 exists to make.
+			const rebasedBaseSHA = "c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7"
+			headRef := "refs/devgeta/pr/213/head"
+
+			pm, ghBase, gitBase := newPRTargetSetup()
+			scriptTargetGh(ghBase, "octocat/hello", "main")
+			headResolved := false
+			gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+				switch {
+				case c.Args[0] == "fetch":
+					return "", "", nil
+				case c.Args[0] == "rev-parse":
+					// The concurrent fetch lands right after this resolution.
+					headResolved = true
+					return prHeadSHA + "\n", "", nil
+				case c.Args[0] == "merge-base":
+					if headResolved && slices.Contains(c.Args, headRef) {
+						return rebasedBaseSHA + "\n", "", nil
+					}
+					return mergeBaseSHA + "\n", "", nil
+				case slices.Contains(c.Args, "--numstat"):
+					return "3\t1\tapi/server.go\n", "", nil
+				default:
+					return "M\tapi/server.go\n", "", nil
+				}
+			}
+
+			out, err := pm.PRReviewTarget("213")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// The printed pair first, since that is the whole product of this
+			// command: base must be the merge base of the head it returns.
+			if strings.Contains(out, rebasedBaseSHA) {
+				t.Fatalf("base came from the moved ref, not the reviewed head:\n%s", out)
+			}
+			if !strings.Contains(out, "base: "+mergeBaseSHA) ||
+				!strings.Contains(out, "head: "+prHeadSHA) {
+				t.Fatalf("expected the base paired with the resolved head, got:\n%s", out)
+			}
+			// Then the mechanism that guarantees it: the merge base is asked
+			// for against the resolved SHA, so no later move of the ref can be
+			// read back into this run.
+			mb := gitArgs(t, gitBase, 2)
+			wantMB := []string{"merge-base", "refs/devgeta/pr/213/base", prHeadSHA}
+			if !slices.Equal(mb, wantMB) {
+				t.Fatalf("unexpected merge-base args %v, want %v", mb, wantMB)
+			}
+		},
+	)
 
 	t.Run("filters noise out of the file list and says it did", func(t *testing.T) {
 		pm, ghBase, gitBase := newPRTargetSetup()
@@ -433,16 +501,6 @@ func TestValidatePRNumber(t *testing.T) {
 				t.Fatalf("unexpected error for %q: %v", c.in, err)
 			}
 		})
-	}
-}
-
-func TestPRJournalKey(t *testing.T) {
-	if got := prJournalKey(
-		"Employ-Inc",
-		"employ-agent",
-		"213",
-	); got != "pr/Employ-Inc/employ-agent/213" {
-		t.Fatalf("unexpected journal key %q", got)
 	}
 }
 

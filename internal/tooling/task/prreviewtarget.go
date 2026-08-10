@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 )
 
 // prLocalRefNamespace is where a PR fetch parks the refs it resolves. Under
@@ -168,7 +170,16 @@ func (p *PRManager) PRReviewTarget(prNumber string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("pr-review-target: %w", err)
 	}
-	base, err := p.Git.MergeBase(baseRef, headRef)
+	// The merge base is asked for against the resolved head SHA, never headRef
+	// again: headRef is a mutable local ref that every fetch of this PR
+	// overwrites, so a concurrent tick or a second `pr-review-target` run can
+	// move it between these two calls. Naming it twice would pair the head
+	// captured above with the merge base of whatever the ref points at NOW —
+	// and after a force-push that rebased the PR, that base is not even an
+	// ancestor of the head returned, so `base..head` shows the base branch's
+	// own commits as this PR's deletions. One resolution, reused, is what makes
+	// the printed pair describe a single diff (ADR-0022).
+	base, err := p.Git.MergeBase(baseRef, head)
 	if err != nil {
 		return "", fmt.Errorf("pr-review-target: %w", err)
 	}
@@ -180,25 +191,21 @@ func (p *PRManager) PRReviewTarget(prNumber string) (string, error) {
 	reviewable, excluded := partitionExcluded(files)
 
 	return formatPRReviewTarget(prReviewTargetData{
-		Base:     base,
-		Head:     head,
-		Journal:  prJournalKey(owner, name, pr),
+		Base: base,
+		Head: head,
+		// A scoped exception to the branch keying in ADR-0012 §5, not a
+		// replacement: a PR reviewed from someone else's fork has no local
+		// branch to key on, and borrowing whatever branch happens to be
+		// checked out would read another piece of work's settled decisions
+		// into this review and write this PR's findings where branch teardown
+		// deletes them. The key's shape belongs to the journal package, which
+		// also has to RECOGNIZE it — Prune may not apply its branch-existence
+		// test to a PR — so the literal has one definition rather than one
+		// here and a matching prefix over there that could drift apart.
+		Journal:  reviewjournal.PRKey(owner, name, pr),
 		Files:    reviewable,
 		Excluded: excluded,
 	}), nil
-}
-
-// prJournalKey builds the PR-scoped review journal key, "pr/<owner>/<repo>/<n>".
-//
-// It is a scoped exception to the branch keying in ADR-0012 §5, not a
-// replacement: a PR reviewed from someone else's fork has no local branch to
-// key on, and borrowing whatever branch happens to be checked out would read
-// another piece of work's settled decisions into this review and write this
-// PR's findings where branch teardown deletes them. The journal's encoder
-// percent-encodes every byte outside [A-Za-z0-9._-], so the separators encode
-// and the key cannot escape the review directory.
-func prJournalKey(owner, repo, prNumber string) string {
-	return fmt.Sprintf("pr/%s/%s/%s", owner, repo, prNumber)
 }
 
 // prReviewTargetNoFiles is the sentinel under `files:` for a range whose every

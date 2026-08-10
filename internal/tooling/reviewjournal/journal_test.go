@@ -5,6 +5,26 @@ import (
 	"testing"
 )
 
+// --- PR keys (ADR-0022 §4: the journal's second key namespace) ---
+
+// The writer of a PR key and the reader that has to tell one from a branch
+// must agree, so what PRKey builds is exactly what IsPRKey recognizes — and a
+// branch name is not mistaken for a PR.
+func TestPRKeyIsRecognizedAndBranchesAreNot(t *testing.T) {
+	key := PRKey("Employ-Inc", "employ-agent", "213")
+	if key != "pr/Employ-Inc/employ-agent/213" {
+		t.Fatalf("unexpected journal key %q", key)
+	}
+	if !IsPRKey(key) {
+		t.Errorf("IsPRKey(%q) = false, want true", key)
+	}
+	for _, branch := range []string{"main", "fix/pr-review-loop", "print/pr", ""} {
+		if IsPRKey(branch) {
+			t.Errorf("IsPRKey(%q) = true, want false", branch)
+		}
+	}
+}
+
 // --- encoding (ADR-0012 acceptance gate: hostile names, no collision, no escape) ---
 
 func TestEncodeBranchRoundTripsAndNeverCollides(t *testing.T) {

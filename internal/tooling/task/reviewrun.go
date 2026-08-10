@@ -753,7 +753,7 @@ func (tm *TaskManager) reviewRoundTarget(
 	if err != nil {
 		return "", "", "", err
 	}
-	if err := os.MkdirAll(rng.ReportDir, files.DirPermission); err != nil {
+	if err := ensureWritableReportDir(rng.ReportDir); err != nil {
 		return "", "", "", fmt.Errorf(
 			"review-run: cannot use %s as --report-dir: %w — pass a directory this user can "+
 				"create and write to, since every reviewer's report is written there",
@@ -761,6 +761,66 @@ func (tm *TaskManager) reviewRoundTarget(
 		)
 	}
 	return rangeReviewPrompt(base, head, rng.Journal), rng.Journal, "", nil
+}
+
+// ensureWritableReportDir creates the report directory and proves a report can
+// actually be written into it.
+//
+// os.MkdirAll alone proves only half of that. It returns nil for a path that
+// already exists as a directory whatever its permissions, so a --report-dir that
+// exists but rejects writes — another user's directory, a read-only mount, a
+// leftover from a run under different ownership — would pass the up-front check
+// and fail later inside writeReviewerReport, after the first reviewer had already
+// spent its minutes. That is exactly the failure this guard exists to prevent, so
+// the guard has to cover it.
+//
+// The proof is an attempted write, not a reading of the mode bits: ACLs, a
+// read-only filesystem, and running as root each make the permission bits a bad
+// predictor of whether the write lands. So the probe is a real report write —
+// WriteFileAtomic with report content and report permissions, the same call
+// writeReviewerReport makes per report later — paid once here where it costs
+// nothing.
+//
+// It has to be that same call, not an imitation of it. Creating an empty file
+// and storing bytes in it are separate operations with separate failure modes:
+// a full disk or an exhausted block quota can still hand out a zero-byte inode
+// while the write of actual content fails with ENOSPC/EDQUOT, and the rename
+// that commits a report can fail on a path an empty temp file never touches.
+// A probe that only created and closed a file would pass in exactly those cases
+// and leave writeReviewerReport — whose own error message tells the user to
+// free space — to discover them after a reviewer had already run.
+func ensureWritableReportDir(dir string) error {
+	if err := os.MkdirAll(dir, files.DirPermission); err != nil {
+		return err
+	}
+	path := reportProbePath(dir)
+	if err := files.WriteFileAtomic(
+		path,
+		[]byte("devgeta --report-dir write probe\n"),
+		reviewReportPermission,
+	); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		// Reported, not returned, like the round-start snapshot's cleanup: the
+		// write this guard was checking for already succeeded, so refusing the
+		// round here would reject a directory that works.
+		logger.L().Errorw(
+			"failed to remove the --report-dir write probe",
+			"path", path, "error", err,
+		)
+	}
+	return nil
+}
+
+// reportProbePath is where ensureWritableReportDir writes its probe report.
+//
+// Dot-prefixed so a probe that somehow outlives the call cannot be mistaken for
+// a report by whoever reads the directory, and pid-suffixed so two rounds
+// probing one shared --report-dir at the same time cannot delete each other's
+// probe out from under the write they are each testing.
+func reportProbePath(dir string) string {
+	return filepath.Join(dir, fmt.Sprintf(".devgeta-report-probe-%d", os.Getpid()))
 }
 
 // resolveRangeEnd resolves one end of an explicit range to an immutable commit
