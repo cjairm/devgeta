@@ -38,7 +38,7 @@ With `--target`, four things change and nothing else:
 
 3. **The approval names the commit** — add `--commit <head-sha>` to the `devgeta task approve-pr` call in step 4.
 
-4. **Every post names the PR** — `--pr <n>` is mandatory on the `devgeta task approve-pr` call in step 4, and on a `devgeta task comment-pr` call if a blocker means you post that instead. Without a number those commands resolve the PR from the checked-out branch, and with `--target` that branch is not this PR: an omitted number does not error, it approves whatever PR the checkout happens to have open. So a number must be in hand here — if none was passed with `--target`, stop and ask for one rather than letting step 1 infer it from the branch.
+4. **Every call that touches the PR names it — the gate reads as much as the post.** `--pr <n>` is mandatory on every `devgeta task` command here that resolves a PR: `pr-view` in step 2, both `review-threads` calls and `pr-checks` in step 3, `approve-pr` in step 4, and a `devgeta task comment-pr` if a blocker means you post that instead. Without a number those commands resolve the PR from the checked-out branch, and with `--target` that branch is not this PR: an omitted number does not error. On the post it approves whatever PR the checkout happens to have open; on a read it is worse than it looks, because every gate in step 3 is then decided on another PR's evidence — its threads, its reviews, its CI — and an approval reached that way was never about this PR at all. So a number must be in hand here — if none was passed with `--target`, stop and ask for one rather than letting step 1 infer it from the branch.
 
 Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you decide. What it buys is that the approval names the commit it was based on, and that branch protection's dismiss-stale-approvals has a sha to key off, so an approval of an older commit is visibly an approval of that commit rather than a silent claim about the new head.
 
@@ -60,6 +60,8 @@ If it prints "No pull request found for the current branch.", stop and tell the 
 devgeta task pr-view          # add --pr PR_NUMBER if you have one
 ```
 
+With `--target`, `--pr PR_NUMBER` is not optional on that read — the checkout is not this PR, so an omitted number describes whatever PR the checkout branch has open, and both checks below (is it open, does it already carry reviews) would be answered about that other PR.
+
 Confirm the state is open. The `review:` line shows whether it already carries reviews — if it has none, say so and recommend `/review-pr` first rather than approving cold.
 
 ### 3. Check the gates
@@ -67,8 +69,10 @@ Confirm the state is open. The `review:` line shows whether it already carries r
 Read the open threads first:
 
 ```bash
-devgeta task review-threads --state unresolved
+devgeta task review-threads --state unresolved      # add --pr PR_NUMBER if you have one
 ```
+
+With `--target`, `--pr PR_NUMBER` is not optional on this read and on both that follow it — the checkout is not this PR, so an omitted number returns another PR's threads and checks, and the approval gets decided on gates that belong to a PR nobody asked about. "No unresolved review threads." from the wrong PR reads exactly like a clean bill of health for this one.
 
 "No unresolved review threads." means there is nothing to check here.
 
@@ -93,7 +97,7 @@ Approving over live non-blocking comments takes one thing beyond your own read: 
 Then confirm the resolved ones were actually fixed, not just replied to and forgotten:
 
 ```bash
-devgeta task review-threads --state resolved
+devgeta task review-threads --state resolved      # add --pr PR_NUMBER if you have one; not optional under --target
 ```
 
 Skim these; only open a file to verify when a resolution looks doubtful (with `--target`, `git show <head-sha>:<path>` again). Trust GitHub's resolution state as the primary signal — don't re-litigate the whole diff.
@@ -101,7 +105,7 @@ Skim these; only open a file to verify when a resolution looks doubtful (with `-
 Finally, look at CI — but treat it as a signal, not a gate:
 
 ```bash
-devgeta task pr-checks
+devgeta task pr-checks      # add --pr PR_NUMBER if you have one; not optional under --target
 ```
 
 A failing or errored check is often flaky, an unrelated job, or otherwise still valid, so it does **not** by itself block approval. Flag it in the report so the user can judge; don't let it decide.

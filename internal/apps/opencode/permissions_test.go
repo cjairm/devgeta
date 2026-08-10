@@ -2402,6 +2402,188 @@ func TestReviewPRSubmitNamesThePRWhenTargeted(t *testing.T) {
 	}
 }
 
+// assertReadsNameThePR checks that every `devgeta task <cmd>` line inside a
+// section carries a --pr flag. The two targeted-read guards below both need it,
+// and a section can hold the same command twice (approve-pr.md reads threads
+// once unresolved and once resolved), so every occurrence is checked rather
+// than the first one found.
+func assertReadsNameThePR(t *testing.T, path, section, cmd, why string) {
+	t.Helper()
+
+	found := false
+	for _, line := range strings.Split(section, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "devgeta task "+cmd) {
+			continue
+		}
+		found = true
+		if !strings.Contains(trimmed, "--pr") {
+			t.Errorf("%s runs `%s` with no --pr in sight. %s", path, trimmed, why)
+		}
+	}
+	if !found {
+		t.Errorf(
+			"%s no longer runs `devgeta task %s` where this guard looks for it — "+
+				"if the read moved, move the guard with it rather than dropping it",
+			path, cmd,
+		)
+	}
+}
+
+// TestReviewPRReadsNameThePRWhenTargeted extends the submit-side guard above to
+// the reads that feed it. Pinning only the post left the same defect alive one
+// step earlier: under --target, a `pr-view` or `review-threads` with no --pr
+// resolves the checkout branch's own PR, so the review is composed from another
+// PR's description and deduplicated against another PR's threads. That is worse
+// than a misdirected post, because it is silent — the review still lands on the
+// right PR, carrying findings this PR already addressed and missing ones an
+// unrelated thread happened to look like.
+//
+// What this catches: either read losing its --pr treatment, or the --target
+// section going back to naming only the post.
+// What this does NOT catch: an agent omitting the flag despite reading the rule.
+func TestReviewPRReadsNameThePRWhenTargeted(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	target := flowSection(t, body, "### `--target <head-sha>`")
+	for _, cmd := range []string{"pr-view", "review-threads"} {
+		if !strings.Contains(target, cmd) {
+			t.Errorf(
+				"%s's `--target` section never names `%s` among the calls that must "+
+					"carry --pr. Listing only the post is what let the reads keep "+
+					"resolving the checkout branch's PR",
+				path, cmd,
+			)
+		}
+	}
+
+	for _, sec := range []struct {
+		heading string
+		cmd     string
+		why     string
+	}{
+		{
+			heading: "### 2. Load context",
+			cmd:     "pr-view",
+			why: "under --target that reads the checkout branch's PR, so the review " +
+				"is written against another PR's purpose and description",
+		},
+		{
+			heading: "### 3. Fetch existing threads and dedup",
+			cmd:     "review-threads",
+			why: "under --target that dedups against another PR's threads — already " +
+				"addressed findings get raised again, and an unrelated thread can " +
+				"look like a duplicate and drop a live one",
+		},
+	} {
+		assertReadsNameThePR(t, path, markdownSection(t, body, sec.heading), sec.cmd, sec.why)
+
+		if !strings.Contains(flowSection(t, body, sec.heading), "not optional") {
+			t.Errorf(
+				"%s %q no longer says the flag is not optional under --target. "+
+					"\"Add it if you have one\" reads as a convenience, which is exactly "+
+					"how these reads kept defaulting to the checkout's PR",
+				path, sec.heading,
+			)
+		}
+	}
+}
+
+// TestApprovePRReadsNameThePRWhenTargeted is the same guard on the approval
+// side, where the stakes are higher: every gate in step 3 is a read. With no
+// --pr under --target, the threads, the resolutions, and the CI status all come
+// from the checkout branch's PR, so the approval is decided on evidence
+// belonging to a different pull request and then posted on this one.
+//
+// What this catches: any of the four gate reads losing its --pr treatment, or
+// the --target section going back to naming only the post.
+// What this does NOT catch: an agent omitting the flag despite reading the rule.
+func TestApprovePRReadsNameThePRWhenTargeted(t *testing.T) {
+	path, body := readSharedCommand(t, "approve-pr.md")
+
+	target := flowSection(t, body, "### `--target <head-sha>`")
+	for _, cmd := range []string{"pr-view", "review-threads", "pr-checks"} {
+		if !strings.Contains(target, cmd) {
+			t.Errorf(
+				"%s's `--target` section never names `%s` among the calls that must "+
+					"carry --pr. Every gate in step 3 is a read, so naming only the "+
+					"approve leaves the decision itself resolving the wrong PR",
+				path, cmd,
+			)
+		}
+	}
+
+	assertReadsNameThePR(t, path,
+		markdownSection(t, body, "### 2. Confirm it's reviewable"), "pr-view",
+		"under --target that reports whether some other PR is open and already "+
+			"reviewed, which is the precondition this whole command rests on")
+
+	gates := markdownSection(t, body, "### 3. Check the gates")
+	assertReadsNameThePR(t, path, gates, "review-threads",
+		"under --target the gates are checked against another PR's threads — and "+
+			"\"No unresolved review threads.\" from the wrong PR reads exactly like "+
+			"a clean bill of health for this one")
+	assertReadsNameThePR(t, path, gates, "pr-checks",
+		"under --target that reports another PR's CI, so a red check here is "+
+			"invisible and a green one there is reported as this PR's")
+
+	for _, heading := range []string{"### 2. Confirm it's reviewable", "### 3. Check the gates"} {
+		if !strings.Contains(flowSection(t, body, heading), "not optional") {
+			t.Errorf(
+				"%s %q no longer says the flag is not optional under --target — the "+
+					"same weak \"add it if you have one\" wording the submit already "+
+					"had to override",
+				path, heading,
+			)
+		}
+	}
+}
+
+// TestReviewPRRereviewBlockerSubmitsAReviewNotAComment guards a mismatch that
+// was live in the file: step 6 defines case 1 (a live blocker someone else
+// already raised) as a review submitted with `--event comment`, while the
+// re-review bullet at the end of the same step pointed at that case and named
+// `comment-pr` instead.
+//
+// Those are not two spellings of one action. `devgeta task comment-pr` runs
+// `gh pr comment` — its own doc comment in githubcli.go calls it "distinct from
+// a review" — so it posts no review at all. ADR-0022 rests on the opposite:
+// submitting any review, comment-only included, removes the user from the PR's
+// reviewRequests, and that removal is the entire de-trigger for
+// /pr-review-loop. Follow the bullet instead of the case definition it cites
+// and the request never clears, so the next tick reads `requested: yes` again
+// and posts the same note — indefinitely.
+//
+// What this catches: the bullet reverting to comment-pr, or losing the reason
+// it must not.
+// What this does NOT catch: an agent reading the bullet and reaching for
+// comment-pr anyway.
+func TestReviewPRRereviewBlockerSubmitsAReviewNotAComment(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	rereview := flowSection(t, body, "**Re-review with nothing new to add**")
+
+	if !strings.Contains(rereview, "submit-review --event comment") {
+		t.Errorf(
+			"%s's re-review section no longer posts the still-live blocker as "+
+				"`devgeta task submit-review --event comment`. Step 6 defines that "+
+				"case as a review with event comment, so anything else contradicts "+
+				"the definition the bullet points back to",
+			path,
+		)
+	}
+
+	if !strings.Contains(rereview, "not a review") {
+		t.Errorf(
+			"%s's re-review section no longer says why a top-level comment is the "+
+				"wrong tool here — that it is not a review, so it leaves the review "+
+				"request pending. Without the reason, `comment-pr` reads like a "+
+				"lighter-weight equivalent and the swap comes back",
+			path,
+		)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Dedup suppresses duplicate comments. It never moves the verdict.
 //
