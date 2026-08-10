@@ -50,7 +50,7 @@ func (tm *TaskManager) journalBranch(branch string) (string, error) {
 }
 
 // verifyRev checks ONCE, before any entry is touched, that rev names a commit
-// this repository actually has — the failure ADR-0022's flow makes most likely,
+// this repository actually has — the failure ADR-0023's flow makes most likely,
 // since it fetches refs/pull/<n>/head and a skipped or failed fetch leaves
 // every later lookup with nothing to resolve against — and returns the commit
 // SHA it resolved to. A blank rev stays blank: that is working-tree mode, which
@@ -63,7 +63,7 @@ func (tm *TaskManager) journalBranch(branch string) (string, error) {
 // about the findings rather than an error about the revision.
 //
 // Callers use the RESOLVED sha from here, not the string the user typed. Every
-// stamp ADR-0022 writes is supposed to name an immutable commit, and a ref name
+// stamp ADR-0023 writes is supposed to name an immutable commit, and a ref name
 // is not one: `--rev refs/pull/213/head` recorded verbatim describes a
 // different commit after the next fetch, and two ticks of the same review stamp
 // the same text for two different states, so the entries cannot be compared. A
@@ -88,7 +88,7 @@ func (tm *TaskManager) verifyRev(rev string) (string, error) {
 // against the current working tree, or against rev when one is given.
 //
 // rev is what makes the freshness signal mean something for a review of code
-// that is not checked out (ADR-0022 §4): pass the revision under review NOW —
+// that is not checked out (ADR-0023 §4): pass the revision under review NOW —
 // a pull request's current head — and [STALE] means "the pull request changed
 // this file since the finding was written". Against the working tree of an
 // unrelated checkout it would mean nothing but "you are not on that branch".

@@ -175,13 +175,24 @@ alias lta='lt -a'
 alias cat="bat"
 {{end}}
 
-{{if .Opencode}}
-alias oc=opencode
-{{end}}
-
-{{if .Claude}}
-alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"
-{{end}}
+{{/*
+  The alias lines below are RENDERED from the launch recipes in pkg/constants,
+  never written here. devgeta's own launches name the binary (a tmux pane runs
+  its command through a non-interactive shell, which has no aliases), so the
+  recipe - binary plus env prefix - is the definition and these aliases are a
+  convenience rendering of it for the user to type. See ADR-0021. This comment
+  is for whoever edits this template; it deliberately does not reach the
+  generated devgeta.zsh.
+*/ -}}
+{{if or .Opencode .Claude}}
+# ---- AI coders ----
+{{- end}}
+{{- if .Opencode}}
+{{.OpenCodeAlias}}
+{{- end}}
+{{- if .Claude}}
+{{.ClaudeAlias}}
+{{- end}}
 # ============================================================================
 # End of Devgeta Configuration
 # ============================================================================

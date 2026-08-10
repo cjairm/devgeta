@@ -91,7 +91,7 @@ type reviewerRun struct {
 	model string
 }
 
-// ReviewRange is review-run's explicit-range mode (ADR-0022 §5): review an
+// ReviewRange is review-run's explicit-range mode (ADR-0023 §5): review an
 // arbitrary pair of commits under an explicit journal key, and persist each
 // reviewer's full report, instead of reviewing whatever is checked out.
 //
@@ -99,20 +99,20 @@ type reviewerRun struct {
 // mode, which is byte-identical to what review-run did before this mode
 // existed. That is deliberate: a partially filled group means the caller
 // intended a range review and got a branch review of unrelated code, which is
-// exactly the silent wrong-target failure ADR-0022 exists to prevent, so
+// exactly the silent wrong-target failure ADR-0023 exists to prevent, so
 // mode() refuses it instead.
 type ReviewRange struct {
 	// Base and Head are the ends of the reviewed range. Any commit-ish is
 	// accepted and resolved to an immutable SHA before a reviewer launches;
 	// the caller is responsible for Base being a MERGE BASE when the range
-	// must equal a pull request's diff (ADR-0022 §2 — a base branch tip makes
+	// must equal a pull request's diff (ADR-0023 §2 — a base branch tip makes
 	// everything merged since look reverted).
 	Base string
 	Head string
 	// Journal is the key the round's findings are read from and written under
 	// (e.g. `pr/owner/repo/213`). It is a plain string key, not a git branch:
 	// the journal has been addressable by an explicit key since `review-note
-	// --branch` landed, and ADR-0022 §3 is what a PR's key looks like.
+	// --branch` landed, and ADR-0023 §3 is what a PR's key looks like.
 	Journal string
 	// ReportDir is where each run's full report is persisted. Without it the
 	// reports die with the headless runs — stdout carries verdict lines only,
@@ -182,7 +182,7 @@ func (r ReviewRange) mode() (bool, error) {
 // does not narrow the review — see reviewNoteHeader. It rides the prompt in
 // both modes, unchanged by which one is running.
 //
-// rng, when set, switches the round to explicit-range mode (ADR-0022 §5): an
+// rng, when set, switches the round to explicit-range mode (ADR-0023 §5): an
 // arbitrary base..head pair is reviewed instead of the checkout, the journal is
 // keyed explicitly instead of by branch name, and each run's full report is
 // persisted. Its zero value is branch mode, unchanged. The two modes differ in
@@ -682,7 +682,7 @@ func reviewNoteSuffix(note string) (string, error) {
 //     widened a branch review to include uncommitted work; on someone else's
 //     pull request that work is unrelated, and including it would put the
 //     reader's own edits in front of a reviewer judging another author's
-//     change (ADR-0022 §5).
+//     change (ADR-0023 §5).
 //  2. The diff comes from `review-package <base> <head>`. `review-scope` and
 //     `branch-diff` read the checkout, so here they describe different code
 //     entirely — the same reasoning /review-pr's --target mode applies.
@@ -721,7 +721,7 @@ func rangeReviewPrompt(base, head, journalKey string) string {
 // nothing) and must keep re-checking that HEAD has not moved. Range mode is
 // handed its target, so none of those three refusals has anything left to
 // protect: the diff is an explicit non-empty range and the journal key is
-// stated, which is exactly what each refusal exists to infer (ADR-0022 §5).
+// stated, which is exactly what each refusal exists to infer (ADR-0023 §5).
 //
 // What range mode refuses instead is a target it cannot resolve — a base or
 // head this clone does not have, or a report directory it cannot create.
@@ -945,7 +945,7 @@ type ocEvent struct {
 //
 // report is the assistant text scanRunEvents already extracted from this run's
 // event stream — returned rather than dropped so range mode can persist it
-// (ADR-0022 §5) without parsing the same NDJSON a second way. Two derivations
+// (ADR-0023 §5) without parsing the same NDJSON a second way. Two derivations
 // of "the reviewer's report" could disagree, and the one that decided the
 // verdict is the one worth keeping.
 //

@@ -1,15 +1,15 @@
-# ADR-0022: A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
+# ADR-0023: A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
 
 **Status:** ACCEPTED
 **Date:** 2026-08-07
 **Deciders:** cjairm
-**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md), [ADR-0021](ADR-0021-pr-review-trigger-is-a-polled-state-read.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
+**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md), [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
 
 ---
 
 ## Context
 
-[ADR-0021](ADR-0021-pr-review-trigger-is-a-polled-state-read.md) decides **when** a PR gets
+[ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) decides **when** a PR gets
 reviewed. This one decides **what gets reviewed, and where the findings go** — the harder
 half, because every piece of devgeta's review machinery was built for a branch that is
 checked out, and a PR under review usually is not.

@@ -13,7 +13,7 @@ import (
 // before reading refs, so a hung remote can't block a caller expecting a fast,
 // single-call response. Shared by ReviewScope and PRReviewTarget: they differ
 // in what a failed fetch MEANS (ReviewScope reports it and carries on;
-// PRReviewTarget ends with an error, ADR-0022 §1), not in how long either is
+// PRReviewTarget ends with an error, ADR-0023 §1), not in how long either is
 // willing to wait.
 const reviewFetchTimeout = 10 * time.Second
 

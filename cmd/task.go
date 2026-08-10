@@ -418,7 +418,7 @@ or hold unrelated content. It applies to --open and --settle only; --ratify and
 
 // taskReviewRunReviewerFlag/NoteFlag are review-run's flags, and
 // taskReviewRunBase/Head/Journal/ReportDirFlag are its explicit-range mode's
-// group — all four together, or none of them (ADR-0022 §5).
+// group — all four together, or none of them (ADR-0023 §5).
 var (
 	taskReviewRunReviewerFlag  string
 	taskReviewRunNoteFlag      string

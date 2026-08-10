@@ -276,7 +276,8 @@ func GetWorktreeBasePath() string {
 // session. If force is false and the repo has hooks incompatible with git
 // worktrees, the user is prompted to confirm before proceeding.
 func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	repoRoot, err := w.Git.GetRepoRoot()
@@ -293,7 +294,8 @@ func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
 // Like Create, it does not move the attached client — call FollowWindow if the
 // user should end up in the new window.
 func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force bool) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	repoRoot, err := w.Git.GetRepoRootIn(paths.ExpandHome(repoPath))
@@ -310,9 +312,17 @@ func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force b
 // gives the same "one actionable message before anything is touched"
 // guarantee validateCoder gave for a single coder - a layout is just N of
 // those checks instead of one.
-func validateLayout(layout Layout) error {
+//
+// It RETURNS the layout, and callers must use the returned value: each pane's
+// check also resolves the absolute path of the tool it verified, and that
+// resolution rides on the copy this returns. Discarding it would leave the
+// eventual pane launch with nothing to build from, forcing it to either probe a
+// second time or launch the bare name - the two outcomes ADR-0021 rules out. The
+// returned layout is a copy, so calling this twice on one resolved layout (which
+// `dg ws` does: resolve once, create repeatedly) keeps each create independent.
+func validateLayout(layout Layout) (Layout, error) {
 	if len(layout.Panes) == 0 {
-		return fmt.Errorf("a layout with at least one pane is required")
+		return Layout{}, fmt.Errorf("a layout with at least one pane is required")
 	}
 	return layout.EnsureInstalled()
 }
@@ -508,23 +518,55 @@ func (w *WorktreeManager) FollowWindow(windowName string) error {
 	return w.Tmux.SwitchToWindow(session, windowName)
 }
 
-// buildWindowFromLayout creates windowName (pane 0 only) and then builds the
-// rest of layout's panes into it. If the window can't be created at all, or
-// any later step fails partway (pane 0's launch, a split, or a later pane's
-// launch/reselect), the partially built window is killed (best-effort) and
-// the worktree is rolled back - the same "all or nothing" guarantee the
-// single-pane path gave, never a window with some panes up alongside a
-// worktree that's still there.
+// paneShell resolves the shell every pane command in one window build is run
+// by and re-exec'd into - launch.go's two recipes interpolate it, twice each.
+// It is resolved once per window build, here, because this is the layer that
+// holds the tmux wrapper; layout.go's resolveShell takes its candidates as
+// input precisely so it needs no tmux dependency of its own.
+//
+// The candidate order is ADR-0021's ladder: the user's $SHELL first, then
+// tmux's own default-shell, with resolveShell's /bin/sh floor behind both. The
+// tmux query is a CANDIDATE, never a requirement - a failed or empty answer
+// simply drops it from the list. It is not an error, is not logged as one, and
+// cannot block a create; the floor means resolution never comes back empty.
+//
+// tmux is queried unconditionally rather than only when $SHELL turns out to be
+// unusable. Short-circuiting would make the tmux calls a create issues depend
+// on whichever $SHELL the machine happens to have, which is both harder to
+// reason about and exactly the kind of environment-dependent call sequence the
+// ordered window-build tests exist to pin.
+func (w *WorktreeManager) paneShell() string {
+	candidates := []string{os.Getenv("SHELL")}
+	if tmuxShell, ok := w.Tmux.DefaultShell(); ok {
+		candidates = append(candidates, tmuxShell)
+	}
+	return resolveShell(candidates...)
+}
+
+// buildWindowFromLayout creates windowName - pane 0, running pane 0's own
+// command as its process - and then builds the rest of layout's panes into it.
+// If the window can't be created at all, or any later step fails partway (a
+// split or the pane-0 reselect), the partially built window is killed
+// (best-effort) and the worktree is rolled back - the same "all or nothing"
+// guarantee the single-pane path gave, never a window with some panes up
+// alongside a worktree that's still there.
 func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layout Layout) error {
-	if err := w.Tmux.CreateWindow(windowName, wtPath); err != nil {
+	// Pane 0's command goes to the call that CREATES pane 0, because that is
+	// the only place it can go: by the time buildWindowPanes runs, pane 0
+	// already exists (ADR-0021 - the command travels as process arguments, so
+	// the 1024-byte pty input queue that silently ate a long --prompt is out
+	// of the path entirely).
+	shell := w.paneShell()
+	if err := w.Tmux.CreateWindow(
+		windowName,
+		wtPath,
+		layout.Panes[0].creationCommand(shell),
+	); err != nil {
 		_ = w.Git.RemoveWorktree(wtPath, true, "")
 		return fmt.Errorf("failed to create tmux window: %w", err)
 	}
 
-	sendKeys := func(command string) error {
-		return w.Tmux.SendKeysToWindow(windowName, command)
-	}
-	if err := w.buildWindowPanes(windowName, wtPath, layout, sendKeys); err != nil {
+	if err := w.buildWindowPanes(windowName, wtPath, shell, layout); err != nil {
 		_ = w.Tmux.KillWindow(windowName)
 		_ = w.Git.RemoveWorktree(wtPath, true, "")
 		return err
@@ -532,18 +574,29 @@ func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layou
 	return nil
 }
 
-// buildWindowPanes builds every pane of layout into a window that already
-// exists with exactly one (pane 0) pane - i.e. right after CreateWindow,
-// CreateWindowInSession, or CreateSessionWithWindow. target is how the window
-// is addressed for SplitWindow/ActivePaneID: a bare window name (current
-// session) or "session:window" (qualified, for a window that may not be in
-// the attached client's session). sendKeys sends a command to target's
-// currently active pane, mirroring whichever of SendKeysToWindow /
-// SendKeysToWindowInSession target's form matches.
+// buildWindowPanes builds every pane of layout AFTER pane 0 into a window that
+// already exists with exactly one (pane 0) pane - i.e. right after
+// CreateWindow, CreateWindowInSession, or CreateSessionWithWindow. target is
+// how the window is addressed for SplitWindow/ActivePaneID: a bare window name
+// (current session) or "session:window" (qualified, for a window that may not
+// be in the attached client's session). shell must come from paneShell.
+//
+// Pane 0 is deliberately not built here, and that is ADR-0021's shape rather
+// than a division of labor: a pane's command is exec'd BY the tmux call that
+// brings the pane into existence, and pane 0 was brought into existence by the
+// caller's window-creating call. So pane 0's command is the caller's to pass -
+// each of the three window-creating wrappers takes it - and this function
+// starts at pane 1, where SplitWindow does the same job.
+//
+// Nothing is typed into any pane here. The send-keys seam this function used to
+// take is gone, and that is the fix this whole change exists for: send-keys
+// writes into the pane's pty, whose input queue is capped at 1024 bytes on
+// macOS/BSD, and an overflowing write is discarded - the tail of the command
+// AND the trailing Enter - with tmux still exiting 0. A window came up looking
+// correct with a coder sitting at an empty session (ADR-0021).
 func (w *WorktreeManager) buildWindowPanes(
-	target, wtPath string,
+	target, wtPath, shell string,
 	layout Layout,
-	sendKeys func(command string) error,
 ) error {
 	// Pane 0's tmux pane_id must be captured now, before any split, while it
 	// is still the window's only (and therefore unambiguously "active") pane.
@@ -557,31 +610,32 @@ func (w *WorktreeManager) buildWindowPanes(
 		pane0ID = id
 	}
 
-	for i, pane := range layout.Panes {
-		if i > 0 {
-			// split-window always splits the CURRENTLY ACTIVE pane and makes
-			// the new pane active, so building panes strictly in order (pane
-			// 0 first, no explicit pane index anywhere) is enough for each
-			// pane's command to land in the right place: right after this
-			// split, the new pane is active, and sendKeys below (send-keys
-			// with no pane index) always targets whichever pane in the
-			// window is currently active.
-			if err := w.Tmux.SplitWindow(target, wtPath, pane.Split); err != nil {
-				return fmt.Errorf(
-					"layout %q, pane %d: failed to split window: %w",
-					layout.Name, i+1, err,
-				)
-			}
-		}
-		// A pane with no command (the "shell" layout's pane - see shellPane)
-		// wants the shell tmux already started for it, nothing typed. Sending
-		// an empty command would still press Enter at that shell, printing a
-		// stray prompt line for no reason.
-		if pane.Command == "" {
-			continue
-		}
-		if err := sendKeys(pane.Command); err != nil {
-			return fmt.Errorf("layout %q, pane %d: failed to launch: %w", layout.Name, i+1, err)
+	// Panes are still built strictly in order, starting at pane 1, and the
+	// order is load-bearing: split-window always splits the CURRENTLY ACTIVE
+	// pane and makes the new pane active, so going in order is what puts each
+	// pane where the layout says without an explicit pane index anywhere.
+	//
+	// Carrying the command ON the split (rather than in a call after it) also
+	// removes the only gap in that reasoning: a pane's command is its process
+	// from the pane's first instant, so "which pane is active" can no longer
+	// change between a pane being created and its command arriving.
+	//
+	// A pane with no command (the "shell" layout's pane - see shellPane) gets
+	// an empty command argument, which is exactly the argument list this split
+	// produced before commands were passed at creation: tmux starts the pane's
+	// shell and nothing else.
+	for i := 1; i < len(layout.Panes); i++ {
+		pane := layout.Panes[i]
+		if err := w.Tmux.SplitWindow(
+			target,
+			wtPath,
+			pane.Split,
+			pane.creationCommand(shell),
+		); err != nil {
+			return fmt.Errorf(
+				"layout %q, pane %d: failed to split window: %w",
+				layout.Name, i+1, err,
+			)
 		}
 	}
 
@@ -1784,7 +1838,8 @@ func (w *WorktreeManager) repoSlugForWorktree(name string) string {
 // worktree's parent folder (the repo slug), creating that session if it does
 // not exist. Works from any directory or session.
 func (w *WorktreeManager) Repair(name string, layout Layout) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 
@@ -1896,7 +1951,8 @@ func (w *WorktreeManager) RemoveWithSessionInRepo(repoSlug, name string) error {
 
 // RepairInRepo repairs a worktree in a specific repo, bypassing the slug-search ambiguity.
 func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) error {
-	if err := validateLayout(layout); err != nil {
+	layout, err := validateLayout(layout)
+	if err != nil {
 		return err
 	}
 	// realWorktreePathOrConfigured, not worktreePath - see Repair's identical
@@ -1938,33 +1994,40 @@ func (w *WorktreeManager) RepairInRepo(repoSlug, name string, layout Layout) err
 //   - No live window: the review command becomes the window's only pane,
 //     built via the same create-if-missing path ensureWindow already gives
 //     Create/Repair/RepairInRepo.
-//   - Live window: a new pane is split off and the review command is sent
-//     there - never into the window's existing pane, which may already be
-//     running a coder's interactive TUI (send-keys would type the review
-//     command into its composer instead of executing it).
+//   - Live window: a new pane is split off with the review command as its
+//     process - never into the window's existing pane, which may already be
+//     running a coder's interactive TUI (typing the review command there would
+//     land it in the coder's composer instead of executing it). The one
+//     exception is an existing pane that is sitting idle at a shell, which
+//     launchReviewInLiveWindow reuses.
 //
-// A failed launch in the live-window case rolls back only what this call
-// added - the new pane it just split - never the user's window, its
-// existing pane, or the worktree: unlike buildWindowFromLayout's rollback
-// (which also kills the window and removes the worktree it just created),
-// R never creates a worktree, and the window here is the user's, already
-// holding their work.
+// A failed launch in the live-window case never touches the user's window, its
+// existing pane, or the worktree - unlike buildWindowFromLayout's rollback,
+// which kills the window and removes the worktree it just created. R never
+// creates a worktree, and the window here is the user's, already holding their
+// work. See launchReviewInLiveWindow on why there is now nothing left for it to
+// roll back either.
 func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string) error {
-	reviewCmd, err := ReviewCommand(reviewerKey)
+	// reviewerPane validates reviewerKey and runs the review path's ONE opencode
+	// probe, keeping its resolution on the pane it returns (see reviewerPane).
+	// Both launches below build from this single pane, so the check and whatever
+	// runs cannot describe different things (ADR-0021).
+	//
+	// A review is always launched via OpenCode, regardless of the worktree's own
+	// layout - a user whose default layout is claude/claude-nvim has never needed
+	// opencode, so it may never have been installed. Probing here, before any tmux
+	// call, turns that into one actionable error instead of a pane that prints
+	// "command not found" while the dashboard reports "review started" with no
+	// error anywhere.
+	//
+	// The probed token is the "opencode" BINARY (see
+	// OpenCodeCoder.EnsureInstalled), because that is what both launches below
+	// name - the created pane execs it, and the live-window branch types it. So an
+	// opencode installed outside devgeta - one whose "oc" alias was never written
+	// to devgeta.zsh - passes this check and launches correctly either way
+	// (ADR-0021's 2026-08-07 amendment; the older alias probe refused it outright).
+	pane, err := reviewerPane(reviewerKey)
 	if err != nil {
-		return err
-	}
-
-	// A review is always launched via OpenCode (the "oc" alias), regardless
-	// of the worktree's own layout - a user whose default layout is
-	// claude/claude-nvim has never needed oc, so it may never have been
-	// installed. Checking here, before any tmux call, turns that into one
-	// actionable error instead of a pane that prints "oc: command not found"
-	// while the dashboard reports "review started" with no error anywhere.
-	// EnsureInstalled checks the "oc" alias itself (see its doc comment), not
-	// the raw "opencode" binary, so a coder installed outside devgeta (whose
-	// alias was never written to devgeta.zsh) correctly fails this check.
-	if err := (&OpenCodeCoder{}).EnsureInstalled(); err != nil {
 		return err
 	}
 
@@ -1991,23 +2054,42 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 		// two queries, ensureWindow's existing-window branch would send the
 		// review command via a window-targeted send-keys into whatever pane
 		// is active, exactly the unsafe behavior this cycle exists to
-		// prevent. This ad-hoc one-pane layout has no install checker to run
-		// (a review launch never introduces a new tool to check for beyond
-		// the oc check above).
+		// prevent. This one-pane layout carries no install checker, because
+		// reviewerPane already probed - see its doc comment on why a nil check
+		// is what keeps this from becoming a second probe.
 		layout := Layout{
 			Name:  "review-" + reviewerKey,
-			Panes: []Pane{{Command: reviewCmd}},
+			Panes: []Pane{pane},
 		}
 		return w.createWindowWithLayout(repoSlug, windowName, wtPath, layout)
 	}
 
-	return w.launchReviewInLiveWindow(session, windowName, wtPath, reviewCmd)
+	return w.launchReviewInLiveWindow(session, windowName, wtPath, pane)
 }
 
-// launchReviewInLiveWindow gets reviewCmd running in an existing (live)
-// window: in a pane that is sitting at a shell prompt if the window has one,
-// otherwise in a new pane split off for it. Focus is restored to whichever
-// pane was active beforehand, on both success and failure.
+// launchReviewInLiveWindow gets pane's review command running in an existing
+// (live) window: in a pane that is sitting at a shell prompt if the window has
+// one, otherwise in a new pane split off for it. Focus is restored to whichever
+// pane was active beforehand on the success paths. There is no failure path
+// that moves focus: a failed split never creates a pane, so it never touches
+// focus in the first place, and a failed send-keys into the reused pane leaves
+// that pane's own focus exactly as it was - both leave focus right where it
+// found it, with nothing to restore.
+//
+// It takes the whole reviewer Pane, not just a command string, so this branch and
+// LaunchReviewInRepo's create branch spend the SAME probe's resolution (see
+// reviewerPane). The two sub-branches then use DIFFERENT forms of that one pane,
+// and which form is decided by one question only - is this pane NEW? (ADR-0021
+// part 4; asking "is the window live?" is what put this function's split branch
+// on the wrong side of the line in an earlier draft, since the function is named
+// for the window.)
+//
+//   - Reusing an idle shell pane sends pane.Command with send-keys. That pane
+//     already exists and is running a live interactive shell, so there is
+//     nothing to exec into; the 1023-byte guard in the tmux wrapper is what
+//     keeps that path from ever truncating silently.
+//   - Splitting a new pane CREATES a pane, so it passes pane.creationCommand at
+//     creation and types nothing at all.
 //
 // The rule this function enforces is "never type into a pane that is running
 // something" - not "always split". An idle shell is not running anything, so
@@ -2026,13 +2108,27 @@ func (w *WorktreeManager) LaunchReviewInRepo(repoSlug, name, reviewerKey string)
 // retargetWindowAfterMove already accepts for `cd`, and pressing R from the
 // dashboard means the user is not typing in that pane at that moment.
 //
-// The command is sent with SendKeysToPane(paneID, ...), never a
+// The reuse branch sends with SendKeysToPane(paneID, ...), never a
 // window/session-targeted send-keys: the latter resolves to whatever pane is
 // active in the window at send time, which could have changed in the gap
 // since it was chosen (a user keystroke, a tmux hook), landing the review
-// command in the coder's pane - the exact outcome this function prevents.
+// command in the coder's pane - the exact outcome this function prevents. The
+// split branch needs no such precaution at all: its command is an argument of
+// the very call that creates the pane, so there is no gap and no target to
+// resolve.
+//
+// Rollback: nothing to undo. It used to kill the pane it had just split when
+// the follow-up send-keys failed, which was the only failure that could happen
+// AFTER a pane existed. With the command carried by the split itself, that
+// second step is gone - split-window either creates the pane (with its command
+// already running) or fails having created nothing, so a failed split leaves
+// nothing behind and a successful one leaves nothing that can still fail. The
+// negative guarantees are unchanged and are what the tests pin: this function
+// never kills the window, never touches the user's existing pane, and never
+// removes a worktree (R does not create one).
 func (w *WorktreeManager) launchReviewInLiveWindow(
-	session, windowName, wtPath, reviewCmd string,
+	session, windowName, wtPath string,
+	pane Pane,
 ) error {
 	target := session + ":" + windowName
 
@@ -2044,12 +2140,14 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 		return fmt.Errorf("failed to identify active pane in %s: %w", windowName, err)
 	}
 
-	// Reuse before creating. No rollback branch here on purpose: this pane
-	// already existed, so a failed send-keys leaves it exactly as it was -
-	// killing it would destroy a pane devgeta did not create, and the user's
-	// shell with it.
+	// Reuse before creating. The TYPED form is correct here and only here: this
+	// pane already exists and is running the user's interactive shell, so there
+	// is no process to exec the command as (ADR-0021 part 4). No rollback branch
+	// on purpose either - the pane already existed, so a failed send-keys leaves
+	// it exactly as it was, and killing it would destroy a pane devgeta did not
+	// create, and the user's shell with it.
 	if idlePaneID, ok := w.idleShellPaneIn(windowName); ok {
-		if err := w.Tmux.SendKeysToPane(idlePaneID, reviewCmd); err != nil {
+		if err := w.Tmux.SendKeysToPane(idlePaneID, pane.Command); err != nil {
 			return fmt.Errorf("failed to launch review in %s: %w", windowName, err)
 		}
 		if idlePaneID != coderPaneID {
@@ -2059,32 +2157,25 @@ func (w *WorktreeManager) launchReviewInLiveWindow(
 		return nil
 	}
 
-	if err := w.Tmux.SplitWindow(target, wtPath, "vertical"); err != nil {
+	// This pane is NEW, so its command is exec'd as the pane's process at
+	// creation, built from the resolution this pane already carries (ADR-0021
+	// part 3). The shell is resolved here rather than at the top of the function
+	// so the reuse branch above, which needs none, pays for none.
+	shell := w.paneShell()
+	if err := w.Tmux.SplitWindow(
+		target,
+		wtPath,
+		splitVertical,
+		pane.creationCommand(shell),
+	); err != nil {
 		return fmt.Errorf("failed to split window %s: %w", windowName, err)
 	}
 
-	// split-window always makes the new pane active (see buildWindowPanes's
-	// comment on the same property), so this second ActivePaneID call -
-	// immediately after the split - captures the new pane's id.
-	newPaneID, err := w.Tmux.ActivePaneID(target)
-	if err != nil {
-		return fmt.Errorf("failed to identify new pane in %s: %w", windowName, err)
-	}
-
-	if err := w.Tmux.SendKeysToPane(newPaneID, reviewCmd); err != nil {
-		// Roll back only the pane this call added - never the window or the
-		// worktree (there is none to roll back; R doesn't create one).
-		_ = w.Tmux.KillPane(newPaneID)
-		// Best-effort: this is cleanup after an already-failed operation, not
-		// something to fail loudly over.
-		_ = w.Tmux.SelectPane(coderPaneID)
-		return fmt.Errorf("failed to launch review in %s: %w", windowName, err)
-	}
-
 	// Best-effort: land the user back on their coder pane, not the reviewer,
-	// the next time they attach to this window - the review is already
-	// running correctly in its own pane regardless of which pane is "active"
-	// here. Swallow the error: not fatal, at most log-worthy.
+	// the next time they attach to this window - split-window makes the new
+	// pane active, and the review is already running correctly in it regardless
+	// of which pane is "active" here. Swallow the error: not fatal, at most
+	// log-worthy.
 	_ = w.Tmux.SelectPane(coderPaneID)
 	return nil
 }
@@ -2145,20 +2236,35 @@ func (w *WorktreeManager) createWindowWithLayout(
 	layout Layout,
 ) error {
 	session := TmuxSessionName(repoSlug)
+	// Both branches create pane 0, so both carry pane 0's command (ADR-0021:
+	// any tmux call that brings a pane into existence carries that pane's
+	// command). new-session is the one that reads like session setup rather
+	// than pane setup, and it is the FIRST worktree for a repo - the common
+	// case - so leaving it out would have kept the truncation bug alive
+	// exactly where users hit it most.
+	shell := w.paneShell()
+	pane0Command := layout.Panes[0].creationCommand(shell)
 	if w.Tmux.HasSession(session) {
-		if err := w.Tmux.CreateWindowInSession(session, windowName, wtPath); err != nil {
+		if err := w.Tmux.CreateWindowInSession(
+			session,
+			windowName,
+			wtPath,
+			pane0Command,
+		); err != nil {
 			return fmt.Errorf("failed to create tmux window: %w", err)
 		}
 	} else {
-		if err := w.Tmux.CreateSessionWithWindow(session, windowName, wtPath); err != nil {
+		if err := w.Tmux.CreateSessionWithWindow(
+			session,
+			windowName,
+			wtPath,
+			pane0Command,
+		); err != nil {
 			return fmt.Errorf("failed to create tmux session: %w", err)
 		}
 	}
 
-	sendKeys := func(command string) error {
-		return w.Tmux.SendKeysToWindowInSession(session, windowName, command)
-	}
-	if err := w.buildWindowPanes(session+":"+windowName, wtPath, layout, sendKeys); err != nil {
+	if err := w.buildWindowPanes(session+":"+windowName, wtPath, shell, layout); err != nil {
 		// Kill only the window, never the session: other worktrees' windows
 		// may already live in this same repo-slug session.
 		_ = w.Tmux.KillWindow(windowName)

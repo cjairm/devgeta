@@ -14,7 +14,7 @@ import (
 // git or the user drives off these, so writing them moves no branch, changes
 // no upstream tracking, and leaves the working tree exactly as the human left
 // it — which is the point when a review loop runs unattended on an interval
-// (ADR-0022 §1).
+// (ADR-0023 §1).
 const prLocalRefNamespace = "refs/devgeta/pr/"
 
 // prLocalRefs names the two refs one PR's review target is resolved from.
@@ -88,7 +88,7 @@ type prReviewTargetData struct {
 // baseRefName is the ONLY field this command needs: the head comes from
 // refs/pull/<n>/head, which the upstream repo serves for fork PRs too, so
 // headRefName and the head repository's owner would be data with nowhere to
-// go — the fork-remote path they exist for is the one ADR-0022 rejected.
+// go — the fork-remote path they exist for is the one ADR-0023 rejected.
 func (p *PRManager) prBaseBranch(prNumber string) (string, error) {
 	raw, err := p.Gh.PRView(prNumber, "baseRefName")
 	if err != nil {
@@ -114,7 +114,7 @@ func (p *PRManager) prBaseBranch(prNumber string) (string, error) {
 // This output is THE context for a PR review — reviewer runs, journal stamps,
 // reviewer-type selection, finding verification, and posting all key off it,
 // and none of them read the working tree. Three properties make that safe
-// (ADR-0022):
+// (ADR-0023):
 //
 //   - Every call fetches refs/pull/<n>/head and the base branch first, so the
 //     target is what GitHub shows right now. A FAILED fetch ends the command
@@ -178,7 +178,7 @@ func (p *PRManager) PRReviewTarget(prNumber string) (string, error) {
 	// and after a force-push that rebased the PR, that base is not even an
 	// ancestor of the head returned, so `base..head` shows the base branch's
 	// own commits as this PR's deletions. One resolution, reused, is what makes
-	// the printed pair describe a single diff (ADR-0022).
+	// the printed pair describe a single diff (ADR-0023).
 	base, err := p.Git.MergeBase(baseRef, head)
 	if err != nil {
 		return "", fmt.Errorf("pr-review-target: %w", err)

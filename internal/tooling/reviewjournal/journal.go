@@ -30,7 +30,7 @@ func ValidResolution(s string) bool {
 }
 
 // PRKeyPrefix opens the journal keys that name a pull request instead of a
-// branch (ADR-0022 §4). A PR reviewed without a checkout — a fork's, or one
+// branch (ADR-0023 §4). A PR reviewed without a checkout — a fork's, or one
 // reviewed from an unrelated worktree — has no local branch to key on, so its
 // findings are filed under "pr/<owner>/<repo>/<number>".
 //

@@ -18,7 +18,7 @@ const (
 
 // ghUserRequest and ghTeamRequest render the two shapes gh emits inside
 // reviewRequests. A team entry carries name/slug and NO login — that is the
-// wire fact ADR-0021 §3's personal-request-only rule rests on, so the tests
+// wire fact ADR-0022 §3's personal-request-only rule rests on, so the tests
 // pin it as literal JSON rather than building it from the parsing structs.
 func ghUserRequest(login string) string {
 	return fmt.Sprintf(`{"__typename":"User","login":%q}`, login)
@@ -170,7 +170,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			action: "wait",
 		},
 		{
-			// ADR-0021 §3: a request addressed to a team the user may well be
+			// ADR-0022 §3: a request addressed to a team the user may well be
 			// on is a staffing judgment the loop does not make.
 			name:     "a team request that does not name the user is not a request",
 			state:    "OPEN",

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// --- PR keys (ADR-0022 §4: the journal's second key namespace) ---
+// --- PR keys (ADR-0023 §4: the journal's second key namespace) ---
 
 // The writer of a PR key and the reader that has to tell one from a branch
 // must agree, so what PRKey builds is exactly what IsPRKey recognizes — and a

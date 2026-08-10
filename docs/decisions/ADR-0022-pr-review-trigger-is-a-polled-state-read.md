@@ -1,9 +1,9 @@
-# ADR-0021: The PR review trigger is a polled state read, and one invocation is one tick
+# ADR-0022: The PR review trigger is a polled state read, and one invocation is one tick
 
 **Status:** ACCEPTED
 **Date:** 2026-08-07
 **Deciders:** cjairm
-**Related:** [ADR-0022](ADR-0022-a-pr-review-targets-immutable-shas.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
+**Related:** [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
 
 ---
 

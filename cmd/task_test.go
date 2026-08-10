@@ -678,7 +678,7 @@ func TestTask_ReviewNotes(t *testing.T) {
 	})
 
 	// --rev is what makes freshness mean anything for code that is not checked
-	// out (ADR-0022 §4): it must reach the task layer, and it must not be
+	// out (ADR-0023 §4): it must reach the task layer, and it must not be
 	// silently accepted beside the two flags that compute no freshness at all.
 	t.Run("passes --rev through", func(t *testing.T) {
 		resetReviewNoteFlags(t)
@@ -756,7 +756,7 @@ func TestTask_ReviewNote(t *testing.T) {
 	})
 
 	// --rev is what makes a review of code that is not checked out possible
-	// (ADR-0022 §4); it has to reach the task layer on both entry-creating
+	// (ADR-0023 §4); it has to reach the task layer on both entry-creating
 	// paths or the entry is stamped against the wrong source.
 	t.Run("--rev reaches --open and --settle", func(t *testing.T) {
 		resetReviewNoteFlags(t)

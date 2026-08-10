@@ -40,5 +40,6 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md) — The review loop refuses the default branch, and the fix is a branch
 - [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) — A review covers the branch's working state, not just its committed history
 - [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) — A reviewer that reports nothing is retried once
-- [ADR-0021](ADR-0021-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick
-- [ADR-0022](ADR-0022-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
+- [ADR-0021](ADR-0021-pane-commands-are-exec-d-not-typed.md) — A pane's command is exec'd at pane creation, not typed into the pane
+- [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick
+- [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner

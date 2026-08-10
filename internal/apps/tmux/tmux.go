@@ -145,8 +145,27 @@ func (t *Tmux) CreateSession(name, workdir string) error {
 // window is named windowName, rooted at workdir. Used when a worktree's session
 // does not yet exist, so the session starts with the worktree window directly
 // instead of a stray default window.
-func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir string) error {
-	return t.ExecuteCommand("new-session", "-d", "-s", session, "-n", windowName, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (tmux execs
+// it as the pane's process rather than devgeta typing it in afterward - see
+// ADR-0021). An empty command produces the exact argument list this method
+// produced before command existed, so existing callers passing "" see
+// byte-identical behavior.
+func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir, command string) error {
+	args := []string{"new-session", "-d", "-s", session, "-n", windowName, "-c", workdir}
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
+}
+
+// appendPaneCommand appends command as the final argv element when non-empty,
+// returning args unchanged when command is "". Shared by every tmux call that
+// creates a pane (CreateSessionWithWindow, CreateWindowInSession, CreateWindow,
+// SplitWindow) so the pane's shell-command (ADR-0021) is appended identically
+// everywhere instead of once per call site.
+func appendPaneCommand(args []string, command string) []string {
+	if command == "" {
+		return args
+	}
+	return append(args, command)
 }
 
 // CreateWindowInSession creates a window inside a specific session.
@@ -154,8 +173,13 @@ func (t *Tmux) CreateSessionWithWindow(session, windowName, workdir string) erro
 // -d for the same reason CreateWindow passes it: building a window must never
 // move the attached client. Without it, a client attached to `session` gets
 // dragged to the new window, overriding a caller that decided to stay put.
-func (t *Tmux) CreateWindowInSession(session, name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-d", "-t", session+":", "-n", name, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (see
+// ADR-0021). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) CreateWindowInSession(session, name, workdir, command string) error {
+	args := []string{"new-window", "-d", "-t", session + ":", "-n", name, "-c", workdir}
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // SessionInfo describes one tmux session for listing purposes.
@@ -460,13 +484,68 @@ func (t *Tmux) CurrentSession() (string, bool) {
 	return name, true
 }
 
+// DefaultShell returns tmux's server-global "default-shell" option value -
+// the shell tmux itself would launch a pane with when nothing more specific
+// is given. Unlike CurrentSession, this does not gate on running inside a
+// tmux client: "show-options -gv default-shell" is a server-global query that
+// answers from outside a tmux client too, and the pane-creation paths that
+// need this run from outside tmux (a plain `dg wt create` invocation).
+// Returns ("", false) on a failed or empty query - callers treat "no answer"
+// as "skip this candidate", not as a failure.
+func (t *Tmux) DefaultShell() (string, bool) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args:    []string{"show-options", "-gv", "default-shell"},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", false
+	}
+	shell := strings.TrimSpace(stdout)
+	if shell == "" {
+		return "", false
+	}
+	return shell, true
+}
+
 // SwitchToSession moves the attached client to the given session.
 func (t *Tmux) SwitchToSession(name string) error {
 	return t.ExecuteCommand("switch-client", "-t", name)
 }
 
+// maxSendKeysBytes is the largest send-keys payload guaranteed to reach a
+// pane intact. Measured on macOS/BSD (ADR-0021): the pty input queue backing
+// an interactive pane is capped at 1024 bytes; a write that overflows it is
+// silently discarded by the terminal driver - including the trailing Enter
+// send-keys appends - while tmux itself still exits 0. 1023 bytes of command
+// plus that Enter fills the queue exactly, so 1023 is the last length that is
+// safe to send.
+const maxSendKeysBytes = 1023
+
+// checkSendKeysLength rejects a send-keys payload that the pty cannot
+// deliver intact, instead of handing it over to be silently cut in half (see
+// ADR-0021, part 4: any remaining send-keys path refuses to truncate).
+// Chunking the payload into sub-limit writes is deliberately not an option
+// here - it keeps the data flowing through the terminal and reintroduces the
+// same timing-dependent silent loss this guard exists to remove.
+func checkSendKeysLength(keys string) error {
+	if len(keys) > maxSendKeysBytes {
+		return fmt.Errorf(
+			"send-keys payload is %d bytes, over the %d-byte tmux pty input queue limit; "+
+				"shorten it before sending - past this limit the terminal driver silently "+
+				"drops the excess and the trailing Enter, and tmux still reports success (ADR-0021)",
+			len(keys),
+			maxSendKeysBytes,
+		)
+	}
+	return nil
+}
+
 // SendKeysToWindowInSession sends keystrokes to a window in a specific session.
 func (t *Tmux) SendKeysToWindowInSession(session, window, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", session+":"+window, keys, "Enter")
 }
 
@@ -483,6 +562,9 @@ func (t *Tmux) HasSession(name string) bool {
 
 // SendKeys sends keystrokes to a session
 func (t *Tmux) SendKeys(session, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", session, keys, "Enter")
 }
 
@@ -495,26 +577,37 @@ func (t *Tmux) SendKeys(session, keys string) error {
 // dashboard's worktree.attach_after_create: false was overridden by this call
 // before it was ever read. Moving the client is now always a separate,
 // explicit step (SwitchToWindow), so only a caller that asks for it gets it.
-func (t *Tmux) CreateWindow(name, workdir string) error {
-	return t.ExecuteCommand("new-window", "-d", "-n", name, "-c", workdir)
+//
+// command, when non-empty, is appended as the pane's shell-command (see
+// ADR-0021). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) CreateWindow(name, workdir, command string) error {
+	args := []string{"new-window", "-d", "-n", name, "-c", workdir}
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // SplitWindow splits an existing window, rooting the new pane at workdir.
 // direction describes the resulting pane arrangement (this cycle's Layout
 // model's language), not tmux's own flag letters: "vertical" means panes
 // side by side (tmux's -h), "horizontal" means panes stacked (tmux's -v).
-func (t *Tmux) SplitWindow(window, workdir, direction string) error {
+//
+// command, when non-empty, is appended as the new pane's shell-command (see
+// ADR-0021). An empty command produces the exact argument list this method
+// produced before command existed.
+func (t *Tmux) SplitWindow(window, workdir, direction, command string) error {
+	var args []string
 	switch direction {
 	case "vertical":
-		return t.ExecuteCommand("split-window", "-h", "-t", window, "-c", workdir)
+		args = []string{"split-window", "-h", "-t", window, "-c", workdir}
 	case "horizontal":
-		return t.ExecuteCommand("split-window", "-v", "-t", window, "-c", workdir)
+		args = []string{"split-window", "-v", "-t", window, "-c", workdir}
 	default:
 		return fmt.Errorf(
 			"unknown split direction %q (want \"vertical\" or \"horizontal\")",
 			direction,
 		)
 	}
+	return t.ExecuteCommand(appendPaneCommand(args, command)...)
 }
 
 // ActivePaneID returns the tmux pane_id (e.g. "%12") of window's currently
@@ -589,28 +682,25 @@ func (t *Tmux) KillWindow(name string) error {
 	return t.ExecuteCommand("kill-window", "-t", name)
 }
 
-// KillPane closes a specific pane by its tmux pane_id (e.g. "%12"). Pane ids
-// are unique server-wide, so no window or session qualification is needed -
-// the same property ActivePaneID and SelectPane already rely on. Used to
-// roll back a review launch that failed after splitting a new pane, without
-// touching the window or session that pane lived in.
-func (t *Tmux) KillPane(paneID string) error {
-	return t.ExecuteCommand("kill-pane", "-t", paneID)
-}
-
 // SendKeysToWindow sends keystrokes to a specific window
 func (t *Tmux) SendKeysToWindow(window, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", window, keys, "Enter")
 }
 
 // SendKeysToPane sends keystrokes to the pane identified by paneID (a tmux
 // pane_id like "%12", as returned by ActivePaneID). Pane IDs are unique
 // server-wide, so no window or session qualification is needed - the same
-// property KillPane and SelectPane already rely on. Unlike
+// property ActivePaneID and SelectPane already rely on. Unlike
 // SendKeysToWindow/SendKeysToWindowInSession, which resolve to whatever pane
 // is active in the target window at send time, this always lands in the
 // exact pane captured earlier, even if the active pane has since changed.
 func (t *Tmux) SendKeysToPane(paneID, keys string) error {
+	if err := checkSendKeysLength(keys); err != nil {
+		return err
+	}
 	return t.ExecuteCommand("send-keys", "-t", paneID, keys, "Enter")
 }
 

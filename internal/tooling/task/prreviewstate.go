@@ -42,7 +42,7 @@ var prReviewStateFields = []string{"state", "isDraft", "reviewRequests", "review
 //
 // gh emits `login` for a USER request and only `name`/`slug` for a TEAM
 // request, so a team entry unmarshals here with an empty Login. That is why
-// ADR-0021 §3's personal-request-only rule needs no filter of its own: a
+// ADR-0022 §3's personal-request-only rule needs no filter of its own: a
 // request that does not name a user cannot match a login.
 type prReviewRequest struct {
 	Login string `json:"login"`
@@ -81,7 +81,7 @@ type prReviewStateData struct {
 //	requested: yes
 //	my-review: none
 //
-// This is THE trigger read (ADR-0021): every tick calls it first and takes
+// This is THE trigger read (ADR-0022): every tick calls it first and takes
 // exactly one row of the decision table from it, and it is called again
 // immediately before posting as a re-check. Three properties make that safe:
 //
@@ -184,7 +184,7 @@ func prLifecycle(state string, isDraft bool) (string, error) {
 //
 // Logins are compared case-insensitively because GitHub treats them that way,
 // and an entry with no login (a team request) can never match — which is
-// ADR-0021 §3: a request addressed to a team is a staffing judgment the loop
+// ADR-0022 §3: a request addressed to a team is a staffing judgment the loop
 // does not make.
 func requestsReviewFrom(requests []prReviewRequest, login string) bool {
 	for _, r := range requests {

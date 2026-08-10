@@ -3,7 +3,7 @@
 **Status:** ACCEPTED
 **Date:** 2026-08-06
 **Deciders:** cjairm
-**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md), [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) (what "nothing to review" means for a non-default branch: no commits ahead AND a clean tree, since uncommitted work is reviewable), [ADR-0022](ADR-0022-a-pr-review-targets-immutable-shas.md) (scopes an exception to this ADR's default-branch refusal: explicit-range mode skips it)
+**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md), [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) (what "nothing to review" means for a non-default branch: no commits ahead AND a clean tree, since uncommitted work is reviewable), [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) (scopes an exception to this ADR's default-branch refusal: explicit-range mode skips it)
 
 ---
 

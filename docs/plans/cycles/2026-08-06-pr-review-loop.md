@@ -137,12 +137,12 @@ no-third-undocumented-outcome rule as the sibling cycle.
 - [x] ADR: trigger and driver — poll GitHub's `reviewRequests` state rather than
       webhooks/events; idempotent tick + external driver rather than a stateful
       watcher; personal-request-only filter (write before implementation, §11)
-      → [ADR-0021](../../decisions/ADR-0021-pr-review-trigger-is-a-polled-state-read.md)
+      → [ADR-0022](../../decisions/ADR-0022-pr-review-trigger-is-a-polled-state-read.md)
 - [x] ADR: review target for a PR that isn't checked out — read-only fetch of
       `refs/pull/<n>/head`, merge-base-correct range, immutable SHAs; the PR-scoped
       journal key; and `review-run`'s explicit-range mode (write before
       implementation, §11)
-      → [ADR-0022](../../decisions/ADR-0022-a-pr-review-targets-immutable-shas.md)
+      → [ADR-0023](../../decisions/ADR-0023-a-pr-review-targets-immutable-shas.md)
 - [x] gh wrapper method: `AuthenticatedLogin()` (`gh api user --jq .login`) — the
       account the request must name. The PR side needed no new wrapper method: the
       existing `PRView(prNumber, fields...)` already selects fields, so the state read
@@ -568,7 +568,7 @@ without `--base`, `/review-pr` stops and says it needs the base — it never gue
 base and never falls back to the checked-out branch's diff. **`--base` is the merge
 base, not the base branch's tip**: a tip-based diff shows commits merged into the
 base since the PR opened as if this PR reverted them, the reversed-changes failure
-[ADR-0022](../../decisions/ADR-0022-a-pr-review-targets-immutable-shas.md) §2
+[ADR-0023](../../decisions/ADR-0023-a-pr-review-targets-immutable-shas.md) §2
 rejects. `pr-review-target`'s `base:` line already prints a merge base.
 
 (This supersedes the brief's original single-flag `/review-pr … [--target]` form.

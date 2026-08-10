@@ -2040,7 +2040,7 @@ func TestReviewRunPrintsOnlyVerdictLines(t *testing.T) {
 	}
 }
 
-// --- explicit-range mode (ADR-0022 §5) --------------------------------------
+// --- explicit-range mode (ADR-0023 §5) --------------------------------------
 
 const (
 	// The two commit-ish values a range-mode test passes, and the SHAs the
