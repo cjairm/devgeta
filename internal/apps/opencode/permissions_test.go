@@ -13,6 +13,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	"github.com/cjairm/devgeta/pkg/files"
 	"gopkg.in/yaml.v3"
 )
@@ -1489,12 +1490,12 @@ func readReviewLoop(t *testing.T) (string, string) {
 	return path, string(data)
 }
 
-// reviewLoopFlowSection is reviewLoopSection with the section's whitespace
-// collapsed to single spaces, so a phrase a guard test looks for still matches
-// when the prose is rewrapped. The file is hand-wrapped at ~90 columns, and a
+// flowSection is markdownSection with the section's whitespace collapsed to
+// single spaces, so a phrase a guard test looks for still matches when the
+// prose is rewrapped. The command files are hand-wrapped at ~90 columns, and a
 // phrase that happens to straddle a line break would otherwise read as deleted
 // the next time a sentence above it grows by a word.
-func reviewLoopFlowSection(t *testing.T, body, heading string) string {
+func flowSection(t *testing.T, body, heading string) string {
 	t.Helper()
 	return strings.Join(strings.Fields(markdownSection(t, body, heading)), " ")
 }
@@ -1516,7 +1517,7 @@ func reviewLoopFlowSection(t *testing.T, body, heading string) string {
 // instructions.
 func TestReviewLoopStopsWhenARoundLeavesNothingToActOn(t *testing.T) {
 	path, body := readReviewLoop(t)
-	section := reviewLoopFlowSection(t, body, "### 3. Check for clean approval")
+	section := flowSection(t, body, "### 3. Check for clean approval")
 
 	if !strings.Contains(section, "continue to step 4") {
 		t.Errorf(
@@ -1549,7 +1550,7 @@ func TestReviewLoopStopsWhenARoundLeavesNothingToActOn(t *testing.T) {
 // test that separates "outside this loop's authority" from "hard" is judgment.
 func TestReviewLoopTriageRoutesEveryOpenFinding(t *testing.T) {
 	path, body := readReviewLoop(t)
-	section := reviewLoopFlowSection(
+	section := flowSection(
 		t,
 		body,
 		"### 4. Otherwise, triage each open finding, then settle it",
@@ -1595,7 +1596,7 @@ func TestReviewLoopTriageRoutesEveryOpenFinding(t *testing.T) {
 // half the round's findings from it.
 func TestReviewLoopDispatchesOneSubagentPerRound(t *testing.T) {
 	path, body := readReviewLoop(t)
-	section := reviewLoopFlowSection(t, body, "### 6. The fix subagent")
+	section := flowSection(t, body, "### 6. The fix subagent")
 
 	if !strings.Contains(section, "one fresh subagent per round") {
 		t.Errorf(
@@ -1638,7 +1639,7 @@ func TestReviewLoopDispatchesOneSubagentPerRound(t *testing.T) {
 func TestReviewLoopTrustsTheJournalOverTheSubagent(t *testing.T) {
 	path, body := readReviewLoop(t)
 
-	fixSection := reviewLoopFlowSection(
+	fixSection := flowSection(
 		t,
 		body,
 		"### 4. Otherwise, triage each open finding, then settle it",
@@ -1652,7 +1653,7 @@ func TestReviewLoopTrustsTheJournalOverTheSubagent(t *testing.T) {
 		)
 	}
 
-	stopSection := reviewLoopFlowSection(
+	stopSection := flowSection(
 		t,
 		body,
 		"### 5. Stop for anything escalated, then enforce the round cap",
@@ -1683,7 +1684,7 @@ func TestReviewLoopTrustsTheJournalOverTheSubagent(t *testing.T) {
 func TestReviewLoopFixedSettlementNamesTheTestEvidence(t *testing.T) {
 	path, body := readReviewLoop(t)
 
-	settleSection := reviewLoopFlowSection(
+	settleSection := flowSection(
 		t,
 		body,
 		"### 4. Otherwise, triage each open finding, then settle it",
@@ -1698,7 +1699,7 @@ func TestReviewLoopFixedSettlementNamesTheTestEvidence(t *testing.T) {
 		)
 	}
 
-	dispatchSection := reviewLoopFlowSection(t, body, "### 6. The fix subagent")
+	dispatchSection := flowSection(t, body, "### 6. The fix subagent")
 	if !strings.Contains(dispatchSection, "name the command and its result") {
 		t.Errorf(
 			"%s step 6's never-do list no longer requires the test command and its "+
@@ -1749,6 +1750,152 @@ func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 			path, "## Notes",
 		)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// /pr-review-loop: the PR tick inherits the review-loop family's guards.
+//
+// It is the same shape of file — a documented flag list, a numbered flow, and a
+// standing grant to act unattended — so it is exposed to the same two failures
+// the three tests below already caught once in review-loop.md: a flag that is
+// documented but never parsed or forwarded, and an authorization that goes
+// missing so an unattended watch starts asking permission every tick.
+//
+// The derived authorization tests above do not reach this file: it posts only
+// through /review-pr and /approve-pr, so it contains no literal outward
+// `devgeta task` verb for TestPostingCommandsDeclareStandingAuthorization's
+// regex to find, and it instructs no commit or push. Its grant is pinned here
+// instead.
+// ---------------------------------------------------------------------------
+
+// prReviewLoopParseHeading and prReviewLoopRunHeading are the two anchors the
+// forwarding tests read. They are the tick's argument-parsing step and its
+// reviewer-invocation step — the pair every "documented but does nothing" flag
+// bug lives between.
+const (
+	prReviewLoopParseHeading = "### 0. Resolve the PR number, the reviewer types, and the note"
+	prReviewLoopRunHeading   = "### 5. Run the reviewers, one run per type"
+)
+
+// TestPRReviewLoopForwardsReviewerTypes is the pr-review-loop analog of
+// TestReviewLoopForwardsReviewerSelector, guarding the same bug in the same two
+// places: the reviewer types a human passes must be READ from $ARGUMENTS in
+// step 0 and FORWARDED to `devgeta task review-run` in step 5. Documented in
+// Usage but missing from either step, they silently do nothing and every tick
+// reviews with the runner's default lens instead of the one that was asked for.
+//
+// The type vocabulary is checked against worktree.BuiltinReviewerChoices()
+// rather than against three hard-coded strings, because "no translation layer"
+// is the decision this file rests on: the words a human types are the exact
+// keys `--reviewer` validates against, so a friendlier alias invented here
+// (`doc` for `document` is the tempting one) would be a second vocabulary that
+// can drift from the registry it maps onto. Prose cannot import the registry,
+// so this test is the only thing tying the two together.
+//
+// What this catches: either half being deleted, and the documented types
+// drifting away from the runner's real keys — including a reviewer added to the
+// registry that the tick's usage line never learns about.
+// What this does NOT catch: prose that reads plausibly while forwarding a
+// stale or wrong value — this is a substring check over prose, not an execution
+// of it (see TestCommittingCommandsDeclareStandingAuthorization).
+func TestPRReviewLoopForwardsReviewerTypes(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	parseSection := flowSection(t, body, prReviewLoopParseHeading)
+	if !strings.Contains(parseSection, "$ARGUMENTS") {
+		t.Errorf(
+			"%s step 0 no longer mentions parsing $ARGUMENTS — without it the "+
+				"reviewer types and the note are never read from anywhere, so the "+
+				"Usage section advertises arguments that have no effect",
+			path,
+		)
+	}
+	for _, choice := range worktree.BuiltinReviewerChoices() {
+		if !strings.Contains(parseSection, choice.Key) {
+			t.Errorf(
+				"%s step 0 no longer names %q as a reviewer type. The types are "+
+					"passed through to `devgeta task review-run --reviewer` verbatim, "+
+					"so the loop's vocabulary must be the registry's keys exactly — a "+
+					"missing key is a reviewer a human cannot ask for, and a renamed "+
+					"one is a translation layer this file deliberately does not have",
+				path, choice.Key,
+			)
+		}
+	}
+
+	runSection := flowSection(t, body, prReviewLoopRunHeading)
+	if !strings.Contains(runSection, "--reviewer <type>") {
+		t.Errorf(
+			"%s step 5 no longer forwards --reviewer <type> to `devgeta task "+
+				"review-run` — without this the types are parsed in step 0 and then "+
+				"dropped, and every tick runs the default reviewer",
+			path,
+		)
+	}
+}
+
+// TestPRReviewLoopForwardsTheNote is the --note half of the same guard, for the
+// same failure: a flag documented in Usage but never parsed or passed on does
+// nothing, and the human's steering silently never reaches a reviewer. Step 0
+// must resolve it and step 5 must forward it to every run of the tick.
+//
+// What this catches: `--note` being dropped from either step while the Usage
+// section keeps advertising it.
+// What this does NOT catch: the tick summarizing or answering the note instead
+// of passing it verbatim — that is judgment, which the instruction states
+// plainly but no substring check can verify.
+func TestPRReviewLoopForwardsTheNote(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	if !strings.Contains(body, "--note <text>") {
+		t.Fatalf("%s no longer documents --note <text> at all", path)
+	}
+	parseSection := flowSection(t, body, prReviewLoopParseHeading)
+	if !strings.Contains(parseSection, "--note") {
+		t.Errorf(
+			"%s step 0 no longer resolves --note — a note that is never parsed "+
+				"never reaches a reviewer, so the flag is Usage-section text with no "+
+				"effect",
+			path,
+		)
+	}
+	runSection := flowSection(t, body, prReviewLoopRunHeading)
+	if !strings.Contains(runSection, "--note <text>") {
+		t.Errorf(
+			"%s step 5 no longer forwards --note <text> to `devgeta task "+
+				"review-run` — without this the note is parsed and then dropped",
+			path,
+		)
+	}
+}
+
+// TestPRReviewLoopRunsUnattendedWithoutAsking guards the standing authorization
+// that makes this tick usable at all, the analog of
+// TestReviewLoopRunsUnattendedWithoutAsking. A tick reads GitHub state, fetches
+// refs, runs reviewer agents, and then posts a review or an approval — every
+// one of those is something an agent's default instinct is to confirm first,
+// and the whole point of a watch running on an interval is that nobody is there
+// to answer. The `permission:` frontmatter that used to carry this was removed
+// in 6bb17ab because OpenCode never enforced it, so prose is the only carrier
+// left.
+//
+// Unlike review-loop.md, no exception is required beside the grant. That file's
+// carve-out exists because it settles journal findings and could reach for
+// --ratify; this tick settles nothing itself — /review-pr does any settling —
+// and it has no decision reserved for the human other than stopping, which is
+// an absence of action rather than a permission it must not exercise.
+//
+// What this catches: the authorization section being dropped or reworded so it
+// no longer grants the authority AND forbids the confirmation pause.
+// What this does NOT catch: wording that keeps the words but reverses the
+// meaning, or an agent asking anyway despite a correctly-worded instruction.
+func TestPRReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	section := markdownSection(t, body, postingAuthorizationHeading)
+	requireStandingAuthorization(
+		t, path, fmt.Sprintf("%q section", postingAuthorizationHeading), section,
+	)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,0 +1,399 @@
+---
+description: Use when a pull request should be watched and answered unattended — one invocation is one tick that reads the PR's review state and, when a review is requested of you, runs the reviewer agents over the PR's own diff and posts exactly one review or approval
+---
+
+Watch one pull request and answer a review request on it. **One invocation is one tick:**
+read the PR's current state, take exactly one action, exit. This file holds no timer and
+keeps nothing between runs — GitHub's own review-request field is the memory, so running a
+tick twice in a row, by hand, or after a crash is always safe.
+
+The PR does not have to be checked out. Every step below reads the PR's own commits,
+fetched read-only into refs nothing else drives, so the working tree is never the source
+and is never modified. That matters here more than usual: a tick can fire while the human
+is mid-edit in the same clone.
+
+## Usage
+
+```
+/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--note <text>]
+```
+
+`PR_NUMBER` is optional and resolves from the current branch's PR when omitted — the same
+inference every PR command makes. Pass it when watching a PR whose branch is not the
+checkout, which is the normal case for reviewing someone else's work.
+
+The types name **which reviewer agents run**, and more than one is allowed: `code document`
+is two reviewer runs, one per type, each covering every configured model internally. The
+three values are `code`, `document`, and `skill` — exactly the keys the `--reviewer` flag of
+`devgeta task review-run` takes, passed straight through with no translation. There is no `doc`
+shorthand; a friendlier spelling here would be a second vocabulary that can drift from the
+one the runner validates against. Types omitted → judge them from what the PR changes.
+
+`--note <text>` is the human's own emphasis, forwarded verbatim to every reviewer run of
+the tick (e.g. `--note "the retry path is the risky part"`). It adds context; it never
+narrows what gets reviewed.
+
+**Repetition belongs to the driver, not to this file.** On Claude Code, `/loop <interval>
+/pr-review-loop [n] [types]`. On OpenCode, run a tick by hand. Either way, the review runs
+at most once per tick and at most one review is posted per tick.
+
+## Authority to post
+
+Running this command **is** the authorization for the whole tick: the state read, the
+read-only fetch of the PR's refs, the reviewer runs, and the posting step at the end —
+whether that step is `/review-pr` or `/approve-pr`. **Do not ask before any of it, do not
+show the review or the approval for confirmation first, and do not stop at "shall I post
+this?".** A watch that pauses for a go-ahead each tick is not unattended, and the human
+started the loop precisely so they would not have to be present for it.
+
+This authorizes _acting unprompted_, nothing else. Every gate below still holds: the
+decision table still picks exactly one action, the pre-post re-check at step 7 can still
+cancel the post, the verdicts still come from the reviewer runs rather than from your own
+read, and an escalation is still reported to the human instead of decided for them.
+
+## What this drives
+
+- `devgeta task pr-review-state --pr <n>` — the trigger read. Prints exactly three lines
+  and nothing else: `pr:` (`open | draft | merged | closed`), `requested:` (`yes | no` —
+  whether the authenticated user is in the PR's review requests **right now**), and
+  `my-review:` (`approved | changes-requested | commented | none` — that user's latest
+  submitted review). A request addressed to a team and not to the user reports
+  `requested: no`; claiming a team's work is a staffing judgment this loop does not make.
+- `devgeta task pr-review-target --pr <n>` — fetches the PR's head and base read-only, then
+  prints the immutable review target: a `base:` merge-base sha, a `head:` sha, a `journal:`
+  key, and the noise-filtered `files:` list. A failed fetch is an error, not a warning, and
+  it ends the tick — a confident review of code the PR no longer contains is worse than no
+  review.
+- `devgeta task pr-view --pr <n>` — the PR's purpose, description, and linked ticket.
+- `devgeta task review-run` in range mode — one reviewer type against the PR's range. Takes
+  `--reviewer <type>` plus `--base <sha> --head <sha> --journal <key> --report-dir <dir>`,
+  and an optional `--note <text>`. Those four range flags are **required together**; three
+  of them is an error. Every model
+  configured in `review.reviewers` runs the selected agent sequentially and headless, and
+  the output is one line per model and nothing else.
+- `devgeta task review-notes --branch <key> --rev <sha>` — the PR's review journal, read at
+  the reviewed revision. **This is the only place open findings are listed** — `review-run`
+  prints verdicts and report paths, never ids — so this is how the tick learns what is
+  open.
+- `devgeta task scratch` — a fresh directory for this tick's reviewer reports.
+  `devgeta task scratch --clean <path>` removes it.
+- `devgeta task current-pr` — the current branch's PR number, when none was passed.
+- `/review-pr <n> --base <base> --target <head>` and `/approve-pr <n> --target <head>` —
+  the posting step. Exactly one of them runs per tick (step 8).
+
+Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the
+installed binary is available in this environment.
+
+## Flow
+
+### 0. Resolve the PR number, the reviewer types, and the note
+
+Parse `$ARGUMENTS` once, before anything else. The values resolved here are used unchanged
+for the rest of the tick.
+
+- A bare number is `PR_NUMBER`. With none given, run `devgeta task current-pr` and use what
+  it prints. If it reports that the branch has no pull request, stop and say so — there is
+  nothing to watch.
+- Bare words are reviewer types. Each one must be `code`, `document`, or `skill`. Anything
+  else: stop before reading any state, and report that the types are `code`, `document`, or
+  `skill`, naming the value that was actually passed. Do not guess which one was meant, and
+  do not map a near-miss like `doc` or `docs` onto `document` — these values are forwarded
+  to `devgeta task review-run --reviewer` verbatim, and this file owns no translation.
+- No types at all is normal, not an error: step 3 judges them from the PR's changed files.
+- `--note <text>` is carried verbatim into every `review-run` call this tick makes. Pass it
+  exactly as written — never summarize it, extend it, or answer it yourself. It is the
+  human's message to the reviewers, not an instruction to this loop. Omit the flag entirely
+  when no note was given.
+
+### 1. Read the state once
+
+```bash
+devgeta task pr-review-state --pr <n>
+```
+
+Read the three lines exactly as printed. This one read selects the tick's action; nothing
+else does. Do not re-read it here to "confirm" anything — the only other state read in the
+tick is step 7's, which exists for a different reason.
+
+### 2. Take exactly one row of the table
+
+Rows are evaluated top to bottom, and **the first match wins:**
+
+| `pr:`             | `requested:` | `my-review:`  | Action                                                                               |
+| ----------------- | ------------ | ------------- | ------------------------------------------------------------------------------------ |
+| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop                                          |
+| `draft`           | any          | any           | Wait. A draft is unfinished work; a formal review on it is noise even when requested |
+| `open`            | `yes`        | any           | **Review** — steps 3 to 9                                                            |
+| `open`            | `no`         | `approved`    | **Terminal: approved.** Report, stop the loop                                        |
+| `open`            | `no`         | anything else | Wait — the ball is with the author                                                   |
+
+Draft is checked **before** the request state on purpose: a requested draft waits. A draft
+is work the author is still shaping, and a formal review posted on it is noise the author
+did not ask to receive yet, request button or not.
+
+**Wait** means exactly that: report the tick in the shape step 11 gives and take no other
+action. No fetch, no reviewer run, nothing posted. Most ticks are this row, which is why
+they are cheap.
+
+**Terminal** means the watch is over: report it, run step 10's ref cleanup, and say plainly
+that the loop should be stopped, so a human or a driver reading the report knows not to tick
+again. Nothing in this file can stop the driver by itself.
+
+Two consequences of reading current state rather than a local log are worth knowing, because
+both look like bugs and are neither. A colleague who answers the request first removes the
+user from the request list, so the next tick simply waits. And a dismissed approval reports
+`my-review: none` rather than `approved`, so the loop keeps watching an approval GitHub has
+already thrown away instead of stopping on it.
+
+### 3. Resolve the review target
+
+```bash
+devgeta task pr-review-target --pr <n>
+```
+
+This is **the** context for the rest of the tick: the `base:` and `head:` shas, the
+`journal:` key, and the `files:` list. Every later step reads these values. Nothing reads
+the working tree, and nothing re-resolves a ref name into a sha — a review takes minutes
+across several models, and a name resolved twice inside that window can mean two different
+commits.
+
+If the command fails, end the tick with its error in the report. Never fall back to whatever
+refs are already on disk and never fall back to the checkout: both describe code that may
+not be this PR.
+
+Then read the PR's own account of itself:
+
+```bash
+devgeta task pr-view --pr <n>
+```
+
+Read the purpose and the linked ticket before any code. A diff shows what moved, never why.
+
+Now fix the reviewer types. If step 0 resolved any, use exactly those. Otherwise judge them
+from the target's `files:` list: `code` for code, `document` for docs and prose, `skill` for
+agent skills and commands. A mixed PR takes the matching set — more than one type is normal
+and each becomes its own run.
+
+If `files:` prints `(none)`, the whole range is either empty or excluded as noise, so there
+is nothing for a reviewer lens to judge. End the tick without running a reviewer and without
+posting, and report it as `nothing to review` — its own status word in step 11, because
+nothing is pending on anyone and calling it a wait would misdescribe it. The request stays
+pending, so the report is what tells the human this PR needs their own eyes; a review of an
+empty file list would say nothing and still cost a post.
+
+### 4. Allocate the scratch directory
+
+```bash
+SCRATCH=$(devgeta task scratch)
+```
+
+This is where the reviewer reports land for this tick. Step 10 removes it.
+
+### 5. Run the reviewers, one run per type
+
+For each resolved type, in turn:
+
+```bash
+devgeta task review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"
+```
+
+Add `--note <text>` when step 0 resolved one, with the human's text verbatim. Pass all four
+range flags every time, with the values from step 3 — the group is required together, and
+review-run rejects a partial one rather than guessing at the missing end of the range.
+
+Run these yourself, in the main session, not in a subagent. The verdict lines are the one
+thing this tick must never take second-hand, and each run's stdout is a few lines.
+
+Read stdout exactly as printed. One line per configured model:
+
+```
+<label> → APPROVE | REQUEST CHANGES | NEEDS DISCUSSION | NO VERDICT | ERROR(<reason>)  report: <path>
+```
+
+Never guess at, soften, or invent a verdict a line does not state. Progress goes to stderr
+while a run works (a line per reviewer plus a periodic heartbeat) so a long run reads as
+working rather than stuck; none of it is a verdict and none of it carries findings. Never
+pass `--verbose`: it replaces the heartbeat with a line per tool call, which is hundreds of
+lines this tick does not read.
+
+**Parse the `report:` field from the right** — find the **last** occurrence in the line of
+`report:` preceded by two spaces, and take everything after it as the value. The value can
+contain spaces: a run that produced nothing prints
+`report: none (the reviewer wrote no report)`, and an `ERROR(<reason>)` reason is the
+model's own text, which could contain that same sequence too. Splitting the line from the
+left, or on the first match, gets both of those wrong.
+
+Keep, for every run: its type, its model label, its outcome, and its report path. Step 6
+weighs the outcomes and step 8 reads the reports.
+
+### 6. Aggregate every run's verdict, once
+
+Weigh **all** the runs together — every type times every model — and pick one of three
+outcomes here. This is the only place the outcome is decided; steps 7 to 9 act on it and
+never recompute it.
+
+- **Any run's outcome is `ERROR(<reason>)` or `NO VERDICT` → terminal: escalated.** Name the
+  failing run — its type and its model label — and go to step 10. Never approve on a run
+  that did not complete, and never re-run it: `review-run` already relaunches a reviewer
+  that produced no report at all, once, inside the same run, so a failure that reaches you
+  has already survived the only retry there is. Report an `ERROR` reason verbatim. A
+  `NO VERDICT(<reason>)` carries the runner's own words for why, also verbatim. A bare
+  `NO VERDICT` carries no reason at all — state that the reviewer completed without
+  producing a verdict, and do not invent one.
+- **Every run's outcome is `APPROVE`** → the approval path in step 8.
+- **Otherwise** — at least one `REQUEST CHANGES` or `NEEDS DISCUSSION`, and no `ERROR` and
+  no `NO VERDICT` anywhere — the review path in step 8.
+
+One blocking outcome from any single run is enough. The runs are independent opinions, not
+votes to be tallied: a finding one lens or one model sees is not cancelled by the others
+missing it.
+
+### 7. Re-check the state and the head before posting
+
+The reviewer runs take minutes, so the world may have moved. Before anything is posted,
+read both again:
+
+```bash
+devgeta task pr-review-state --pr <n>
+devgeta task pr-review-target --pr <n>
+```
+
+Two conditions, and **either one failing means post nothing:**
+
+- **The state must still land on the Review row** (`open` and `requested: yes`). Anything
+  else means the PR merged, closed, or went draft, or that someone else already answered the
+  request — so posting now would be a duplicate or an unsolicited review. Take the row the
+  fresh state selects (terminal or wait) instead, then go to step 10.
+- **`head` must still equal the sha the reviewers read.** If it moved, the author pushed
+  mid-review: the reviews describe code the PR no longer is, and an approval would cover
+  commits no reviewer saw. Post nothing, end the tick reporting that the head moved during
+  the review, and go to step 10. The request is still pending, so the next tick reviews the
+  new head from scratch. An author pushing repeatedly just defers the review, which is the
+  correct outcome rather than starvation.
+
+### 8. Post exactly one review
+
+Step 6 chose the path. Run **one** of these two commands, **once**:
+
+- **Every run `APPROVE`** → `/approve-pr <n> --target <head>`. Its own file verifications
+  read the reviewed commit rather than the working tree, and the cross-model `APPROVE`
+  verdicts sitting in this conversation are the basis it needs for approving over live
+  non-blocking comments.
+- **Otherwise** → `/review-pr <n> --base <base> --target <head>`. Both shas come from step 3,
+  so the posted review's diff is the same merge-base range the reviewers read. Before
+  invoking it, put the findings in context: read every `report:` file from step 5 (skipping
+  any whose value was the no-report sentinel) and run
+  `devgeta task review-notes --branch <key> --rev <head>`. The reports carry the full
+  cross-model findings — every severity, the strengths, the evidence — while the journal
+  carries only the blocking entries as one-liners, and a review composed from the one-liners
+  alone throws most of what the reviewers found away. Any journal settling `/review-pr`
+  performs uses `--branch <key> --rev <head>` too, so it reads and writes this PR's journal
+  rather than the checkout branch's.
+
+Never run both. Never run either twice — the single exception is step 9's one re-ask, which
+is the same `/approve-pr` invocation and is bounded there. A tick posts one review or one
+approval, and both commands post exactly one thing each, so this is the whole of what
+reaches the PR.
+
+Both commands stamp the posted review with the reviewed commit, so what lands on GitHub
+names the sha it judged even if a push races the submission itself.
+
+### 9. Read the approval outcome
+
+Only the approval path has an outcome to read. `/approve-pr` prints one line:
+
+```
+## PR #<num> — <approved | not approved>
+```
+
+- **`approved` → terminal: approved.** The loop stops now, including on the very first
+  trigger. It never keeps listening past an approval it posted.
+- **`not approved` → one re-ask, approve-only.** This branch is reached only when every
+  reviewer run said `APPROVE`, and that verdict is exactly the basis `approve-pr.md` names
+  for approving over live comments. So invoke `/approve-pr <n> --target <head>` one more
+  time, stating that the cross-model verdict in context is `APPROVE` and that the expected
+  outcome is an approval whose body is `LGWC; <who/what remains>`, naming the leftover
+  non-blocking comments — not a re-review, and not a comment.
+  - Approved on the re-ask → terminal: approved.
+  - Still `not approved` → **terminal: escalated.** It is standing on a blocker every
+    reviewer run missed. Report what it named and stop.
+  - **Never a third ask.** A decline leaves `requested:` at `yes`, so asking forever would
+    post forever.
+
+The review path has nothing to parse. `/review-pr` prints its own summary line; record it in
+the tick report and keep listening. Posting any review — approve, comment, or request
+changes — removes the user from the PR's review requests, so the next tick reads
+`requested: no` and waits. The author's re-request is the next trigger.
+
+### 10. Clean up
+
+Two cleanups with two different scopes. Get the scopes right: the first runs far more often
+than the second.
+
+**The scratch directory, on every completed exit of the review action** — approved,
+escalated (including step 6's), the head moved or the state changed at step 7, a review
+posted, or a submit that failed:
+
+```bash
+devgeta task scratch --clean "$SCRATCH"
+```
+
+`--clean` is idempotent, so running it after a partial failure is safe. If a submit failed,
+print the review into the tick report **before** cleaning, so nothing is lost and the human
+can post it by hand. The one exit this cannot cover is the process being killed mid-tick — a
+dead process runs no cleanup — and that directory is swept by the existing
+`dg configure --force` scratch sweep, the same recovery every scratch user has.
+
+**The PR's fetched refs, only on the three exits that are terminal for the loop** —
+approved, closed, or escalated:
+
+```bash
+git update-ref -d refs/devgeta/pr/<n>/head
+git update-ref -d refs/devgeta/pr/<n>/base
+```
+
+These cannot go earlier. Every step from 3 onward reads them, and holding them is what keeps
+a concurrent `git gc` from collecting the commits under review. A non-terminal exit — a
+wait row, a head that moved, a review posted, nothing to review — **keeps** them, because
+the next tick reviews the same PR. Run these on a terminal exit reached straight from the
+table too (closed, or approved with no review this tick): a previous tick may have left
+them. They are keyed by PR number and reused per tick, so a killed tick leaks one pair and
+the leftovers are bounded by the number of distinct PRs reviewed, not by ticks.
+
+### 11. Report the tick
+
+Three lines at most: what the state read said, what ran and what it returned, and what
+happens next. A tick is a line in a log a human skims, not a document.
+
+```
+## PR #<n> — <waiting | nothing to review | reviewed | approved | closed | escalated | head moved>
+
+<the state read: pr/requested/my-review, or the reason the tick stopped early>
+<the runs and their verdicts, one clause — omit on a wait row, where nothing ran>
+<what the next tick expects, or "the watch is over — stop the loop" on a terminal exit>
+```
+
+On an escalation, name the failing run and its reason verbatim in place of the next-tick
+line. On a terminal exit, say the watch is over explicitly, because stopping the driver is
+the human's or the harness's action, not this file's.
+
+## Notes
+
+- Run the whole tick yourself, without asking — see "Authority to post" above. Running the
+  command is the authorization for every part of it, posting included, and a watch that
+  stops to confirm each tick costs the human exactly the attention the loop exists to save.
+- One invocation is one tick. This file owns no repetition, so it never sleeps, never
+  retries a tick, and never loops back to step 1 within a run.
+- At most one review reaches the PR per tick: step 6 picks one path, step 8 runs one command
+  once, and step 9's single re-ask is the only repeat of either.
+- This tick never edits code, never resolves threads, never re-requests reviewers, and never
+  settles a finding it did not go through `/review-pr` to settle.
+- It never moves the checkout either: no branch is created, switched, or checked out,
+  nothing is stashed, staged, or committed, and it never pulls or merges. The human may be
+  working in this clone while a tick runs, and the review target comes from fetched refs
+  that touch no branch and no working tree.
+- Never invent a verdict, and never present an escalation, a head-moved exit, or a wait as
+  an approval.
+- If any `devgeta task` command refuses to run — a PR number that is not a PR number, a
+  branch with no PR, a fetch that failed, a blank `--note` — surface that error as-is in the
+  tick report and stop. Do not work around it.
