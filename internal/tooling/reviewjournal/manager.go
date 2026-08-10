@@ -239,6 +239,60 @@ func reserveSnapshotPath(journalPath string) (string, error) {
 	return path, nil
 }
 
+// journalLockFile is the sidecar every journal WRITE in a repo serializes on,
+// in the review directory beside the journals themselves.
+//
+// One lock for the directory rather than one per journal, on purpose. A journal
+// write is a few milliseconds, so nothing is lost by serializing two branches'
+// writes, and a per-journal lock file would have to be created and removed
+// alongside each journal — which reintroduces the problem it is there to solve,
+// because unlinking a lock another process is holding lets the next opener
+// create a fresh inode and hold "the same" lock at the same time. One
+// long-lived file per repository has no such lifecycle.
+//
+// It deliberately does not end in ".md" and contains no snapshotUniqueSeparator,
+// so Prune (which owns "*.md") and Delete (which removes by snapshot prefix)
+// both look straight past it and cannot delete the lock out from under a live
+// writer.
+const journalLockFile = "journals.lock"
+
+// journalLockTimeout bounds how long a write waits for the lock before giving
+// up with an actionable error rather than hanging a review round forever. A var
+// so tests can shorten it; production never changes it.
+var journalLockTimeout = 10 * time.Second
+
+// withJournalLock runs fn holding the review directory's exclusive lock.
+//
+// Every journal mutator wraps its WHOLE load-mutate-save cycle in this, not
+// just its save. save is atomic (files.WriteFileAtomic), which keeps a reader
+// from ever seeing half a journal, but atomic is not lost-update-safe: two
+// `review-run` invocations are two separate OS processes, and a review loop
+// ticking on an interval can overlap with another tick or with a human running
+// the command by hand (the same overlap WriteSnapshot above is built for). Both
+// load the same journal, both compute the same nextID, and the later save
+// overwrites the earlier — losing not just the id but the entire finding the
+// other reviewer had just opened. Holding the lock across load-mutate-save
+// means only one process at a time is between its load and its save, so the
+// second one reads the first one's entry and numbers past it.
+//
+// The lock is held for one mutation, never for a whole review round: a round
+// takes minutes of model time, and holding it that long would stall every other
+// writer past any sane timeout for no added safety.
+func (m *Manager) withJournalLock(repoDir string, fn func() error) error {
+	dir, err := m.reviewDir(repoDir)
+	if err != nil {
+		return err
+	}
+	if err := files.WithLock(
+		filepath.Join(dir, journalLockFile),
+		journalLockTimeout,
+		fn,
+	); err != nil {
+		return fmt.Errorf("review journal: %w", err)
+	}
+	return nil
+}
+
 // save writes the journal atomically: temp file in the same directory, then
 // rename — the same write-to-temp-then-rename rule CLAUDE.md §7 mandates for
 // the global config. A crash mid-write leaves the previous journal intact.
@@ -350,20 +404,28 @@ func (m *Manager) ensureBase(repoDir string, j *Journal) {
 
 // Open records an open question or finding and returns its new id.
 func (m *Manager) Open(repoDir, branch, cite, note string) (string, error) {
-	j, err := m.Load(repoDir, branch)
+	var id string
+	err := m.withJournalLock(repoDir, func() error {
+		j, err := m.Load(repoDir, branch)
+		if err != nil {
+			return err
+		}
+		e := Entry{ID: j.nextID(), Cite: cite, Note: note}
+		if err := m.stamp(repoDir, &e); err != nil {
+			return err
+		}
+		m.ensureBase(repoDir, j)
+		j.Entries = append(j.Entries, e)
+		if err := m.save(repoDir, j); err != nil {
+			return err
+		}
+		id = e.ID
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	e := Entry{ID: j.nextID(), Cite: cite, Note: note}
-	if err := m.stamp(repoDir, &e); err != nil {
-		return "", err
-	}
-	m.ensureBase(repoDir, j)
-	j.Entries = append(j.Entries, e)
-	if err := m.save(repoDir, j); err != nil {
-		return "", err
-	}
-	return e.ID, nil
+	return id, nil
 }
 
 // SettleByID moves an open entry to settled with its resolution. The cite
@@ -383,23 +445,25 @@ func (m *Manager) SettleByID(repoDir, branch, id, resolution, answer string) err
 	if !ValidResolution(resolution) {
 		return fmt.Errorf("invalid resolution %q (want rejected, answered, or fixed)", resolution)
 	}
-	j, err := m.Load(repoDir, branch)
-	if err != nil {
-		return err
-	}
-	e, err := j.findOrErr(id)
-	if err != nil {
-		return err
-	}
-	if !e.Open() {
-		return fmt.Errorf("entry %s is already settled (%s)", id, e.Resolution)
-	}
-	e.Resolution = resolution
-	e.Answer = answer
-	if err := m.restamp(repoDir, e); err != nil {
-		return err
-	}
-	return m.save(repoDir, j)
+	return m.withJournalLock(repoDir, func() error {
+		j, err := m.Load(repoDir, branch)
+		if err != nil {
+			return err
+		}
+		e, err := j.findOrErr(id)
+		if err != nil {
+			return err
+		}
+		if !e.Open() {
+			return fmt.Errorf("entry %s is already settled (%s)", id, e.Resolution)
+		}
+		e.Resolution = resolution
+		e.Answer = answer
+		if err := m.restamp(repoDir, e); err != nil {
+			return err
+		}
+		return m.save(repoDir, j)
+	})
 }
 
 // restamp refreshes an entry's blob and head as it is settled, tolerating a
@@ -435,31 +499,33 @@ func (m *Manager) restamp(repoDir string, e *Entry) error {
 // answered (ratify only concerns rejections), or a rejected entry with no
 // prefix (already ratified once).
 func (m *Manager) Ratify(repoDir, branch, id string) error {
-	j, err := m.Load(repoDir, branch)
-	if err != nil {
-		return err
-	}
-	e, err := j.findOrErr(id)
-	if err != nil {
-		return err
-	}
-	if e.Open() {
-		return fmt.Errorf("entry %s is open, not settled — nothing to ratify", id)
-	}
-	if e.Resolution != ResolutionRejected {
-		return fmt.Errorf(
-			"entry %s is settled as %s, not rejected — ratify only applies to a rejected entry",
-			id, e.Resolution,
-		)
-	}
-	if !HasAgentNote(e.Answer) {
-		return fmt.Errorf(
-			"entry %s is already an ordinary rejection (no %s prefix to strip)",
-			id, AgentNotePrefix,
-		)
-	}
-	e.Answer = StripAgentNote(e.Answer)
-	return m.save(repoDir, j)
+	return m.withJournalLock(repoDir, func() error {
+		j, err := m.Load(repoDir, branch)
+		if err != nil {
+			return err
+		}
+		e, err := j.findOrErr(id)
+		if err != nil {
+			return err
+		}
+		if e.Open() {
+			return fmt.Errorf("entry %s is open, not settled — nothing to ratify", id)
+		}
+		if e.Resolution != ResolutionRejected {
+			return fmt.Errorf(
+				"entry %s is settled as %s, not rejected — ratify only applies to a rejected entry",
+				id, e.Resolution,
+			)
+		}
+		if !HasAgentNote(e.Answer) {
+			return fmt.Errorf(
+				"entry %s is already an ordinary rejection (no %s prefix to strip)",
+				id, AgentNotePrefix,
+			)
+		}
+		e.Answer = StripAgentNote(e.Answer)
+		return m.save(repoDir, j)
+	})
 }
 
 // Reopen returns a settled entry to open under the same id, keeping its
@@ -476,20 +542,22 @@ func (m *Manager) Ratify(repoDir, branch, id string) error {
 // Valid on any settled entry, regardless of resolution. An already-open entry
 // or an unknown id is refused with the actual state named.
 func (m *Manager) Reopen(repoDir, branch, id string) error {
-	j, err := m.Load(repoDir, branch)
-	if err != nil {
-		return err
-	}
-	e, err := j.findOrErr(id)
-	if err != nil {
-		return err
-	}
-	if e.Open() {
-		return fmt.Errorf("entry %s is already open", id)
-	}
-	e.Resolution = ""
-	e.Answer = ""
-	return m.save(repoDir, j)
+	return m.withJournalLock(repoDir, func() error {
+		j, err := m.Load(repoDir, branch)
+		if err != nil {
+			return err
+		}
+		e, err := j.findOrErr(id)
+		if err != nil {
+			return err
+		}
+		if e.Open() {
+			return fmt.Errorf("entry %s is already open", id)
+		}
+		e.Resolution = ""
+		e.Answer = ""
+		return m.save(repoDir, j)
+	})
 }
 
 // SettleDirect records an exchange that was never open — asked and answered in
@@ -501,20 +569,28 @@ func (m *Manager) SettleDirect(repoDir, branch, resolution, cite, note string) (
 			resolution,
 		)
 	}
-	j, err := m.Load(repoDir, branch)
+	var id string
+	err := m.withJournalLock(repoDir, func() error {
+		j, err := m.Load(repoDir, branch)
+		if err != nil {
+			return err
+		}
+		e := Entry{ID: j.nextID(), Resolution: resolution, Cite: cite, Note: note}
+		if err := m.stamp(repoDir, &e); err != nil {
+			return err
+		}
+		m.ensureBase(repoDir, j)
+		j.Entries = append(j.Entries, e)
+		if err := m.save(repoDir, j); err != nil {
+			return err
+		}
+		id = e.ID
+		return nil
+	})
 	if err != nil {
 		return "", err
 	}
-	e := Entry{ID: j.nextID(), Resolution: resolution, Cite: cite, Note: note}
-	if err := m.stamp(repoDir, &e); err != nil {
-		return "", err
-	}
-	m.ensureBase(repoDir, j)
-	j.Entries = append(j.Entries, e)
-	if err := m.save(repoDir, j); err != nil {
-		return "", err
-	}
-	return e.ID, nil
+	return id, nil
 }
 
 // Freshness values Verdict can return.

@@ -170,16 +170,35 @@ func (p *PRManager) PRReviewTarget(prNumber string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("pr-review-target: %w", err)
 	}
-	// The merge base is asked for against the resolved head SHA, never headRef
-	// again: headRef is a mutable local ref that every fetch of this PR
-	// overwrites, so a concurrent tick or a second `pr-review-target` run can
-	// move it between these two calls. Naming it twice would pair the head
-	// captured above with the merge base of whatever the ref points at NOW —
-	// and after a force-push that rebased the PR, that base is not even an
-	// ancestor of the head returned, so `base..head` shows the base branch's
-	// own commits as this PR's deletions. One resolution, reused, is what makes
-	// the printed pair describe a single diff (ADR-0023).
-	base, err := p.Git.MergeBase(baseRef, head)
+	// BOTH ends are resolved to SHAs before the merge base is computed, never
+	// the ref names again. refs/devgeta/pr/<n>/head and .../base are mutable
+	// local refs that every fetch of this PR force-updates, so a concurrent
+	// tick or a second `pr-review-target` run can move either one between
+	// these calls — and each name, used twice, fails a different way.
+	//
+	// Naming headRef twice would pair the head captured above with the merge
+	// base of whatever the ref points at NOW. After a force-push that rebased
+	// the PR, that base is not even an ancestor of the head returned, so
+	// `base..head` shows the base branch's own commits as this PR's deletions.
+	//
+	// Naming baseRef twice fails more quietly. merge-base always returns an
+	// ancestor of its operands, so a base ref that merely advanced still
+	// yields SOME ancestor of this head — but if it advanced to CONTAIN the
+	// head (the PR was merged, or the base branch merged this PR's branch),
+	// that ancestor IS the head. base == head is an empty range, so a PR full
+	// of changes prints `files:` as `(none)` and every reviewer downstream is
+	// told there is nothing to look at.
+	//
+	// Resolving both does not make the fetch and the resolution one atomic
+	// operation — only the server could offer that — but it shrinks the window
+	// to two adjacent rev-parse calls instead of one spanning a merge-base
+	// graph walk, and it is what makes the printed pair describe a single diff
+	// (ADR-0023).
+	baseCommit, err := p.Git.ResolveCommit(baseRef)
+	if err != nil {
+		return "", fmt.Errorf("pr-review-target: %w", err)
+	}
+	base, err := p.Git.MergeBase(baseCommit, head)
 	if err != nil {
 		return "", fmt.Errorf("pr-review-target: %w", err)
 	}

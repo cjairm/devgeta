@@ -14,9 +14,13 @@ import (
 // Fixed SHAs for the review target. mergeBaseSHA is what merge-base returns —
 // deliberately unequal to the head, standing for a base branch that advanced
 // past the PR, which is the case a merge-base-less implementation gets wrong.
+// baseTipSHA is that advanced tip, what resolving the base ref returns, and is
+// a third distinct value so a run that printed it instead of the merge base
+// would be caught rather than aliasing onto one of the other two.
 const (
 	mergeBaseSHA = "9f2c1ab8bc0d1e2f3a4b5c6d7e8f90a1b2c3d4e5"
 	prHeadSHA    = "2f38a274cd0e1f2a3b4c5d6e7f8091a2b3c4d5e6"
+	baseTipSHA   = "7a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d"
 )
 
 // newPRTargetSetup extends newPRSetup with the git leg PRReviewTarget needs,
@@ -37,12 +41,14 @@ func scriptTargetGh(ghBase *commands.MockBaseCommand, repo, baseBranch string) {
 	)
 }
 
-// scriptTargetGit scripts the five git calls of a successful resolution:
-// fetch, rev-parse (head), merge-base, then fileChanges' numstat/name-status.
+// scriptTargetGit scripts the six git calls of a successful resolution: fetch,
+// rev-parse (head), rev-parse (base), merge-base, then fileChanges'
+// numstat/name-status.
 func scriptTargetGit(gitBase *commands.MockBaseCommand, numstat, nameStatus string) {
 	gitBase.SetExecCommandResults(
 		commands.ExecCommandResult("", "", nil),
 		commands.ExecCommandResult(prHeadSHA+"\n", "", nil),
+		commands.ExecCommandResult(baseTipSHA+"\n", "", nil),
 		commands.ExecCommandResult(mergeBaseSHA+"\n", "", nil),
 		commands.ExecCommandResult(numstat, "", nil),
 		commands.ExecCommandResult(nameStatus, "", nil),
@@ -183,24 +189,24 @@ func TestPRReviewTarget(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		// mergeBaseSHA reaches the output from the merge-base call and from
-		// nowhere else: the run resolves exactly one ref by name, the head,
-		// and reuses that SHA. That is the structural reason a base tip cannot
-		// be printed here — the code never asks for one — so the guard is
-		// these three positive assertions (base value, merge-base operands,
-		// diff range), not a negative check against a tip SHA no scripted call
-		// can return.
+		// The base ref IS resolved now (so the merge base is computed from two
+		// immutable SHAs), so baseTipSHA is a value this run holds and could
+		// wrongly print. Hence a negative check on it as well as the three
+		// positive ones: base value, merge-base operands, diff range.
+		if strings.Contains(out, baseTipSHA) {
+			t.Fatalf("the base branch tip was printed instead of the merge base:\n%s", out)
+		}
 		if !strings.Contains(out, "base: "+mergeBaseSHA) {
 			t.Fatalf("expected the merge base as base, got:\n%s", out)
 		}
-		mb := gitArgs(t, gitBase, 2)
-		wantMB := []string{"merge-base", "refs/devgeta/pr/213/base", prHeadSHA}
+		mb := gitArgs(t, gitBase, 3)
+		wantMB := []string{"merge-base", baseTipSHA, prHeadSHA}
 		if !slices.Equal(mb, wantMB) {
 			t.Fatalf("unexpected merge-base args %v, want %v", mb, wantMB)
 		}
 		// The diff must run over the merge-base range, not the base tip's.
 		wantRange := mergeBaseSHA + ".." + prHeadSHA
-		for _, n := range []int{3, 4} {
+		for _, n := range []int{4, 5} {
 			args := gitArgs(t, gitBase, n)
 			if !slices.Contains(args, wantRange) {
 				t.Fatalf("expected diff over %s, got %v", wantRange, args)
@@ -234,10 +240,12 @@ func TestPRReviewTarget(t *testing.T) {
 				switch {
 				case c.Args[0] == "fetch":
 					return "", "", nil
-				case c.Args[0] == "rev-parse":
+				case c.Args[0] == "rev-parse" && strings.Contains(c.Args[2], "/head"):
 					// The concurrent fetch lands right after this resolution.
 					headResolved = true
 					return prHeadSHA + "\n", "", nil
+				case c.Args[0] == "rev-parse":
+					return baseTipSHA + "\n", "", nil
 				case c.Args[0] == "merge-base":
 					if headResolved && slices.Contains(c.Args, headRef) {
 						return rebasedBaseSHA + "\n", "", nil
@@ -267,8 +275,75 @@ func TestPRReviewTarget(t *testing.T) {
 			// Then the mechanism that guarantees it: the merge base is asked
 			// for against the resolved SHA, so no later move of the ref can be
 			// read back into this run.
-			mb := gitArgs(t, gitBase, 2)
-			wantMB := []string{"merge-base", "refs/devgeta/pr/213/base", prHeadSHA}
+			mb := gitArgs(t, gitBase, 3)
+			wantMB := []string{"merge-base", baseTipSHA, prHeadSHA}
+			if !slices.Equal(mb, wantMB) {
+				t.Fatalf("unexpected merge-base args %v, want %v", mb, wantMB)
+			}
+		},
+	)
+
+	t.Run(
+		"pairs the head with the base it resolved, not a base ref that moved after",
+		func(t *testing.T) {
+			// The other half of the same race, and the quieter half. A moved
+			// base ref cannot produce a base that is not an ancestor of the
+			// head — merge-base always returns an ancestor of its operands —
+			// but it CAN produce the head itself: if a concurrent fetch
+			// advances refs/devgeta/pr/213/base to a commit that contains this
+			// head (the PR got merged, or the base branch merged the PR's
+			// branch), the best common ancestor of the two IS the head. That
+			// range is empty, so a PR full of changes would print
+			// `files: (none)` and every reviewer downstream would be told there
+			// is nothing to look at.
+			//
+			// The mock models that: a merge base asked for by NAME, after the
+			// base ref has moved, comes back as the head.
+			baseRef := "refs/devgeta/pr/213/base"
+
+			pm, ghBase, gitBase := newPRTargetSetup()
+			scriptTargetGh(ghBase, "octocat/hello", "main")
+			baseResolved := false
+			gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+				switch {
+				case c.Args[0] == "fetch":
+					return "", "", nil
+				case c.Args[0] == "rev-parse" && strings.Contains(c.Args[2], "/head"):
+					return prHeadSHA + "\n", "", nil
+				case c.Args[0] == "rev-parse":
+					// The concurrent fetch lands right after this resolution,
+					// which is the whole reason the base is resolved here at all.
+					baseResolved = true
+					return baseTipSHA + "\n", "", nil
+				case c.Args[0] == "merge-base":
+					if baseResolved && slices.Contains(c.Args, baseRef) {
+						return prHeadSHA + "\n", "", nil
+					}
+					return mergeBaseSHA + "\n", "", nil
+				case slices.Contains(c.Args, "--numstat"):
+					return "3\t1\tapi/server.go\n", "", nil
+				default:
+					return "M\tapi/server.go\n", "", nil
+				}
+			}
+
+			out, err := pm.PRReviewTarget("213")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			if !strings.Contains(out, "base: "+mergeBaseSHA) ||
+				!strings.Contains(out, "head: "+prHeadSHA) {
+				t.Fatalf("expected the base paired with the resolved head, got:\n%s", out)
+			}
+			// The failure mode here is an EMPTY range rather than a wrong one,
+			// so the two ends must differ and the file list must survive.
+			if strings.Contains(out, "base: "+prHeadSHA) ||
+				strings.Contains(out, "files:\n"+prReviewTargetNoFiles) {
+				t.Fatalf("the range collapsed onto the head:\n%s", out)
+			}
+			mb := gitArgs(t, gitBase, 3)
+			wantMB := []string{"merge-base", baseTipSHA, prHeadSHA}
 			if !slices.Equal(mb, wantMB) {
 				t.Fatalf("unexpected merge-base args %v, want %v", mb, wantMB)
 			}

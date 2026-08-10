@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -323,27 +324,34 @@ func TestUpdate_TimesOutWithActionableErrorWhenLockHeld(t *testing.T) {
 	}
 
 	origTimeout := lockAcquireTimeout
-	origPoll := lockPollInterval
 	lockAcquireTimeout = 100 * time.Millisecond
-	lockPollInterval = 5 * time.Millisecond
 	t.Cleanup(func() {
 		lockAcquireTimeout = origTimeout
-		lockPollInterval = origPoll
 	})
 
-	unlock, err := acquireLock()
-	if err != nil {
-		t.Fatalf("acquireLock failed: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := unlock(); err != nil {
-			t.Logf("unlock failed: %v", err)
+	// The wedged holder is a goroutine parked inside the lock rather than a
+	// lock handed back to the test: files.WithLock deliberately offers no way
+	// to hold a lock outside a scope, because a caller that dropped the handle
+	// would silently lose the lock to the garbage collector. A second flock on
+	// the same file conflicts even from the same process, so this is a faithful
+	// stand-in for another devgeta stuck holding it.
+	held := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		if err := files.WithLock(getGlobalConfigLockFilePath(), time.Minute, func() error {
+			close(held)
+			<-release
+			return nil
+		}); err != nil {
+			t.Errorf("the stand-in holder failed to take the lock: %v", err)
 		}
-	})
+	}()
+	<-held
+	t.Cleanup(func() { close(release) })
 
 	ran := false
 	start := time.Now()
-	err = Update(func(gc *GlobalConfig) error {
+	err := Update(func(gc *GlobalConfig) error {
 		ran = true
 		return nil
 	})

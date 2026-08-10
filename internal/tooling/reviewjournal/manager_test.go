@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/files"
 )
 
 // fakeRepo wires a Manager whose git calls are answered from the real files in
@@ -22,6 +24,7 @@ import (
 type fakeRepo struct {
 	t        *testing.T
 	mgr      *Manager
+	root     string // the temp root, so a test can build a second view of it
 	repoDir  string
 	gitDir   string
 	branches []string // "local" branches, for prune
@@ -46,7 +49,17 @@ type fakeRepo struct {
 
 func newFakeRepo(t *testing.T) *fakeRepo {
 	t.Helper()
-	root := t.TempDir()
+	return newFakeRepoAt(t, t.TempDir())
+}
+
+// newFakeRepoAt builds a fixture over an existing root, which is how a test
+// gets a SECOND, independent view of the same repository — the stand-in for a
+// second devgeta process. It has to be a separate fixture rather than a shared
+// one because MockBaseCommand records every call into a plain slice with no
+// synchronization, so two goroutines driving one mock would race on the
+// recorder instead of on the journal under test.
+func newFakeRepoAt(t *testing.T, root string) *fakeRepo {
+	t.Helper()
 	repoDir := filepath.Join(root, "work")
 	gitDir := filepath.Join(root, "work", ".git")
 	if err := os.MkdirAll(repoDir, 0o755); err != nil {
@@ -56,7 +69,7 @@ func newFakeRepo(t *testing.T) *fakeRepo {
 		t.Fatalf("setup: %v", err)
 	}
 
-	fr := &fakeRepo{t: t, repoDir: repoDir, gitDir: gitDir}
+	fr := &fakeRepo{t: t, root: root, repoDir: repoDir, gitDir: gitDir}
 
 	mockBase := commands.NewMockBaseCommand()
 	mockBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
@@ -1029,15 +1042,150 @@ func TestWritesAreAtomicAndLeaveNoTempFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
+	var names []string
 	for _, e := range entries {
 		// Any dotfile sibling is a leaked staging file, whatever the
 		// atomic writer happens to name its temp file today.
 		if strings.HasPrefix(e.Name(), ".") {
 			t.Errorf("leftover temp file %s", e.Name())
 		}
+		names = append(names, e.Name())
 	}
-	if len(entries) != 1 {
-		t.Errorf("expected exactly the journal file, got %d entries", len(entries))
+	// The journal and the write lock, and nothing else. The lock is named
+	// rather than counted so a future sibling has to be justified here instead
+	// of slipping past a bumped number.
+	want := []string{filepath.Base(fr.journalPath("feat")), journalLockFile}
+	slices.Sort(names)
+	slices.Sort(want)
+	if !slices.Equal(names, want) {
+		t.Errorf("unexpected review directory contents %v, want %v", names, want)
+	}
+}
+
+// TestConcurrentOpensKeepBothFindings is the lost-update guard. Two
+// `review-run` invocations are two separate OS processes — a review loop tick
+// overlapping the next tick, or a human running the command while a loop is
+// mid-round — and both write the same journal. Load, take the next id, save is
+// a read-modify-write cycle, so without a lock across the whole of it both
+// readers see the same journal, both pick the same id, and the later save
+// overwrites the earlier: not just a duplicated id, an entire finding gone with
+// no error anywhere.
+//
+// The interleaving is FORCED rather than raced for, so the test fails
+// deterministically if the lock is removed. save() stamps last_review through
+// NowFn, which puts a hook exactly in the dangerous window: the journal is
+// loaded, the write has not happened yet. The first writer parks there and
+// gives the second every chance to load that pre-write journal. With the lock
+// the second cannot even start, so the wait times out and the two writes
+// happen in order; without it the second sails through and its finding is the
+// one that disappears.
+func TestConcurrentOpensKeepBothFindings(t *testing.T) {
+	first := newFakeRepo(t)
+	second := newFakeRepoAt(t, first.root)
+
+	inWindow := make(chan struct{})   // the first writer is mid-cycle
+	secondDone := make(chan struct{}) // the second writer finished, if it can
+	windowBudget := 300 * time.Millisecond
+
+	var once sync.Once
+	first.mgr.NowFn = func() time.Time {
+		once.Do(func() {
+			close(inWindow)
+			select {
+			case <-secondDone:
+			case <-time.After(windowBudget):
+			}
+		})
+		return time.Date(2026, 8, 5, 0, 0, 0, 0, time.UTC)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if _, err := first.mgr.Open(first.repoDir, "feat", "", "first finding"); err != nil {
+			t.Errorf("first Open: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		<-inWindow
+		if _, err := second.mgr.Open(second.repoDir, "feat", "", "second finding"); err != nil {
+			t.Errorf("second Open: %v", err)
+		}
+		close(secondDone)
+	}()
+	wg.Wait()
+
+	j, err := first.mgr.Load(first.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(j.Entries) != 2 {
+		t.Fatalf("a concurrent write was lost: %d entries, want 2", len(j.Entries))
+	}
+	var ids, notes []string
+	for _, e := range j.Entries {
+		ids = append(ids, e.ID)
+		notes = append(notes, e.Note)
+	}
+	slices.Sort(ids)
+	slices.Sort(notes)
+	if !slices.Equal(ids, []string{"n1", "n2"}) {
+		t.Errorf("both writers claimed the same id: %v", ids)
+	}
+	if !slices.Equal(notes, []string{"first finding", "second finding"}) {
+		t.Errorf("unexpected findings %v", notes)
+	}
+}
+
+// TestOpenReportsAWedgedLockInsteadOfHanging is the other half of the locking
+// contract: a write that cannot get the lock has to fail, say so, and leave the
+// journal untouched. Hanging would stall an unattended review loop forever, and
+// writing anyway would be the lost update the lock exists to prevent.
+func TestOpenReportsAWedgedLockInsteadOfHanging(t *testing.T) {
+	fr := newFakeRepo(t)
+	if _, err := fr.mgr.Open(fr.repoDir, "feat", "", "already here"); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	orig := journalLockTimeout
+	journalLockTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { journalLockTimeout = orig })
+
+	lockPath := filepath.Join(filepath.Dir(fr.journalPath("feat")), journalLockFile)
+	held := make(chan struct{})
+	release := make(chan struct{})
+	go func() {
+		if err := files.WithLock(lockPath, time.Minute, func() error {
+			close(held)
+			<-release
+			return nil
+		}); err != nil {
+			t.Errorf("the stand-in holder failed to take the lock: %v", err)
+		}
+	}()
+	<-held
+	t.Cleanup(func() { close(release) })
+
+	start := time.Now()
+	_, err := fr.mgr.Open(fr.repoDir, "feat", "", "blocked")
+	if err == nil {
+		t.Fatal("wrote the journal without holding the lock")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("the error must say what happened, got: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Open hung for %s instead of timing out", elapsed)
+	}
+
+	j, err := fr.mgr.Load(fr.repoDir, "feat")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(j.Entries) != 1 {
+		t.Fatalf("a refused write still changed the journal: %d entries, want 1", len(j.Entries))
 	}
 }
 

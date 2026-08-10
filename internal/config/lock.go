@@ -1,15 +1,12 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 
 	"github.com/cjairm/devgeta/pkg/files"
-	"github.com/cjairm/devgeta/pkg/logger"
-	"golang.org/x/sys/unix"
 )
 
 // globalConfigLockFile is the sidecar lock's filename, next to
@@ -25,14 +22,6 @@ const globalConfigLockFile = "global_config.lock"
 // hanging Update forever. It is a var, not a const, so tests can shorten it
 // to keep the timeout test fast; production code never changes it.
 var lockAcquireTimeout = 10 * time.Second
-
-// lockPollInterval is how often acquireLock retries a non-blocking flock
-// attempt while waiting out lockAcquireTimeout. unix.Flock has no built-in
-// timeout and LOCK_EX blocks forever, so polling with LOCK_EX|LOCK_NB is used
-// instead of a blocking call on a goroutine: a goroutine stuck in a blocking
-// syscall past the timeout can't be cancelled and would leak for as long as
-// the other holder keeps the lock.
-var lockPollInterval = 25 * time.Millisecond
 
 func getGlobalConfigLockFilePath() string {
 	return filepath.Join(filepath.Dir(getGlobalConfigFilePath()), globalConfigLockFile)
@@ -59,17 +48,35 @@ func getGlobalConfigLockFilePath() string {
 //
 // If fn returns an error, the config is not saved and Update returns that
 // error unchanged.
+//
+// The locking mechanism itself is files.WithLock — the same one the review
+// journal's writes use, because it is the same problem and CLAUDE.md's reuse
+// rule puts it in one place rather than two that could drift. What stays here
+// is only what is specific to the config: WHICH file is locked, how long a
+// caller waits for it, and a "config:" prefix so an error names which lock
+// timed out.
 func Update(fn func(gc *GlobalConfig) error) error {
-	unlock, err := acquireLock()
+	// inside is what happened WITHIN the lock, kept apart from what WithLock
+	// itself returns so the two can be told apart afterwards: the body's errors
+	// (fn's above all) must reach the caller exactly as they are, while a lock
+	// failure arrives bare and is the only one that needs saying which lock.
+	var inside error
+	err := files.WithLock(getGlobalConfigLockFilePath(), lockAcquireTimeout, func() error {
+		inside = updateLocked(fn)
+		return inside
+	})
 	if err != nil {
-		return err
-	}
-	defer func() {
-		if unlockErr := unlock(); unlockErr != nil {
-			logger.L().Warnw("config: failed to release lock", "error", unlockErr)
+		if inside != nil {
+			return inside
 		}
-	}()
+		return fmt.Errorf("config: %w", err)
+	}
+	return nil
+}
 
+// updateLocked is Update's load-mutate-save cycle, which runs only with the
+// lock held.
+func updateLocked(fn func(gc *GlobalConfig) error) error {
 	gc := &GlobalConfig{}
 	if err := gc.Load(); err != nil {
 		if !os.IsNotExist(err) {
@@ -78,9 +85,9 @@ func Update(fn func(gc *GlobalConfig) error) error {
 		// No config file yet: gc is already the zero value here (Load's
 		// os.ReadFile failed before yaml.Unmarshal ever ran, so nothing wrote
 		// to it), so it's already the right starting point. Do not write
-		// anything here — the only write for this Update happens below,
-		// after fn runs, so it's the first write and it already contains
-		// fn's change. See the Update doc comment for the race this avoids.
+		// anything here — the only write for this Update happens below, after
+		// fn runs, so it's the first write and it already contains fn's
+		// change. See the Update doc comment for the race this avoids.
 	}
 	if err := fn(gc); err != nil {
 		return err
@@ -89,62 +96,4 @@ func Update(fn func(gc *GlobalConfig) error) error {
 		return fmt.Errorf("config: failed to save: %w", err)
 	}
 	return nil
-}
-
-// acquireLock opens (creating if needed) the sidecar lock file and blocks
-// until it holds an exclusive flock on it, or lockAcquireTimeout elapses. On
-// success it returns a function that releases the lock and closes the file
-// descriptor; the caller must call it exactly once.
-//
-// unix.Flock(LOCK_EX) is chosen over an O_CREATE|O_EXCL lockfile because the
-// OS releases a flock automatically when the holding process exits —
-// including on crash — so there is no stale-lock case to detect or clean up.
-func acquireLock() (func() error, error) {
-	lockPath := getGlobalConfigLockFilePath()
-	if err := os.MkdirAll(filepath.Dir(lockPath), files.DirPermission); err != nil {
-		return nil, fmt.Errorf(
-			"config: failed to create directory for lock file %s: %w",
-			lockPath,
-			err,
-		)
-	}
-
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, files.FilePermission)
-	if err != nil {
-		return nil, fmt.Errorf("config: failed to open lock file %s: %w", lockPath, err)
-	}
-
-	deadline := time.Now().Add(lockAcquireTimeout)
-	fd := int(f.Fd())
-	for {
-		flockErr := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB)
-		if flockErr == nil {
-			break
-		}
-		if !errors.Is(flockErr, unix.EWOULDBLOCK) {
-			// Closing after a real flock error; the more informative error
-			// below (which names the lock path and the flock failure) is
-			// what's returned, so a close failure on the way out is not
-			// actionable on its own.
-			_ = f.Close()
-			return nil, fmt.Errorf("config: failed to lock %s: %w", lockPath, flockErr)
-		}
-		if time.Now().After(deadline) {
-			// Same as above: closing after a timeout error, where the
-			// timeout error itself is what's returned to the caller.
-			_ = f.Close()
-			return nil, fmt.Errorf(
-				"config: timed out after %s waiting for the config lock (%s); "+
-					"another devgeta process may be stuck holding it",
-				lockAcquireTimeout, lockPath,
-			)
-		}
-		time.Sleep(lockPollInterval)
-	}
-
-	return func() error {
-		unlockErr := unix.Flock(fd, unix.LOCK_UN)
-		closeErr := f.Close()
-		return errors.Join(unlockErr, closeErr)
-	}, nil
 }
