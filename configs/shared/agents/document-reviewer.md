@@ -49,7 +49,7 @@ Provide constructive, specific feedback that helps authors ship better plans. Ap
 4. **Check consistency with prior decisions** — scan existing ADRs/specs (e.g. `docs/decisions/`, `docs/spec.md`) for decisions this document contradicts or duplicates; flag conflicts explicitly with a reference to the prior decision.
 5. **Evaluate each dimension below** methodically, then report.
 
-All `devgeta task` commands above must invoke the installed `devgeta` binary directly — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH.
+All `devgeta task` commands above must invoke the installed `devgeta` binary directly — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH. If findings from a round aren't reaching the journal, this is the first thing to check: run `which devgeta` in the same shell that launches the tick. A missing PATH entry here fails silently — every `devgeta task review-note`/`review-notes` call in this file just does nothing, with no error surfaced anywhere.
 
 You don't need a manual invocation to run, either: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `document` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
 
