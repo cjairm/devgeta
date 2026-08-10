@@ -1902,10 +1902,88 @@ func TestPRReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 // anchors the tick's guards read: the step that posts, and the step that
 // allocates the reports directory.
 const (
-	prReviewLoopScratchHeading = "### 4. Allocate the scratch directory"
-	prReviewLoopPostHeading    = "### 8. Post exactly one review"
-	prReviewLoopCleanupHeading = "### 10. Clean up"
+	prReviewLoopTargetHeading    = "### 3. Resolve the review target"
+	prReviewLoopScratchHeading   = "### 4. Allocate the scratch directory"
+	prReviewLoopAggregateHeading = "### 6. Aggregate every run's verdict, once"
+	prReviewLoopPostHeading      = "### 8. Post exactly one review"
+	prReviewLoopCleanupHeading   = "### 10. Clean up"
 )
+
+// TestPRReviewLoopCannotApproveWithoutRunningAReviewer guards the tick against
+// approving a PR no model ever read. Two steps have to hold for that to be
+// impossible, and each closed half of one real hole:
+//
+//   - Step 3 assigns the reviewer types from the PR's changed files. It used to
+//     name three buckets — code, docs/prose, agent prompts — with no bucket for
+//     anything else, so a PR touching only a workflow YAML and a shell script
+//     could resolve to no type at all. `code` is now the catch-all, which is
+//     what the code reviewer already is: it reads the whole diff of its range,
+//     not a list of source extensions.
+//   - Step 6 then aggregates. Its approval rule is universally quantified over
+//     the runs ("every run APPROVE"), and a universal over an empty set is TRUE
+//     — so zero runs used to satisfy the approval branch outright. Counting the
+//     runs before weighing them is what makes that rule mean something.
+//
+// Both halves are asserted because either one alone leaves the failure
+// reachable: patch only step 3 and any other route to zero runs re-enters the
+// vacuous branch; patch only step 6 and every such PR escalates to a human
+// instead of being reviewed.
+//
+// What this catches: the catch-all bucket leaving step 3, or step 6's approval
+// branch going back to a bare "every run approved" with no count.
+// What this does NOT catch: an agent classifying a file wrongly, or approving
+// despite a correctly-worded count — substring checks over prose cannot execute
+// the instructions (see TestCommittingCommandsDeclareStandingAuthorization).
+func TestPRReviewLoopCannotApproveWithoutRunningAReviewer(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	resolve := flowSection(t, body, prReviewLoopTargetHeading)
+	for _, req := range []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "`code` for **everything else**",
+			why: "the three named buckets stop covering every changed file, so a PR " +
+				"of config, build, or script files resolves to no reviewer type — and " +
+				"a tick with no type runs no reviewer",
+		},
+		{
+			substr: "at least one type",
+			why: "nothing states the invariant the buckets exist to produce, so a " +
+				"later edit can narrow them back down without anything noticing",
+		},
+	} {
+		if !strings.Contains(resolve, req.substr) {
+			t.Errorf(
+				"%s step 3 is missing %q — %s",
+				path, req.substr, req.why,
+			)
+		}
+	}
+
+	aggregate := flowSection(t, body, prReviewLoopAggregateHeading)
+	if !strings.Contains(aggregate, "No run happened this tick") {
+		t.Errorf(
+			"%s step 6 no longer treats \"no run happened\" as its own outcome. "+
+				"Every other rule in that step quantifies over the runs, and each is "+
+				"trivially true of nothing, so without this case a tick that reviewed "+
+				"no code falls straight through to the approval path",
+			path,
+		)
+	}
+	if !strings.Contains(
+		aggregate,
+		"At least one run happened and every run's outcome is `APPROVE`",
+	) {
+		t.Errorf(
+			"%s step 6's approval branch no longer requires a run to have happened. "+
+				"\"Every run approved\" is a universal, and a universal over an empty "+
+				"set is true — so the count is not decoration, it is the whole guard",
+			path,
+		)
+	}
+}
 
 // TestPRReviewLoopForwardsTheRangeFlags guards the four flags that make a
 // reviewer run read the PR instead of the checkout. `review-run` requires
@@ -2264,6 +2342,61 @@ func TestApprovePRSubmitNamesThePRWhenTargeted(t *testing.T) {
 				"Step 1 saying to pass it is not enough — it is ~80 lines above the "+
 				"fenced command, and review-pr.md restates it at its own submit for "+
 				"exactly this reason",
+			path,
+		)
+	}
+}
+
+// TestReviewPRSubmitNamesThePRWhenTargeted is the /review-pr half of the same
+// defect approve-pr.md was already guarded against. `devgeta task submit-review`
+// with no --pr resolves the PR from the current branch, and that does not error:
+// under --target the checkout is a different PR entirely, so the review is
+// composed correctly against the target commit and then posted, in full, on
+// somebody else's pull request.
+//
+// The file's own opening line — "The PR is resolved from the current branch
+// unless you pass a number" — is what makes an omitted number silently plausible,
+// so the --target section has to override it explicitly. And the rule cannot live
+// only there: it is ~200 lines above the submit, which is the same distance that
+// let approve-pr.md's submit omit the flag with the rule already written.
+//
+// What this catches: the --target section losing the mandate, or step 6's submit
+// losing the local restatement.
+// What this does NOT catch: an agent omitting the flag despite reading both.
+func TestReviewPRSubmitNamesThePRWhenTargeted(t *testing.T) {
+	path, body := readSharedCommand(t, "review-pr.md")
+
+	target := flowSection(t, body, "### `--target <head-sha>`")
+	for _, req := range []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "--pr <n>",
+			why: "nothing names the flag that carries the PR number, so the review " +
+				"is posted to whichever PR the checkout branch has open",
+		},
+		{
+			substr: "mandatory",
+			why: "the number reads as optional, which is exactly what step 1's " +
+				"branch inference then supplies — a wrong number, without an error",
+		},
+	} {
+		if !strings.Contains(target, req.substr) {
+			t.Errorf(
+				"%s's `--target` section is missing %q — %s",
+				path, req.substr, req.why,
+			)
+		}
+	}
+
+	submit := flowSection(t, body, "### 6. Submit one review")
+	if !strings.Contains(submit, "not optional") {
+		t.Errorf(
+			"%s step 6 no longer restates at the submit that `--pr PR_NUMBER` is "+
+				"not optional under --target. \"Add it when you resolved a number in "+
+				"step 1\" is a conditional, and under --target there is no condition: "+
+				"the checkout is not this PR",
 			path,
 		)
 	}

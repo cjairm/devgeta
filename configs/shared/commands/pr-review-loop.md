@@ -175,9 +175,20 @@ devgeta task pr-view --pr <n>
 Read the purpose and the linked ticket before any code. A diff shows what moved, never why.
 
 Now fix the reviewer types. If step 0 resolved any, use exactly those. Otherwise judge them
-from the target's `files:` list: `code` for code, `document` for docs and prose, `skill` for
-agent skills and commands. A mixed PR takes the matching set — more than one type is normal
-and each becomes its own run.
+from the target's `files:` list: `document` for docs and prose, `skill` for agent, command,
+and skill prompt files, and `code` for **everything else**. A mixed PR takes the matching
+set — more than one type is normal and each becomes its own run.
+
+`code` is the catch-all on purpose, so that every listed file lands in some bucket. The code
+reviewer reads the whole diff of the range it is given rather than a list of source
+extensions, so a workflow YAML, a shell script, a Makefile, a JSON config, or an asset is
+work it can judge. The alternative is worse than a slightly loose fit: a file matching none
+of the three types would resolve to no type at all, and a tick with no type runs no reviewer
+and then has nothing to weigh in step 6.
+
+So a non-empty `files:` list always yields at least one type. If you somehow end up with
+none anyway, that is a bug in this step and never an approval: end the tick as `escalated`,
+naming the files you could not place, and post nothing.
 
 If `files:` prints `(none)`, the whole range is either empty or excluded as noise, so there
 is nothing for a reviewer lens to judge. End the tick without running a reviewer and without
@@ -238,10 +249,18 @@ weighs the outcomes and step 8 reads the reports.
 
 ### 6. Aggregate every run's verdict, once
 
-Weigh **all** the runs together — every type times every model — and pick one of three
+Weigh **all** the runs together — every type times every model — and pick one of four
 outcomes here. This is the only place the outcome is decided; steps 7 to 9 act on it and
 never recompute it.
 
+**Count the runs before weighing them.** Every rule below is a statement about the runs that
+happened, and each one is trivially true of nothing — "every run approved" most of all. So
+zero runs is its own outcome, checked first, and it is never an approval:
+
+- **No run happened this tick → terminal: escalated.** Step 3 resolved no reviewer type, or
+  step 5 never got as far as running one. Say which, name the PR, and go to step 10. A tick
+  that ran no reviewer looked at no code, and posting an approval for it would put your name
+  on a review no model performed.
 - **Any run's outcome is `ERROR(<reason>)` or `NO VERDICT` → terminal: escalated.** Name the
   failing run — its type and its model label — and go to step 10. Never approve on a run
   that did not complete, and never re-run it: `review-run` already relaunches a reviewer
@@ -250,7 +269,8 @@ never recompute it.
   `NO VERDICT(<reason>)` carries the runner's own words for why, also verbatim. A bare
   `NO VERDICT` carries no reason at all — state that the reviewer completed without
   producing a verdict, and do not invent one.
-- **Every run's outcome is `APPROVE`** → the approval path in step 8.
+- **At least one run happened and every run's outcome is `APPROVE`** → the approval path in
+  step 8. Both halves are required: the count first, the verdicts second.
 - **Otherwise** — at least one `REQUEST CHANGES` or `NEEDS DISCUSSION`, and no `ERROR` and
   no `NO VERDICT` anywhere — the review path in step 8.
 

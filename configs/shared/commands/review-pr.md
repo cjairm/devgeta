@@ -24,7 +24,7 @@ Pass `--target` when the PR's code is not in the working tree: someone else's PR
 
 `--target` comes with `--base`. The PR's diff is `<merge base>..<head>`, and a merge base cannot be worked out from a head alone, so both shas are passed in. **Given `--target` without `--base`, stop and say you need the base sha.** Do not guess one, and do not fall back to the checked-out branch's diff — that diff describes different code, so the review would be posted against the wrong changes.
 
-With `--target`, four things change and nothing else:
+With `--target`, five things change and nothing else:
 
 1. **Resolve it first — and stop if it doesn't resolve.**
 
@@ -41,6 +41,8 @@ With `--target`, four things change and nothing else:
 3. **The submit names the commit** — add `--commit <head-sha>` to the `devgeta task submit-review` call in step 6.
 
 4. **The journal is the PR's, not the checkout's.** **When you are also given a journal key** — `--journal <key>`, which the caller that can name a target can name too — append `--branch <key> --rev <head-sha>` to every `review-notes` and `review-note` command in this file, the settle in step 3 included. The key names the journal to read and write; the revision is the commit a cited path is stamped against. Unscoped, those commands fall back to the checked-out branch's journal, which here is not this PR's: you reconcile against another branch's settled decisions, and a settle writes into that branch's record. Journal ids are per-journal and sequential, so `--settle --id n4` lands on whatever `n4` that branch already has — a real, unrelated open finding closed with a note about this PR. Given `--target` with no key, settle nothing: post the review and say in your summary that no journal key was passed. Without `--target` at all, run every journal command exactly as written.
+
+5. **Every post names the PR** — `--pr <n>` is mandatory on the `devgeta task submit-review` call in step 6, and on a `devgeta task comment-pr` call if you post one instead. Without a number those commands resolve the PR from the checked-out branch, and with `--target` that branch is not this PR: an omitted number does not error, it posts a correctly-written review to whatever PR the checkout happens to have open. So a number must be in hand here — if none was passed with `--target`, stop and ask for one rather than letting step 1 infer it from the branch.
 
 Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you review. What it buys is that the posted review names the commit it actually judged: inline comments hang off that diff (GitHub marks them outdated once the head moves), the review record shows the sha, and branch protection's dismiss-stale-approvals has a sha to key off. A review that lands late is visibly stamped with the commit it read instead of silently claiming the new head.
 
@@ -230,7 +232,7 @@ devgeta task submit-review \
   --comments-file "$SCRATCH/comments.json"      # omit when there are no inline findings
 ```
 
-Add `--pr PR_NUMBER` when you resolved a number in step 1. With `--target`, add `--commit <head-sha>` too, so the posted review names the commit it judged. The review posts atomically — one notification, all inline comments grouped under it.
+Add `--pr PR_NUMBER` when you resolved a number in step 1. With `--target`, that flag is not optional — the checkout is not this PR, so an omitted number posts this review to whatever PR the checkout branch has open. Add `--commit <head-sha>` too, so the posted review names the commit it judged. The review posts atomically — one notification, all inline comments grouped under it.
 
 **Clean up on every exit path, not just the happy one:**
 
@@ -246,7 +248,7 @@ If submit failed, **print the review body and any inline comments into your repl
 
 - **Every prior thread's concern was addressed and you have no new findings → approve.** Don't post a comment saying "nothing to add" — a comment doesn't dismiss a prior request-changes review, so it leaves the PR blocked for no reason. Don't ask the author to resolve threads either. Submit `--event approve` with a one-line body that matches what actually happened: if feedback was raised and addressed, acknowledge it warmly ("LGTM. Thanks for working on the suggestions 🔥" — vary the phrasing); if nothing was ever raised, plain `LGTM.` — never thank the author for addressing feedback that was never given.
 - **A prior concern is still live in the code but doesn't block → approve with `LGWC`, naming who raised it.** An open suggestion or nit from a bot or another reviewer is worth passing along, not worth holding the PR over.
-- **A prior concern is still live in the code and is a real blocker → don't approve** (case 1 above). Flag the concern itself in one brief `comment-pr` — the rest looks good, this one item is outstanding, you'll approve once it's addressed — rather than re-listing each thread or asking for resolutions.
+- **A prior concern is still live in the code and is a real blocker → don't approve** (case 1 above). Flag the concern itself in one brief `comment-pr` — the rest looks good, this one item is outstanding, you'll approve once it's addressed — rather than re-listing each thread or asking for resolutions. With `--target`, `--pr PR_NUMBER` is not optional on that call either — the checkout is not this PR, so an omitted number posts the comment to whatever PR the checkout branch has open.
 
 ## Output
 
