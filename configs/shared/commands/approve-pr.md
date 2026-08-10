@@ -24,7 +24,7 @@ This is the **deciding-approver** step, not a review — the full review lives i
 
 Pass `--target` when the PR's code is not in the working tree: someone else's PR, a fork's PR, or any PR judged from an unrelated branch. It names the commit this approval is about. **Without `--target`, everything below works exactly as it always has** — the working tree is the source, and nothing in this file changes.
 
-With `--target`, three things change and nothing else:
+With `--target`, four things change and nothing else:
 
 1. **Resolve it first — and stop if it doesn't resolve.**
 
@@ -37,6 +37,8 @@ With `--target`, three things change and nothing else:
 2. **Every read of repo content resolves at that commit** — `git show <head-sha>:<path>` instead of opening the path on disk. Same gates, same triage, same severity rules; only where the bytes come from changes.
 
 3. **The approval names the commit** — add `--commit <head-sha>` to the `devgeta task approve-pr` call in step 4.
+
+4. **Every post names the PR** — `--pr <n>` is mandatory on the `devgeta task approve-pr` call in step 4, and on a `devgeta task comment-pr` call if a blocker means you post that instead. Without a number those commands resolve the PR from the checked-out branch, and with `--target` that branch is not this PR: an omitted number does not error, it approves whatever PR the checkout happens to have open. So a number must be in hand here — if none was passed with `--target`, stop and ask for one rather than letting step 1 infer it from the branch.
 
 Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you decide. What it buys is that the approval names the commit it was based on, and that branch protection's dismiss-stale-approvals has a sha to key off, so an approval of an older commit is visibly an approval of that commit rather than a silent claim about the new head.
 
@@ -118,6 +120,8 @@ Three cases cover almost every PR that reaches here:
 devgeta task comment-pr --body "Everything looks good on my side except one thing: <the blocker in one line> — already flagged by <who>. I'll approve once that's addressed."
 ```
 
+With `--target`, `--pr PR_NUMBER` is not optional on that call — the checkout is not this PR, so an omitted number posts the comment to whatever PR the checkout branch has open.
+
 **2. A non-blocking comment or suggestion someone else left → LGWC: approve.** Approve and name who left it, so the author knows whose feedback to read. Say it's worth doing — you are passing it along, not dismissing it.
 
 **3. Failing checks with no code blocker → LGWC: approve, and name the failing check.** A red check is a signal for the user to judge, not a gate (see step 3). Name the specific job so the author can go look; don't withhold approval over it.
@@ -128,7 +132,7 @@ To approve (cases 2 and 3, and every PR with nothing outstanding at all):
 devgeta task approve-pr --body "<body picked below>"
 ```
 
-Add `--commit <head-sha>` when you were given `--target`, so the approval names the commit it was based on.
+Add `--pr PR_NUMBER` when you resolved a number in step 1. With `--target`, that flag is not optional — the checkout is not this PR, so an omitted number approves whatever PR the checkout branch has open. Add `--commit <head-sha>` too, so the approval names the commit it was based on.
 
 **The body must match what actually happened on this PR — never thank the author for addressing feedback that was never given.** Pick by situation:
 
@@ -158,6 +162,8 @@ Don't paste the gate summary or per-thread detail into the PR — that belongs i
 ```bash
 devgeta task comment-pr --body "Everything looks good on my side except one thing: <what's left in one line>. I'll approve once that's addressed."
 ```
+
+With `--target`, `--pr PR_NUMBER` is not optional on that call — the checkout is not this PR, so an omitted number posts the comment to whatever PR the checkout branch has open.
 
 ## Output
 

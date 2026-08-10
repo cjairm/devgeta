@@ -1898,6 +1898,377 @@ func TestPRReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 	)
 }
 
+// prReviewLoopPostHeading and prReviewLoopScratchHeading complete the set of
+// anchors the tick's guards read: the step that posts, and the step that
+// allocates the reports directory.
+const (
+	prReviewLoopScratchHeading = "### 4. Allocate the scratch directory"
+	prReviewLoopPostHeading    = "### 8. Post exactly one review"
+	prReviewLoopCleanupHeading = "### 10. Clean up"
+)
+
+// TestPRReviewLoopForwardsTheRangeFlags guards the four flags that make a
+// reviewer run read the PR instead of the checkout. `review-run` requires
+// --base/--head/--journal/--report-dir as a group, so dropping one is an error
+// the runner reports — with one exception that is silent and severe: --journal
+// is what keys the review journal to the PR (ADR-0012 §5), and a run that
+// somehow loses it files a PR's findings under whatever branch happens to be
+// checked out. The types and the note already have guards above; the range
+// flags carry the actual target, and had none.
+//
+// What this catches: any of the four being dropped from step 5's invocation
+// while the rest of the file still describes a PR review.
+// What this does NOT catch: the flags carrying wrong values — step 3 resolves
+// those, and a substring check over prose cannot follow a value.
+func TestPRReviewLoopForwardsTheRangeFlags(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	runSection := flowSection(t, body, prReviewLoopRunHeading)
+	required := []struct {
+		flag string
+		why  string
+	}{
+		{
+			flag: "--base <base>",
+			why: "the reviewers would read a range with no start, so the diff under " +
+				"review is not the PR's",
+		},
+		{
+			flag: "--head <head>",
+			why: "the reviewed commit stops being the one step 3 pinned, so a push " +
+				"mid-tick changes what gets reviewed",
+		},
+		{
+			flag: "--journal <key>",
+			why: "the journal falls back to the checked-out branch, so this PR's " +
+				"findings are filed under an unrelated branch's name — the failure " +
+				"ADR-0012 §5's keying exists to prevent, and the one range-mode flag " +
+				"whose absence is silent rather than an error",
+		},
+		{
+			flag: "--report-dir",
+			why: "the reports have nowhere to land, so step 8 has nothing to read and " +
+				"a review composed from journal one-liners throws the findings away",
+		},
+	}
+	for _, req := range required {
+		if !strings.Contains(runSection, req.flag) {
+			t.Errorf(
+				"%s step 5 no longer forwards %s to `devgeta task review-run` — %s",
+				path, req.flag, req.why,
+			)
+		}
+	}
+}
+
+// invocationFlags returns the flag text of every `/<command> …` inline-code span
+// in section — the argument list each posting invocation is written with. The
+// spans are matched inside whitespace-collapsed prose, so a hand-rewrapped
+// invocation still reads as one span.
+func invocationFlags(t *testing.T, section, command string) []string {
+	t.Helper()
+	re := regexp.MustCompile("`/" + regexp.QuoteMeta(command) + " ([^`]*)`")
+	matches := re.FindAllStringSubmatch(section, -1)
+	flags := make([]string, 0, len(matches))
+	for _, m := range matches {
+		flags = append(flags, m[1])
+	}
+	return flags
+}
+
+// TestPRReviewLoopPostingInvocationsCarryTheirScope pins the shape of step 8's
+// two invocations, which is where the tick hands a PR that is not the checkout
+// to a command that defaults to the checkout. Every one of these was a
+// maintainer decision that nothing held in place, and each has a distinct
+// failure:
+//
+//   - `/review-pr` needs --base: a head alone cannot yield a merge base, and a
+//     tip-based diff reads every commit merged since the PR opened as a finding
+//     against it.
+//   - `/review-pr` needs --journal: without the key its own settle commands fall
+//     back to the checkout's journal, where the same sequential id is a
+//     different finding — so a settle closes a real, unrelated open finding with
+//     a note about this PR.
+//   - `/approve-pr` must NOT get --base: it judges threads at a commit and never
+//     diffs a range, so a base sha there is a flag its file does not document.
+//     It never reads the journal either, so it takes no key.
+//   - Both need --target: it is the whole reason either command can judge a PR
+//     that is not checked out.
+//
+// What this catches: any of the four being dropped or added while the tick's
+// prose still reads plausibly.
+// What this does NOT catch: the values being wrong (step 3 resolves them), or
+// the invoked command ignoring a flag it was correctly handed — the companion
+// guards over review-pr.md and approve-pr.md cover that side.
+func TestPRReviewLoopPostingInvocationsCarryTheirScope(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	section := flowSection(t, body, prReviewLoopPostHeading)
+
+	reviewCalls := invocationFlags(t, section, "review-pr")
+	if len(reviewCalls) == 0 {
+		t.Fatalf(
+			"%s step 8 no longer invokes `/review-pr` — the review path has no way to "+
+				"reach the PR",
+			path,
+		)
+	}
+	for _, flags := range reviewCalls {
+		for _, want := range []string{"--base", "--target", "--journal"} {
+			if !strings.Contains(flags, want) {
+				t.Errorf(
+					"%s step 8's `/review-pr %s` does not pass %s. The PR is not the "+
+						"checkout here, so every part of the target has to travel in the "+
+						"invocation: --base and --target name the reviewed range, and "+
+						"--journal names the journal a settle writes to — without the key, "+
+						"`/review-pr` settles an id in the checked-out branch's journal, "+
+						"where that id is someone else's open finding",
+					path, flags, want,
+				)
+			}
+		}
+	}
+
+	approveCalls := invocationFlags(t, section, "approve-pr")
+	if len(approveCalls) == 0 {
+		t.Fatalf(
+			"%s step 8 no longer invokes `/approve-pr` — the approval path has no way "+
+				"to reach the PR",
+			path,
+		)
+	}
+	for _, flags := range approveCalls {
+		if !strings.Contains(flags, "--target") {
+			t.Errorf(
+				"%s step 8's `/approve-pr %s` does not pass --target, so the approval "+
+					"is decided against the working tree instead of the reviewed commit",
+				path, flags,
+			)
+		}
+		for _, unwanted := range []string{"--base", "--journal"} {
+			if strings.Contains(flags, unwanted) {
+				t.Errorf(
+					"%s step 8's `/approve-pr %s` passes %s. `/approve-pr` documents "+
+						"neither: it judges threads at one commit rather than diffing a "+
+						"range, and it never reads or writes the journal — so this is a "+
+						"flag its own file has no rule for",
+					path, flags, unwanted,
+				)
+			}
+		}
+	}
+
+	if !strings.Contains(section, "review-notes --branch <key> --rev <head>") {
+		t.Errorf(
+			"%s step 8 no longer reads `devgeta task review-notes --branch <key> --rev "+
+				"<head>` before composing the review. That read is the only place open "+
+				"findings are listed — review-run prints verdicts and report paths, never "+
+				"ids — and unscoped it would list the checkout branch's findings instead",
+			path,
+		)
+	}
+}
+
+// TestPRReviewLoopScratchVariableCannotCollideWithReviewPR guards the tick's
+// reports directory against the one name it must not use. /review-pr, which
+// this tick invokes at step 8, allocates and cleans its own scratch directory in
+// a variable literally named SCRATCH. Sharing that name across the two files in
+// one session means step 10 cleans a directory /review-pr already removed and
+// leaves this tick's reports behind.
+//
+// What this catches: the tick going back to a bare SCRATCH, or step 5 and step
+// 10 drifting onto a different variable than step 4 allocated.
+// What this does NOT catch: a shell that never exports either variable — this
+// is prose, and the collision is about the name, not the value.
+func TestPRReviewLoopScratchVariableCannotCollideWithReviewPR(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	alloc := flowSection(t, body, prReviewLoopScratchHeading)
+	m := regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)=\$\(devgeta task scratch\)`).
+		FindStringSubmatch(alloc)
+	if m == nil {
+		t.Fatalf(
+			"%s step 4 no longer allocates a scratch directory from `devgeta task "+
+				"scratch` — the reviewer reports have nowhere to land",
+			path,
+		)
+	}
+	name := m[1]
+	if name == "SCRATCH" {
+		t.Errorf(
+			"%s step 4 allocates $SCRATCH, the same variable /review-pr allocates and "+
+				"cleans for itself. This tick invokes /review-pr at step 8, between this "+
+				"allocation and step 10's cleanup, so one name for two directories makes "+
+				"step 10 clean a path that is already gone and leak this tick's reports",
+			path,
+		)
+	}
+
+	ref := "\"$" + name + "\""
+	for _, use := range []struct {
+		heading string
+		what    string
+	}{
+		{prReviewLoopRunHeading, "step 5 writes the reviewer reports into it"},
+		{prReviewLoopCleanupHeading, "step 10 removes it"},
+	} {
+		if !strings.Contains(flowSection(t, body, use.heading), ref) {
+			t.Errorf(
+				"%s %s, but no longer names %s — the step that allocates the directory "+
+					"and the step that uses it have drifted apart, so one of them acts on "+
+					"a variable nothing set",
+				path, use.what, ref,
+			)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The posting commands' own --target contracts.
+//
+// /pr-review-loop hands a PR that is not the checkout to /review-pr and
+// /approve-pr. Both default to the checkout — for the journal, for the PR
+// number — and a launch prompt cannot override that on its own: it contradicts
+// the command file's own written instructions, and the file wins. That is the
+// same lesson TestReviewerAgentsScopeTheJournalWhenTargeted pins for the
+// reviewer agents, and it had to be learned twice.
+// ---------------------------------------------------------------------------
+
+// TestPostingCommandsScopeTheJournalWhenTargeted is the /review-pr analog of
+// TestReviewerAgentsScopeTheJournalWhenTargeted, for the same defect one file
+// downstream. /review-pr settles a journal entry whenever it drops a finding as
+// genuinely handled. Unscoped, that settle goes to the checked-out branch's
+// journal, and because ids are per-journal and sequential, `--settle --id n4`
+// closes whatever n4 that branch already has — a real, unrelated open finding
+// marked answered with a note about someone else's PR. Run from a default-branch
+// checkout, which reviewing another person's PR normally means, it also creates
+// the `main` journal ADR-0018 exists to prevent.
+//
+// approve-pr.md is asserted from the other side: it must stay journal-free. It
+// never reads or writes the journal, so a scoping rule there would be a rule
+// for a command that does not exist — and if it ever gains a journal call, this
+// test fails and says which clause it now needs.
+//
+// What this catches: the --target section losing the scoping rule, the flags
+// being paraphrased into something an agent cannot copy, the fenced settle
+// dropping its scoped form, and approve-pr.md growing an unscoped journal call.
+// What this does NOT catch: an agent reading a correct rule and settling
+// unscoped anyway; substring checks over prose cannot execute it.
+func TestPostingCommandsScopeTheJournalWhenTargeted(t *testing.T) {
+	// The flag pair, quoted as review-pr.md renders it, so a paraphrase an agent
+	// could not copy verbatim fails here.
+	const scopedFlags = "`--branch <key> --rev <head-sha>`"
+
+	path, body := readSharedCommand(t, "review-pr.md")
+	target := flowSection(t, body, "### `--target <head-sha>`")
+
+	required := []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "--journal <key>",
+			why: "nothing names the flag that carries the key, so a caller reviewing " +
+				"another branch's PR has no way to say which journal is the PR's",
+		},
+		{
+			substr: scopedFlags,
+			why:    "the rule never says which flags carry the key and the revision",
+		},
+		{
+			substr: "every `review-notes` and `review-note` command in this file",
+			why: "the rule does not plainly reach every journal call, so some are " +
+				"scoped and some are not and the round's record splits across two " +
+				"journals",
+		},
+		{
+			substr: "run every journal command exactly as written",
+			why: "the ordinary run — a PR checked out here, no key passed — is left " +
+				"ambiguous, which invites inventing a key that was never given",
+		},
+	}
+	for _, req := range required {
+		if !strings.Contains(target, req.substr) {
+			t.Errorf(
+				"%s's `--target` section is missing %q — %s",
+				path, req.substr, req.why,
+			)
+		}
+	}
+
+	// The settle sits ~60 lines below the rule, in step 3. Restating the scope
+	// where the command actually is is what stops a run from reading the rule and
+	// then settling unscoped anyway — the same reason the reviewer agents repeat
+	// it in their recording section.
+	dedup := flowSection(t, body, "### 3. Fetch existing threads and dedup")
+	if !strings.Contains(dedup, "--branch <key> --rev <head-sha>") {
+		t.Errorf(
+			"%s step 3's settle no longer shows its scoped form (`--branch <key> --rev "+
+				"<head-sha>`). This is the only journal WRITE in the file, and the one "+
+				"that corrupts another branch's record: ids are per-journal and "+
+				"sequential, so an unscoped `--settle --id n4` closes that branch's n4",
+			path,
+		)
+	}
+
+	// The other half of the contract: approve-pr.md is journal-free, which is why
+	// the loop passes it no key. If that ever stops being true, the scoping rule
+	// has to arrive with the first journal call, not after it.
+	approvePath, approveBody := readSharedCommand(t, "approve-pr.md")
+	for _, call := range []string{"review-notes", "review-note "} {
+		if strings.Contains(approveBody, call) {
+			t.Errorf(
+				"%s now runs `devgeta task %s`, so it touches the review journal. "+
+					"/pr-review-loop passes it no journal key precisely because it did "+
+					"not, so that call resolves the journal from the checked-out branch — "+
+					"which in --target mode is not this PR. Give this file the same "+
+					"scoping rule review-pr.md's `--target` section carries, and pass the "+
+					"key from the loop's step 8",
+				approvePath, strings.TrimSpace(call),
+			)
+		}
+	}
+}
+
+// TestApprovePRSubmitNamesThePRWhenTargeted guards the second half of the same
+// defect class: a command that defaults to the checkout, invoked from a checkout
+// that is not the PR. `devgeta task approve-pr` with no --pr resolves the PR
+// from the current branch, and that does not error — it approves whatever PR the
+// checkout branch has open. A real, misdirected approval on someone else's PR.
+//
+// The rule cannot live only at step 1, ~80 lines above the submit: it was there
+// all along, and the submit still omitted the flag. It has to be at the submit,
+// the way review-pr.md's already is.
+//
+// What this catches: the --target section or the fenced approve losing the
+// restatement.
+// What this does NOT catch: an agent omitting the flag despite reading the rule.
+func TestApprovePRSubmitNamesThePRWhenTargeted(t *testing.T) {
+	path, body := readSharedCommand(t, "approve-pr.md")
+
+	target := flowSection(t, body, "### `--target <head-sha>`")
+	if !strings.Contains(target, "--pr <n>") {
+		t.Errorf(
+			"%s's `--target` section never says the submit must name the PR (`--pr "+
+				"<n>`). With --target the checkout is not this PR, so an omitted number "+
+				"does not fail — `devgeta task approve-pr` resolves the checkout "+
+				"branch's own PR and approves that one instead",
+			path,
+		)
+	}
+
+	decide := flowSection(t, body, "### 4. Decide")
+	if !strings.Contains(decide, "--pr PR_NUMBER") {
+		t.Errorf(
+			"%s step 4 no longer restates `--pr PR_NUMBER` at the approve submit. "+
+				"Step 1 saying to pass it is not enough — it is ~80 lines above the "+
+				"fenced command, and review-pr.md restates it at its own submit for "+
+				"exactly this reason",
+			path,
+		)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Dedup suppresses duplicate comments. It never moves the verdict.
 //

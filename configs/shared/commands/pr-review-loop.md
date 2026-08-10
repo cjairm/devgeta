@@ -61,9 +61,11 @@ read, and an escalation is still reported to the human instead of decided for th
   `requested: no`; claiming a team's work is a staffing judgment this loop does not make.
 - `devgeta task pr-review-target --pr <n>` — fetches the PR's head and base read-only, then
   prints the immutable review target: a `base:` merge-base sha, a `head:` sha, a `journal:`
-  key, and the noise-filtered `files:` list. A failed fetch is an error, not a warning, and
-  it ends the tick — a confident review of code the PR no longer contains is worse than no
-  review.
+  key, and the noise-filtered `files:` list. Each file is a `- <path>` line, and one
+  `excluded (see …): …` receipt can follow the list when the range had filtered noise — a
+  trailing line that does not start with `- ` is that receipt, not a path. A failed fetch is
+  an error, not a warning, and it ends the tick — a confident review of code the PR no longer
+  contains is worse than no review.
 - `devgeta task pr-view --pr <n>` — the PR's purpose, description, and linked ticket.
 - `devgeta task review-run` in range mode — one reviewer type against the PR's range. Takes
   `--reviewer <type>` plus `--base <sha> --head <sha> --journal <key> --report-dir <dir>`,
@@ -78,8 +80,11 @@ read, and an escalation is still reported to the human instead of decided for th
 - `devgeta task scratch` — a fresh directory for this tick's reviewer reports.
   `devgeta task scratch --clean <path>` removes it.
 - `devgeta task current-pr` — the current branch's PR number, when none was passed.
-- `/review-pr <n> --base <base> --target <head>` and `/approve-pr <n> --target <head>` —
-  the posting step. Exactly one of them runs per tick (step 8).
+- `/review-pr <n> --base <base> --target <head> --journal <key>` and
+  `/approve-pr <n> --target <head>` — the posting step. Exactly one of them runs per tick
+  (step 8). `/review-pr` gets the journal key because it may settle findings and must settle
+  them in this PR's journal; `/approve-pr` never reads or writes the journal, so it takes no
+  key.
 
 Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build. Only the
 installed binary is available in this environment.
@@ -184,17 +189,20 @@ empty file list would say nothing and still cost a post.
 ### 4. Allocate the scratch directory
 
 ```bash
-SCRATCH=$(devgeta task scratch)
+PR_REVIEW_SCRATCH=$(devgeta task scratch)
 ```
 
-This is where the reviewer reports land for this tick. Step 10 removes it.
+This is where the reviewer reports land for this tick. Step 10 removes it. The name is the
+tick's own: `/review-pr` allocates a `SCRATCH` of its own in step 8 and cleans it there, so a
+variable shared between them would leave step 10 cleaning a directory that is already gone and
+this tick's reports behind.
 
 ### 5. Run the reviewers, one run per type
 
 For each resolved type, in turn:
 
 ```bash
-devgeta task review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"
+devgeta task review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$PR_REVIEW_SCRATCH"
 ```
 
 Add `--note <text>` when step 0 resolved one, with the human's text verbatim. Pass all four
@@ -207,7 +215,7 @@ thing this tick must never take second-hand, and each run's stdout is a few line
 Read stdout exactly as printed. One line per configured model:
 
 ```
-<label> → APPROVE | REQUEST CHANGES | NEEDS DISCUSSION | NO VERDICT | ERROR(<reason>)  report: <path>
+<label> → APPROVE | REQUEST CHANGES | NEEDS DISCUSSION | NO VERDICT | NO VERDICT(<reason>) | ERROR(<reason>)  report: <path>
 ```
 
 Never guess at, soften, or invent a verdict a line does not state. Progress goes to stderr
@@ -217,8 +225,10 @@ pass `--verbose`: it replaces the heartbeat with a line per tool call, which is 
 lines this tick does not read.
 
 **Parse the `report:` field from the right** — find the **last** occurrence in the line of
-`report:` preceded by two spaces, and take everything after it as the value. The value can
-contain spaces: a run that produced nothing prints
+the exact sequence `report:` preceded by two spaces and followed by one, and take everything
+after that final space as the value. The value therefore starts at the first character of the
+path and never carries a leading space. The value itself can contain spaces: a run that
+produced nothing prints
 `report: none (the reviewer wrote no report)`, and an `ERROR(<reason>)` reason is the
 model's own text, which could contain that same sequence too. Splitting the line from the
 left, or on the first match, gets both of those wrong.
@@ -279,16 +289,17 @@ Step 6 chose the path. Run **one** of these two commands, **once**:
   read the reviewed commit rather than the working tree, and the cross-model `APPROVE`
   verdicts sitting in this conversation are the basis it needs for approving over live
   non-blocking comments.
-- **Otherwise** → `/review-pr <n> --base <base> --target <head>`. Both shas come from step 3,
-  so the posted review's diff is the same merge-base range the reviewers read. Before
-  invoking it, put the findings in context: read every `report:` file from step 5 (skipping
-  any whose value was the no-report sentinel) and run
-  `devgeta task review-notes --branch <key> --rev <head>`. The reports carry the full
-  cross-model findings — every severity, the strengths, the evidence — while the journal
-  carries only the blocking entries as one-liners, and a review composed from the one-liners
-  alone throws most of what the reviewers found away. Any journal settling `/review-pr`
-  performs uses `--branch <key> --rev <head>` too, so it reads and writes this PR's journal
-  rather than the checkout branch's.
+- **Otherwise** → `/review-pr <n> --base <base> --target <head> --journal <key>`. The two shas
+  and the key all come from step 3, so the posted review's diff is the same merge-base range
+  the reviewers read and any settling lands in this PR's journal. Before invoking it, put the
+  findings in context: read every `report:` file from step 5 (skipping any whose value was the
+  no-report sentinel) and run `devgeta task review-notes --branch <key> --rev <head>`. The
+  reports carry the full cross-model findings — every severity, the strengths, the evidence —
+  while the journal carries only the blocking entries as one-liners, and a review composed
+  from the one-liners alone throws most of what the reviewers found away. `--journal <key>` is
+  what makes `/review-pr`'s own journal calls carry `--branch <key> --rev <head>`, so it reads
+  and writes this PR's journal rather than the checkout branch's; without it, a settle would
+  close an id in whatever journal the checkout happens to have.
 
 Never run both. Never run either twice — the single exception is step 9's one re-ask, which
 is the same `/approve-pr` invocation and is bounded there. A tick posts one review or one
@@ -320,10 +331,20 @@ Only the approval path has an outcome to read. `/approve-pr` prints one line:
   - **Never a third ask.** A decline leaves `requested:` at `yes`, so asking forever would
     post forever.
 
+  Step 7's gate is deliberately not re-run before the re-ask. The re-ask is the same
+  invocation naming the same `--target <head>`, so anything it posts is stamped with the
+  commit the reviewers actually judged — the attribution that bounds a late post is already in
+  place, and a second state read here would narrow a window it cannot close while adding a
+  second way for one decision to be read twice.
+
 The review path has nothing to parse. `/review-pr` prints its own summary line; record it in
 the tick report and keep listening. Posting any review — approve, comment, or request
 changes — removes the user from the PR's review requests, so the next tick reads
-`requested: no` and waits. The author's re-request is the next trigger.
+`requested: no` and waits. The author's re-request is the next trigger. `/review-pr` can
+itself decide to approve — its own no-new-findings branch — and this tick still reports
+`reviewed`, which names what it ran rather than what the PR now is; the next tick's state read
+sees `my-review: approved` with `requested: no` and stops on the terminal-approved row, so
+that reading corrects itself without a second check here.
 
 ### 10. Clean up
 
@@ -335,7 +356,7 @@ escalated (including step 6's), the head moved or the state changed at step 7, a
 posted, or a submit that failed:
 
 ```bash
-devgeta task scratch --clean "$SCRATCH"
+devgeta task scratch --clean "$PR_REVIEW_SCRATCH"
 ```
 
 `--clean` is idempotent, so running it after a partial failure is safe. If a submit failed,

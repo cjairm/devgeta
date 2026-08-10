@@ -702,14 +702,16 @@ reads the working tree:
    reviewed SHA even if a push races the submission itself:
    - Every run `APPROVE` → `/approve-pr <n> --target <head>` (its file
      verifications read `git show <head>:<path>`).
-   - Otherwise → `/review-pr <n> --base <base> --target <head>` (the `base` from
-     step 1, so the posted review's diff is the same merge-base range the reviewers
-     read) — first read every `report:`
-     file plus `devgeta task review-notes --branch <key> --rev <head>`, so the full
-     cross-model findings (all severities, strengths, evidence) are in context, not
-     just the one-line blocking entries. `/review-pr` dedups against the PR's
-     existing threads and posts one review. Journal settles it performs use
-     `--branch <key> --rev <head>`.
+   - Otherwise → `/review-pr <n> --base <base> --target <head> --journal <key>` (the
+     `base` and `journal` from step 1, so the posted review's diff is the same
+     merge-base range the reviewers read, and any finding `/review-pr` settles lands
+     in this PR's journal rather than the checked-out branch's) — first read every
+     `report:` file plus `devgeta task review-notes --branch <key> --rev <head>`, so
+     the full cross-model findings (all severities, strengths, evidence) are in
+     context, not just the one-line blocking entries. `/review-pr` dedups against the
+     PR's existing threads and posts one review; `--journal <key>` is what makes its
+     own journal settles land at `--branch <key> --rev <head>` too, rather than only
+     asserting that they should.
 9. **Parse the second step's outcome.** `/approve-pr` prints
    `## PR #<num> — approved | not approved`:
    - `approved` → **terminal: approved.** The loop stops now — including on the

@@ -208,8 +208,11 @@ func retried(run scriptedRun) []scriptedRun {
 }
 
 // verifyNoStrayCommands asserts review-run never reached around the app
-// wrappers to the generic executor: everything it shells out for goes
-// through the Git app or the OpenCode wrapper, each with its own mock base.
+// wrappers to the generic executor: it checks tm.Base — the TaskManager's own
+// executor, which review-run is expected to leave completely unused — and not
+// the Git app's or the OpenCode wrapper's bases, each of which has its own mock
+// that the scripted expectations cover. So a real command recorded on either
+// wrapper's base is out of this helper's reach.
 func verifyNoStrayCommands(t *testing.T, tm *TaskManager) {
 	t.Helper()
 	base, ok := tm.Base.(*commands.MockBaseCommand)

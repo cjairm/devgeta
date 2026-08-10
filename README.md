@@ -225,6 +225,7 @@ dg install --skip databases,desktop
     - `dg task merge-pr [--pr N] [--method squash|merge|rebase]` - Merge a PR
     - `dg task pr-view [--pr N]` / `pr-checks [--pr N]` - Compact PR summary / CI check status
     - `dg task pr-review-target [--pr N]` - Immutable review target for a PR: merge-base/head SHAs, PR-scoped journal key, and the noise-filtered changed-file list (fetches `refs/pull/<n>/head` read-only; fails rather than review a stale ref). The working tree is untouched, but the fetch leaves two refs — `refs/devgeta/pr/<n>/head` and `.../base` — in the repo for later review steps to read; they are reused per PR, and `git update-ref -d` removes them
+    - `dg task pr-review-state [--pr N]` - Whether a PR wants a review from you right now, as three lines: `pr:` (`open | draft | merged | closed`), `requested:` (is the authenticated user in the PR's review requests) and `my-review:` (`approved | changes-requested | commented | none`). A state read of GitHub's own fields, so it never goes stale
     - `dg task current-pr` / `current-repo` - Resolve the current branch's PR number / `owner/name`
 - `dg --version` - Show version information
 - `dg --help` - Show help message

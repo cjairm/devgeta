@@ -13,7 +13,7 @@ This authorizes _posting without asking_, nothing else. The verdict is still you
 ## Usage
 
 ```
-/review-pr [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>]
+/review-pr [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>] [--journal <key>]
 ```
 
 The PR is resolved from the current branch unless you pass a number.
@@ -24,7 +24,7 @@ Pass `--target` when the PR's code is not in the working tree: someone else's PR
 
 `--target` comes with `--base`. The PR's diff is `<merge base>..<head>`, and a merge base cannot be worked out from a head alone, so both shas are passed in. **Given `--target` without `--base`, stop and say you need the base sha.** Do not guess one, and do not fall back to the checked-out branch's diff — that diff describes different code, so the review would be posted against the wrong changes.
 
-With `--target`, three things change and nothing else:
+With `--target`, four things change and nothing else:
 
 1. **Resolve it first — and stop if it doesn't resolve.**
 
@@ -39,6 +39,8 @@ With `--target`, three things change and nothing else:
    **`--base` must be the merge base of the PR, not the tip of the base branch.** The tip looks close enough and is not: when the base branch moves on after the PR opens — the normal case on an active repo — a tip-based diff shows everything merged since as if this PR reverted it. Those read as real findings against work the author never touched. `devgeta task pr-review-target --pr <n>` prints the correct value on its `base:` line, and that value is already a merge base, so that is where a caller gets one.
 
 3. **The submit names the commit** — add `--commit <head-sha>` to the `devgeta task submit-review` call in step 6.
+
+4. **The journal is the PR's, not the checkout's.** **When you are also given a journal key** — `--journal <key>`, which the caller that can name a target can name too — append `--branch <key> --rev <head-sha>` to every `review-notes` and `review-note` command in this file, the settle in step 3 included. The key names the journal to read and write; the revision is the commit a cited path is stamped against. Unscoped, those commands fall back to the checked-out branch's journal, which here is not this PR's: you reconcile against another branch's settled decisions, and a settle writes into that branch's record. Journal ids are per-journal and sequential, so `--settle --id n4` lands on whatever `n4` that branch already has — a real, unrelated open finding closed with a note about this PR. Given `--target` with no key, settle nothing: post the review and say in your summary that no journal key was passed. Without `--target` at all, run every journal command exactly as written.
 
 Be clear on what that anchor does: it is **attribution, not a lock**. GitHub accepts a review whose `commit_id` is behind the PR's current head — this API has no atomic submit, so nothing here prevents the author pushing while you review. What it buys is that the posted review names the commit it actually judged: inline comments hang off that diff (GitHub marks them outdated once the head moves), the review record shows the sha, and branch protection's dismiss-stale-approvals has a sha to key off. A review that lands late is visibly stamped with the commit it read instead of silently claiming the new head.
 
@@ -88,6 +90,15 @@ A finding produced by a reviewer agent carries a journal id — `(n4)` next to i
 ```bash
 devgeta task review-note --settle --id n4 --as answered --note "already handled in a resolved thread on PR #123"
 ```
+
+With `--target` and a journal key, the same call carries the scope — the `--target` rule above, restated where the settle actually is:
+
+```bash
+devgeta task review-note --settle --id n4 --as answered --note "already handled in a resolved thread on PR #123" \
+  --branch <key> --rev <head-sha>
+```
+
+Without those flags the settle closes id `n4` in the checked-out branch's journal, where `n4` is a different finding entirely — with `--target` and no key, don't run the settle at all; post the review and note in your summary that no journal key was passed.
 
 Otherwise the journal keeps an entry the PR has already closed, and the next review raises it again — the exact loop the journal exists to break. Findings you do post stay open; `/address-feedback` settles them when the author responds.
 

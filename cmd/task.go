@@ -475,8 +475,9 @@ the review covers the two commits ONLY — the working tree is never part of the
 diff, unlike a branch review. --journal keys the review journal explicitly
 (e.g. pr/owner/repo/213), so findings are not filed under whatever branch
 happens to be checked out. Each reviewer's full report — every severity,
-strengths, evidence — is written to <report-dir>/<reviewer>+<model>.md, and
-each output line names the file:
+strengths, evidence — is written to <report-dir>/<agent>+<model>.md, where
+<agent> is the resolved reviewer agent's name and <model> is percent-encoded so
+a provider/model id cannot become a path. Each output line names the file:
 
   openai/gpt-5.2 → REQUEST CHANGES  report: /tmp/r/code-reviewer+openai%2Fgpt-5.2.md
 
@@ -493,7 +494,8 @@ The findings themselves are not printed here — they are in the journal; read
 them with "dg task review-notes", which also lists what is still open.
 
 An outcome is APPROVE, REQUEST CHANGES, NEEDS DISCUSSION, NO VERDICT (the run
-finished but stated no verdict), or ERROR(<reason>) (the run itself failed).
+finished but stated no verdict), NO VERDICT(<reason>) (the run wrote no report
+at all, and the reason is why), or ERROR(<reason>) (the run itself failed).
 NO VERDICT and ERROR are never approval. One reviewer failing does not stop
 the others.
 

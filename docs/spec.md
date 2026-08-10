@@ -1070,9 +1070,10 @@ the pre-post re-check its step 7.)
    anyone; the request stays pending, so the tick report is what tells the human to
    look themselves.
 3. One `review-run` per type, in range mode:
-   `review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$SCRATCH"`
+   `review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$PR_REVIEW_SCRATCH"`
    (plus `--note` when one was given), against a `scratch` directory allocated for
-   this tick. The runs happen in the main session, not a subagent — the verdict lines
+   this tick and named distinctly from `/review-pr`'s own scratch variable, so the two
+   can never be confused with each other in the same session. The runs happen in the main session, not a subagent — the verdict lines
    are the one thing a tick must never take second-hand — and each line's `report:`
    field is parsed from the **right**, since a reason inside `ERROR(<reason>)` can
    contain that same sequence.
@@ -1094,9 +1095,11 @@ the pre-post re-check its step 7.)
    defers the review, which is the correct outcome rather than starvation.
 6. **Post through the unchanged posting commands,** exactly one of them, exactly once:
    `/approve-pr <n> --target <head>` when every run approved, otherwise
-   `/review-pr <n> --base <base> --target <head>` — both SHAs from step 1, so the
-   posted review's diff is the same merge-base range the reviewers read. Before
-   `/review-pr` the tick reads every `report:` file and
+   `/review-pr <n> --base <base> --target <head> --journal <key>` — both SHAs and the
+   journal key from step 1, so the posted review's diff is the same merge-base range
+   the reviewers read, and any finding `/review-pr` settles lands in this PR's journal
+   rather than the checked-out branch's. `/approve-pr` never reads the journal, so it
+   gets no key. Before `/review-pr` the tick reads every `report:` file and
    `review-notes --branch <key> --rev <head>`, because the reports carry the full
    cross-model findings (every severity, the strengths, the evidence) while the journal
    carries only the blocking entries as one-liners — a review composed from the
@@ -1159,19 +1162,27 @@ gained the flags this loop needs, and **without them both files behave word-for-
 they always have** — the working tree is the source and nothing changes:
 
 ```
-/review-pr  [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>]
+/review-pr  [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>] [--journal <key>]
 /approve-pr [PR_NUMBER] [--target <head-sha>]
 ```
 
 `--target` names the commit the review judges, for code that is not in the working
-tree. With it, three things change and nothing else: the sha is resolved first with
+tree. With it, four things change and nothing else: the sha is resolved first with
 `git rev-parse --verify <head-sha>^{commit}` and **a failure stops the command** —
 never a silent fall back to the working tree, which holds different code, so a finding
 would be checked against something the PR never contained; every read of repo content
 resolves at that commit — `git show <head-sha>:<path>` in both, plus
 `git log <head-sha> -- <path>` where `/review-pr` needs a path's own history — with the
-same checks, dedup rules, and verdict rules as before; and the submit passes
-`--commit <head-sha>`, which is the attribution described above and not a lock.
+same checks, dedup rules, and verdict rules as before; the submit passes
+`--commit <head-sha>`, which is the attribution described above and not a lock; and,
+given `--journal <key>`, `/review-pr` appends `--branch <key> --rev <head-sha>` to
+every `review-notes`/`review-note` call it makes, settling included — without a key,
+a settle falls back to the checked-out branch's journal, where the same numeric id
+means an unrelated finding on an unrelated branch. `/approve-pr` never touches the
+journal, so it takes no `--journal` and needs none; a PR number must be in hand
+whenever `--target` is given, since an omitted one no longer infers from the checkout
+(that branch is not this PR) — it silently posts against whatever PR the checkout
+happens to have open, so `/approve-pr` stops and asks for one rather than guessing.
 
 `/review-pr` takes `--base` alongside `--target` because it reads a diff and a diff
 needs both ends — a merge base cannot be worked out from a head alone. **Given
