@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/logger"
 )
 
@@ -89,13 +91,114 @@ type reviewerRun struct {
 	model string
 }
 
+// ReviewRange is review-run's explicit-range mode (ADR-0022 §5): review an
+// arbitrary pair of commits under an explicit journal key, and persist each
+// reviewer's full report, instead of reviewing whatever is checked out.
+//
+// The four fields are one group — all set, or none. The zero value is branch
+// mode, which is byte-identical to what review-run did before this mode
+// existed. That is deliberate: a partially filled group means the caller
+// intended a range review and got a branch review of unrelated code, which is
+// exactly the silent wrong-target failure ADR-0022 exists to prevent, so
+// mode() refuses it instead.
+type ReviewRange struct {
+	// Base and Head are the ends of the reviewed range. Any commit-ish is
+	// accepted and resolved to an immutable SHA before a reviewer launches;
+	// the caller is responsible for Base being a MERGE BASE when the range
+	// must equal a pull request's diff (ADR-0022 §2 — a base branch tip makes
+	// everything merged since look reverted).
+	Base string
+	Head string
+	// Journal is the key the round's findings are read from and written under
+	// (e.g. `pr/owner/repo/213`). It is a plain string key, not a git branch:
+	// the journal has been addressable by an explicit key since `review-note
+	// --branch` landed, and ADR-0022 §3 is what a PR's key looks like.
+	Journal string
+	// ReportDir is where each run's full report is persisted. Without it the
+	// reports die with the headless runs — stdout carries verdict lines only,
+	// and the journal carries one-line blocking findings, so nothing
+	// downstream could compose a cohesive review out of them.
+	ReportDir string
+}
+
+// normalized trims every field once, up front. A key or path that arrives with
+// stray whitespace — a shell variable that expanded with a trailing newline is
+// the realistic case — must key the same journal and name the same file as the
+// value the caller meant, not a near-duplicate of it.
+func (r ReviewRange) normalized() ReviewRange {
+	return ReviewRange{
+		Base:      strings.TrimSpace(r.Base),
+		Head:      strings.TrimSpace(r.Head),
+		Journal:   strings.TrimSpace(r.Journal),
+		ReportDir: strings.TrimSpace(r.ReportDir),
+	}
+}
+
+// mode reports whether this round is an explicit range, and refuses a
+// partially filled flag group by naming exactly what is missing.
+//
+// It is called on a normalized value, so a flag whose value is only whitespace
+// counts as absent: a shell variable that expanded to nothing is a caller who
+// meant to supply a key and did not, which must not silently become a branch
+// review.
+func (r ReviewRange) mode() (bool, error) {
+	fields := []struct{ flag, value string }{
+		{"--base", r.Base},
+		{"--head", r.Head},
+		{"--journal", r.Journal},
+		{"--report-dir", r.ReportDir},
+	}
+	given := make([]string, 0, len(fields))
+	missing := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if f.value == "" {
+			missing = append(missing, f.flag)
+			continue
+		}
+		given = append(given, f.flag)
+	}
+	switch {
+	case len(given) == 0:
+		return false, nil
+	case len(missing) == 0:
+		return true, nil
+	}
+	return false, fmt.Errorf(
+		"review-run: %s given without %s — reviewing an explicit range needs all four of "+
+			"--base, --head, --journal, and --report-dir. Pass the missing flag(s), or drop "+
+			"%s to review the current branch instead",
+		strings.Join(given, ", "),
+		strings.Join(missing, ", "),
+		strings.Join(given, ", "),
+	)
+}
+
 // ReviewRun runs one review round: every configured reviewer model, in
 // order, through the OpenCode wrapper, against the current branch — then
 // returns one line per reviewer, and nothing else.
 //
 // note, when non-empty, is the human's own steering for this round (`--note`).
 // It is appended to the fixed review prompt as extra context, and deliberately
-// does not narrow the review — see reviewNoteHeader.
+// does not narrow the review — see reviewNoteHeader. It rides the prompt in
+// both modes, unchanged by which one is running.
+//
+// rng, when set, switches the round to explicit-range mode (ADR-0022 §5): an
+// arbitrary base..head pair is reviewed instead of the checkout, the journal is
+// keyed explicitly instead of by branch name, and each run's full report is
+// persisted. Its zero value is branch mode, unchanged. The two modes differ in
+// exactly three places, each pinned by its own test:
+//
+//   - Range mode skips all three HEAD-dependent refusals, and the
+//     did-HEAD-move re-check between reviewers. Every one of them guards an
+//     inference about the checkout that range mode supplies outright, and a
+//     range review does not depend on the checkout at all — see
+//     reviewRoundTarget and the loop below.
+//   - Range mode reviews the immutable SHAs only; branch mode covers the
+//     branch's whole working state, uncommitted work included (ADR-0019). The
+//     prompt states which, because the scoping happens inside the reviewer's
+//     own `review-package` call, not here.
+//   - Range mode persists each report and names the file on the run's output
+//     line. Branch mode's line stays exactly "<label> → <outcome>".
 //
 // Reviewers are isolated on the read side only (ADR-0017 §4): a snapshot of
 // the journal as it stood at round start is written first, and each reviewer
@@ -110,28 +213,33 @@ type reviewerRun struct {
 // parseable contract docs/guides/task-design.md governs. A multi-minute
 // headless run against a real branch diff would otherwise leave the caller
 // watching silence with no way to tell working from stuck.
-func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
-	// Cheapest guards first: a bad --reviewer or a blank --note needs no git
-	// and no config.
+func (tm *TaskManager) ReviewRun(reviewer, note string, rng ReviewRange) (string, error) {
+	// Cheapest guards first: a bad --reviewer, an incomplete range flag group,
+	// or a blank --note needs no git and no config.
 	agent, err := reviewerAgentFor(reviewer)
 	if err != nil {
 		return "", err
 	}
-	prompt, err := reviewPromptWithNote(note)
+	rng = rng.normalized()
+	rangeMode, err := rng.mode()
+	if err != nil {
+		return "", err
+	}
+	noteSuffix, err := reviewNoteSuffix(note)
 	if err != nil {
 		return "", err
 	}
 
-	// All three refusals happen here, before any reviewer is launched and
-	// before any file is written — a wrong branch, or a branch with nothing
-	// to review at all, must cost nothing.
-	branch, defaultBranch, err := tm.checkOnReviewableBranch()
+	// Everything the round needs to know about its target — including all
+	// three refusals in branch mode — is settled here, before any reviewer is
+	// launched and before any file is written. A wrong branch, a branch with
+	// nothing to review, a sha this clone does not have, or a report directory
+	// that cannot be created must all cost nothing.
+	basePrompt, journalKey, branch, err := tm.reviewRoundTarget(rng, rangeMode)
 	if err != nil {
 		return "", err
 	}
-	if err := tm.checkBranchHasReviewableChanges(branch, defaultBranch); err != nil {
-		return "", err
-	}
+	prompt := basePrompt + noteSuffix
 
 	runs, err := resolveReviewerRuns()
 	if err != nil {
@@ -139,7 +247,7 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 	}
 
 	jm := reviewjournal.New(tm.Git)
-	snapshot, err := jm.WriteSnapshot("", branch)
+	snapshot, err := jm.WriteSnapshot("", journalKey)
 	if err != nil {
 		return "", fmt.Errorf("review-run: %w", err)
 	}
@@ -172,7 +280,7 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 		// A reviewer that fails never aborts the ones after it: each is an
 		// independent opinion, and losing the rest to one bad provider would
 		// throw away work already paid for.
-		outcome := tm.runReviewerWithRetry(opencode.RunOptions{
+		outcome, report := tm.runReviewerWithRetry(opencode.RunOptions{
 			Agent:        agent,
 			Model:        run.model,
 			Prompt:       prompt,
@@ -183,12 +291,27 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 		progress.finished(outcome)
 
 		// The branch is a precondition of the whole round, not just of its
-		// first moment, so it is re-checked after every reviewer.
-		if err := tm.checkBranchStillCheckedOut(branch, run.label); err != nil {
-			return "", err
+		// first moment, so it is re-checked after every reviewer — in branch
+		// mode. In range mode nothing about the round is derived from HEAD:
+		// the reviewed commits and the journal key were both stated by the
+		// caller, so a checkout that moves mid-round changes nothing this
+		// command asserts, and abandoning a paid round over it would be a
+		// defect in a mode built to run unattended while a human works.
+		if !rangeMode {
+			if err := tm.checkBranchStillCheckedOut(branch, run.label); err != nil {
+				return "", err
+			}
 		}
 
-		lines = append(lines, fmt.Sprintf("%s → %s", run.label, outcome))
+		line := fmt.Sprintf("%s → %s", run.label, outcome)
+		if rangeMode {
+			where, err := writeReviewerReport(rng.ReportDir, agent, run.label, report)
+			if err != nil {
+				return "", err
+			}
+			line += reportField + where
+		}
+		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n"), nil
 }
@@ -205,7 +328,13 @@ func (tm *TaskManager) ReviewRun(reviewer, note string) (string, error) {
 const reviewerAttempts = 2
 
 // runReviewerWithRetry launches one reviewer and returns the outcome to
-// report for it, retrying once when an attempt produced no report at all.
+// report for it — plus that same attempt's report text — retrying once when an
+// attempt produced no report at all.
+//
+// The two returns always describe ONE attempt. That pairing is the whole point
+// of returning them together rather than having the caller re-derive the text:
+// persisting one attempt's report beside another attempt's verdict would file a
+// report under a conclusion it never reached.
 //
 // The retry exists because "no report" is usually not the reviewer's verdict —
 // it is the run failing in a way that leaves nothing to read. The case this was
@@ -230,20 +359,26 @@ const reviewerAttempts = 2
 func (tm *TaskManager) runReviewerWithRetry(
 	opts opencode.RunOptions,
 	progress *reviewerProgress,
-) string {
-	var firstOutcome string
+) (outcome, report string) {
+	var firstOutcome, firstReport string
 	for attempt := 1; attempt <= reviewerAttempts; attempt++ {
 		res, runErr := tm.OpenCode.Run(opts)
-		outcome, reported := classifyReviewerRun(res, runErr)
+		outcome, report, reported := classifyReviewerRun(res, runErr)
 		if reported {
-			return outcome
+			return outcome, report
 		}
 		if attempt == 1 {
-			firstOutcome = outcome
+			// Kept together for the same reason the reported case returns both:
+			// whichever attempt's outcome is reported, its own text is what
+			// gets persisted. An unreported attempt has no report text by
+			// definition (that is what "unreported" means), so this carries
+			// nothing today — carrying it anyway is what keeps the pairing
+			// true of every return rather than of most of them.
+			firstOutcome, firstReport = outcome, report
 			progress.retrying(outcome)
 		}
 	}
-	return firstOutcome
+	return firstOutcome, firstReport
 }
 
 // checkBranchStillCheckedOut verifies HEAD is still on the branch the round
@@ -462,6 +597,15 @@ func (tm *TaskManager) checkBranchHasReviewableChanges(branch, defaultBranch str
 // resolveReviewerRuns turns review.reviewers into the runs for this round.
 // An unset (or all-blank) list is not an error: it means one reviewer on
 // OpenCode's own default model, launched with no -m flag at all.
+//
+// A model id repeated in the list becomes ONE run, keeping the first
+// occurrence's position. Running it twice would pay twice for one model's
+// opinion, and in range mode it also destroys output: the report filename is
+// derived from the run's label (reviewerReportName), so a second run with the
+// same label overwrites the first's report while both output lines still name
+// that one path — leaving a verdict line pointing at a report that describes a
+// different verdict. One line, one report, matching text is the invariant this
+// mode is built on, so the duplicate is dropped rather than reconciled later.
 func resolveReviewerRuns() ([]reviewerRun, error) {
 	gc := &config.GlobalConfig{}
 	if err := gc.Load(); err != nil && !os.IsNotExist(err) {
@@ -471,10 +615,17 @@ func resolveReviewerRuns() ([]reviewerRun, error) {
 	// list below already handles — the same state as a config with no
 	// review.reviewers key.
 	runs := make([]reviewerRun, 0, len(gc.Review.Reviewers))
+	seen := make(map[string]struct{}, len(gc.Review.Reviewers))
 	for _, model := range gc.Review.Reviewers {
-		if model = strings.TrimSpace(model); model != "" {
-			runs = append(runs, reviewerRun{label: model, model: model})
+		model = strings.TrimSpace(model)
+		if model == "" {
+			continue
 		}
+		if _, dup := seen[model]; dup {
+			continue
+		}
+		seen[model] = struct{}{}
+		runs = append(runs, reviewerRun{label: model, model: model})
 	}
 	if len(runs) == 0 {
 		return []reviewerRun{{label: defaultModelLabel}}, nil
@@ -491,15 +642,20 @@ func resolveReviewerRuns() ([]reviewerRun, error) {
 const reviewNoteHeader = "Note from the person who asked for this review — extra context " +
 	"and emphasis, not a narrower scope; still review everything you normally would:\n"
 
-// reviewPromptWithNote builds the round's prompt: the fixed review prompt on
-// its own, or that prompt followed by the human's --note.
+// reviewNoteSuffix validates --note and returns what it appends to whichever
+// prompt the round is using: nothing when the flag was not passed.
+//
+// It is split from prompt composition so that both modes get one validation,
+// one header, and one spelling of where the note sits — and so a blank --note
+// is still refused before either mode pays a single git call, which is what
+// range mode's own resolve-first guards would otherwise push it behind.
 //
 // A note that is present but blank is refused rather than dropped: the caller
 // meant to say something to the reviewers, and silently running a round
 // without it would look identical to a round that carried it.
-func reviewPromptWithNote(note string) (string, error) {
+func reviewNoteSuffix(note string) (string, error) {
 	if note == "" {
-		return worktree.ReviewPrompt, nil
+		return "", nil
 	}
 	trimmed := strings.TrimSpace(note)
 	if trimmed == "" {
@@ -508,8 +664,210 @@ func reviewPromptWithNote(note string) (string, error) {
 				"or omit the flag entirely",
 		)
 	}
-	return worktree.ReviewPrompt + "\n\n" + reviewNoteHeader + trimmed, nil
+	return "\n\n" + reviewNoteHeader + trimmed, nil
 }
+
+// rangeReviewPromptTemplate is the opening prompt every reviewer gets in
+// explicit-range mode, in place of worktree.ReviewPrompt.
+//
+// Longer than the branch prompt on purpose. That one can be one sentence
+// because the reviewer agents' own instructions already scope themselves
+// correctly for a checked-out branch (`review-scope`, `branch-diff`). Here
+// every one of those defaults is wrong — wrong diff, wrong files, wrong
+// journal — so the prompt has to say what replaces them. Three things it must
+// state, each pinned by a test:
+//
+//  1. The target is two commits, and the working tree is NOT part of it. This
+//     is the one place range mode contradicts ADR-0019, which deliberately
+//     widened a branch review to include uncommitted work; on someone else's
+//     pull request that work is unrelated, and including it would put the
+//     reader's own edits in front of a reviewer judging another author's
+//     change (ADR-0022 §5).
+//  2. The diff comes from `review-package <base> <head>`. `review-scope` and
+//     `branch-diff` read the checkout, so here they describe different code
+//     entirely — the same reasoning /review-pr's --target mode applies.
+//  3. A journal key AND a revision, named plainly. That pair is the trigger
+//     the three reviewer agents already carry ("when your launch prompt gives
+//     you a journal key and a revision, append --branch <key> --rev <sha>"),
+//     so the prompt states both and the appended flags, and the agent files
+//     stay the single place that rule is spelled out.
+//
+// The shas interpolated here are resolved commit SHAs, never the caller's
+// spelling of them: a review takes minutes across several models, and a ref
+// name read twice inside that window can name two different commits.
+const rangeReviewPromptTemplate = `Review the commit range %[1]s..%[2]s.
+
+This is not a review of the checked-out branch. Review those two commits and nothing else: the range is immutable, and the working tree is not part of it — uncommitted and untracked files here belong to other work and are out of scope no matter how related they look, and whatever branch happens to be checked out is irrelevant to this review.
+
+Get the diff with ` + "`devgeta task review-package %[1]s %[2]s`" + ` — one call for the commit list, the noise-filtered stat table, and the full diff of the range. ` + "`devgeta task review-scope`" + ` and ` + "`devgeta task branch-diff`" + ` describe the checked-out branch, so they do not apply here: do not run them. Read any file you need at the reviewed revision with ` + "`git show %[2]s:<path>`" + `, never from disk.
+
+Your journal key is %[3]s and the revision under review is %[2]s, so every ` + "`devgeta task review-notes`" + ` and ` + "`devgeta task review-note`" + ` call carries ` + "`--branch %[3]s --rev %[2]s`" + `.`
+
+// rangeReviewPrompt fills that template with the resolved range and the
+// journal key the round writes under.
+func rangeReviewPrompt(base, head, journalKey string) string {
+	return fmt.Sprintf(rangeReviewPromptTemplate, base, head, journalKey)
+}
+
+// reviewRoundTarget settles what this round reviews and where its findings go:
+// the base prompt every reviewer gets, the journal key entries are written
+// under, and — branch mode only — the branch HEAD must stay on for the round's
+// verdicts to mean anything.
+//
+// branch comes back empty in range mode, and that is the whole difference
+// between the modes' preconditions. Branch mode infers its target from the
+// checkout, so it must refuse the three HEADs that cannot be reviewed
+// (ADR-0018's default branch and detached HEAD, ADR-0019's branch that changes
+// nothing) and must keep re-checking that HEAD has not moved. Range mode is
+// handed its target, so none of those three refusals has anything left to
+// protect: the diff is an explicit non-empty range and the journal key is
+// stated, which is exactly what each refusal exists to infer (ADR-0022 §5).
+//
+// What range mode refuses instead is a target it cannot resolve — a base or
+// head this clone does not have, or a report directory it cannot create.
+// Cheapest guards first, for the same reason the branch refusals run here: a
+// bad sha must cost nothing, not surface minutes later as a confusing failure
+// inside a reviewer's own tool call, and a report directory that cannot be
+// written must not be discovered after a round's worth of reports have been
+// produced with nowhere to go.
+func (tm *TaskManager) reviewRoundTarget(
+	rng ReviewRange,
+	rangeMode bool,
+) (basePrompt, journalKey, branch string, err error) {
+	if !rangeMode {
+		current, defaultBranch, err := tm.checkOnReviewableBranch()
+		if err != nil {
+			return "", "", "", err
+		}
+		if err := tm.checkBranchHasReviewableChanges(current, defaultBranch); err != nil {
+			return "", "", "", err
+		}
+		return worktree.ReviewPrompt, current, current, nil
+	}
+
+	base, err := tm.resolveRangeEnd("--base", rng.Base)
+	if err != nil {
+		return "", "", "", err
+	}
+	head, err := tm.resolveRangeEnd("--head", rng.Head)
+	if err != nil {
+		return "", "", "", err
+	}
+	if err := os.MkdirAll(rng.ReportDir, files.DirPermission); err != nil {
+		return "", "", "", fmt.Errorf(
+			"review-run: cannot use %s as --report-dir: %w — pass a directory this user can "+
+				"create and write to, since every reviewer's report is written there",
+			rng.ReportDir, err,
+		)
+	}
+	return rangeReviewPrompt(base, head, rng.Journal), rng.Journal, "", nil
+}
+
+// resolveRangeEnd resolves one end of an explicit range to an immutable commit
+// SHA, or refuses the round.
+//
+// Refusing here rather than letting the reviewer find out is the point. The
+// likeliest bad value in this flow is a head that was never fetched (the pull
+// request flow fetches refs/pull/<n>/head before resolving anything), and a
+// reviewer handed one would spend minutes discovering it through failing tool
+// calls of its own — then report something shaped like a verdict about a diff
+// it never read.
+func (tm *TaskManager) resolveRangeEnd(flag, ref string) (string, error) {
+	sha, err := tm.Git.ResolveCommit(ref)
+	if err != nil {
+		return "", fmt.Errorf(
+			"review-run: %s %s does not name a commit this clone has — check the sha, or "+
+				"fetch the commit first (a pull request head needs "+
+				"'git fetch origin refs/pull/<n>/head'), then run review-run again: %w",
+			flag, ref, err,
+		)
+	}
+	return sha, nil
+}
+
+// reportField separates a run's verdict from where its full report was written.
+// Two spaces, then a `key: value` label, per docs/guides/task-design.md's
+// labeled-plain-text rule. It is the LAST field on the line: an ERROR(...)
+// outcome carries OpenCode's own words, so a parser reads the report path from
+// the right rather than assuming the outcome contains no colon.
+const reportField = "  report: "
+
+// reportNone is the report path's value for a run that produced no report at
+// all. The field is always present in range mode so a caller can parse one
+// shape rather than two, and naming the absence is what keeps "no report" from
+// reading as a missing field or an empty file.
+const reportNone = "none (the reviewer wrote no report)"
+
+// reviewReportPermission is the mode a persisted report is written with. Same
+// 0600 as the review journal (reviewjournal's journalPermission) and for the
+// same reason, more strongly: a report quotes findings, evidence, and code
+// verbatim out of the reviewed range, so on a shared machine it carries more of
+// the repo's content than a settings file does.
+const reviewReportPermission = 0o600
+
+// writeReviewerReport persists one run's full report and returns what the run's
+// output line says about it: the file's path, or reportNone when the run
+// produced nothing to persist.
+//
+// A whitespace-only report is treated as none rather than written, because that
+// is the same state classifyReviewerRun reads as "no report at all" — writing a
+// file for it would put an empty report in front of whoever composes the review
+// and let it read as a reviewer who found nothing.
+func writeReviewerReport(dir, agent, label, report string) (string, error) {
+	if strings.TrimSpace(report) == "" {
+		return reportNone, nil
+	}
+	path := filepath.Join(dir, reviewerReportName(agent, label))
+	if err := files.WriteFileAtomic(path, []byte(report), reviewReportPermission); err != nil {
+		// The round stops here, unlike a reviewer that fails: in range mode the
+		// report IS the deliverable the caller composes a review from, so
+		// continuing would keep paying for reviewer runs whose output lands
+		// nowhere. Reports already written stay on disk, and the message names
+		// the one that did not.
+		return "", fmt.Errorf(
+			"review-run: %s reviewed on %s but its report could not be written to %s: %w — "+
+				"the round is stopped rather than left with findings nowhere; free space or "+
+				"fix the directory's permissions, then run review-run again",
+			agent, label, path, err,
+		)
+	}
+	return path, nil
+}
+
+// reviewerReportName is one run's report filename: the reviewer agent that
+// produced it, then the model it ran on.
+//
+// Both segments go through reviewjournal.EncodeBranch — the encoder ADR-0012 §5
+// already relies on, not a second safe-filename scheme. It is what makes a
+// model id usable here at all: those are `provider/model`, so an unencoded
+// segment would carry a path separator and write outside the report directory.
+// The agent segment needs no encoding today (BuiltinReviewerChoices' names are
+// plain), and is encoded anyway so the filename has exactly one construction
+// rule rather than one rule per segment.
+//
+// The segments are joined with reportNameSeparator, which makes the join
+// injective as a property of the encoder rather than of today's registry: no
+// (agent, label) pair can spell the same filename as a different pair, whatever
+// names the reviewer registry grows.
+func reviewerReportName(agent, label string) string {
+	return reviewjournal.EncodeBranch(agent) +
+		reportNameSeparator +
+		reviewjournal.EncodeBranch(label) + ".md"
+}
+
+// reportNameSeparator joins the two segments of a report filename.
+//
+// It is "+" because EncodeBranch can never emit that byte: the encoder keeps
+// only [A-Za-z0-9._-] and percent-encodes every other byte, so "+" survives in
+// the filename exactly once — at the join — and the two segments are always
+// recoverable from it. A separator the encoder passes through, "-" among them,
+// would make the join ambiguous in the abstract: an agent named
+// "code-reviewer-strict" with label "x" and an agent "code-reviewer" with label
+// "strict-x" would spell one filename, and one run's report would overwrite the
+// other's. That is impossible in today's registry, which is exactly why it is
+// worth closing structurally instead of trusting a comment about the registry's
+// current shape to survive the next name added to it.
+const reportNameSeparator = "+"
 
 // ocEvent is the slice of an `opencode run --format json` NDJSON event this
 // command reads. Part and Error stay raw and are decoded per event type, so
@@ -521,8 +879,15 @@ type ocEvent struct {
 	Error json.RawMessage `json:"error"`
 }
 
-// classifyReviewerRun maps one reviewer's run to exactly one outcome, and
-// reports whether the reviewer wrote a report at all.
+// classifyReviewerRun maps one reviewer's run to exactly one outcome, hands
+// back the report that outcome was read out of, and reports whether the
+// reviewer wrote a report at all.
+//
+// report is the assistant text scanRunEvents already extracted from this run's
+// event stream — returned rather than dropped so range mode can persist it
+// (ADR-0022 §5) without parsing the same NDJSON a second way. Two derivations
+// of "the reviewer's report" could disagree, and the one that decided the
+// verdict is the one worth keeping.
 //
 // ERROR is decided by the error EVENT and the process exit status, never by
 // matching message text: a probe against the real binary showed an unusable
@@ -535,25 +900,31 @@ type ocEvent struct {
 // said anything, so there is nothing to read a verdict out of and nothing to
 // tell the human why. ReviewRun uses it to decide whether the attempt is worth
 // repeating — see runReviewerWithRetry.
-func classifyReviewerRun(res opencode.RunResult, runErr error) (outcome string, reported bool) {
+func classifyReviewerRun(
+	res opencode.RunResult,
+	runErr error,
+) (outcome, report string, reported bool) {
 	text, reason, finishReason, parsedAny := scanRunEvents(res.Stdout)
 	reported = strings.TrimSpace(text) != ""
 	switch {
 	case reason != "":
-		return fmt.Sprintf("ERROR(%s)", reason), reported
+		return fmt.Sprintf("ERROR(%s)", reason), text, reported
 	case runErr != nil:
 		// Spawn failure, nonzero exit, or timeout with no error event to
 		// explain it — the wrapper's own message is all there is.
-		return fmt.Sprintf("ERROR(%s)", truncateReason(runErr.Error())), reported
+		return fmt.Sprintf("ERROR(%s)", truncateReason(runErr.Error())), text, reported
 	case !parsedAny && strings.TrimSpace(res.Stdout) != "":
 		// Output that is not the event stream at all. Note this needs
 		// EVERY line to be unreadable: a shell that prints its own warning
 		// before opencode's first event (zoxide's, in the Step 0 probe
 		// captures) must not be mistaken for a failed run.
-		return fmt.Sprintf("ERROR(%s)", truncateReason(firstNonBlankLine(res.Stdout))), reported
+		return fmt.Sprintf(
+			"ERROR(%s)",
+			truncateReason(firstNonBlankLine(res.Stdout)),
+		), text, reported
 	}
 	if verdict := lastStatusVerdict(text); verdict != "" {
-		return verdict, reported
+		return verdict, text, reported
 	}
 	if !reported {
 		// The failure this whole path exists for: exit 0, no error event, and
@@ -563,9 +934,9 @@ func classifyReviewerRun(res opencode.RunResult, runErr error) (outcome string, 
 			"%s(%s)",
 			outcomeNoVerdict,
 			noReportReason(res.Stderr, finishReason),
-		), false
+		), text, false
 	}
-	return outcomeNoVerdict, true
+	return outcomeNoVerdict, text, true
 }
 
 // noReportFallbackReason is used when a run wrote no report and left nothing

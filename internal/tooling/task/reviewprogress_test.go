@@ -95,7 +95,7 @@ func TestReviewRunVerboseReportsEachToolCallAsItHappens(t *testing.T) {
 	tm.Verbose = true
 	tm.NowFn = fixedClock(time.Unix(0, 0), 90*time.Second)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestReviewRunQuietDefaultSamplesToolCalls(t *testing.T) {
 	tm.NowFn = clockAt(0, 5*time.Second, 35*time.Second, 40*time.Second,
 		70*time.Second, 75*time.Second, 80*time.Second)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestReviewRunProgressNeverPrintsReviewerProse(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if strings.Contains(progress.String(), prose) {
@@ -206,7 +206,7 @@ func TestReviewRunProgressOmitsCostWhenNoneReported(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = clockAt(0, time.Second, 2*time.Second)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if !strings.Contains(progress.String(), "APPROVE (2s, 1 tools)") {
@@ -232,7 +232,7 @@ func TestReviewRunPassesTheProgressHookToOpenCode(t *testing.T) {
 		},
 	})
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 }

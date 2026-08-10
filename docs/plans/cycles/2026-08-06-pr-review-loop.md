@@ -467,7 +467,7 @@ Verify: `go test ./internal/tooling/reviewjournal/ ./internal/tooling/task/ ./cm
 ### Step 4b: `review-run` explicit-range mode — after the sibling's Step 4 lands
 
 Extend, don't fork: `--base <sha> --head <sha> --journal <key> --report-dir <dir>`
-(the first three required together; mutually exclusive with running on a branch). In
+(all four required together; mutually exclusive with running on a branch). In
 this mode `review-run`:
 
 - Reviews `base..head` (the caller passes the merge base — Step 2's output) instead
@@ -476,7 +476,7 @@ this mode `review-run`:
   `--rev <head>` on every journal call, so entries stamp against the reviewed
   snapshot (Step 4a), never the checkout
 - **Persists each run's full report** (the agent's final text — findings of every
-  severity, strengths, evidence) to `<report-dir>/<reviewer>-<encoded-model>.md`,
+  severity, strengths, evidence) to `<report-dir>/<reviewer>+<encoded-model>.md`,
   and adds a `report:` path per verdict line to the compact output. Model ids are
   `provider/model` — a path separator — so the model segment is percent-encoded
   with the existing `reviewjournal.EncodeBranch` helper (already collision-free and
@@ -497,6 +497,33 @@ this mode `review-run`:
   note rides the prompt, not the range), sequential runs, the five outcomes, the
   compact per-model output contract, and the sampled stderr progress heartbeats
   (full stream behind the root `--verbose`)
+
+Five details this brief left to the implementation, decided as follows (2026-08-10):
+
+- **All FOUR flags are required together** (the brief above says so now; it first
+  said three). `--report-dir` is
+  as load-bearing as the rest — a range review whose reports go nowhere cannot be
+  composed into a posted review, which is the whole reason this mode persists them.
+- **The after-every-reviewer branch re-check is skipped too**, not only the three
+  refusals. It guards the same two inferences (which tree, which journal), and range
+  mode states both — so "did HEAD move" cannot invalidate anything here. Keeping it
+  would also abandon a paid round because a human switched branches while an
+  unattended tick ran. Range mode never reads `HEAD` at all, pinned by a test.
+- **Report filenames use the resolved agent name**, not the `--reviewer` key:
+  `code-reviewer+openai%2Fgpt-5.2.md`. The two segments join on `+` — a byte
+  `EncodeBranch` never emits — so no pair of names can spell another pair's
+  filename and overwrite its report, whatever the reviewer registry grows to.
+  The agent is what produced the report and is
+  self-describing to whoever reads the directory. With `review.reviewers` unset the
+  model segment is the label that names that condition, encoded like any other, so
+  there is one naming rule rather than a special case.
+- **A run with no report writes no file** and its line reads
+  `report: none (the reviewer wrote no report)`. The field is always present so a
+  caller parses one shape; an empty file would read as a reviewer who found nothing.
+- **Report-write failures**: the directory is created (and so proved usable) before
+  any reviewer launches, and a write that still fails mid-round **stops** the round.
+  In this mode the report is the deliverable, so continuing would keep paying for
+  runs whose output lands nowhere. Reports already written stay on disk.
 
 Tests: range mode with/without configured models; flag-pairing validation (partial
 `--base` without `--head`/`--journal` errors); journal writes land under the key at

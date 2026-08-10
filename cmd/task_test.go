@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/cjairm/devgeta/internal/tooling/task"
 )
 
 // mockTaskRunner records calls to each task method.
@@ -85,6 +87,7 @@ type mockTaskRunner struct {
 
 	reviewRunReviewerArg string
 	reviewRunNoteArg     string
+	reviewRunRangeArg    task.ReviewRange
 	reviewRunCalled      bool
 	reviewRunRet         string
 	reviewRunErr         error
@@ -215,10 +218,14 @@ func (m *mockTaskRunner) ReviewNoteReopen(branch, id string) (string, error) {
 	return m.reviewNoteReopenRet, m.reviewNoteReopenErr
 }
 
-func (m *mockTaskRunner) ReviewRun(reviewer, note string) (string, error) {
+func (m *mockTaskRunner) ReviewRun(
+	reviewer, note string,
+	rng task.ReviewRange,
+) (string, error) {
 	m.reviewRunCalled = true
 	m.reviewRunReviewerArg = reviewer
 	m.reviewRunNoteArg = note
+	m.reviewRunRangeArg = rng
 	return m.reviewRunRet, m.reviewRunErr
 }
 
@@ -1084,6 +1091,92 @@ func TestTask_ReviewRun(t *testing.T) {
 
 		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	// setReviewRunRange sets the four explicit-range flags and restores them, so
+	// a leaked value cannot turn a later case's branch review into a range one.
+	setReviewRunRange := func(t *testing.T, rng task.ReviewRange) {
+		t.Helper()
+		base, head := taskReviewRunBaseFlag, taskReviewRunHeadFlag
+		journal, dir := taskReviewRunJournalFlag, taskReviewRunReportDirFlag
+		taskReviewRunBaseFlag = rng.Base
+		taskReviewRunHeadFlag = rng.Head
+		taskReviewRunJournalFlag = rng.Journal
+		taskReviewRunReportDirFlag = rng.ReportDir
+		t.Cleanup(func() {
+			taskReviewRunBaseFlag, taskReviewRunHeadFlag = base, head
+			taskReviewRunJournalFlag, taskReviewRunReportDirFlag = journal, dir
+		})
+	}
+
+	t.Run("passes the explicit-range flags through", func(t *testing.T) {
+		want := task.ReviewRange{
+			Base:      "4a1c2ef",
+			Head:      "9f2c1ab",
+			Journal:   "pr/acme/web/213",
+			ReportDir: "/tmp/reports",
+		}
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE  report: /tmp/reports/x.md"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunRange(t, want)
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.reviewRunRangeArg != want {
+			t.Errorf("expected the range %+v passed through, got %+v", want, mock.reviewRunRangeArg)
+		}
+	})
+
+	// Omitting them all is branch mode, and the zero value is what says so.
+	t.Run("omitting the range flags passes the zero range", func(t *testing.T) {
+		mock := &mockTaskRunner{reviewRunRet: "openai/gpt-5.2 → APPROVE"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		setReviewRunRange(t, task.ReviewRange{})
+
+		if err := taskReviewRunCmd.RunE(taskReviewRunCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if (mock.reviewRunRangeArg != task.ReviewRange{}) {
+			t.Errorf("expected an empty range, got %+v", mock.reviewRunRangeArg)
+		}
+	})
+
+	// The four flags exist and are declared as one group, so cobra refuses a
+	// partial one at parse time — before ReviewRun's own refusal, which is what
+	// protects every other caller.
+	t.Run("the four range flags are declared required together", func(t *testing.T) {
+		for _, name := range []string{"base", "head", "journal", "report-dir"} {
+			flag := taskReviewRunCmd.Flags().Lookup(name)
+			if flag == nil {
+				t.Fatalf("expected a --%s flag", name)
+			}
+			if flag.DefValue != "" {
+				t.Errorf("expected --%s to default to empty, got %q", name, flag.DefValue)
+			}
+		}
+
+		if err := taskReviewRunCmd.Flags().Set("base", "4a1c2ef"); err != nil {
+			t.Fatalf("setting --base: %v", err)
+		}
+		t.Cleanup(func() {
+			if err := taskReviewRunCmd.Flags().Set("base", ""); err != nil {
+				t.Logf("restoring --base: %v", err)
+			}
+			taskReviewRunBaseFlag = ""
+		})
+
+		err := taskReviewRunCmd.ValidateFlagGroups()
+		if err == nil {
+			t.Fatal("expected --base alone to be refused by the flag group")
+		}
+		for _, want := range []string{"head", "journal", "report-dir"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("expected %q named in the group error, got: %v", want, err)
+			}
 		}
 	})
 }

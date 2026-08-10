@@ -562,7 +562,7 @@ func TestReviewRunVerdictOutcomes(t *testing.T) {
 			withReviewers(t)
 			scriptOpenCode(t, ocBase, scriptedRun{stdout: tt.stdout, err: tt.err})
 
-			out, err := tm.ReviewRun("", "")
+			out, err := tm.ReviewRun("", "", ReviewRange{})
 			if err != nil {
 				t.Fatalf("ReviewRun: %v", err)
 			}
@@ -610,7 +610,7 @@ func TestReviewRunClassifiesRealCodexDocumentReviewerCapture(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: capture})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -632,7 +632,7 @@ func TestReviewRunErrorOutcomeFromErrorEvent(t *testing.T) {
 		err:    errors.New("exit status 1"),
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -650,7 +650,7 @@ func TestReviewRunErrorOutcomeFromNonzeroExitAlone(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, retried(scriptedRun{err: errors.New("exit status 127")})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -672,7 +672,7 @@ func TestReviewRunErrorReasonIsTruncatedNotReworded(t *testing.T) {
 		retried(scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})...,
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -710,7 +710,7 @@ func TestReviewRunErrorReasonTruncationIsRuneSafe(t *testing.T) {
 		retried(scriptedRun{stdout: errorEvent("UnknownError", long) + "\n"})...,
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -733,7 +733,7 @@ func TestReviewRunErrorOutcomeWhenNothingParses(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, retried(scriptedRun{stdout: "opencode: command not found\n"})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -752,7 +752,7 @@ func TestReviewRunIgnoresNonEventNoiseOnStdout(t *testing.T) {
 		stdout: "zoxide: detected a possible configuration issue.\n" + statusReport("APPROVE"),
 	})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -777,7 +777,7 @@ func TestReviewRunMidListFailureDoesNotStopRemainingReviewers(t *testing.T) {
 	runs = append(runs, scriptedRun{stdout: statusReport("APPROVE")})
 	scriptOpenCode(t, ocBase, runs...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -838,7 +838,7 @@ func TestReviewRunNoReportReportsTheStderrReason(t *testing.T) {
 		stderr: autoRejectStderr,
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -863,7 +863,7 @@ func TestReviewRunNoReportReasonStripsANSIEscapes(t *testing.T) {
 		stderr: autoRejectStderr,
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -883,7 +883,7 @@ func TestReviewRunNoReportFallsBackToTheStepReason(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, retried(scriptedRun{stdout: noReportCapture()})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -906,7 +906,7 @@ func TestReviewRunNoReportWithNothingToExplainItStillGivesAReason(t *testing.T) 
 			stepFinishWithReason(finishReasonStop) + "\n",
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -928,7 +928,7 @@ func TestReviewRunRetriesAReviewerThatProducedNoReport(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE")},
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -949,7 +949,7 @@ func TestReviewRunDoesNotRetryAReviewerThatReported(t *testing.T) {
 		stdout: textEvent("I read the diff and have no comment.") + "\n",
 	})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -973,7 +973,7 @@ func TestReviewRunRetriesAtMostOnce(t *testing.T) {
 		stderr: autoRejectStderr,
 	})...)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 }
@@ -994,7 +994,7 @@ func TestReviewRunKeepsTheFirstOutcomeWhenTheRetryAlsoFails(t *testing.T) {
 		scriptedRun{},
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1015,7 +1015,7 @@ func TestReviewRunNoReportReasonStaysOneLine(t *testing.T) {
 		stderr: "first line\n" + long,
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1107,7 +1107,7 @@ func TestReviewRunWritesProgressLinesPerReviewer(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), 1500*time.Millisecond)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1138,7 +1138,7 @@ func TestReviewRunProgressUsesDefaultModelLabel(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	want := "[1/1] OpenCode default model: running\n[1/1] OpenCode default model: APPROVE (1s)\n"
@@ -1161,7 +1161,7 @@ func TestReviewRunProgressContinuesAfterAReviewerFails(t *testing.T) {
 	tm.ProgressOut = &progress
 	tm.NowFn = fixedClock(time.Unix(0, 0), time.Second)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
 	}
@@ -1207,7 +1207,7 @@ func TestReviewRunConfiguredReviewersPinTheirModels(t *testing.T) {
 		},
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1231,13 +1231,133 @@ func TestReviewRunUnsetReviewersRunsOpenCodeDefaultModel(t *testing.T) {
 		},
 	})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if out != "OpenCode default model → APPROVE" {
 		t.Errorf("unexpected output:\n%s", out)
 	}
+}
+
+// A model id repeated in review.reviewers is ONE run, keeping the first
+// occurrence's position. In branch mode running it twice only wastes a paid
+// round on a second copy of one model's opinion; in range mode it was silent
+// data loss, because both runs derive the same report filename from the same
+// label — the second overwrote the first while both output lines still named
+// that one path, so the first line pointed at a report describing a different
+// verdict. Both modes are covered here because the dedup is one rule, and the
+// range half is the one that was actually broken.
+func TestReviewRunRunsADuplicatedModelOnce(t *testing.T) {
+	const (
+		dupModel   = "openai/gpt-5.2"
+		otherModel = "google/gemini-3-pro"
+	)
+
+	// The duplicate sits LAST, so this also pins the position rule: the kept run
+	// is the first occurrence, ahead of the model configured between the two.
+	configured := []string{dupModel, otherModel, dupModel}
+
+	t.Run("branch mode", func(t *testing.T) {
+		tm, _, ocBase := newRepoSetup(t, "feat")
+		withReviewers(t, configured...)
+		// Two scripted attempts for three configured entries: a third launch
+		// fails the fixture's call-count check, which is how a lost dedup gets
+		// caught even if the printed lines somehow still looked right.
+		scriptOpenCode(
+			t, ocBase,
+			scriptedRun{
+				stdout: statusReport("REQUEST CHANGES"),
+				onCall: func(t *testing.T, c commands.CommandParams) {
+					assertModelFlag(t, c, dupModel)
+				},
+			},
+			scriptedRun{
+				stdout: statusReport("APPROVE"),
+				onCall: func(t *testing.T, c commands.CommandParams) {
+					assertModelFlag(t, c, otherModel)
+				},
+			},
+		)
+
+		out, err := tm.ReviewRun("", "", ReviewRange{})
+		if err != nil {
+			t.Fatalf("ReviewRun: %v", err)
+		}
+		want := dupModel + " → REQUEST CHANGES\n" + otherModel + " → APPROVE"
+		if out != want {
+			t.Errorf("got:\n%s\nwant:\n%s", out, want)
+		}
+	})
+
+	t.Run("range mode", func(t *testing.T) {
+		tm, ocBase, rng := newRangeSetup(t, "feat")
+		withReviewers(t, configured...)
+		scriptOpenCode(
+			t, ocBase,
+			scriptedRun{stdout: fullReport("gpt found a race", "REQUEST CHANGES")},
+			scriptedRun{stdout: fullReport("gemini found nothing blocking", "APPROVE")},
+		)
+
+		out, err := tm.ReviewRun("", "", rng)
+		if err != nil {
+			t.Fatalf("ReviewRun: %v", err)
+		}
+		wants := []struct{ prefix, body, verdict string }{
+			{dupModel + " → REQUEST CHANGES", "gpt found a race", "REQUEST CHANGES"},
+			{otherModel + " → APPROVE", "gemini found nothing blocking", "APPROVE"},
+		}
+		lines := strings.Split(out, "\n")
+		if len(lines) != len(wants) {
+			// Not fatal: the report-directory check below is what names the
+			// actual damage (more lines than files), and it is worth reporting
+			// alongside the line count rather than instead of it.
+			t.Errorf("expected one line per distinct model, got:\n%s", out)
+		}
+
+		// One file per line. A duplicate run overwrites its twin's report, so a
+		// line count above the file count IS the data loss.
+		entries, err := os.ReadDir(rng.ReportDir)
+		if err != nil {
+			t.Fatalf("reading the report directory: %v", err)
+		}
+		if len(entries) != len(lines) {
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Errorf(
+				"%d verdict line(s) but %d report file(s) %v — a report was overwritten",
+				len(lines), len(entries), names,
+			)
+		}
+		if len(lines) < len(wants) {
+			return
+		}
+
+		// And each line's report says what that line says — the pairing the
+		// overwrite destroyed.
+		seen := make(map[string]bool, len(wants))
+		for i, want := range wants {
+			if !strings.HasPrefix(lines[i], want.prefix+reportField) {
+				t.Errorf("line %d: got %q, want %q then a report field", i+1, lines[i], want.prefix)
+				continue
+			}
+			path := reportPathFrom(t, lines[i])
+			if seen[path] {
+				t.Errorf("line %d: report path %q already belongs to an earlier line", i+1, path)
+			}
+			seen[path] = true
+			data, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("reading the persisted report: %v", err)
+			}
+			wantText := fullReportText(want.body, want.verdict)
+			if string(data) != wantText {
+				t.Errorf("line %d: persisted report is\n%s\nwant\n%s", i+1, data, wantText)
+			}
+		}
+	})
 }
 
 func assertModelFlag(t *testing.T, c commands.CommandParams, want string) {
@@ -1282,7 +1402,7 @@ func TestReviewRunLaunchesTheSelectedReviewerAgent(t *testing.T) {
 				},
 			})
 
-			if _, err := tm.ReviewRun(tt.flag, ""); err != nil {
+			if _, err := tm.ReviewRun(tt.flag, "", ReviewRange{}); err != nil {
 				t.Fatalf("ReviewRun: %v", err)
 			}
 		})
@@ -1320,7 +1440,7 @@ func TestReviewRunNoteReachesEveryReviewer(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE"), onCall: check},
 	)
 
-	if _, err := tm.ReviewRun("", note); err != nil {
+	if _, err := tm.ReviewRun("", note, ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 }
@@ -1333,7 +1453,7 @@ func TestReviewRunBlankNoteRefused(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("", "   \n\t")
+	_, err := tm.ReviewRun("", "   \n\t", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected a refusal for a blank --note")
 	}
@@ -1350,7 +1470,7 @@ func TestReviewRunUnknownReviewerRefused(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase)
 
-	_, err := tm.ReviewRun("architecture", "")
+	_, err := tm.ReviewRun("architecture", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected an error for an unregistered reviewer")
 	}
@@ -1368,7 +1488,7 @@ func TestReviewRunProceedsOnANamedNonDefaultBranch(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun on a feature branch must proceed, got: %v", err)
 	}
@@ -1382,7 +1502,7 @@ func TestReviewRunRefusesOnTheDefaultBranch(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("", "")
+	_, err := tm.ReviewRun("", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected a refusal on the default branch")
 	}
@@ -1400,7 +1520,7 @@ func TestReviewRunRefusesOnDetachedHead(t *testing.T) {
 	withReviewers(t)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("", "")
+	_, err := tm.ReviewRun("", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected a refusal on a detached HEAD")
 	}
@@ -1422,7 +1542,7 @@ func TestReviewRunRefusesWhenBranchChangesNothing(t *testing.T) {
 	withAheadCount(t, tm, 0)
 	scriptOpenCode(t, ocBase) // no run may happen
 
-	_, err := tm.ReviewRun("", "")
+	_, err := tm.ReviewRun("", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected a refusal when the branch has no commits and a clean tree")
 	}
@@ -1450,7 +1570,7 @@ func TestReviewRunProceedsOnUncommittedWorkAlone(t *testing.T) {
 	withDirtyWorktree(t, tm, " M internal/x.go\n")
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("REQUEST CHANGES")})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("a dirty tree with no commits must still be reviewable, got: %v", err)
 	}
@@ -1468,7 +1588,7 @@ func TestReviewRunProceedsOnUntrackedWorkAlone(t *testing.T) {
 	withDirtyWorktree(t, tm, "?? docs/draft.md\n")
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("an untracked-only branch must still be reviewable, got: %v", err)
 	}
 }
@@ -1483,7 +1603,7 @@ func TestReviewRunProceedsWhenDirtinessCannotBeDetermined(t *testing.T) {
 	withStatusFailure(t, tm)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("an unresolvable status check must fail open, not block the round: %v", err)
 	}
 }
@@ -1504,7 +1624,7 @@ func TestReviewRunAbortsWhenHeadMovesMidRound(t *testing.T) {
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 	withBranchSwitchAfter(t, tm, 2, "main")
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected the round to abort when HEAD moved mid-round")
 	}
@@ -1528,7 +1648,7 @@ func TestReviewRunAbortsWhenHeadDetachesMidRound(t *testing.T) {
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 	withBranchSwitchAfter(t, tm, 2, "")
 
-	_, err := tm.ReviewRun("", "")
+	_, err := tm.ReviewRun("", "", ReviewRange{})
 	if err == nil {
 		t.Fatal("expected the round to abort when HEAD detached mid-round")
 	}
@@ -1561,7 +1681,7 @@ func TestReviewRunContinuesWhenTheBranchRecheckFails(t *testing.T) {
 		return orig(c)
 	}
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("an unreadable HEAD must not abort the round: %v", err)
 	}
@@ -1581,7 +1701,7 @@ func TestReviewRunUnaffectedWhenTheBranchStaysPut(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE")},
 	)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1600,7 +1720,7 @@ func TestReviewRunSkipsTheDirtyCheckWhenCommitsExist(t *testing.T) {
 	withAheadCount(t, tm, 2)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
@@ -1622,7 +1742,7 @@ func TestReviewRunProceedsWhenBranchHasCommittedDiff(t *testing.T) {
 	withAheadCount(t, tm, 1)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun on a branch with a committed diff must proceed, got: %v", err)
 	}
@@ -1644,7 +1764,7 @@ func TestReviewRunProceedsWhenAheadCountCannotBeDetermined(t *testing.T) {
 	withRevListFailure(t, tm)
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("APPROVE")})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf(
 			"an unresolvable ahead/behind comparison must fail open, not block the round: %v",
@@ -1729,7 +1849,7 @@ func TestReviewRunWritesSnapshotEvenWithNoJournal(t *testing.T) {
 		},
 	)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if seenPath == "" {
@@ -1784,7 +1904,7 @@ func TestReviewRunSnapshotHidesWhatAPeerWroteThisRound(t *testing.T) {
 		},
 	)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	// Ids keep advancing in the LIVE journal while the reads stay frozen: the
@@ -1817,7 +1937,7 @@ func TestReviewRunPointsEveryReviewerAtTheSameSnapshot(t *testing.T) {
 		scriptedRun{stdout: statusReport("APPROVE"), onCall: record},
 	)
 
-	if _, err := tm.ReviewRun("", ""); err != nil {
+	if _, err := tm.ReviewRun("", "", ReviewRange{}); err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
 	if len(pointers) != 2 || pointers[0] != pointers[1] {
@@ -1848,7 +1968,7 @@ func TestReviewRunRemovesSnapshotAfterAReviewerFails(t *testing.T) {
 		},
 	})...)
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("a failed reviewer is an outcome, not a command error: %v", err)
 	}
@@ -1901,7 +2021,7 @@ func TestReviewRunPrintsOnlyVerdictLines(t *testing.T) {
 	}
 	scriptOpenCode(t, ocBase, scriptedRun{stdout: statusReport("REQUEST CHANGES")})
 
-	out, err := tm.ReviewRun("", "")
+	out, err := tm.ReviewRun("", "", ReviewRange{})
 	if err != nil {
 		t.Fatalf("ReviewRun: %v", err)
 	}
@@ -1914,5 +2034,752 @@ func TestReviewRunPrintsOnlyVerdictLines(t *testing.T) {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("stdout must not carry journal content, found %q in:\n%s", unwanted, out)
 		}
+	}
+}
+
+// --- explicit-range mode (ADR-0022 §5) --------------------------------------
+
+const (
+	// The two commit-ish values a range-mode test passes, and the SHAs the
+	// fixture resolves them to. They are deliberately DIFFERENT strings: what
+	// reaches the prompt has to be the resolved commit, never the caller's
+	// spelling of it, or two ticks of the same review describe two different
+	// states under one name.
+	testRangeBaseRef = "merge-base-of-213"
+	testRangeHeadRef = "refs/devgeta/pr/213/head"
+	testRangeBaseSHA = "4a1c2ef9b0d1e2f3a4b5c6d7e8f90123456789ab"
+	testRangeHeadSHA = "9f2c1abcdef0123456789abcdef0123456789abc"
+
+	// The PR-scoped journal key. It carries slashes on purpose: a key is not a
+	// branch name, and the journal's encoder is what makes one a filename.
+	testRangeJournalKey = "pr/acme/web/213"
+)
+
+// withResolvableCommits answers `rev-parse --verify <ref>^{commit}` from refs
+// and fails for anything else — the exact shape a commit this clone never
+// fetched has, which is range mode's likeliest bad input. newRepoSetup's
+// fixture answers that call with nothing, so a range-mode test has to say which
+// commits the clone actually has; every other git call keeps answering exactly
+// as that fixture does.
+func withResolvableCommits(t *testing.T, tm *TaskManager, refs map[string]string) {
+	t.Helper()
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "rev-parse") && slices.Contains(c.Args, "--verify") {
+			ref := strings.TrimSuffix(c.Args[len(c.Args)-1], "^{commit}")
+			sha, found := refs[ref]
+			if !found {
+				return "", "fatal: Needed a single revision", errors.New("exit status 128")
+			}
+			return sha + "\n", "", nil
+		}
+		return orig(c)
+	}
+}
+
+// newRangeSetup is newRepoSetup plus the two commits every range-mode test
+// reviews and the flag group that selects them.
+//
+// branch is whatever the checkout happens to be on — which range mode must not
+// care about at all, which is why the tests below pass a feature branch, the
+// default branch, and a detached HEAD to the same fixture. The report directory
+// is deliberately NOT created here: creating it is the command's job.
+func newRangeSetup(
+	t *testing.T,
+	branch string,
+) (*TaskManager, *commands.MockBaseCommand, ReviewRange) {
+	t.Helper()
+	tm, _, ocBase := newRepoSetup(t, branch)
+	withResolvableCommits(t, tm, map[string]string{
+		testRangeBaseRef: testRangeBaseSHA,
+		testRangeHeadRef: testRangeHeadSHA,
+	})
+	return tm, ocBase, ReviewRange{
+		Base:      testRangeBaseRef,
+		Head:      testRangeHeadRef,
+		Journal:   testRangeJournalKey,
+		ReportDir: filepath.Join(t.TempDir(), "reports"),
+	}
+}
+
+// fullReport is a reviewer's whole report — prose, then the contract's verdict
+// line — rather than statusReport's verdict alone. Range mode must persist all
+// of it: the verdict is already on the output line, and the findings, evidence
+// and strengths around it are the part nothing else keeps.
+func fullReport(body, verdict string) string {
+	return strings.Join([]string{
+		`{"type":"step_start","part":{"type":"step-start"}}`,
+		textEvent(fullReportText(body, verdict)),
+		`{"type":"step_finish","part":{"type":"step-finish","reason":"stop"}}`,
+	}, "\n") + "\n"
+}
+
+// fullReportText is the exact text those events concatenate to, so a test can
+// assert the persisted file byte for byte instead of searching it for a phrase.
+func fullReportText(body, verdict string) string {
+	return "### Findings\n\n" + body + "\n\n**Status:** " + verdict + "\n"
+}
+
+// reportPathFrom pulls the report path out of one verdict line, reading the
+// field from the right — an ERROR(...) outcome carries OpenCode's own words, so
+// the report label is only unambiguous as the line's last field.
+func reportPathFrom(t *testing.T, line string) string {
+	t.Helper()
+	i := strings.LastIndex(line, reportField)
+	if i < 0 {
+		t.Fatalf(
+			"expected a %q field on the verdict line, got %q",
+			strings.TrimSpace(reportField),
+			line,
+		)
+	}
+	return line[i+len(reportField):]
+}
+
+// promptOf returns the prompt argument the wrapper put on the command line.
+func promptOf(c commands.CommandParams) string {
+	return c.Args[len(c.Args)-1]
+}
+
+// The report field's bytes are a published contract, not internal formatting:
+// the agent-side loop splits the report path off a verdict line by this exact
+// prefix and reads this exact sentinel as "no report at all".
+//
+// Every other assertion in this file spells the field via the constants
+// themselves, which is right for testing behavior but means a reformat (two
+// spaces to one) or a reword of the sentinel would keep the whole suite green
+// while silently breaking that consumer. These literals exist so such an edit
+// fails HERE, loudly, instead of downstream — CLAUDE.md's "make the mistake
+// structurally impossible" applied to a string a parser depends on. Changing
+// either value is a contract change, so updating this test is meant to be the
+// deliberate act that records it.
+func TestReviewRunReportFieldBytesAreTheContract(t *testing.T) {
+	if reportField != "  report: " {
+		t.Errorf(
+			"reportField is %q, want %q — this is what a caller parses on",
+			reportField,
+			"  report: ",
+		)
+	}
+	if want := "none (the reviewer wrote no report)"; reportNone != want {
+		t.Errorf(
+			"reportNone is %q, want %q — this is what a caller reads as 'no report'",
+			reportNone,
+			want,
+		)
+	}
+}
+
+// The report filename joins two encoded segments, and the join is only
+// unambiguous because reportNameSeparator is a byte EncodeBranch can never
+// emit: the encoder keeps [A-Za-z0-9._-] and percent-encodes everything else.
+// That property, not the reviewer registry's current names, is what stops one
+// (agent, label) pair spelling the same filename as a different pair — and what
+// stops one run's report overwriting another's. Pinned here because it is a
+// property of a helper in another package that this one silently relies on.
+func TestReviewerReportNameSeparatorCannotComeFromASegment(t *testing.T) {
+	for _, segment := range []string{
+		reportNameSeparator,
+		"code" + reportNameSeparator + "reviewer",
+		"openai/gpt" + reportNameSeparator + "5.2",
+	} {
+		if encoded := reviewjournal.EncodeBranch(
+			segment,
+		); strings.Contains(
+			encoded,
+			reportNameSeparator,
+		) {
+			t.Errorf(
+				"EncodeBranch(%q) = %q, which contains the separator %q — the join is no longer injective",
+				segment,
+				encoded,
+				reportNameSeparator,
+			)
+		}
+	}
+	// So the separator lands in a filename exactly once, wherever the two
+	// segments came from.
+	name := reviewerReportName(
+		"code"+reportNameSeparator+"reviewer",
+		"openai/gpt"+reportNameSeparator+"5.2",
+	)
+	if got := strings.Count(name, reportNameSeparator); got != 1 {
+		t.Errorf("report filename %q contains the separator %d time(s), want exactly 1", name, got)
+	}
+}
+
+// Range mode runs the configured models exactly as branch mode does, and adds
+// one thing to each line: where that run's full report was written.
+func TestReviewRunRangeModeRunsEveryConfiguredModelAndPersistsReports(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: fullReport("gpt found a race in the retry path", "REQUEST CHANGES")},
+		scriptedRun{stdout: fullReport("gemini found nothing blocking", "APPROVE")},
+	)
+
+	out, err := tm.ReviewRun("", "", rng)
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected one line per reviewer, got:\n%s", out)
+	}
+
+	// The model id is a path separator away from escaping the report directory,
+	// so the encoded filename is asserted literally, not derived in the test.
+	wants := []struct{ prefix, file, body, verdict string }{
+		{
+			"openai/gpt-5.2 → REQUEST CHANGES",
+			"code-reviewer+openai%2Fgpt-5.2.md",
+			"gpt found a race in the retry path",
+			"REQUEST CHANGES",
+		},
+		{
+			"google/gemini-3-pro → APPROVE",
+			"code-reviewer+google%2Fgemini-3-pro.md",
+			"gemini found nothing blocking",
+			"APPROVE",
+		},
+	}
+	for i, want := range wants {
+		if !strings.HasPrefix(lines[i], want.prefix+reportField) {
+			t.Errorf("line %d: got %q, want %q then a report field", i+1, lines[i], want.prefix)
+		}
+		got := reportPathFrom(t, lines[i])
+		if wantPath := filepath.Join(rng.ReportDir, want.file); got != wantPath {
+			t.Errorf("line %d: report at %q, want %q", i+1, got, wantPath)
+		}
+		data, err := os.ReadFile(got)
+		if err != nil {
+			t.Fatalf("reading the persisted report: %v", err)
+		}
+		if string(data) != fullReportText(want.body, want.verdict) {
+			t.Errorf(
+				"line %d: persisted report is\n%s\nwant\n%s",
+				i+1, data, fullReportText(want.body, want.verdict),
+			)
+		}
+	}
+	verifyNoStrayCommands(t, tm)
+}
+
+// With review.reviewers unset there is one run on OpenCode's own default model,
+// in range mode as in branch mode. The report filename then encodes the label
+// that names that condition, because there is no model id to name.
+func TestReviewRunRangeModeWithoutConfiguredModels(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, scriptedRun{
+		stdout: fullReport("nothing blocking", "APPROVE"),
+		onCall: func(t *testing.T, c commands.CommandParams) {
+			if slices.Contains(c.Args, "-m") {
+				t.Errorf("expected no -m flag with reviewers unset, got %v", c.Args)
+			}
+		},
+	})
+
+	out, err := tm.ReviewRun("", "", rng)
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	wantPath := filepath.Join(rng.ReportDir, "code-reviewer+OpenCode%20default%20model.md")
+	want := "OpenCode default model → APPROVE" + reportField + wantPath
+	if out != want {
+		t.Errorf("got:\n%s\nwant:\n%s", out, want)
+	}
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("expected the report at %s: %v", wantPath, err)
+	}
+}
+
+// The four flags are one mode. Any subset of them means a caller intended a
+// range review, so the round is refused with the missing flags named — never
+// silently downgraded to a branch review of unrelated code.
+func TestReviewRunRangeModeRequiresTheWholeFlagGroup(t *testing.T) {
+	full := ReviewRange{
+		Base:      testRangeBaseRef,
+		Head:      testRangeHeadRef,
+		Journal:   testRangeJournalKey,
+		ReportDir: "reports",
+	}
+	tests := []struct {
+		name        string
+		rng         ReviewRange
+		wantMissing []string
+	}{
+		{
+			"base alone",
+			ReviewRange{Base: full.Base},
+			[]string{"--head", "--journal", "--report-dir"},
+		},
+		{
+			"head alone",
+			ReviewRange{Head: full.Head},
+			[]string{"--base", "--journal", "--report-dir"},
+		},
+		{
+			"journal alone",
+			ReviewRange{Journal: full.Journal},
+			[]string{"--base", "--head", "--report-dir"},
+		},
+		{
+			"report-dir alone",
+			ReviewRange{ReportDir: full.ReportDir},
+			[]string{"--base", "--head", "--journal"},
+		},
+		{
+			"three of four",
+			ReviewRange{Base: full.Base, Head: full.Head, Journal: full.Journal},
+			[]string{"--report-dir"},
+		},
+		{
+			// Whitespace is not a value: a shell variable that expanded to
+			// nothing must be refused, not treated as a key.
+			"a whitespace-only journal key counts as absent",
+			ReviewRange{
+				Base:      full.Base,
+				Head:      full.Head,
+				Journal:   "   ",
+				ReportDir: full.ReportDir,
+			},
+			[]string{"--journal"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, _, ocBase := newRepoSetup(t, "feat")
+			withReviewers(t)
+			scriptOpenCode(t, ocBase) // no reviewer may be launched
+
+			_, err := tm.ReviewRun("", "", tt.rng)
+			if err == nil {
+				t.Fatal("expected a partial range flag group to be refused")
+			}
+			for _, flag := range tt.wantMissing {
+				if !strings.Contains(err.Error(), flag) {
+					t.Errorf("expected %s named as missing, got: %v", flag, err)
+				}
+			}
+		})
+	}
+}
+
+// A base or head this clone does not have is refused before a reviewer starts.
+// Discovering it inside a headless run costs minutes and comes back as a
+// verdict-shaped report about a diff the reviewer never read.
+func TestReviewRunRangeModeRefusesACommitThisCloneLacks(t *testing.T) {
+	tests := []struct {
+		name     string
+		mutate   func(*ReviewRange)
+		wantFlag string
+	}{
+		{"unknown base", func(r *ReviewRange) { r.Base = "deadbee" }, "--base"},
+		{"unknown head", func(r *ReviewRange) { r.Head = "deadbee" }, "--head"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, ocBase, rng := newRangeSetup(t, "feat")
+			withReviewers(t)
+			scriptOpenCode(t, ocBase) // no reviewer may be launched
+			tt.mutate(&rng)
+
+			_, err := tm.ReviewRun("", "", rng)
+			if err == nil {
+				t.Fatal("expected an unresolvable commit to be refused")
+			}
+			for _, want := range []string{tt.wantFlag, "deadbee", "fetch"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("expected %q in the error, got: %v", want, err)
+				}
+			}
+			// Refused before anything was written, too: the round costs nothing.
+			if _, statErr := os.Stat(rng.ReportDir); !os.IsNotExist(statErr) {
+				t.Errorf("no report directory should exist yet, stat gave: %v", statErr)
+			}
+		})
+	}
+}
+
+// A report directory that cannot be created is refused up front for the same
+// reason: it would otherwise be discovered only after a round's worth of
+// reports had been produced with nowhere to go.
+func TestReviewRunRangeModeRefusesAnUnusableReportDir(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase) // no reviewer may be launched
+
+	// A path whose parent is a regular file: MkdirAll cannot create it.
+	blocker := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	rng.ReportDir = filepath.Join(blocker, "reports")
+
+	_, err := tm.ReviewRun("", "", rng)
+	if err == nil {
+		t.Fatal("expected an unusable --report-dir to be refused")
+	}
+	for _, want := range []string{"--report-dir", rng.ReportDir} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("expected %q in the error, got: %v", want, err)
+		}
+	}
+}
+
+// The round's journal is the one --journal names, not the checked-out branch's.
+// Both directions matter: the reviewers must read what this PR already settled,
+// and nothing may be filed under the branch that happens to be checked out.
+func TestReviewRunRangeModeJournalsUnderTheKeyNotTheBranch(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t)
+	if _, err := tm.ReviewNoteOpen(
+		testRangeJournalKey,
+		"",
+		"",
+		"settled on an earlier tick",
+	); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	var pointer string
+	scriptOpenCode(t, ocBase, scriptedRun{
+		stdout: fullReport("nothing blocking", "APPROVE"),
+		onCall: func(t *testing.T, c commands.CommandParams) {
+			pointer = snapshotPointer(t, c)
+		},
+	})
+
+	if _, err := tm.ReviewRun("", "", rng); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+
+	jm := reviewjournal.New(tm.Git)
+	wantSnapshot, err := jm.SnapshotPathFor("", testRangeJournalKey)
+	if err != nil {
+		t.Fatalf("SnapshotPathFor: %v", err)
+	}
+	if pointer != wantSnapshot {
+		t.Errorf("reviewer was pointed at %s, want the key's snapshot %s", pointer, wantSnapshot)
+	}
+	// The branch's own journal must not exist at all: range mode never touches it.
+	branchJournal, err := jm.PathFor("", "feat")
+	if err != nil {
+		t.Fatalf("PathFor: %v", err)
+	}
+	if _, err := os.Stat(branchJournal); !os.IsNotExist(err) {
+		t.Errorf("a branch journal must not be written in range mode, stat gave: %v", err)
+	}
+	// And what the reviewer read was the key's own history.
+	notes, err := tm.ReviewNotes(testRangeJournalKey, "", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(notes, "settled on an earlier tick") {
+		t.Errorf("expected the key's journal to carry the earlier entry, got:\n%s", notes)
+	}
+}
+
+// The prompt is where range mode's scope actually lives: the diff is fetched by
+// the reviewer's own review-package call, so nothing in Go can enforce the
+// target. Every clause it must carry is pinned here.
+func TestReviewRunRangeModePromptTargetsTheImmutableRange(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t)
+
+	var prompt string
+	scriptOpenCode(t, ocBase, scriptedRun{
+		stdout: fullReport("nothing blocking", "APPROVE"),
+		onCall: func(t *testing.T, c commands.CommandParams) { prompt = promptOf(c) },
+	})
+	if _, err := tm.ReviewRun("", "", rng); err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+
+	wanted := []string{
+		// The range, as resolved SHAs.
+		testRangeBaseSHA + ".." + testRangeHeadSHA,
+		// The diff comes from review-package, and the checkout-shaped commands
+		// are named as not applying.
+		"devgeta task review-package " + testRangeBaseSHA + " " + testRangeHeadSHA,
+		"devgeta task review-scope",
+		"devgeta task branch-diff",
+		"do not run them",
+		"git show " + testRangeHeadSHA + ":<path>",
+		// Immutable SHAs only — the difference from ADR-0019's branch scope,
+		// stated rather than left to be inferred.
+		"the working tree is not part of it",
+		"uncommitted and untracked files here belong to other work and are out of scope",
+		// The journal key and the revision, which is the pair the three
+		// reviewer agents' scoped-journal clause triggers on.
+		"Your journal key is " + testRangeJournalKey,
+		"the revision under review is " + testRangeHeadSHA,
+		"--branch " + testRangeJournalKey + " --rev " + testRangeHeadSHA,
+	}
+	for _, want := range wanted {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("expected %q in the range prompt, got:\n%s", want, prompt)
+		}
+	}
+
+	unwanted := []string{
+		// Branch mode's prompt would point the reviewer at the checkout, whose
+		// working state is explicitly NOT what range mode reviews.
+		worktree.ReviewPrompt,
+		// The caller's spelling of the range must not survive into the prompt:
+		// a ref name read twice during a multi-model round can name two commits.
+		testRangeBaseRef,
+		testRangeHeadRef,
+	}
+	for _, bad := range unwanted {
+		if strings.Contains(prompt, bad) {
+			t.Errorf("the range prompt must not contain %q, got:\n%s", bad, prompt)
+		}
+	}
+}
+
+// --note composes with range mode exactly as it does with a branch: appended to
+// whichever prompt the round uses, with the same emphasis-not-scope framing, and
+// a blank note still refused before any git call.
+func TestReviewRunRangeModeNoteRidesThePrompt(t *testing.T) {
+	const note = "the author says the retry cap is deliberate"
+
+	t.Run("the note is appended to the range prompt", func(t *testing.T) {
+		tm, ocBase, rng := newRangeSetup(t, "feat")
+		withReviewers(t)
+		scriptOpenCode(t, ocBase, scriptedRun{
+			stdout: fullReport("nothing blocking", "APPROVE"),
+			onCall: func(t *testing.T, c commands.CommandParams) {
+				prompt := promptOf(c)
+				if !strings.HasPrefix(prompt, "Review the commit range "+testRangeBaseSHA) {
+					t.Errorf("the note must be appended to the range prompt, got:\n%s", prompt)
+				}
+				for _, want := range []string{note, "not a narrower scope", testRangeJournalKey} {
+					if !strings.Contains(prompt, want) {
+						t.Errorf("expected %q in the prompt, got:\n%s", want, prompt)
+					}
+				}
+			},
+		})
+
+		if _, err := tm.ReviewRun("", note, rng); err != nil {
+			t.Fatalf("ReviewRun: %v", err)
+		}
+	})
+
+	t.Run("a blank note is refused before any commit is resolved", func(t *testing.T) {
+		tm, ocBase, rng := newRangeSetup(t, "feat")
+		withReviewers(t)
+		scriptOpenCode(t, ocBase) // no reviewer may be launched
+
+		_, err := tm.ReviewRun("", "   ", rng)
+		if err == nil {
+			t.Fatal("expected a blank --note to be refused in range mode too")
+		}
+		if !strings.Contains(err.Error(), "--note is blank") {
+			t.Errorf("expected the blank-note refusal, got: %v", err)
+		}
+		if _, statErr := os.Stat(rng.ReportDir); !os.IsNotExist(statErr) {
+			t.Errorf("nothing should have been created yet, stat gave: %v", statErr)
+		}
+	})
+}
+
+// None of the three HEAD-dependent refusals applies in range mode: the target is
+// stated, so there is nothing left for them to infer. A tick of an unattended
+// loop runs from whatever the human left checked out — including the default
+// branch, and including no branch at all.
+func TestReviewRunRangeModeIgnoresWhatIsCheckedOut(t *testing.T) {
+	tests := []struct {
+		name   string
+		branch string
+	}{
+		{"on the default branch", "main"},
+		{"on a detached HEAD", ""},
+		{"on an unrelated feature branch", "some-other-work"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tm, ocBase, rng := newRangeSetup(t, tt.branch)
+			withReviewers(t)
+			// A clean tree with nothing ahead of the default branch, which is
+			// what ADR-0019's refusal blocks in branch mode. Range mode must
+			// not consult either fact.
+			withAheadCount(t, tm, 0)
+			scriptOpenCode(
+				t,
+				ocBase,
+				scriptedRun{stdout: fullReport("nothing blocking", "APPROVE")},
+			)
+
+			out, err := tm.ReviewRun("", "", rng)
+			if err != nil {
+				t.Fatalf("range mode must not refuse a checkout it does not use: %v", err)
+			}
+			if !strings.Contains(out, "→ APPROVE") {
+				t.Errorf("expected a verdict line, got:\n%s", out)
+			}
+		})
+	}
+}
+
+// HEAD moving mid-round abandons a branch review, because a branch review's
+// journal key and reviewed tree both come from HEAD. In range mode both were
+// stated by the caller, so a checkout that moves changes nothing this command
+// asserts — and the round must not be thrown away over it.
+func TestReviewRunRangeModeSurvivesHeadMovingMidRound(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2", "google/gemini-3-pro")
+
+	gitBase, ok := tm.Git.Base.(*commands.MockBaseCommand)
+	if !ok {
+		t.Fatalf("expected a mock git base, got %T", tm.Git.Base)
+	}
+	orig := gitBase.ExecCommandFn
+	headReads := 0
+	gitBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if slices.Contains(c.Args, "--show-current") {
+			headReads++
+			return "main\n", "", nil
+		}
+		return orig(c)
+	}
+
+	scriptOpenCode(
+		t, ocBase,
+		scriptedRun{stdout: fullReport("first opinion", "REQUEST CHANGES")},
+		scriptedRun{stdout: fullReport("second opinion", "APPROVE")},
+	)
+
+	out, err := tm.ReviewRun("", "", rng)
+	if err != nil {
+		t.Fatalf("a moving HEAD must not abandon a range round: %v", err)
+	}
+	if len(strings.Split(out, "\n")) != 2 {
+		t.Errorf("expected both reviewers to be reported, got:\n%s", out)
+	}
+	// Stronger than "it did not fail": range mode never asks what HEAD is, so
+	// there is no window in which the answer could matter.
+	if headReads != 0 {
+		t.Errorf(
+			"range mode must not read the current branch at all, it read it %d time(s)",
+			headReads,
+		)
+	}
+}
+
+// The persisted report and the reported outcome always come from the SAME
+// attempt. Filing one attempt's report under another attempt's verdict would
+// put findings behind a conclusion they never reached.
+func TestReviewRunRangeModePersistsTheReportedAttemptsText(t *testing.T) {
+	t.Run("first attempt reported", func(t *testing.T) {
+		tm, ocBase, rng := newRangeSetup(t, "feat")
+		withReviewers(t)
+		scriptOpenCode(t, ocBase, scriptedRun{
+			stdout: fullReport("the first attempt's findings", "REQUEST CHANGES"),
+		})
+
+		out, err := tm.ReviewRun("", "", rng)
+		if err != nil {
+			t.Fatalf("ReviewRun: %v", err)
+		}
+		if !strings.Contains(out, "→ REQUEST CHANGES") {
+			t.Fatalf("expected the first attempt's verdict, got:\n%s", out)
+		}
+		data, err := os.ReadFile(reportPathFrom(t, out))
+		if err != nil {
+			t.Fatalf("reading the persisted report: %v", err)
+		}
+		want := fullReportText("the first attempt's findings", "REQUEST CHANGES")
+		if string(data) != want {
+			t.Errorf("persisted:\n%s\nwant:\n%s", data, want)
+		}
+	})
+
+	// The retry replaces the outcome only by producing a report — so when it
+	// does, its own text is what must be persisted, not the failed attempt's
+	// nothing.
+	t.Run("first attempt produced no report, the retry did", func(t *testing.T) {
+		tm, ocBase, rng := newRangeSetup(t, "feat")
+		withReviewers(t)
+		scriptOpenCode(
+			t, ocBase,
+			scriptedRun{stdout: noReportCapture(), stderr: autoRejectStderr},
+			scriptedRun{stdout: fullReport("the retry's findings", "APPROVE")},
+		)
+
+		out, err := tm.ReviewRun("", "", rng)
+		if err != nil {
+			t.Fatalf("ReviewRun: %v", err)
+		}
+		if !strings.Contains(out, "→ APPROVE") {
+			t.Fatalf("expected the retry's verdict, got:\n%s", out)
+		}
+		data, err := os.ReadFile(reportPathFrom(t, out))
+		if err != nil {
+			t.Fatalf("reading the persisted report: %v", err)
+		}
+		want := fullReportText("the retry's findings", "APPROVE")
+		if string(data) != want {
+			t.Errorf("persisted:\n%s\nwant:\n%s", data, want)
+		}
+		if strings.Contains(string(data), "permission requested") {
+			t.Error("the failed attempt's stderr must not end up in the report")
+		}
+	})
+}
+
+// A run that produced no report at all writes no file: an empty report file
+// would read as a reviewer who found nothing. The field is still printed, so a
+// caller parses one shape either way.
+func TestReviewRunRangeModeWritesNoFileWhenThereIsNoReport(t *testing.T) {
+	tm, ocBase, rng := newRangeSetup(t, "feat")
+	withReviewers(t)
+	scriptOpenCode(t, ocBase, retried(scriptedRun{
+		stdout: noReportCapture(),
+		stderr: autoRejectStderr,
+	})...)
+
+	out, err := tm.ReviewRun("", "", rng)
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if !strings.HasSuffix(out, reportField+reportNone) {
+		t.Errorf("expected the report field to name the absence, got:\n%s", out)
+	}
+	entries, err := os.ReadDir(rng.ReportDir)
+	if err != nil {
+		t.Fatalf("reading the report directory: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("expected no report files, got %d", len(entries))
+	}
+}
+
+// Branch mode's output contract is untouched: verdict lines with nothing
+// appended. The reports are range mode's addition, and a caller parsing branch
+// mode's output must see exactly what it saw before this mode existed.
+func TestReviewRunBranchModeOutputCarriesNoReportField(t *testing.T) {
+	tm, _, ocBase := newRepoSetup(t, "feat")
+	withReviewers(t, "openai/gpt-5.2")
+	scriptOpenCode(t, ocBase, scriptedRun{
+		stdout: fullReport("plenty of findings that are not persisted anywhere", "REQUEST CHANGES"),
+	})
+
+	out, err := tm.ReviewRun("", "", ReviewRange{})
+	if err != nil {
+		t.Fatalf("ReviewRun: %v", err)
+	}
+	if out != "openai/gpt-5.2 → REQUEST CHANGES" {
+		t.Errorf("got:\n%s\nwant the verdict line alone", out)
+	}
+	if strings.Contains(out, "report:") {
+		t.Errorf("branch mode must not print a report field, got:\n%s", out)
 	}
 }
