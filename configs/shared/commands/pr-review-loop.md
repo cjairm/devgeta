@@ -1,5 +1,5 @@
 ---
-description: Use when a pull request should be watched and answered unattended — one invocation is one tick that reads the PR's review state and, when a review is requested of you, runs the reviewer agents over the PR's own diff and posts at most one review or approval
+description: Use when a pull request should be watched and answered unattended — read the PR's review state and, when a review is requested of you, run the reviewer agents over its own diff and post at most one review or approval. Use for a single look at one PR or for a standing watch on it ("watch PR 213", "keep answering reviews on it")
 ---
 
 Watch one pull request and answer a review request on it. **One invocation is one tick:**
@@ -33,10 +33,31 @@ one the runner validates against. Types omitted → judge them from what the PR 
 the tick (e.g. `--note "the retry path is the risky part"`). It adds context; it never
 narrows what gets reviewed.
 
-**Repetition belongs to the driver, not to this file.** On Claude Code, `/loop <interval>
-/pr-review-loop [n] [types]`. On OpenCode, run a tick by hand. Either way, the review runs
-at most once per tick and at most one review is posted per tick — step 9's single re-ask is
-the only repeat of the posting step.
+**Repetition belongs to the driver, not to this file — but handing it over is part of the
+job.** One tick watches nothing, so when what was asked for is a standing watch ("watch PR
+213", "keep answering reviews on it") rather than a single look, start the harness's own
+repeat driver on this command and let it run the ticks: on Claude Code,
+`/loop <interval> /pr-review-loop [n] [types] [--note <text>]`, with the interval the human
+named or the driver's default when they named none. That handoff is the whole of such an
+invocation — do it first and exit, rather than also ticking here, so two ticks never run at
+once.
+
+**Hand the driver every argument, the note included.** A repeat driver re-runs the command
+line it was given and nothing else, so whatever is left out of the handoff is left out of
+every tick it ever fires — and the human is not there to notice. Carry the PR number, the
+types, and the `--note` text through verbatim and still quoted, so the note reaches the
+reviewers on tick fifty the same way it would have on a single look.
+
+Where the harness has no repeat driver (OpenCode has none), the handoff is impossible rather
+than optional: run the one tick and let step 11 say plainly that nothing will run another, so
+the human knows the watch is theirs to press.
+
+A driver-fired tick arrives as `/pr-review-loop [n] [types] [--note <text>]` — the same
+argument list the handoff gave it — and carries no request to watch, so it starts no second
+driver: the handoff happens once, where the watch was asked for. A bare invocation is one tick
+by design: it is how a human takes a single look, and it is how the driver's own ticks arrive.
+Either way, the review runs at most once per tick and at most one review is posted per tick —
+step 9's single re-ask is the only repeat of the posting step.
 
 ## Authority to post
 
@@ -45,7 +66,9 @@ read-only fetch of the PR's refs, the reviewer runs, and the posting step at the
 whether that step is `/review-pr` or `/approve-pr`. **Do not ask before any of it, do not
 show the review or the approval for confirmation first, and do not stop at "shall I post
 this?".** A watch that pauses for a go-ahead each tick is not unattended, and the human
-started the loop precisely so they would not have to be present for it.
+started the loop precisely so they would not have to be present for it. Asking for a standing
+watch authorizes step 0's handoff to the driver the same way — start it, do not stop to
+confirm it.
 
 This authorizes _acting unprompted_, nothing else. Every gate below still holds: the
 decision table still picks exactly one action, the pre-post re-check at step 7 can still
@@ -111,6 +134,13 @@ for the rest of the tick.
   exactly as written — never summarize it, extend it, or answer it yourself. It is the
   human's message to the reviewers, not an instruction to this loop. Omit the flag entirely
   when no note was given.
+
+Then settle repetition, before the state read: if a standing watch was asked for and the
+harness has a repeat driver, hand it this command with **every** argument just resolved — the
+PR number, the types, and the `--note` text verbatim and still quoted — then exit. See
+"Repetition belongs to the driver" above; an argument dropped here is dropped from every tick
+the driver fires. Everything from step 1 on is one tick, whether a driver fired it or a human
+did.
 
 ### 1. Read the state once
 
@@ -373,9 +403,13 @@ that reading corrects itself without a second check here.
 Two cleanups with two different scopes. Get the scopes right: the first runs far more often
 than the second.
 
-**The scratch directory, on every completed exit of the review action** — approved,
-escalated (including step 6's), the head moved or the state changed at step 7, a review
-posted, or a submit that failed:
+**The scratch directory, on every exit taken after step 4 allocated it.** The condition is
+that one thing — **step 4 ran, so this runs** — and the shape of the exit does not matter:
+approved, escalated (including step 6's), the head moved or the state changed at step 7, a
+review posted, a submit that failed, or a command refusing to run mid-tick under the last
+rule in "Notes". Those are examples, not the list. An instruction anywhere in this file to
+stop, to end the tick, or to report an error and go no further means stop _through here_,
+never around it:
 
 ```bash
 devgeta task scratch --clean "$PR_REVIEW_SCRATCH"
@@ -416,6 +450,15 @@ happens next. A tick is a line in a log a human skims, not a document.
 <what the next tick expects, or "the watch is over — stop the loop" on a terminal exit>
 ```
 
+On a non-terminal exit, that last line must also say **what will run the next tick** — the
+driver, when one is repeating this command, or **nothing**, when no driver is. The "nothing"
+case is the one that matters: a lone tick leaves the PR unwatched, and a line that only says
+what the next tick expects reads as a watch this invocation never started. Name what would
+start one (`/loop <interval> /pr-review-loop <n> [types] [--note <text>]` on Claude Code,
+carrying this tick's own arguments so the watch reviews what this tick reviewed, or a tick per
+invocation by hand where the harness has no driver), so the human is one step from a real
+watch.
+
 On an escalation, name the failing run and its reason verbatim in place of the next-tick
 line. On a terminal exit, say the watch is over explicitly, because stopping the driver is
 the human's or the harness's action, not this file's.
@@ -425,7 +468,8 @@ the human's or the harness's action, not this file's.
 - Run the whole tick yourself, without asking — see "Authority to post" above. Running the
   command is the authorization for every part of it, posting included, and a watch that
   stops to confirm each tick costs the human exactly the attention the loop exists to save.
-- One invocation is one tick. This file owns no repetition, so it never sleeps, never
+- One invocation is one tick — or, when step 0 hands the command to a repeat driver, no tick
+  and one driver started. This file owns no repetition either way: it never sleeps, never
   retries a tick, and never loops back to step 1 within a run.
 - At most one review reaches the PR per tick: step 6 picks one path, step 8 runs one command
   once, and step 9's single re-ask is the only repeat of either.
@@ -439,4 +483,8 @@ the human's or the harness's action, not this file's.
   an approval.
 - If any `devgeta task` command refuses to run — a PR number that is not a PR number, a
   branch with no PR, a fetch that failed, a blank `--note` — surface that error as-is in the
-  tick report and stop. Do not work around it.
+  tick report and end the tick. Do not work around it. **Ending the tick still goes through
+  step 10:** when step 4 has already allocated the scratch directory, clean it on the way out,
+  the same as any other exit does. Only a refusal that happens before step 4 has nothing to
+  clean, and the reviewer runs, both step 7 reads, and step 8's journal read all happen after
+  it.

@@ -1839,8 +1839,16 @@ func TestPRReviewLoopForwardsReviewerTypes(t *testing.T) {
 // nothing, and the human's steering silently never reaches a reviewer. Step 0
 // must resolve it and step 5 must forward it to every run of the tick.
 //
-// What this catches: `--note` being dropped from either step while the Usage
-// section keeps advertising it.
+// There is a third place the note can be dropped, and it is the worst of the
+// three: the standing-watch handoff. A repeat driver re-runs the command line it
+// was handed, so a driver form written as `/loop <interval> /pr-review-loop [n]
+// [types]` silently strips the note from EVERY tick it ever fires — steps 0 and
+// 5 stay correct and forward a note that no longer arrives, and the human who
+// asked for the watch is by definition not watching. So the driver form's own
+// code span must name the flag.
+//
+// What this catches: `--note` being dropped from step 0, from step 5, or from
+// the driver form in Usage, while the Usage section keeps advertising it.
 // What this does NOT catch: the tick summarizing or answering the note instead
 // of passing it verbatim — that is judgment, which the instruction states
 // plainly but no substring check can verify.
@@ -1849,6 +1857,34 @@ func TestPRReviewLoopForwardsTheNote(t *testing.T) {
 
 	if !strings.Contains(body, "--note <text>") {
 		t.Fatalf("%s no longer documents --note <text> at all", path)
+	}
+
+	// The driver form is a backtick code span inside the Usage prose, so it can
+	// wrap across lines: collapse whitespace first, then read the span that
+	// starts at the form and ends at its closing backtick.
+	usage := flowSection(t, body, prReviewLoopUsageHeading)
+	const driverForm = "/loop <interval> /pr-review-loop"
+	formAt := strings.Index(usage, driverForm)
+	if formAt < 0 {
+		t.Fatalf(
+			"%s Usage no longer names the driver form %q — see "+
+				"TestPRReviewLoopStartsTheWatchItPromises",
+			path, driverForm,
+		)
+	}
+	span := usage[formAt:]
+	if end := strings.Index(span, "`"); end >= 0 {
+		span = span[:end]
+	}
+	if !strings.Contains(span, "--note") {
+		t.Errorf(
+			"%s hands the repeat driver `%s` without --note. The driver re-runs "+
+				"exactly this command line, so the human's reviewer emphasis is "+
+				"stripped from every tick the watch ever fires — and steps 0 and 5 "+
+				"look correct while it happens, because they forward a note that is "+
+				"never passed in",
+			path, span,
+		)
 	}
 	parseSection := flowSection(t, body, prReviewLoopParseHeading)
 	if !strings.Contains(parseSection, "--note") {
@@ -2198,6 +2234,195 @@ func TestPRReviewLoopScratchVariableCannotCollideWithReviewPR(t *testing.T) {
 				path, use.what, ref,
 			)
 		}
+	}
+}
+
+// prReviewLoopUsageHeading, prReviewLoopNotesHeading and
+// prReviewLoopReportHeading anchor the three sections the two tests below read:
+// where the driver handoff is described, where the generic command-failure rule
+// lives, and where the tick reports what happens next.
+const (
+	prReviewLoopUsageHeading  = "## Usage"
+	prReviewLoopNotesHeading  = "## Notes"
+	prReviewLoopReportHeading = "### 11. Report the tick"
+)
+
+// TestPRReviewLoopStartsTheWatchItPromises guards the gap that made a real user
+// think a watch was running when none was. The command's trigger offers to watch
+// a PR "unattended", but one invocation is deliberately one tick
+// (ADR-0022) — so a bare invocation that only described the driver in passing
+// answered once and then nothing ever ticked again, silently.
+//
+// Two halves close that, and both are asserted here because either alone leaves
+// the same surprise. The Usage section must make the handoff an obligation and
+// name the driver form, and step 0 must actually perform it before the state
+// read; otherwise the file still only mentions a driver a human has to know to
+// type. And step 11 must report what will run the NEXT tick — including that
+// nothing will, where the harness has no driver — so a lone tick can never read
+// as a watch.
+//
+// What this catches: the handoff being reduced back to a passing mention (either
+// by dropping it from step 0 or by dropping the driver form from Usage), and the
+// report losing the line that says whether anything is repeating this command.
+// What this does NOT catch: whether the harness's driver actually starts, or an
+// agent reading a correct instruction and skipping it — this is a substring
+// check over prose, not an execution of it.
+func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	usage := flowSection(t, body, prReviewLoopUsageHeading)
+	if !strings.Contains(usage, "/loop <interval> /pr-review-loop") {
+		t.Errorf(
+			"%s no longer names the driver form `/loop <interval> /pr-review-loop` in "+
+				"its Usage section. One invocation is one tick, so that form is the only "+
+				"thing that turns this command into the standing watch its description "+
+				"offers",
+			path,
+		)
+	}
+	if !strings.Contains(usage, "standing watch") {
+		t.Errorf(
+			"%s Usage no longer distinguishes a standing watch from a single tick. "+
+				"Without that distinction the file reads as if invoking it once starts a "+
+				"watch, which is exactly the failure a human hit: one answer, then silence",
+			path,
+		)
+	}
+
+	parseSection := flowSection(t, body, prReviewLoopParseHeading)
+	if !strings.Contains(parseSection, "repeat driver") {
+		t.Errorf(
+			"%s step 0 no longer hands repetition to the harness's repeat driver before "+
+				"the state read. Describing the driver in Usage without ever acting on it "+
+				"leaves the watch un-started, and nothing later in the flow starts one",
+			path,
+		)
+	}
+
+	// The report section cannot go through markdownSection: its template is a
+	// fenced block whose first line starts with `## PR #<n>`, which reads as the
+	// next heading and truncates the section before the rules that follow it. So
+	// anchor on everything after the heading instead, whitespace-collapsed the
+	// same way flowSection does it.
+	reportAt := strings.Index(body, prReviewLoopReportHeading)
+	if reportAt < 0 {
+		t.Fatalf("%s no longer has a %q section", path, prReviewLoopReportHeading)
+	}
+	report := strings.Join(strings.Fields(body[reportAt:]), " ")
+	if !strings.Contains(report, "what will run the next tick") {
+		t.Errorf(
+			"%s step 11 no longer requires the report to say what will run the next "+
+				"tick. That line is what tells a human a lone tick left the PR unwatched; "+
+				"without it, a report about what the next tick expects promises a watch "+
+				"the invocation never started",
+			path,
+		)
+	}
+}
+
+// TestPRReviewLoopDescriptionCarriesTriggersNotTheHandoff keeps the driver
+// handoff out of the frontmatter `description`. The description is the one part
+// of a command an agent reads BEFORE — and without — the body: it is what the
+// `/` menu and the command listing show, and what an agent picks the command
+// from. So it can only carry when to reach for this command, never how the
+// command works.
+//
+// The handoff is the case where that distinction bites. Starting a repeat driver
+// on this command is something an agent can do straight from the listing, by
+// typing `/loop … /pr-review-loop …` without ever loading this file — and every
+// rule that makes the handoff correct lives in the body it skipped: carry the PR
+// number, the types and `--note` through verbatim (see
+// TestPRReviewLoopForwardsTheNote — a dropped flag is dropped from every tick the
+// watch fires), hand off and exit so two ticks never run at once, and treat the
+// handoff as impossible rather than optional on a harness with no driver
+// (OpenCode). A description that names the driver form invites exactly the
+// ungated handoff those rules exist to prevent. Internal step numbers have no
+// place there either: nothing in a menu entry resolves "step 0", and renumbering
+// the flow would silently falsify it.
+//
+// What this catches: the driver form or a step reference migrating back into the
+// description.
+// What this does NOT catch: the description drifting away from what the command
+// actually does, or an agent starting a driver on its own initiative — neither is
+// reachable from a substring check over metadata.
+func TestPRReviewLoopDescriptionCarriesTriggersNotTheHandoff(t *testing.T) {
+	path, _ := readSharedCommand(t, "pr-review-loop.md")
+
+	var parsed struct {
+		Description string `yaml:"description"`
+	}
+	if err := yaml.Unmarshal(frontmatter(t, path), &parsed); err != nil {
+		t.Fatalf("%s frontmatter is not valid YAML: %v", path, err)
+	}
+	if parsed.Description == "" {
+		t.Fatalf(
+			"%s frontmatter has no description — that is what the agent picks the command from",
+			path,
+		)
+	}
+
+	if strings.Contains(parsed.Description, "/loop") {
+		t.Errorf(
+			"%s description names the repeat-driver form. An agent can act on the "+
+				"description alone, so the handoff would run without the body's rules "+
+				"about it — forwarding every argument, exiting instead of also ticking, "+
+				"and having no driver at all on OpenCode. Keep the form in Usage and "+
+				"step 0; leave the description to say when this command is the right one",
+			path,
+		)
+	}
+	if stepReference.MatchString(parsed.Description) {
+		t.Errorf(
+			"%s description points at %q. The description is shown without the body, "+
+				"so a step number resolves to nothing there and any renumbering makes it "+
+				"a lie",
+			path, stepReference.FindString(parsed.Description),
+		)
+	}
+}
+
+// stepReference matches a pointer to one of the flow's numbered steps, e.g.
+// "step 0" — meaningful inside the body, meaningless in metadata read on its own.
+var stepReference = regexp.MustCompile(`(?i)\bstep \d+`)
+
+// TestPRReviewLoopCleansScratchOnEveryExitAfterAllocation guards the tick's one
+// leak path. Step 4 allocates a reports directory and step 10 removes it, but
+// the generic rule in "Notes" — a `devgeta task` command that refuses to run
+// ends the tick — fires for the reviewer runs, both step 7 reads and step 8's
+// journal read, all of which happen AFTER that allocation. Read as "stop here",
+// it walks out past step 10 and leaves the directory behind on every failing
+// tick.
+//
+// So two things must hold: step 10's condition must be the allocation itself
+// rather than a list of exit shapes that a new exit can fall outside of, and the
+// refusal rule must route through step 10 instead of around it.
+//
+// What this catches: step 10 going back to enumerating which exits clean up, and
+// the refusal rule losing its pointer to step 10.
+// What this does NOT catch: a process killed mid-tick, which runs no cleanup at
+// all — that one is swept by the scratch sweep step 10 names.
+func TestPRReviewLoopCleansScratchOnEveryExitAfterAllocation(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	cleanup := flowSection(t, body, prReviewLoopCleanupHeading)
+	if !strings.Contains(cleanup, "on every exit taken after step 4 allocated it") {
+		t.Errorf(
+			"%s step 10 no longer conditions the scratch cleanup on step 4 having "+
+				"allocated the directory. A list of exit shapes instead of that one "+
+				"condition leaks the reports directory for every exit the list forgot",
+			path,
+		)
+	}
+
+	notes := flowSection(t, body, prReviewLoopNotesHeading)
+	if !strings.Contains(notes, "goes through step 10") {
+		t.Errorf(
+			"%s no longer routes the command-refusal rule in Notes through step 10. "+
+				"Every command that can refuse after step 4 — the reviewer runs, both "+
+				"step 7 reads, step 8's journal read — then ends the tick without "+
+				"cleaning the reports directory it allocated",
+			path,
+		)
 	}
 }
 

@@ -92,6 +92,12 @@ the command is run per tick by hand — an accepted asymmetry of the same class 
 Claude-only lint feedback loop in CLAUDE.md's agent sync table, because the tick itself is
 identical in both agents and loses nothing when a human presses it.
 
+Owning no repetition does not mean leaving the handoff to the human's memory. When a standing
+watch is what was asked for, the command's step 0 starts that driver on itself and exits, and
+where the harness has none, the tick report says outright that nothing will run another. The
+first draft only mentioned the driver in passing, and a lone tick then read as a watch: it
+answered once and went quiet with no sign that nothing was listening.
+
 Because a tick is idempotent, running it by hand, twice in a row, or after a crash is
 always safe. There is no resume path to get wrong.
 

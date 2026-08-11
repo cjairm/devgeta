@@ -1023,7 +1023,11 @@ has.
 **One invocation is one tick.** Repetition belongs to the driver: on Claude Code,
 `/loop <interval> /pr-review-loop [n] [types]`; on OpenCode, a tick is run by hand.
 Either way the review runs at most once per tick and at most one review is posted per
-tick. Running the command **is** the
+tick. **Handing repetition over is the command's job, not the human's to remember:**
+when a standing watch is what was asked for, step 0 starts the harness's repeat driver
+on the command and exits, and where the harness has no driver, step 11's report says
+plainly that nothing will run another tick. A lone tick that reported only what the
+next tick expects read as a watch that was never running. Running the command **is** the
 authorization for the whole tick — the state read, the fetch, the reviewer runs, and
 the posting step — so the tick never pauses to ask whether to post; a watch that
 stops for a go-ahead each interval costs exactly the attention it exists to save.
