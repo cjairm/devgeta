@@ -2,8 +2,12 @@
 
 **Date:** 2026-08-06
 **Estimated Duration:** ~8 hours (after the sibling cycle's review-run lands)
-**Status:** Implementation complete and committed — Step 6 (manual end-to-end) and the
-final whole-branch review are both still outstanding
+**Status:** Implementation complete and committed — Step 6 (manual end-to-end) started
+2026-08-12 and found two design defects, recorded as
+[ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
+(PROPOSED). That follow-up changes decisions this cycle's §4 locked, so it is deferred to its
+own cycle — [2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
+not started — and the rest of Step 6 and the final whole-branch review are outstanding behind it
 
 ---
 
@@ -241,7 +245,18 @@ no-third-undocumented-outcome rule as the sibling cycle.
 - **Auto-checkout / worktree creation for the target repo.** Precondition, not
   behavior.
 
-**Scope is locked.**
+**Scope is locked.** One thing was discovered out of scope after the in-scope work landed, and
+is deferred rather than added here:
+
+- **The explicit/watch tick split.** Step 6's live run on 2026-08-12 showed that gating _every_
+  tick on GitHub's request field refuses a review the human just asked for, and that nothing
+  repeats afterwards. The decision is
+  [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
+  (PROPOSED) and the file-by-file plan is
+  [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md).
+  It belongs there and not here because it reverses the "Reviewing drafts" row above and adds
+  deliverables (`--once`, `--on-request`, `--reviewer` as a flag on the tick, a two-mode table)
+  that the In Scope list does not carry.
 
 ## 5. Implementation Plan
 
@@ -758,7 +773,28 @@ file present).
 
 ### Step 6: Manual end-to-end
 
-On a real PR in a work repo (from its checkout), with two configured models:
+**Started 2026-08-12 and stopped on its first two points.** Both behaved as the command
+file was written, and both were wrong for the human who had just typed the command:
+
+- Point 1 held literally and failed in practice. `/pr-review-loop --reviewer=document <n>`
+  on an open, unrequested PR printed `pr: open / requested: no / my-review: none` and took
+  no action; the human then had to say "start the review" in prose to get the document
+  reviewer to run. The trigger gate was answering a question it has no standing on — see
+  [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md).
+- Nothing repeated afterwards, and the report naming the `/loop` form read as an
+  instruction to go start the watch by hand.
+- `--reviewer=document` is not a spelling step 0 parses (the tick takes bare words; the
+  sibling `/review-loop` takes `--reviewer`), so the reviewer type the human named reached
+  nothing — the third defect ADR-0025 §5 closes.
+
+So **points 1 and 2 below now describe watch ticks only** (`--on-request`), and the
+sequence needs four points it does not have: an explicit tick reviewing an unrequested PR,
+an explicit tick reviewing a draft and an already-approved PR, the driver being started at
+the end of a non-terminal tick and not started on a terminal one, and `--once` plus both
+`--reviewer` spellings reaching `review-run` — the four cases written out in **Step 3 of
+[cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)**,
+whose plan also covers the command file, the spec, and the guards those cases would exercise.
+Re-run the whole sequence after that cycle lands, not before.
 
 1. Not requested → tick waits, takes no action
 2. Draft + requested → tick waits (the row that must not fall through to review)
@@ -800,11 +836,34 @@ subcommands) and the check-off above.
 
 What is **not** done, so the header status is not `Done`:
 
-- Step 6's fifteen-point live sequence has not been run.
+- Step 6's fifteen-point live sequence has not been run — its first two points were, on
+  2026-08-12, and they turned up the two defects
+  [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
+  answers. The command file, the `docs/spec.md` narrative, and the prose guards still
+  describe the pre-ADR-0025 behavior, so that follow-up —
+  [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
+  deferred out of this locked scope — comes before the rest of the sequence.
 - The final whole-branch review (most capable model) has not been run.
 - The two `dg configure --force` deploys are deliberately deferred: they would
   overwrite the maintainer's live agent configuration from an unmerged branch, so
   they belong after the branch merges, not to this step.
+
+### Deferred follow-up: ADR-0025's explicit/watch split — its own cycle
+
+The two defects Step 6 found are answered by
+[ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
+(PROPOSED), and the fix is **not a step of this cycle**. It reverses §4's "Reviewing drafts"
+row and adds deliverables the In Scope list does not carry, so under
+[docs/plans/TEMPLATE.md](../TEMPLATE.md)'s locked-scope rule it is documented for a future
+cycle and referenced here:
+
+**→ [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)**
+— not started, gated on ADR-0025 being accepted. It carries the file-changes table and the
+command-file / guard-test / end-to-end steps, and its Step 3 is what Step 6 above waits on.
+
+Nothing from it is implemented, so the branch as it stands is documentation only: the shipped
+command still gates every tick on `requested: yes`, its step 0 rejects any word it does not
+recognize as a reviewer type, and step 7 re-demands the request before posting.
 
 ## 6. Verification Plan
 

@@ -43,3 +43,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0021](ADR-0021-pane-commands-are-exec-d-not-typed.md) — A pane's command is exec'd at pane creation, not typed into the pane
 - [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick
 - [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
+- [ADR-0024](ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md) — The dashboard refreshes fast and slow state separately
+- [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) — An invocation reviews now; the request field gates only the watch
