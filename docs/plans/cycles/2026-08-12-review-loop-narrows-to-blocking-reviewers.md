@@ -333,6 +333,11 @@ config is never written.
 review.reviewers` — and **never** from reading `global_config.yaml`, which no
       shipped agent permission reaches; restore passes one argument per recorded
       entry, never a comma-joined string
+- [ ] The shipped command states **why** it does not read that file, and identifies
+      it descriptively — never by filename and never by path — so Step 8's negative
+      anchor on both literals stays an exact substring check. The reason for the
+      wording rule stays in the cycle doc and the test comment, out of the shipped
+      artifact (§12)
 - [ ] The record is **proved before it is used**: single-line `get` output, and
       `get` output byte-identical to the labels joined with `", "`. Any mismatch
       turns narrowing off for the whole run
@@ -513,12 +518,33 @@ and **nothing is read off disk**:
   discards the lines it had and returns `""` — so a half-record is not a state that
   exists; either the loop has every label or it has none and narrowing never starts.
 
-Say plainly why the record is not read from `global_config.yaml`, or the next
-reader will "simplify" it back and reintroduce a step that cannot run: the file is
-outside the repository, the only external directory either agent grants is the
-scratch root, and in a headless run the read auto-rejects rather than prompting
-(§2). There is also no parser — the loop is prose, and YAML scalars have more
-spellings than prose can be trusted to decode.
+Say plainly why the record is not read off disk, or the next reader will
+"simplify" it back and reintroduce a step that cannot run: the file behind
+`devgeta config` sits outside the repository, the only external directory either
+agent grants is the scratch root, and in a headless run the read auto-rejects
+rather than prompting (§2). There is also no parser — the loop is prose, and YAML
+scalars have more spellings than prose can be trusted to decode.
+
+**Write that explanation without spelling the file's name or its path.** Refer to
+it the way the sentence above does — "the file behind `devgeta config`", "devgeta's
+stored config" — so that neither of two literal strings, `global_config.yaml` and
+`.config/devgeta`, ends up anywhere in the shipped file. That is not a stylistic
+preference: Step 8's negative guard is an exact substring check for exactly those
+two strings over the whole shipped file, which is what
+makes the ban structurally enforced rather than a convention someone has to
+remember ([CLAUDE.md §4](../../../CLAUDE.md)) — anyone reaching for the "obvious"
+source has to type one of them, and the build fails. The guard therefore
+over-catches an innocent mention too, this explanation included, which is exactly
+why the wording rule is written down here instead of being discovered as a red
+test.
+
+Do **not** answer that failure by putting the guard's reason into the shipped
+command. A note about devgeta's test suite is project law inside an artifact
+strangers install, which [CLAUDE.md §12](../../../CLAUDE.md) forbids — this command
+runs in repos that have neither the test nor the branch it guards. The reason lives
+in Step 8's test comment and in this step; the shipped prose carries only the
+permission facts above, which stand on their own for a reader who has never seen
+this repo.
 
 **Prove the record before using it.** The labels are the configured list after
 `strings.TrimSpace`, after blank items are dropped, and after duplicates are
@@ -1257,11 +1283,23 @@ review.reviewers` with no values is rejected outright (`requireAtLeastOne`,
   the restore happens **only** while the key still holds the narrowed list the loop
   wrote, and that a write's own output is captured and compared whole rather than split
   at `" -> "`.
-- Anchor one more thing in that test, as a **negative**: the file must not name
-  `global_config.yaml` anywhere in its flow. That is the one rule here a substring
-  check can enforce properly rather than merely gesture at, and it is the rule most
-  likely to be undone by someone reaching for the "obvious" source of the list. Cite
-  §2's permission facts in the test comment so the reason travels with the assertion.
+- Anchor one more thing in that test, as a **negative**, and anchor it precisely:
+  the shipped body must contain neither of the two literal strings
+  `global_config.yaml` and `.config/devgeta` — two separate case-sensitive
+  `strings.Contains` assertions over the **whole** file, not over one section, so the
+  failure names which literal appeared. Both are needed: the filename alone misses
+  `~/.config/devgeta/*.yaml`, and the directory alone misses
+  `$XDG_CONFIG_HOME/devgeta/global_config.yaml`, since that variable need not expand
+  to anything containing `.config`. Between them they cover every path-shaped way to
+  reach the config, which is what the guard is actually for — the rule here most
+  likely to be undone by someone reaching for the "obvious" source of the list, and
+  the one rule a substring check can enforce properly rather than merely gesture at.
+  It over-catches on purpose: a bare mention fails too, which is why Step 2 requires
+  the rationale to identify that file descriptively instead of by name or path. Put
+  both halves in the test comment — §2's permission facts, and that wording rule with
+  a pointer to Step 2 — because the shipped command may not carry either (§12), so
+  the test is the only place a puzzled implementer can read why the assertion exists
+  and how to satisfy it.
   What none of it can catch: an executing agent skipping the restore, printing the
   command after the mutation instead of before it, running the checks and ignoring
   the answer, quoting the entries in the prose while interpolating them bare in
@@ -1572,7 +1610,7 @@ reviewers approved"` from bash or zsh). Both are values the validator accepts an
 | ------------------------------------------------------------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | An interrupted loop leaves `review.reviewers` narrowed             | **High**     | Per-round restore shrinks the window to one command; the write happens only on rounds that actually drop a reviewer, so a one-reviewer set or a round where nobody approved never opens the window; the loop prints the restore command **before** the first mutation (after the opening round, which writes nothing), and the report repeats it — or, in the exit paths where the loop holds no proved record and so has no command to print, states that the key was never written instead, so no report is ever silent about the key and none is forced to print an unsafe or unrunnable command (Step 7). **Not eliminated:** an interrupted run emits no report, the config stays narrowed until someone runs that command, and the next run takes the narrowed list as its baseline. Only `--models` closes it — see ADR-0026                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | A restore writes a different list than the user had                | Med          | Step 2's record is the opening round's verdict labels, and it is unusable until two commands prove it is byte-identical to the configured list: `get` output on one line, and joined labels equal to it. Trimming, a dropped blank and a collapsed duplicate all shorten the join, so every way the labels can differ from the stored list fails the check. Any failed check — that one, an entry `config set` cannot write back, or an entry holding a control byte — turns narrowing off for the whole run, so there is no restore to get wrong                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| The record's source is unreachable in a headless run               | Med          | Reading `global_config.yaml` would need an `external_directory` grant neither agent ships, and auto-rejects headless (§2) — four such rejections in the motivating run. So the loop only ever uses `devgeta config get` / `set`, both plain commands under the agents' `bash` policy, and both already listed in `## What this drives`. Step 8 anchors the file's name **not** appearing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| The record's source is unreachable in a headless run               | Med          | Reading `global_config.yaml` would need an `external_directory` grant neither agent ships, and auto-rejects headless (§2) — four such rejections in the motivating run. So the loop only ever uses `devgeta config get` / `set`, both plain commands under the agents' `bash` policy, and both already listed in `## What this drives`. Step 8 anchors that neither the file's name nor its directory (`global_config.yaml`, `.config/devgeta`) appears anywhere in the shipped command, so a path-shaped read cannot be written back in without failing the build; the command still explains the ban, naming that file descriptively so the guard stays an exact substring check (Step 2)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | A restore overwrites a change the user made while a round ran      | Low          | The restore is conditional, not routine: before writing the record back the loop re-runs the two checks against the **narrowed** list, and a mismatch leaves the value exactly as found, turns narrowing off for the rest of the run, and is named in the report with both strings. The comparison is exact because the loop composed and wrote the narrowed list itself and `Set` stores arguments verbatim, so the expected `get` output is computable rather than inferred                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | A narrowing write overwrites a change the user made between rounds | Low          | The record is proved once but used many minutes later — the journal read and every fix subagent of the previous round sit in between, which is more wall time than a round takes — so the key is re-checked against the record immediately before **every** narrowing write, not once after the opening round. A mismatch means no write, no narrowing for the rest of the run, and both strings in the report. Without it the post-round check is not merely insufficient here, it is misleading: the loop's own write makes the key match the narrowed list, so that check passes and the restore then writes the stale record over the user's list. **Not eliminated:** check and write are two commands and prose cannot fuse them (`internal/config/lock.go`'s lock is per-`config set` invocation and nothing compares-and-sets), so a `set` landing in that one-command gap is still overwritten. Partly mitigated, and labelled as partial: `config set` reports the value it replaced, read inside the same lock as the write, and the loop captures that output and compares the **whole** string against a line it composed — never cutting a previous value out at the first `" -> "`, which an entry may itself contain (§2) — then names it, filters it, and stops narrowing. It cannot put it back, because that string is `get`-joined and ambiguous (§2). **And it cannot see the case where the joined form is unchanged** — one entry `anthropic/a, openai/b` prints what two print — so that write is silently overwritten and the check reports success; §3 says so, and only `--models` closes it |
 | A reviewer entry's own text splits or executes as shell syntax     | Low          | `isProviderModelShaped` (`cmd/config_settings.go:395`) requires only an interior `/`, so spaces, `;`, `$( )` and backticks are all legal in a stored entry. Step 2 requires every entry to be one quoted argument in the narrowing write, the restore, **and** the restore command printed for a human to paste. §6 check 8 observes it as an **artefact** — an entry whose execution would create a file, absent afterwards — because absent output cannot be observed here: `review-run` prints the entry verbatim either way (`reviewrun.go:306`), so "no round printed it" would fail a correct loop                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
@@ -1657,7 +1695,17 @@ reviewers approved"` from bash or zsh). Both are values the validator accepts an
 - [ ] Risks realistic?
 
 **Maintainer go-ahead (Step 0's gate):**
-_Not yet recorded._ Write the date and what was approved here before Step 1 starts.
+**Given 2026-08-12**, after the cross-model review below reached a clean approval. The
+maintainer's words: _"and after all green approve today's cycles and today's adrs"_ —
+issued as the argument to `/review-loop`, conditional on the review going green, which it
+then did.
+
+That satisfies the second half of Step 0's gate: the decision is recorded (ADR-0026) and
+the maintainer has said to proceed. **Step 1 may begin.**
+
+It does **not** authorize a status change on any ADR. ADR-0026 stays `PROPOSED` until the
+work below ships, for the reason the paragraph after this one explains — the same reason
+the earlier attempt was reverted. The status flip is the last step, and the maintainer's.
 
 On 2026-08-12 the maintainer, acting on Step 0, asked for the ADRs to be accepted, and
 ADR-0024 and ADR-0026 were both edited from `PROPOSED` to `ACCEPTED`. Both edits were
@@ -1672,4 +1720,16 @@ are not flipped back without the README gaining a state that fits; whether it co
 the go-ahead above is the maintainer's to say.
 
 **Reviewer notes:**
-(Fill in during review.)
+Reviewed by `github-copilot/gpt-5.6-terra` and `github-copilot/gemini-3.6-flash` via
+`/review-loop --reviewer document` over seven rounds on 2026-08-12, ending in a clean
+approval from both. **25 findings: 24 fixed, 1 rejected and ratified by the maintainer.**
+The journal is the record (`devgeta task review-notes`); note that 25 of its settled notes
+cite this ADR as "ADR-0025", the number it carried before `origin/main` took 0025 for an
+unrelated decision — settled notes cannot be rewritten.
+
+Four findings changed the design rather than the prose, and are worth knowing before
+implementing: the failure-retry rule was unreachable until step 3's no-finding stop was
+split (n2); `config get` cannot serve as the reviewer-list record (n5); the loop cannot
+read the config file at all, for permission reasons (n11/n12); and two later findings were
+collisions _between_ earlier fixes rather than gaps in the original plan (n21, n25) — a
+signal that this plan has been revised more than it has been built.
