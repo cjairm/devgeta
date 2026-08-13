@@ -3,7 +3,7 @@
 **Status:** ACCEPTED
 **Date:** 2026-08-06
 **Deciders:** cjairm
-**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) (narrows the "Auto-retry a failed reviewer" alternative below), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)
+**Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) (narrows the "Auto-retry a failed reviewer" alternative below), [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) (amends §1's round cap and §3's no-retry rule; everything else here stands), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)
 
 ---
 
@@ -75,6 +75,14 @@ escalated to the human — never voted away. The loop ends in exactly two states
 regardless of what the reviewers say. There is no "keep going until they agree" branch,
 because agreement is not the target.
 
+> **Amended 2026-08-12 — the cap is per phase, not per loop. See
+> [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md).** That
+> ADR splits the loop into an opening round, narrowing rounds, and a confirming round, and
+> applies `review.rounds` to each phase, so a run can take up to `rounds + 2` rounds in
+> total. The key's default and its validated 1–5 range do not change, and neither does what
+> this section is actually for: the bound is still fixed up front, and there is still no
+> convergence branch.
+
 ### 2. Any single blocking verdict blocks
 
 Each reviewer returns one of three verdicts (the contract already in
@@ -100,6 +108,19 @@ The report state covers: persistent disagreement, hitting the round cap, any rev
 process failure (`ERROR` / `NO VERDICT`), and approval that rests on an unratified agent
 rejection. A process failure can therefore never be mistaken for approval, and there is no
 third, undocumented outcome. `ERROR` and `NO VERDICT` are not retried in v1.
+
+> **Amended 2026-08-12 — a failure is retried instead of ending the loop, except in the
+> confirming round. See
+> [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md).** The
+> last sentence above no longer holds at the round layer: an `ERROR` or `NO VERDICT` counts
+> as a non-approval, keeps the reviewer in the narrowing set, and is retried on the next
+> round; two consecutive failures drop that reviewer and name it as failed in the report.
+> In ADR-0026's confirming round a failure still stops the loop, exactly as written here.
+> The two terminal states themselves are unchanged, and so is the property this section
+> exists for — a failure still can never be read as approval, because a reviewer that
+> failed has not approved and a reviewer dropped as broken is reported by name. That ADR
+> answers this one's "Auto-retry a failed reviewer" rejection point by point; see the note
+> there.
 
 ### 4. Reviewers run sequentially, but each reads the round's opening state
 
@@ -330,6 +351,17 @@ all** — a structural fact of the event stream, so no error text is matched and
 rejection's reasoning still stands for every failure that did produce output. A failed retry
 never overwrites the first attempt's outcome, so a misconfigured provider is still surfaced
 by name. The round layer is untouched: the loop still never re-runs a round.
+
+**Revisited 2026-08-12 and reversed at the round layer, outside the confirming round — see
+[ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md).** An
+unattended run produced five transient failures of this kind, all five of which succeeded on
+a later round and three of which discarded an otherwise-complete round, and none of which
+was a misconfiguration. ADR-0026 therefore retries a failed reviewer on the next round and
+drops it after two consecutive failures. Both reasons given above are answered rather than
+overruled: the retry decision still reads no error text — only a per-reviewer count of
+consecutive non-completions, the same structural signal ADR-0020 used — and a
+flaky-versus-misconfigured provider is still told apart by name in the report, one round
+later than here. ADR-0026's "What this amends in ADR-0017" makes that argument in full.
 
 ### Parallel reviewers
 
