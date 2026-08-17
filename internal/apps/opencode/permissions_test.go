@@ -1950,6 +1950,147 @@ func TestReviewLoopRestoresReviewerConfig(t *testing.T) {
 	}
 }
 
+// TestReviewLoopQuotesEntriesInComparisonsToo guards the second half of the
+// quoting rule, which used to be missing. Every entry stored in
+// `review.reviewers` is untrusted input to a command line: the validator asks
+// only for a `/` that is neither the first nor the last character, so a single
+// quote is legal inside one. The rule listed exactly three places an entry has
+// to be single-quoted — the narrowing write, the restore, and the restore
+// command printed for a human — and all three are `devgeta config set`
+// invocations. But the loop composes entries, and their `", "` join, into a
+// fourth class of command line the enumeration missed: the `[ "$(devgeta config
+// get review.reviewers)" = '<join>' ]` comparisons. There are five of them (the
+// record's proof check, the pre-write check, the worked capture snippet, the
+// post-round check, and the post-restore verification), and an entry such as
+// `anthropic/x';touch /tmp/pwned;'` closes the test's quoted string early and
+// runs the rest as a command — at the proof check, on the opening round, which
+// is the earliest point in the protocol and before any refusal in the shipped
+// file could have run.
+//
+// The fix is the enumeration, not the control-byte refusal: `'` is printable,
+// so refusing it would cost narrowing on a config a human could plausibly have
+// (a model id is free-form text), which is why the refusal branch deliberately
+// triggers on control bytes only.
+//
+// What this catches: the enumeration narrowing back to the three writes,
+// including the literal revert to "in **all three** places entries appear", and
+// the `'\”` escape no longer being required inside a comparison string.
+// What this does NOT catch: an executing agent that reads the rule and still
+// interpolates a join bare — a substring check over prose cannot run the
+// instructions (see TestCommittingCommandsDeclareStandingAuthorization). Nor
+// does it reach the raw labels `devgeta task review-run` prints before the loop
+// has composed anything.
+func TestReviewLoopQuotesEntriesInComparisonsToo(t *testing.T) {
+	path, body := readReviewLoop(t)
+	section := flowSection(t, body, "### 1. Run a round")
+
+	rules := []struct{ want, why string }{
+		{
+			"not just the ones that write the key",
+			"the quoting rule has to say outright that it reaches past the three " +
+				"`devgeta config set` invocations, or the next reader enumerates " +
+				"the writes again and leaves the comparisons bare",
+		},
+		{
+			"every comparison string",
+			"the entries and their join are embedded in five `[ \"$(…)\" = '…' ]` " +
+				"tests; an unquoted one runs the rest of the entry as a command at " +
+				"the proof check, on the opening round",
+		},
+		{
+			"needs the same `'\\''` escape in those comparison strings",
+			"a `'` is legal inside a stored entry, so quoting a comparison string " +
+				"without escaping the interior quote closes it early — the exact " +
+				"hole the widened enumeration exists to close",
+		},
+	}
+	for _, rule := range rules {
+		if !strings.Contains(section, rule.want) {
+			t.Errorf(
+				"%s step 1's quoting rule no longer contains %q — %s",
+				path, rule.want, rule.why,
+			)
+		}
+	}
+
+	if strings.Contains(section, "**all three** places") {
+		t.Errorf(
+			"%s step 1's quoting rule is back to naming three places entries "+
+				"appear. All three are `devgeta config set` invocations, so the "+
+				"comparison strings the loop also composes from those entries are "+
+				"left unquoted and a stored `'` reaches the shell",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopRoutesARoundThatPrintedNoVerdicts guards the destination of a
+// round that fails as a whole. `devgeta task review-run` abandons a round whose
+// HEAD moved mid-flight and prints no verdict lines at all, so the state is
+// reachable — step 6's never-do list is written around exactly that failure —
+// but nothing routed it.
+//
+// The missing branch is not the dangerous half. Step 3's clean-approval gate
+// requires "every reviewer's outcome this round is `APPROVE`", which is
+// VACUOUSLY TRUE over an empty set of outcomes, so an abandoned confirming round
+// satisfies every condition and reads as a clean approval. Step 3's fall-through
+// cases have the mirror problem: "every non-approving outcome was `ERROR` or `NO
+// VERDICT`" is vacuously true too, so a zero-line round matches two branches on
+// nothing and none on its merits. The rule therefore lives in `### 1`, ahead of
+// every consumer of the verdict lines, and step 3 carries a cross-reference
+// rather than a second copy.
+//
+// What this catches: `### 1` losing the state, its not-vacuously-satisfied rule,
+// or its destination; and step 3 losing the clause that defers to it, which is
+// where the vacuous reading would actually be acted on.
+// What this does NOT catch: an agent that reads both and still treats a silent
+// round as unanimous. Substring checks over prose cannot execute the
+// instructions.
+func TestReviewLoopRoutesARoundThatPrintedNoVerdicts(t *testing.T) {
+	path, body := readReviewLoop(t)
+
+	roundSection := flowSection(t, body, "### 1. Run a round")
+	roundRules := []struct{ want, why string }{
+		{
+			"no verdict lines at all did not complete",
+			"a round that printed nothing has to be named as incomplete, or it " +
+				"is read as a round whose every reviewer happened to agree",
+		},
+		{
+			"empty set of outcomes",
+			"the vacuous reading is the whole danger: without the sentence " +
+				"ruling it out, \"every outcome is `APPROVE`\" is satisfied by a " +
+				"round that produced no outcomes at all",
+		},
+		{
+			"go to the terminal report",
+			"the state needs a destination; a rule that says a round failed and " +
+				"not where it goes leaves the loop to pick one of the branches " +
+				"that match it vacuously",
+		},
+	}
+	for _, rule := range roundRules {
+		if !strings.Contains(roundSection, rule.want) {
+			t.Errorf(
+				"%s step 1 no longer contains %q — %s",
+				path, rule.want, rule.why,
+			)
+		}
+	}
+
+	approvalSection := flowSection(t, body, "### 3. Check for clean approval")
+	if !strings.Contains(approvalSection, "no verdict lines at all") {
+		t.Errorf(
+			"%s step 3 no longer excludes a round that printed no verdict lines. "+
+				"Step 3 is where the vacuous reading gets acted on — its "+
+				"clean-approval gate and its `ERROR`/`NO VERDICT` fall-through are "+
+				"both satisfied by an empty set of outcomes — so the exclusion has "+
+				"to be visible here, even though `### 1` states the rule",
+			path,
+		)
+	}
+}
+
 // TestReviewLoopCleanApprovalRequiresConfirmingRound is the third condition on
 // the same gate TestReviewLoopCleanApprovalRequiresNothingOpen guards. Narrowing
 // made an approval cheap to collect and easy to over-trust: the opening round
