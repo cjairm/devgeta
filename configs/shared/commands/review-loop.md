@@ -55,6 +55,51 @@ where their exact form is spelled out.
 This file owns the round counter and the cap. `devgeta task review-run` only knows about
 the one round it just ran.
 
+## Phases
+
+This loop runs three phases, always in this order:
+
+1. **Opening round.** Every reviewer configured in `review.reviewers` runs. Nothing has
+   been narrowed yet, so this round establishes who is actually blocking.
+2. **Narrowing rounds.** Only the reviewers that did not approve in the previous round
+   run. A reviewer whose outcome was `APPROVE` drops out of this phase's set; any other
+   outcome (`REQUEST CHANGES`, `NEEDS DISCUSSION`, an error, or no verdict at all) keeps
+   it in. Findings are triaged and settled exactly as in any other round — only which
+   reviewers run changes.
+3. **Confirming round.** Every configured reviewer runs again, including any dropped
+   during narrowing. **Only this round can produce a clean approval.** An approval from
+   the opening round or a narrowing round is provisional: the branch kept changing after
+   it was given, so by the time the loop would act on it, the approval is evidence about
+   a version of the branch that no longer exists. A reviewer can approve during narrowing
+   and then find something real on the very next look, once the branch has moved
+   further — that is exactly what the confirming round exists to catch.
+
+**The config-restore invariant.** Narrowing works by rewriting `review.reviewers` down
+to the still-blocking reviewers for one round, then putting the original list back —
+never left narrowed for a whole phase. Every read and write of that key goes only
+through `devgeta config get` and `devgeta config set`; the loop never reads devgeta's
+stored config directly. The rule that governs every one of those reads and writes,
+stated here in full because later steps refer back to it rather than repeating it:
+
+- The loop narrows `review.reviewers` only while the key still holds the exact list it
+  recorded — checked again immediately before every narrowing write, not assumed from
+  an earlier check.
+- It restores the key after every single round, never held narrowed for a whole phase:
+  narrow, run the round, restore, before the key is touched again for the next round.
+- It writes the key at all only when the narrowing set is a strict subset of the
+  recorded list. A round that would narrow to the same list it already holds makes no
+  write and runs on the configured value as it stands.
+- It refuses to narrow at all unless it has first established that it can put back
+  exactly the list it found. If that cannot be established, nothing is written, for the
+  rest of the run.
+- It prints the recorded list and the exact command that restores it before the first
+  narrowing write — not only in the final report — so the recovery instruction is
+  already on screen if anything interrupts the loop mid-run.
+- If the key no longer holds what the loop expects to find there — the recorded list
+  before a narrowing write, or the narrowed list before a restore — because something
+  else changed it in between, the loop leaves the key exactly as found and stops
+  narrowing for the rest of the run.
+
 ## Flow
 
 ### 0. Resolve the reviewer selector and the note
