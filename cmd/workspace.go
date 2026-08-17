@@ -18,10 +18,12 @@ The dashboard lists every repo workspace with its git worktrees alongside
 standalone tmux sessions that aren't tied to a worktree, so you can manage
 both from one place.
 
-Key session actions:
+Key actions:
   s       New session
-  enter   Switch/attach to the selected session
-  d       Delete/kill the selected session`,
+  enter   Switch/attach to the selected session or pane
+  d       Delete/kill the selected session
+  e       Toggle the left pane's width (default / double)
+  ctrl+r  Recompute the diff for the selected row`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return tuiworktree.Run()

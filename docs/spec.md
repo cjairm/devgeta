@@ -620,7 +620,12 @@ the three are told apart without looking, and a missing sound player or audio de
 silence rather than an error or a blocked hook.
 
 Both kinds share the existing worktree-row keys (`j`/`k` nav,
-`h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit).
+`h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit), plus
+two keys added this cycle: `e` toggles the left pane between its default width and double
+width, both clamped to 60% of the terminal — per-session only, not persisted — and `ctrl+r`
+recomputes the branch diff for the currently selected row, in both the list and the
+diff-focused view. `ctrl+r` is diff-only: it deliberately does not re-read git worktree state
+([ADR-0024](decisions/ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md)).
 Session rows add:
 
 - `enter` — switch the attached tmux client to the session (guarded: only works inside tmux,
@@ -645,6 +650,11 @@ Session rows add:
 - `D`/`r`/`R` are worktree-only actions and are no-ops on a session row. `R` is additionally a
   no-op on a repo-header row, since only a worktree row has a specific worktree to
   review.
+
+Pane rows add:
+
+- `enter` — switch the tmux client to that exact pane (same tmux guard and dashboard-quit
+  behavior as attaching to a session or worktree). Previously a no-op.
 
 Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf.tmpl`) — it previously
 opened tmux's native `choose-tree -Zs` popup, which this replaces. This is the only key bound
