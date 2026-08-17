@@ -201,13 +201,13 @@ resolved. Rows are evaluated top to bottom, and **the first match wins** — eve
 the full state it matches, so read `requested:` off the row rather than checking it
 separately:
 
-| `pr:`             | `requested:` | `my-review:`  | Explicit tick                               | Watch tick (`--on-request`)                   |
-| ----------------- | ------------ | ------------- | ------------------------------------------- | --------------------------------------------- |
-| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop | **Terminal: closed.** Report, stop the loop   |
-| `draft`           | any          | any           | **Review** — steps 3 to 9                   | Wait — a formal review on unfinished work     |
-| `open`            | `yes`        | any           | **Review** — steps 3 to 9                   | **Review** — steps 3 to 9                     |
-| `open`            | `no`         | `approved`    | **Review** — steps 3 to 9                   | **Terminal: approved.** Report, stop the loop |
-| `open`            | `no`         | anything else | **Review** — steps 3 to 9                   | Wait — the ball is with the author            |
+| `pr:`             | `requested:` | `my-review:`  | Explicit tick                               | Watch tick (`--on-request`)                        |
+| ----------------- | ------------ | ------------- | ------------------------------------------- | -------------------------------------------------- |
+| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop | **Terminal: closed.** Report, stop the loop        |
+| `draft`           | any          | any           | **Review** — steps 3 to 9                   | Wait — a formal review on unfinished work is noise |
+| `open`            | `yes`        | any           | **Review** — steps 3 to 9                   | **Review** — steps 3 to 9                          |
+| `open`            | `no`         | `approved`    | **Review** — steps 3 to 9                   | **Terminal: approved.** Report, stop the loop      |
+| `open`            | `no`         | anything else | **Review** — steps 3 to 9                   | Wait — the ball is with the author                 |
 
 **An explicit tick reviews unless the pull request is over.** Only `merged` and `closed` stop
 it: there is nothing left to review, and a review posted on a closed PR is noise nobody can
@@ -292,6 +292,11 @@ posting, and report it as `nothing to review` — its own status word in step 12
 nothing is pending on anyone and calling it a wait would misdescribe it. Any review request on
 the PR stays pending, so the report is what tells the human this PR needs their own eyes; a
 review of an empty file list would say nothing and still cost a post.
+
+This exit is not terminal, so step 10 keeps the refs and step 11 still starts a watch on an
+explicit tick that did not pass `--once`. Because this tick posted nothing, that watch acts
+only if a review is requested of this user — say so in the report rather than leaving it
+reading as a watch that will review this PR on its own.
 
 ### 4. Allocate the scratch directory
 
@@ -406,9 +411,15 @@ modes:
   mid-review: the reviews describe code the PR no longer is, and an approval would cover
   commits no reviewer saw. Post nothing, end the tick reporting that the head moved during
   the review, and go to step 10. A moved head is a non-terminal exit, so the refs are kept and
-  a watch is still wanted — and on the watch side the request is still pending, so the next
+  a watch is still wanted — and on a watch tick the request is still pending, so the next
   tick reviews the new head from scratch. An author pushing repeatedly just defers the review,
   which is the correct outcome rather than starvation.
+
+  On an explicit tick this exit is where the human's own ask goes unanswered, so report it as
+  such: nothing was posted, and any watch step 11 starts is request-gated, so it acts only when
+  a review is requested of this user — which on an explicit tick is usually not the case.
+  Running this command again is what reviews the new head; never report the watch as the thing
+  that will.
 
 ### 8. Post exactly one review
 
@@ -457,8 +468,9 @@ Only the approval path has an outcome to read. `/approve-pr` prints one line:
   - Approved on the re-ask → terminal: approved.
   - Still `not approved` → **terminal: escalated.** It is standing on a blocker every
     reviewer run missed. Report what it named and stop.
-  - **Never a third ask.** A decline leaves `requested:` at `yes`, so asking forever would
-    post forever.
+  - **Never a third ask.** This rule is the only thing that bounds the asking, in either
+    mode: nothing in the PR's state stops it, and on a watch tick a decline even leaves
+    `requested:` at `yes`, so asking forever would post forever.
 
   Step 7's gate is deliberately not re-run before the re-ask. The re-ask is the same
   invocation naming the same `--target <head>`, so anything it posts is stamped with the
@@ -467,7 +479,8 @@ Only the approval path has an outcome to read. `/approve-pr` prints one line:
   second way for one decision to be read twice.
 
 The review path has nothing to parse. `/review-pr` prints its own summary line; record it in
-the tick report and keep listening. Posting any review — approve, comment, or request
+the tick report and end the tick as `reviewed` — a non-terminal exit, so whatever watch is
+running keeps listening. Posting any review — approve, comment, or request
 changes — removes the user from the PR's review requests, so the next **watch** tick reads
 `requested: no` and waits. The author's re-request is the next trigger. `/review-pr` can
 itself decide to approve — its own no-new-findings branch — and this tick still reports
@@ -542,8 +555,15 @@ the human named, or the driver's default when they named none.
 
 The driver's own first firing is harmless whenever it lands, because it is request-gated. If
 this tick posted a review, that already cleared the request, so the first fired tick reads
-`requested: no` and waits. If it posted nothing, a request still standing on the PR is exactly
-what a watch tick should review.
+`requested: no` and waits. If a request is still standing on the PR, that is exactly what a
+watch tick should review.
+
+Request-gated also means the driver is not a substitute for a review this tick did not post.
+On an explicit tick that posted nothing — a head that moved at step 7, or nothing to review at
+step 3 — there is usually no request standing at all, so the watch waits until someone asks
+rather than picking up where this tick stopped. Start it anyway (it is what answers the next
+request), but step 12 has to say that re-running this command is what reviews the current
+head.
 
 Otherwise start nothing, and let step 12 name what will run the next tick:
 
@@ -585,6 +605,13 @@ say plainly that **nothing will run another tick**, and name what would start on
 carrying this tick's own arguments so the watch reviews what this tick reviewed, or a tick per
 invocation by hand where the harness has no driver), so the human is one step from a real
 watch.
+
+**Naming a driver is not a promise that it will review.** Every tick a driver fires is
+request-gated, so on an exit where this tick posted nothing and no review is requested of this
+user — a head that moved at step 7, or nothing to review at step 3, both normal on an explicit
+tick — the driver will wait, not review. Say that: the watch acts only if a review is requested,
+and **re-running this command is what reviews the current head**. Never let this line read as a
+watch that will pick up what this tick did not post.
 
 On an escalation, name whatever caused it — a failing run, no run at all, or a command that
 refused to run — and its reason, verbatim, in place of the next-tick line. On a terminal

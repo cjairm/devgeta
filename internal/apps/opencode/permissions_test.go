@@ -3154,17 +3154,28 @@ func TestPRReviewLoopMarksTheDriversTicksAsWatchTicks(t *testing.T) {
 // exponential and completely silent from inside the file: every individual tick
 // behaves correctly, and the human sees only a PR reviewed more and more often.
 //
-// Two things are asserted in the handoff step and they are not the same
-// assertion. The precondition is what an agent evaluates ("this tick is
-// explicit — `--on-request` was not on its command line"); the restated rule is
+// The marker's own rule is asserted twice in the handoff step, and the two are
+// not the same assertion. The precondition is what an agent evaluates ("this tick
+// is explicit — `--on-request` was not on its command line"); the restated rule is
 // what survives a rewrite of the precondition list into prose. The rule sentence
 // is written twice in the file — once in Usage, once in the handoff step — so
 // each site is asserted separately: a revert of one alone would leave a single
 // whole-file check green while the two halves of the file contradicted each
 // other.
 //
-// What this catches: the handoff step losing its explicit-only precondition,
-// either statement of the no-second-driver rule being deleted, or a fourth
+// The step's two other preconditions — `--once` was not passed, and the exit is
+// not terminal — are pinned here too, each together with the rule it is restated
+// as further down the step. They belong with the explicit-only precondition
+// because they are the rest of the same list and nothing else in this file reads
+// them: deleting either left every PR-loop guard green while `--once` became a
+// flag that is documented, parsed, and then ignored, and a driver got started on
+// a tick that had just approved the pull request — the driver-outlives-the-
+// approval cost ADR-0025 §4 claims to have retired, and the one
+// TestPRReviewLoopStartsTheWatchItPromises' own failure message cites ("a
+// first-look approval must start nothing") without asserting.
+//
+// What this catches: the handoff step losing any of its three stated
+// preconditions or the restatement of any of the three rules, and a fourth
 // occurrence of the driver form `/loop <interval> /pr-review-loop` appearing
 // anywhere in the file. That count is the one structural signal available for
 // "no other site hands this command to a driver" (ADR-0025 §4): the three
@@ -3207,6 +3218,54 @@ func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
 				"because the reverse revert is just as easy",
 			path, rule,
 		)
+	}
+
+	// The handoff step's other two preconditions, each with the rule it is
+	// restated as further down the step. Nothing else in this file's guards reads
+	// them: without the four checks below, `--once` and the terminal-exit rule can
+	// both be deleted from step 11 while every PR-loop guard stays green — `--once`
+	// becomes a flag that is documented, parsed, and then ignored, and a driver is
+	// started on a tick that just approved the pull request. Each check is proved
+	// by deleting its clause from the command file and confirming this test fails.
+	for _, req := range []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "`--once` was not passed",
+			why: "this is the precondition an agent evaluates, and it is the only thing " +
+				"that makes --once mean anything at the one step it acts on: without it " +
+				"the flag is documented in Usage, parsed in step 0, and then ignored, so " +
+				"a human who asked for a single look gets a standing watch anyway",
+		},
+		{
+			substr: "`--once` starts nothing",
+			why: "the precondition list above can be rewritten into prose; this sentence " +
+				"is what states the flag's whole purpose outright at the step that could " +
+				"break it",
+		},
+		{
+			substr: "The exit is not terminal",
+			why: "without this precondition a driver is started on a tick that just " +
+				"approved, closed out, or escalated the pull request — which re-creates " +
+				"exactly the cost ADR-0025 §4 claims to have retired, a driver outliving " +
+				"the approval it was started for, and leaves the human a watch they have " +
+				"to remember to stop",
+		},
+		{
+			substr: "A terminal exit starts nothing",
+			why: "this is the restated form of the same rule, and it is the one " +
+				"TestPRReviewLoopStartsTheWatchItPromises' own failure message already " +
+				"cites (\"a first-look approval must start nothing\") without asserting " +
+				"anywhere",
+		},
+	} {
+		if !strings.Contains(handoff, req.substr) {
+			t.Errorf(
+				"%s's handoff step (%q) is missing %q — %s",
+				path, prReviewLoopHandoffHeading, req.substr, req.why,
+			)
+		}
 	}
 
 	// The one structural signal available for "no other site hands this command

@@ -1110,13 +1110,13 @@ rather than checking it separately, since that is what keeps the two request sta
 apart: an author re-requesting a review on a PR this user already approved lands on
 the `requested: yes` row, never the standing-approval one below it.
 
-| `pr:`             | `requested:` | `my-review:`  | Explicit tick         | Watch tick (`--on-request`)                |
-| ----------------- | ------------ | ------------- | --------------------- | ------------------------------------------ |
-| `merged`/`closed` | any          | any           | **Terminal: closed.** | **Terminal: closed.**                      |
-| `draft`           | any          | any           | **Review**            | Wait — a formal review on a draft is noise |
-| `open`            | `yes`        | any           | **Review**            | **Review**                                 |
-| `open`            | `no`         | `approved`    | **Review**            | **Terminal: approved.**                    |
-| `open`            | `no`         | anything else | **Review**            | Wait — the ball is with the author         |
+| `pr:`             | `requested:` | `my-review:`  | Explicit tick         | Watch tick (`--on-request`)                        |
+| ----------------- | ------------ | ------------- | --------------------- | -------------------------------------------------- |
+| `merged`/`closed` | any          | any           | **Terminal: closed.** | **Terminal: closed.**                              |
+| `draft`           | any          | any           | **Review**            | Wait — a formal review on unfinished work is noise |
+| `open`            | `yes`        | any           | **Review**            | **Review**                                         |
+| `open`            | `no`         | `approved`    | **Review**            | **Terminal: approved.**                            |
+| `open`            | `no`         | anything else | **Review**            | Wait — the ball is with the author                 |
 
 **An explicit tick reviews unless the pull request is over** — only `merged` and
 `closed` stop it, because the human typed the command and that is a request already,
@@ -1161,8 +1161,8 @@ the pre-post re-check its step 7.)
    takes the matching set). `files: (none)` — an empty range, or one entirely filtered
    as noise — ends the tick as `nothing to review`: no reviewer, nothing posted, refs
    kept. It is its own status word rather than a wait, because nothing is pending on
-   anyone; the request stays pending, so the tick report is what tells the human to
-   look themselves.
+   anyone; any review request on the PR stays pending, so the tick report is what tells
+   the human to look themselves.
 3. One `review-run` per type, in range mode:
    `review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$PR_REVIEW_SCRATCH"`
    (plus `--note` when one was given), against a `scratch` directory allocated for
