@@ -648,15 +648,33 @@ func (m *Model) selectionChangedCmd(sel worktree.WorktreeStatus) tea.Cmd {
 
 // selectedPath is the identity of what the diff pane is currently about: the
 // selected worktree's path, or "" when the cursor sits on anything that has no
-// diff (a repo header, a session, a pane). Update compares it either side of a
-// handler to notice a selection change without enumerating the keys that cause
-// one, and the diffMsg handler compares an arriving diff against it to drop one
-// that belongs to a row the user has already left.
+// diff (a repo header, a session, or a pane under a session). Update compares
+// it either side of a handler to notice a selection change without
+// enumerating the keys that cause one, and the diffMsg handler compares an
+// arriving diff against it to drop one that belongs to a row the user has
+// already left.
+//
+// A pane row resolves to its enclosing worktree's path rather than "": a pane
+// belongs to a worktree, so drilling into one of its panes (the 'l' flow)
+// keeps showing that worktree's diff instead of the debounce wrapper treating
+// the drill-in as a selection change (arming a pointless debounce) and the
+// stale-diff guard discarding the diff already computing for that worktree.
+// A pane under a standalone session has no enclosing worktree, so it still
+// resolves to "" — sessions have no diff. This deliberately does not change
+// selectedStatus: d/D/r/R stay inert on a pane row, only this identity used
+// for diff bookkeeping is resolved through to the parent.
 func (m Model) selectedPath() string {
 	if sel, ok := m.selectedStatus(); ok {
 		return sel.Path
 	}
-	return ""
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowPane {
+		return ""
+	}
+	parent, ok := enclosingPaneParent(m.rows, m.cursor)
+	if !ok || parent.kind != rowWorktree {
+		return ""
+	}
+	return parent.status.Path
 }
 
 // armDiffDebounce starts (or restarts) the navigation debounce: bump diffGen so

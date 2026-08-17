@@ -172,6 +172,73 @@ func TestEnterOnPaneRowSwitchFailureShowsStatusAndDoesNotQuit(t *testing.T) {
 	}
 }
 
+// --- d/D/r/R stay inert on a pane row (selectedStatus deliberately reports
+// ok=false there; only selectedPath resolves through to the parent for diff
+// bookkeeping) ---
+
+func TestDeleteRepairSessionDeleteKickReviewInertOnPaneRow(t *testing.T) {
+	m := makeTestModel(paneQualifyingStatuses())
+	cursorToPane(&m, "%2")
+
+	removeCalled := false
+	m.removeFn = func(_, _ string, _ bool) error {
+		removeCalled = true
+		return nil
+	}
+	removeSessionCalled := false
+	m.removeSessionFn = func(_, _ string) error {
+		removeSessionCalled = true
+		return nil
+	}
+	repairCalled := false
+	m.repairFn = func(_, _ string, _ worktree.Layout) error {
+		repairCalled = true
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: 'd'})
+	m3 := m2.(Model)
+	if cmd != nil {
+		t.Error("d on a pane row should return no command")
+	}
+	if removeCalled {
+		t.Error("d on a pane row must not call removeFn")
+	}
+	if m3.pendingDelete != "" {
+		t.Error("d on a pane row must not arm pendingDelete")
+	}
+
+	m4, cmd2 := m3.Update(tea.KeyPressMsg{Code: 'D'})
+	m5 := m4.(Model)
+	if cmd2 != nil {
+		t.Error("D on a pane row should return no command")
+	}
+	if removeSessionCalled {
+		t.Error("D on a pane row must not call removeSessionFn")
+	}
+	if m5.pendingSessionDelete != "" {
+		t.Error("D on a pane row must not arm pendingSessionDelete")
+	}
+
+	m6, cmd3 := m5.Update(tea.KeyPressMsg{Code: 'r'})
+	m7 := m6.(Model)
+	if cmd3 != nil {
+		t.Error("r on a pane row should return no command")
+	}
+	if repairCalled {
+		t.Error("r on a pane row must not call repairFn")
+	}
+
+	m8, cmd4 := m7.Update(tea.KeyPressMsg{Code: 'R'})
+	m9 := m8.(Model)
+	if cmd4 != nil {
+		t.Error("R on a pane row should return no command")
+	}
+	if m9.reviewMode != reviewNone {
+		t.Error("R on a pane row must not open the kick-a-review picker")
+	}
+}
+
 func TestEnterOnPaneRowOutsideTmuxShowsGuardMessage(t *testing.T) {
 	t.Setenv("TMUX", "")
 	m := makeTestModel(paneQualifyingStatuses())

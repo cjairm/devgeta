@@ -405,8 +405,11 @@ func TestFastTickThatMovesSelectionArmsDebounce(t *testing.T) {
 	m.mgr = newTestWorktreeManager()
 	m.cursor = 2 // the first pane row under feature-a
 	before := m.selectedPath()
-	if before != "" {
-		t.Fatalf("expected the cursor to start on a pane row (no selected path), got %q", before)
+	if before != "/tmp/a" {
+		t.Fatalf(
+			"expected the cursor to start on a pane row resolving to its parent /tmp/a, got %q",
+			before,
+		)
 	}
 
 	// The scan reports no panes at all for feature-a's window, so it no longer
@@ -489,21 +492,11 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 		msg      tea.Msg
 		wantPath string
 	}{
-		{
-			// model.go's h, priority 1: the pane row the cursor sat on disappears,
-			// so the cursor is relocated onto the parent worktree by identity.
-			name: "h folds a worktree's panes and lands on the worktree",
-			setup: func(t *testing.T) Model {
-				// paneRowTestStatuses is the package's existing two-stateful-pane
-				// fixture (testStatuses has no panes, so it can only exercise the
-				// repo-level fold).
-				m := makeTestModel(paneRowTestStatuses())
-				m.cursor = 2 // the first pane row
-				return m
-			},
-			msg:      tea.KeyPressMsg{Code: 'h'},
-			wantPath: "/tmp/a",
-		},
+		// h's priority-1 case (folding a worktree's panes while the cursor sits
+		// on one of them, landing back on the parent worktree row) is NOT in
+		// this table: selectedPath() resolves a pane row to its enclosing
+		// worktree's path, so that fold keeps the same path throughout and must
+		// NOT arm a debounce. See TestFoldingPaneRowsBackOntoSameWorktreeDoesNotArmDebounce.
 		{
 			// model.go's h, priority 3: collapsing the repo leaves only its header.
 			name: "h collapses a repo and lands on its header",
@@ -604,6 +597,199 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 			assertDebouncedDiff(t, m, flattenCmd(cmd), tc.wantPath)
 		})
 	}
+}
+
+// --- selectedPath resolves a pane row to its enclosing worktree ---
+//
+// A pane belongs to a worktree, so drilling into one of its panes (the 'l'
+// flow) must keep showing that worktree's diff: no pointless debounce for a
+// path that hasn't changed, and no dropping of a diff already computing for
+// that worktree. selectedStatus is untouched — d/D/r/R stay inert on a pane
+// row (see pane_flow_test.go).
+
+// TestSelectedPathOnWorktreeRowIsItsOwnPath pins the baseline this whole
+// feature builds on: the cursor on a worktree row identifies the diff by that
+// worktree's own path.
+func TestSelectedPathOnWorktreeRowIsItsOwnPath(t *testing.T) {
+	m := makeTestModel(testStatuses()) // cursor starts on repo-a/feature-a, /tmp/a
+	if got := m.selectedPath(); got != "/tmp/a" {
+		t.Fatalf("expected selectedPath on a worktree row to be its own path, got %q", got)
+	}
+}
+
+// TestSelectedPathOnPaneRowResolvesToEnclosingWorktree is the core of the fix:
+// selectedPath must not return "" for a pane row, it must return the path of
+// the worktree that pane belongs to.
+func TestSelectedPathOnPaneRowResolvesToEnclosingWorktree(t *testing.T) {
+	m := makeTestModel(paneRowTestStatuses()) // single worktree /tmp/a, 2 panes
+	cursorToPane(&m, "%1")
+
+	if got := m.selectedPath(); got != "/tmp/a" {
+		t.Fatalf("expected a pane row to resolve to its parent worktree's path /tmp/a, got %q", got)
+	}
+}
+
+// TestSelectedPathOnSessionPaneRowStaysEmpty verifies the resolution is
+// specific to worktree parents: a pane under a standalone session has no
+// diff to show, so it must still resolve to "".
+func TestSelectedPathOnSessionPaneRowStaysEmpty(t *testing.T) {
+	m := makeTestModel(nil)
+	m.sessions = paneRowTestSessions()
+	m.rebuildRows()
+	cursorToPane(&m, "%1")
+	if m.rows[m.cursor].kind != rowPane {
+		t.Fatalf(
+			"expected cursor on a pane row under the session, got kind=%d",
+			m.rows[m.cursor].kind,
+		)
+	}
+
+	if got := m.selectedPath(); got != "" {
+		t.Errorf(
+			"a pane row under a standalone session has no diff and must resolve to \"\", got %q",
+			got,
+		)
+	}
+}
+
+// TestDrillingIntoPaneRowDoesNotArmDebounce covers the plan's second bullet:
+// pressing l from a worktree row onto its first pane row keeps selectedPath
+// unchanged, so the Update wrapper must not arm a pointless debounce for a
+// diff that already applies.
+func TestDrillingIntoPaneRowDoesNotArmDebounce(t *testing.T) {
+	m := makeTestModel(paneRowTestStatuses())
+	key := "worktree:wt-feature-a"
+	m.collapsed[key] = true
+	m.rebuildRows()
+	m.mgr = newTestWorktreeManager()
+	if m.rows[m.cursor].kind != rowWorktree {
+		t.Fatalf(
+			"expected cursor on the worktree row while collapsed, got kind=%d",
+			m.rows[m.cursor].kind,
+		)
+	}
+	before := m.selectedPath()
+	if before != "/tmp/a" {
+		t.Fatalf("expected cursor to start on the worktree row's own path, got %q", before)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'l'})
+	m2 := updated.(Model)
+
+	if m2.rows[m2.cursor].kind != rowPane {
+		t.Fatalf(
+			"expected cursor to land on a pane row after l, got kind=%d",
+			m2.rows[m2.cursor].kind,
+		)
+	}
+	if got := m2.selectedPath(); got != before {
+		t.Fatalf(
+			"expected selectedPath to stay %q after drilling into the pane row, got %q",
+			before,
+			got,
+		)
+	}
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(diffDebounceMsg); ok {
+			t.Error(
+				"drilling into a pane row under the same worktree must not arm a new diff debounce",
+			)
+		}
+	}
+}
+
+// TestFoldingPaneRowsBackOntoSameWorktreeDoesNotArmDebounce is the h-key
+// mirror of the l-drill-in case above: folding a worktree's panes while the
+// cursor sits on one of them lands back on the same worktree, so no debounce
+// should fire either.
+func TestFoldingPaneRowsBackOntoSameWorktreeDoesNotArmDebounce(t *testing.T) {
+	m := makeTestModel(paneRowTestStatuses())
+	m.mgr = newTestWorktreeManager()
+	cursorToPane(&m, "%1")
+	before := m.selectedPath()
+	if before != "/tmp/a" {
+		t.Fatalf("expected cursor to start on a pane row resolving to /tmp/a, got %q", before)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'h'})
+	m2 := updated.(Model)
+
+	if m2.rows[m2.cursor].kind != rowWorktree {
+		t.Fatalf(
+			"expected h to fold back onto the parent worktree row, got kind=%d",
+			m2.rows[m2.cursor].kind,
+		)
+	}
+	if got := m2.selectedPath(); got != before {
+		t.Fatalf(
+			"expected selectedPath to stay %q after folding back onto the same worktree, got %q",
+			before,
+			got,
+		)
+	}
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(diffDebounceMsg); ok {
+			t.Error(
+				"folding pane rows back onto the same worktree must not arm a new diff debounce",
+			)
+		}
+	}
+}
+
+// TestDiffMsgForParentWorktreeAppliesWhileCursorOnPaneRow is the regression
+// test for the defect this cycle exists to fix: a diff already computing for
+// a worktree must not be dropped by the stale-diff guard just because the
+// cursor drilled into one of that worktree's pane rows in the meantime.
+// Before the fix, selectedPath() returned "" on a pane row, so diffMsg's
+// `msg.path != m.selectedPath()` check discarded the in-flight diff.
+func TestDiffMsgForParentWorktreeAppliesWhileCursorOnPaneRow(t *testing.T) {
+	m := makeTestModel(paneRowTestStatuses())
+	cursorToPane(&m, "%1")
+	if m.rows[m.cursor].kind != rowPane {
+		t.Fatalf("expected cursor on a pane row, got kind=%d", m.rows[m.cursor].kind)
+	}
+
+	// A diff for the enclosing worktree was already computing - e.g. dispatched
+	// the moment the cursor first landed on /tmp/a, before l drilled into a pane.
+	updated, _ := m.Update(diffMsg{path: "/tmp/a", content: "feature-a's changes", files: 2})
+	m2 := updated.(Model)
+
+	if m2.diffContent != "feature-a's changes" || m2.diffPath != "/tmp/a" {
+		t.Errorf(
+			"the stale-diff guard must not drop the enclosing worktree's in-flight diff while "+
+				"the cursor sits on one of its pane rows, got path=%q content=%q",
+			m2.diffPath,
+			m2.diffContent,
+		)
+	}
+}
+
+// TestMovingFromPaneRowToDifferentWorktreeArmsDebounce covers the plan's
+// third bullet: moving off a pane row onto a different worktree is a genuine
+// path change, so it must debounce and the diff must follow to the new path,
+// exactly like any other cursor move.
+func TestMovingFromPaneRowToDifferentWorktreeArmsDebounce(t *testing.T) {
+	statuses := append(paneRowTestStatuses(), worktree.WorktreeStatus{
+		Name:       "feature-b",
+		Repo:       "repo-a",
+		Path:       "/tmp/b",
+		TmuxWindow: worktree.GetWindowName("repo-a", "feature-b"),
+	})
+	m := makeTestModel(statuses)
+	m.mgr = newTestWorktreeManager()
+	cursorToPane(&m, "%2") // last pane row under feature-a, /tmp/a
+	before := m.selectedPath()
+	if before != "/tmp/a" {
+		t.Fatalf("expected cursor to start on a pane row resolving to /tmp/a, got %q", before)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'j'})
+	m2 := updated.(Model)
+
+	if got := m2.selectedPath(); got != "/tmp/b" {
+		t.Fatalf("expected j to move off the pane row onto feature-b (/tmp/b), got %q", got)
+	}
+	assertDebouncedDiff(t, m2, flattenCmd(cmd), "/tmp/b")
 }
 
 // The debounce only earns its keep if the moves it coalesces cost nothing:

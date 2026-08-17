@@ -657,6 +657,10 @@ Pane rows add:
 
 - `enter` — switch the tmux client to that exact pane (same tmux guard and dashboard-quit
   behavior as attaching to a session or worktree). Previously a no-op.
+- The diff pane: a pane belongs to a worktree, so moving the cursor onto one of a worktree's
+  pane rows keeps showing that worktree's branch diff, exactly as if the cursor were still on
+  the worktree row itself — drilling into a pane (`l`) never blanks or delays the diff. A pane
+  row under a standalone session shows no diff, same as the session row itself.
 
 Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf.tmpl`) — it previously
 opened tmux's native `choose-tree -Zs` popup, which this replaces. This is the only key bound
