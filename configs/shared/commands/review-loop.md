@@ -693,11 +693,34 @@ open. `review-run` does not print ids, so this is how the loop learns them: ever
 the journal's `open:` section is an unanswered finding, and "nothing under `open:`" (or the
 `No review notes for branch <b>.` sentinel) means nothing is open.
 
-### 2. A reviewer failure stops the loop here
+### 2. A reviewer failure is a non-approval, not a stop
 
-If any reviewer's outcome this round is `ERROR(<reason>)` or `NO VERDICT`, stop. Do not
-run another round, and do not attempt to fix anything based on a run that did not
-complete. Go straight to the terminal report, and name the failing reviewer in it:
+`ERROR(<reason>)` and `NO VERDICT` are outcomes like any other non-approval: the reviewer
+that produced one has not approved, so — outside the confirming round — it stays in the
+narrowing set and runs again next round, the same as `REQUEST CHANGES` or `NEEDS
+DISCUSSION` would leave it in.
+
+**Two consecutive failures by the same reviewer drop it from the narrowing set.** Count
+per reviewer, never per round of the loop, and count only rounds that reviewer **actually
+ran**: a reviewer's count is how many rounds in a row — in a row for that reviewer, not
+for the loop — it ran and came back `ERROR` or `NO VERDICT`. Any other outcome from that
+reviewer resets its count to zero, `APPROVE` included. A round the reviewer sits out,
+because it had already approved or had already been dropped, is not a round it ran: it
+neither adds to the count nor clears it. State that plainly, because narrowing means
+reviewers routinely sit rounds out, and without this sentence "consecutive" reads as
+consecutive rounds of the loop, which counts the wrong thing. Once a reviewer's count
+reaches two, drop it from the narrowing set for the rest of the run and name it in the
+terminal report as failed, with its last reason reported verbatim by the rules below.
+
+**A failure in the confirming round still stops the loop.** The confirming round runs
+every configured reviewer regardless of what it did during narrowing, and only that round
+can produce a clean approval — there is no next narrowing round left for a
+confirming-round failure to be retried in. So when the round that just ran is the
+confirming round, stop exactly as before: do not run another round, and do not attempt to
+fix anything based on a run that did not complete. Go straight to the terminal report.
+
+Report a failure this way, whether it is being retried, it is the failure that drops a
+reviewer, or it stopped the loop in the confirming round:
 
 - `ERROR(<reason>)`: report the reason verbatim.
 - `NO VERDICT(<reason>)`: the reviewer wrote no report at all, and the text in parentheses
@@ -707,12 +730,22 @@ complete. Go straight to the terminal report, and name the failing reviewer in i
   invent a reason; the outcome carries none, and making one up would misreport what
   happened.
 
-This loop never re-runs a round — a flaky round and a broken one look the same from here,
-so both get reported rather than silently rerun. One level below, `review-run` does retry:
-a reviewer whose attempt produced no report at all is launched once more inside the same
-round (devgeta's ADR-0020), and the outcome you are reading already accounts for it. So a
-failure that reaches you has already survived the only retry there is — there is nothing
-left for this loop to rerun.
+This loop never re-runs a round to paper over a failure inside that same round — a flaky
+round and a broken one look the same from here, so both are handled by the schedule above
+rather than an out-of-band immediate rerun. One level below, `review-run` does its own
+retry: a reviewer whose attempt produced no report at all is launched once more inside the
+same round (devgeta's ADR-0020), and the outcome you are reading already accounts for it.
+So a failure that reaches you has already survived the only within-round retry there is;
+the per-reviewer retry above, spanning rounds rather than happening inside one, is a
+second, different thing.
+
+Rewriting this rule alone does not make a failure survivable end to end. `### 3` below
+still stops the loop on a round that withheld approval and recorded no finding, and a
+failed reviewer records none — so without a matching change there, a retried failure would
+still end the run the moment it happened, on the very branch this section just promised
+not to take. That branch is not this section's to change; splitting it by outcome, so a
+failure falls through to the next round instead of stopping, is the next step in this same
+change. The two edits ship together, or neither one works.
 
 ### 3. Check for clean approval
 
