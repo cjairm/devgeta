@@ -2339,3 +2339,220 @@ func TestClearAgentStateForWindow(t *testing.T) {
 		}
 	})
 }
+
+func TestSwitchToPane(t *testing.T) {
+	t.Run("switches session, selects window, then selects pane", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 3 {
+			t.Fatalf(
+				"expected 3 calls (switch-client + select-window + select-pane), got %d: %+v",
+				len(calls),
+				calls,
+			)
+		}
+		if calls[0].Args[0] != "switch-client" {
+			t.Errorf("call[0] = %v, want switch-client", calls[0].Args)
+		}
+		if calls[1].Args[0] != "select-window" {
+			t.Errorf("call[1] = %v, want select-window", calls[1].Args)
+		}
+		if calls[2].Args[0] != "select-pane" {
+			t.Errorf("call[2] = %v, want select-pane", calls[2].Args)
+		}
+		lastArg := calls[2].Args[len(calls[2].Args)-1]
+		if lastArg != "%12" {
+			t.Errorf("select-pane target = %q, want %%12", lastArg)
+		}
+
+	})
+
+	t.Run("stops before select-window when switch-client fails", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "error", errors.New("no server"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err == nil {
+			t.Fatal("expected error when switch-client fails")
+		}
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+			t.Fatalf("expected 1 call (switch-client only), got %d", calls)
+		}
+
+	})
+
+	t.Run("stops before select-pane when select-window fails", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "error", errors.New("no such window")),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err == nil {
+			t.Fatal("expected error when select-window fails")
+		}
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 2 {
+			t.Fatalf("expected 2 calls (switch-client + select-window), got %d", calls)
+		}
+
+	})
+}
+
+func TestClearAgentStateForPane(t *testing.T) {
+	t.Run("clears only the target pane and writes the sibling's state to the mirror", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			// scan: target %1 is blocked, sibling %2 (same session+window) is idle
+			commands.ExecCommandResult(
+				"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
+				"",
+				nil,
+			),
+			// clear %1: succeeds
+			commands.ExecCommandResult("", "", nil),
+			// mirror write: succeeds
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForPane("%1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 3 {
+			t.Fatalf("expected 3 calls (scan + pane clear + mirror write), got %d: %+v", len(calls), calls)
+		}
+		clearArgs := []string{"set-option", "-p", "-u", "-t", "%1", "@dg_agent_state"}
+		if !slices.Equal(calls[1].Args, clearArgs) {
+			t.Errorf("clear call args = %v, want %v", calls[1].Args, clearArgs)
+		}
+		// The remaining pane (%2, idle) is what's left wanting attention once
+		// %1 is cleared - the mirror must report that, not %1's own old value.
+		mirrorArgs := []string{"set-option", "-w", "-t", "%1", "@dg_window_agent_state", "idle"}
+		if !slices.Equal(calls[2].Args, mirrorArgs) {
+			t.Errorf("mirror call args = %v, want %v", calls[2].Args, mirrorArgs)
+		}
+
+	})
+
+	t.Run("failed pane clear keeps the target's own state in the mirror, not the sibling's", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			// scan: target %1 is blocked, sibling %2 (same session+window) is idle
+			commands.ExecCommandResult(
+				"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
+				"",
+				nil,
+			),
+			// clear %1: fails (e.g. pane closed between scan and clear)
+			commands.ExecCommandResult("", "error", errors.New("pane closed")),
+			// mirror write: succeeds
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		err := app.ClearAgentStateForPane("%1")
+		if err == nil {
+			t.Fatal("expected the failed clear's error to be returned")
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 3 {
+			t.Fatalf("expected 3 calls (scan + failed pane clear + mirror write), got %d: %+v", len(calls), calls)
+		}
+		// %1's pre-clear "blocked" outranks %2's "idle" (ADR-0005), so the
+		// mirror must still say blocked - not idle, which is what a wrongly
+		// dropped %1 would produce.
+		mirrorArgs := []string{"set-option", "-w", "-t", "%1", "@dg_window_agent_state", "blocked"}
+		if !slices.Equal(calls[2].Args, mirrorArgs) {
+			t.Errorf("mirror call args = %v, want %v (target's own pre-clear state)", calls[2].Args, mirrorArgs)
+		}
+
+	})
+
+	t.Run("a same-named window in another session is excluded from the aggregate", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			// scan: target %1 is the only pane in s1:win; %2 is a blocked pane
+			// in a *different* session's window that happens to share the name "win".
+			commands.ExecCommandResult(
+				"s1\twin\t%1\t0\tclaude\tidle\ns2\twin\t%2\t0\tclaude\tblocked\n",
+				"",
+				nil,
+			),
+			// clear %1: succeeds
+			commands.ExecCommandResult("", "", nil),
+			// mirror unset: succeeds
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForPane("%1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 3 {
+			t.Fatalf("expected 3 calls (scan + pane clear + mirror unset), got %d: %+v", len(calls), calls)
+		}
+		// s1:win has nothing left once %1 is cleared - the foreign s2:win
+		// pane's "blocked" must not leak into this aggregate and pin the flag.
+		mirrorArgs := []string{"set-option", "-w", "-u", "-t", "%1", "@dg_window_agent_state"}
+		if !slices.Equal(calls[2].Args, mirrorArgs) {
+			t.Errorf("mirror call args = %v, want %v (unset, foreign session excluded)", calls[2].Args, mirrorArgs)
+		}
+
+	})
+
+	t.Run("busy sibling never sets the mirror - it unsets instead", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"s\twin\t%1\t0\tclaude\tidle\ns\twin\t%2\t1\tclaude\tbusy\n",
+				"",
+				nil,
+			),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForPane("%1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := mockApp.Base.ExecCommandCalls
+		mirrorArgs := []string{"set-option", "-w", "-u", "-t", "%1", "@dg_window_agent_state"}
+		if !slices.Equal(calls[2].Args, mirrorArgs) {
+			t.Errorf("mirror call args = %v, want %v (busy never written to mirror, per ADR-0005)", calls[2].Args, mirrorArgs)
+		}
+
+	})
+
+	t.Run("pane not found in the scan is a silent no-op", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(
+			"s\twin\t%1\t0\tclaude\tidle\n",
+			"",
+			nil,
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForPane("%99"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+			t.Fatalf("expected 1 call (scan only), got %d", calls)
+		}
+
+	})
+}

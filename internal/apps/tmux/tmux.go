@@ -409,6 +409,50 @@ func (t *Tmux) PanesInWindow(windowName string) []WindowPane {
 	return panes
 }
 
+// Agent state constants for the @dg_agent_state pane option (ADR-0005) and
+// its @dg_window_agent_state window-level mirror. These are the vocabulary of
+// that option, not of any one caller, which is why they live here rather than
+// in internal/tooling/worktree: worktree imports tmux, not the other way
+// around, so anything tmux needs cannot live upstream of it. worktree keeps
+// thin aliases (AgentStateBusy etc., AggregateAgentState) so its existing
+// callers and tests are unaffected.
+const (
+	AgentStateBusy    = "busy"
+	AgentStateIdle    = "idle"
+	AgentStateError   = "error"
+	AgentStateBlocked = "blocked"
+)
+
+// agentStateRank ranks a pane's @dg_agent_state value by aggregation urgency
+// per ADR-0005: blocked > error > idle > busy > (no agent) - higher wins.
+// The empty string (no agent has ever written to this pane) and any
+// unrecognized value both resolve to the zero value here (Go's map lookup
+// default), so a value this cycle didn't anticipate can never silently
+// outrank a real one; it just falls back to "no agent" for ranking purposes.
+var agentStateRank = map[string]int{
+	AgentStateBusy:    1,
+	AgentStateIdle:    2,
+	AgentStateError:   3,
+	AgentStateBlocked: 4,
+}
+
+// AggregateAgentState reduces one window's (or session's) pane states to the
+// single value a row should report, per ADR-0005's precedence. Pure function
+// of the pane states so it's testable without a live tmux server. Returns ""
+// when states is empty or nil, or every entry is "" / unrecognized - i.e. no
+// pane has a real agent state to report.
+func AggregateAgentState(states []string) string {
+	best := ""
+	bestRank := 0
+	for _, s := range states {
+		if rank := agentStateRank[s]; rank > bestRank {
+			bestRank = rank
+			best = s
+		}
+	}
+	return best
+}
+
 // ClearAgentStateForWindow unsets @dg_agent_state on every pane belonging to
 // the named window, across all sessions (mirroring WindowSession's "search
 // every session" semantics - a window name is unique in practice, but this
@@ -454,6 +498,106 @@ func (t *Tmux) ClearAgentStateForWindow(window string) error {
 	return firstErr
 }
 
+// ClearAgentStateForPane unsets @dg_agent_state on exactly one pane, leaving
+// every other pane's state untouched (ADR-0008's per-pane granularity - a
+// sibling pane sharing a window must not lose its own state because a
+// different pane was acknowledged). Called when the user selects a specific
+// pane from the dashboard rather than a whole window.
+//
+// The window-level mirror (@dg_window_agent_state) is recomputed, not
+// cleared: acknowledging one pane does not mean the window has nothing left
+// to report if a sibling pane in the same session+window is still
+// idle/blocked/error (ADR-0005, ADR-0008). The aggregate is computed fresh
+// from the same PaneStates() scan used to find the target pane, filtered to
+// panes sharing both that pane's Session and Window - not by window name
+// alone. tmux allows the same window name in two sessions, and a name-only
+// key would let a same-named window in another session contribute its panes
+// to this window's mirror (a foreign blocked pane would pin a "wants you"
+// flag on a window with nothing pending, or a foreign idle pane would hold
+// the flag up after this window's real last state was cleared). The pane
+// path can be this strict because paneID's own scan entry already carries
+// its Session next to its Window - unlike ClearAgentStateForWindow, which
+// starts from a bare window name and has no session to pin the search to.
+// Per ADR-0005, busy never goes in the mirror: idle/blocked/error are
+// written, anything else (including busy and "nothing left") unsets it.
+//
+// "Remaining" for the aggregate means every pane whose state is still on the
+// pane, not "every pane except the target": the unset below is best-effort,
+// the same treatment ClearAgentStateForWindow already gives it (records the
+// error, keeps going) - so when it fails, the target pane's @dg_agent_state
+// is still sitting there and its pre-clear value stays in the aggregate
+// rather than being dropped, which would otherwise write a mirror the panes
+// themselves contradict. This does not rescan to resolve a failure: a second
+// PaneStates() call races the same way and costs exactly the scan ADR-0024
+// removes. If the pane had in fact closed between the scan and the clear,
+// this over-reports for the window until the next agent write or the next
+// attach (which unsets the mirror outright) - the safe direction, since a
+// lost flag hides a blocked agent nobody sees.
+//
+// A no-op (no calls, no error) when paneID does not appear in the scan at
+// all - e.g. the pane already closed - matching ClearAgentStateForWindow's
+// own silent no-op for a window with no matching panes.
+func (t *Tmux) ClearAgentStateForPane(paneID string) error {
+	states := t.PaneStates()
+
+	var target *PaneState
+	for i := range states {
+		if states[i].PaneID == paneID {
+			target = &states[i]
+			break
+		}
+	}
+	if target == nil {
+		return nil
+	}
+
+	clearErr := t.ExecuteCommand("set-option", "-p", "-u", "-t", paneID, "@dg_agent_state")
+
+	var remaining []string
+	for _, ps := range states {
+		if ps.Session != target.Session || ps.Window != target.Window {
+			continue
+		}
+		if ps.PaneID == paneID {
+			if clearErr != nil {
+				// The unset failed - the pane's pre-clear state is still
+				// live on it, so it still counts toward the aggregate.
+				remaining = append(remaining, ps.State)
+			}
+			continue
+		}
+		remaining = append(remaining, ps.State)
+	}
+
+	aggregate := AggregateAgentState(remaining)
+	var mirrorErr error
+	switch aggregate {
+	case AgentStateIdle, AgentStateBlocked, AgentStateError:
+		mirrorErr = t.ExecuteCommand(
+			"set-option",
+			"-w",
+			"-t",
+			paneID,
+			"@dg_window_agent_state",
+			aggregate,
+		)
+	default:
+		mirrorErr = t.ExecuteCommand(
+			"set-option",
+			"-w",
+			"-u",
+			"-t",
+			paneID,
+			"@dg_window_agent_state",
+		)
+	}
+
+	if clearErr != nil {
+		return clearErr
+	}
+	return mirrorErr
+}
+
 // SwitchToWindow moves the attached client to the given session and selects the
 // window, so it works no matter which session the client is currently on.
 func (t *Tmux) SwitchToWindow(session, name string) error {
@@ -461,6 +605,22 @@ func (t *Tmux) SwitchToWindow(session, name string) error {
 		return err
 	}
 	return t.ExecuteCommand("select-window", "-t", session+":"+name)
+}
+
+// SwitchToPane moves the attached client to session, selects window within
+// it, and makes paneID the active pane - one wrapper rather than the caller
+// composing SwitchToWindow + SelectPane itself (CLAUDE.md §6: route external
+// tool invocations through their app wrapper). Implemented by calling those
+// two existing wrappers in sequence rather than re-issuing their tmux calls,
+// so the switch-client / select-window / select-pane behavior stays defined
+// in exactly one place each. Stops and returns the error if switching to the
+// window fails, without attempting select-pane against a client that never
+// arrived at the right window.
+func (t *Tmux) SwitchToPane(session, window, paneID string) error {
+	if err := t.SwitchToWindow(session, window); err != nil {
+		return err
+	}
+	return t.SelectPane(paneID)
 }
 
 // CurrentSession returns the name of the session the attached client is on.

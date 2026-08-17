@@ -41,11 +41,16 @@ const (
 	fallbackSession = "misc"
 
 	// Agent state constants representing the aggregated state of AI agents
-	// in a worktree's window panes (per ADR-0005).
-	AgentStateBusy    = "busy"
-	AgentStateIdle    = "idle"
-	AgentStateError   = "error"
-	AgentStateBlocked = "blocked"
+	// in a worktree's window panes (per ADR-0005). These are thin aliases of
+	// the tmux package's own constants, kept here so existing callers
+	// (internal/tui/components/statusdot.go) and tests don't change: the
+	// vocabulary of the @dg_agent_state pane option lives in
+	// internal/apps/tmux now, since tmux cannot import worktree (the
+	// dependency runs the other way) but worktree already imports tmux.
+	AgentStateBusy    = tmux.AgentStateBusy
+	AgentStateIdle    = tmux.AgentStateIdle
+	AgentStateError   = tmux.AgentStateError
+	AgentStateBlocked = tmux.AgentStateBlocked
 )
 
 // isWorktreeWindow reports whether a tmux window name belongs to a worktree
@@ -714,34 +719,18 @@ func (w *WorktreeManager) worktreeStateFor(wtPath, windowName string) WorktreeSt
 	return state
 }
 
-// agentStateRank ranks a pane's @dg_agent_state value by aggregation urgency
-// per ADR-0005: blocked > error > idle > busy > (no agent) - higher wins.
-// The empty string (no agent has ever written to this pane) and any
-// unrecognized value both resolve to the zero value here (Go's map lookup
-// default), so a value this cycle didn't anticipate can never silently
-// outrank a real one; it just falls back to "no agent" for ranking purposes.
-var agentStateRank = map[string]int{
-	AgentStateBusy:    1,
-	AgentStateIdle:    2,
-	AgentStateError:   3,
-	AgentStateBlocked: 4,
-}
-
 // AggregateAgentState reduces one window's pane states to the single value a
-// worktree row should report, per ADR-0005's precedence. Pure function of
-// the pane states so it's testable without a WorktreeManager. Returns "" when
-// states is empty or nil, or every entry is "" / unrecognized - i.e. no pane
-// in the window has a real agent state to report.
+// worktree row should report, per ADR-0005's precedence
+// (blocked > error > idle > busy > (no agent)). Returns "" when states is
+// empty or nil, or every entry is "" / unrecognized - i.e. no pane in the
+// window has a real agent state to report.
+//
+// Thin alias of tmux.AggregateAgentState, kept here so existing callers
+// (worktree.go's own List()/session-status paths, internal/tui/worktree/tree.go)
+// and tests don't change - see the AgentState* constants' doc comment for why
+// the vocabulary itself now lives in internal/apps/tmux.
 func AggregateAgentState(states []string) string {
-	best := ""
-	bestRank := 0
-	for _, s := range states {
-		if rank := agentStateRank[s]; rank > bestRank {
-			bestRank = rank
-			best = s
-		}
-	}
-	return best
+	return tmux.AggregateAgentState(states)
 }
 
 // anchorGroup is a set of candidate anchor paths that are all believed to
