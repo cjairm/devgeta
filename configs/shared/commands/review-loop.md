@@ -44,7 +44,7 @@ makes — they are not just documentation here.
   finding. Reviewers do this themselves; this loop does not open new findings.
 - `devgeta task review-note --settle --id <id> --as answered|rejected|fixed --note
 "<text>"` — close an open finding with the outcome and the reasoning behind it.
-- `devgeta config get review.rounds` — the round cap (default 3, maximum 5).
+- `devgeta config get review.rounds` — the round cap per phase (default 3, maximum 5).
 - `devgeta config get review.reviewers` — the configured reviewer models; empty means
   one run on OpenCode's own default model.
 - `devgeta config set review.reviewers <entry> <entry> …` — rewrite that list. It takes
@@ -61,7 +61,8 @@ the one round it just ran.
 
 ## Phases
 
-This loop runs three phases, always in this order:
+This loop runs three phases, always in this order, though a phase can be skipped — see
+`### 5`:
 
 1. **Opening round.** Every reviewer configured in `review.reviewers` runs. Nothing has
    been narrowed yet, so this round establishes who is actually blocking.
@@ -892,10 +893,12 @@ this step. Work through these three checks in this order.
 
 **First, stop for anything still open.** If anything is still open after this round —
 step 4's triage left it for a human, or the fix subagent escalated it back while
-verifying — stop; go to the terminal report, even if rounds remain. The journal you
-re-read at the end of step 4 decides this: any id still under `open:` counts, whichever
-way it got there. Another round cannot clear it: the finding is still open, so step 3
-could never call the result a clean approval, and every further round pays the reviewers
+verifying — stop; go to the terminal report, even if rounds remain. What decides this is
+the journal's current state — for a round that ran step 4, that is the re-read at its
+end; for the two fall-throughs from step 3 that skip step 4, the journal is already known
+to have nothing open — and any id still under `open:` counts, whichever way it got there.
+Another round cannot clear it: the finding is still open, so step 3 could never call the
+result a clean approval, and every further round pays the reviewers
 to raise it again and waits on the same answer.
 
 **Then check the cap, which counts rounds within the current phase.** Read `devgeta
@@ -1114,7 +1117,7 @@ instruction. Follow it exactly.
   round is not unattended. The single exception is retiring an agent's rejection, which
   stays the human's call (see the report section above).
 - Never invent a reviewer's verdict, and never present a run that failed, or a run that
-  hit the round cap, as one that passed.
+  ended at the round cap without a clean approval, as one that passed.
 - If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, a
   branch that changes nothing at all, or a blank `--note`), surface that error as-is and
   stop before running anything else.
