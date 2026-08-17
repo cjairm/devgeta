@@ -3,7 +3,7 @@
 **Status:** ACCEPTED
 **Date:** 2026-08-07
 **Deciders:** cjairm
-**Related:** [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) (PROPOSED — would narrow §1's trigger rule and §2's handoff order to the watch's own ticks; nothing below has changed yet), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
+**Related:** [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) (ACCEPTED — narrows §1's trigger rule and §2's handoff order to the watch's own ticks; both narrowings are in force, see the notes in those sections), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)
 
 ---
 
@@ -81,18 +81,17 @@ commit having moved. That is wrong: an author who replies to review threads with
 and then re-requests is asking for a real re-review, and a SHA guard would silently ignore
 them. Presence in `reviewRequests` is the entire trigger.
 
-**A narrowing to the watch's own ticks is proposed, not yet in force — see
-[ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) (PROPOSED).**
+**This section is now narrowed to the watch's own ticks — see
+[ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) (ACCEPTED).**
 The field answers "does this PR want a review from me, unattended", and this section made it
 answer a second question it has no standing on: "does the human who just typed the command
 want one now". The first live end-to-end run, on 2026-08-12, hit that — `requested: no` on a
 PR the human had explicitly asked to have reviewed, so the tick printed three lines and did
-nothing. ADR-0025 proposes that an explicit invocation review on its own authority, leaving a
-driver-fired tick to take the rows below exactly as written. **Until that ADR is accepted and
-its implementation lands, this section stands as written: the shipped command gates every
-tick, explicit or driver-fired, on the field.** The proposal adds no local record anywhere, so
-this section's trigger, dedup, and re-trigger reasoning holds under either outcome for every
-unattended tick.
+nothing. **As shipped, an explicit invocation now reviews on its own authority, and the field
+gates only the ticks a repeat driver fires** (they carry `--on-request`), which take the rows
+below exactly as written. The narrowing adds no local record anywhere, so this section's
+trigger, dedup, and re-trigger reasoning is unchanged for every unattended tick — it is simply
+no longer the answer for a tick a human typed.
 
 ### 2. An idempotent tick, driven from outside
 
@@ -111,19 +110,23 @@ where the harness has none, the tick report says outright that nothing will run 
 first draft only mentioned the driver in passing, and a lone tick then read as a watch: it
 answered once and went quiet with no sign that nothing was listening.
 
-**A reordering is proposed, not yet in force — see
+**The handoff order in the paragraph above is superseded and no longer describes the shipped
+command — see
 [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) §4
-(PROPOSED).** The handoff-then-exit order rests on a premise about the driver that does not
+(ACCEPTED).** The handoff-then-exit order rested on a premise about the driver that does not
 hold: `/loop` is cron-backed, and cron fires at the next match rather than on creation, so
 handing off first answers the human with a state read and defers their review by a whole
-interval. ADR-0025 proposes running the tick first and starting the driver at the end, only on
-a non-terminal outcome — which would also retire this section's other cost, a driver still
-ticking after the approval it was started for. **The shipped command still hands off at step 0
-and exits, as described above, until that change lands.** Under either order the tick itself
-holds no timer and no state between runs.
+interval. **As shipped, the tick runs first and the driver is started at the end, only on a
+non-terminal explicit tick that did not pass `--once`** — which also retired this section's
+other cost, a driver still ticking after the approval it was started for. Under either order
+the tick itself holds no timer and no state between runs, and repetition still belongs to the
+harness rather than to this command.
 
 Because a tick is idempotent, running it by hand, twice in a row, or after a crash is
-always safe. There is no resume path to get wrong.
+always safe. There is no resume path to get wrong. That idempotency is now a property of
+**watch** ticks specifically: ADR-0025 gives it up for an explicit tick on purpose, because
+typing the command a second time is a request to review a second time. Nothing persists
+between runs in either mode, so a tick after a crash is still safe.
 
 ### 3. Personal request only
 

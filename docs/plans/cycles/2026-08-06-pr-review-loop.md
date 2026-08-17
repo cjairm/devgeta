@@ -5,9 +5,12 @@
 **Status:** Implementation complete and committed — Step 6 (manual end-to-end) started
 2026-08-12 and found two design defects, recorded as
 [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
-(PROPOSED). That follow-up changes decisions this cycle's §4 locked, so it is deferred to its
-own cycle — [2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
-not started — and the rest of Step 6 and the final whole-branch review are outstanding behind it
+(now ACCEPTED). That follow-up changes decisions this cycle's §4 locked, so it went to its own
+cycle — [2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
+whose command-file, spec and guard-test work shipped 2026-08-17. **Step 6 below has been
+revised for that split but not re-run**, so it and the final whole-branch review are still
+outstanding, and Step 7's two `dg configure --force` deploys remain deferred until after merge.
+This cycle is therefore not closed out.
 
 ---
 
@@ -252,7 +255,7 @@ is deferred rather than added here:
   tick on GitHub's request field refuses a review the human just asked for, and that nothing
   repeats afterwards. The decision is
   [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
-  (PROPOSED) and the file-by-file plan is
+  (ACCEPTED — its behavior shipped 2026-08-17) and the file-by-file plan is
   [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md).
   It belongs there and not here because it reverses the "Reviewing drafts" row above and adds
   deliverables (`--once`, `--on-request`, `--reviewer` as a flag on the tick, a two-mode table)
@@ -783,21 +786,32 @@ file was written, and both were wrong for the human who had just typed the comma
   [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md).
 - Nothing repeated afterwards, and the report naming the `/loop` form read as an
   instruction to go start the watch by hand.
-- `--reviewer=document` is not a spelling step 0 parses (the tick takes bare words; the
-  sibling `/review-loop` takes `--reviewer`), so the reviewer type the human named reached
-  nothing — the third defect ADR-0025 §5 closes.
+- `--reviewer=document` was not a spelling step 0 parsed then (the tick took bare words only;
+  the sibling `/review-loop` takes `--reviewer`), so the reviewer type the human named reached
+  nothing — the third defect, closed by ADR-0025 §5 and now parsed.
 
-So **points 1 and 2 below now describe watch ticks only** (`--on-request`), and the
-sequence needs four points it does not have: an explicit tick reviewing an unrequested PR,
-an explicit tick reviewing a draft and an already-approved PR, the driver being started at
-the end of a non-terminal tick and not started on a terminal one, and `--once` plus both
-`--reviewer` spellings reaching `review-run` — the four cases written out in **Step 3 of
-[cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)**,
-whose plan also covers the command file, the spec, and the guards those cases would exercise.
-Re-run the whole sequence after that cycle lands, not before.
+**The sequence below is revised as of 2026-08-17 and has not been re-run.** The command file,
+the `docs/spec.md` narrative and the guard tests now carry
+[ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)'s
+explicit/watch split (landed by
+[cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
+Steps 1 and 2), so the sequence has been rewritten to match what the command now does. Running
+it is still outstanding — it was not re-run when the split landed, because it posts real
+reviews on a real pull request.
 
-1. Not requested → tick waits, takes no action
-2. Draft + requested → tick waits (the row that must not fall through to review)
+Two things changed in it. **Points 1 and 2 describe watch ticks only, so they are run with
+`--on-request`** — without that flag both now review instead of waiting, which is the point of
+the split, not a failure. And **four new cases come first**: an explicit tick reviewing an
+unrequested PR, an explicit tick reviewing a draft and an already-approved PR, the driver being
+started at the end of a non-terminal tick and not started on a terminal one, and `--once` plus
+both `--reviewer` spellings reaching `review-run`. Those four are written out and tracked as
+**Step 3 of
+[cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)** —
+they belong to that cycle's scope, not to this one's; run them before the fifteen points here.
+
+1. Not requested, run with `--on-request` → tick waits, takes no action
+2. Draft + requested, run with `--on-request` → tick waits (the row that must not fall through
+   to review on a watch tick)
 3. Press the review button → next tick fetches, runs type × model reviewer runs over
    the merge-base range, posts one review
 4. Posted review clears `requested:` (verify with `pr-review-state`)
@@ -839,10 +853,12 @@ What is **not** done, so the header status is not `Done`:
 - Step 6's fifteen-point live sequence has not been run — its first two points were, on
   2026-08-12, and they turned up the two defects
   [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
-  answers. The command file, the `docs/spec.md` narrative, and the prose guards still
-  describe the pre-ADR-0025 behavior, so that follow-up —
+  answers. That follow-up —
   [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
-  deferred out of this locked scope — comes before the rest of the sequence.
+  deferred out of this locked scope — landed on 2026-08-17, so the command file, the
+  `docs/spec.md` narrative and the prose guards now describe the explicit/watch split. Step 6's
+  sequence has been revised to match it; running it, and that cycle's own Step 3 four cases
+  first, is still outstanding.
 - The final whole-branch review (most capable model) has not been run.
 - The two `dg configure --force` deploys are deliberately deferred: they would
   overwrite the maintainer's live agent configuration from an unmerged branch, so
@@ -852,18 +868,20 @@ What is **not** done, so the header status is not `Done`:
 
 The two defects Step 6 found are answered by
 [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
-(PROPOSED), and the fix is **not a step of this cycle**. It reverses §4's "Reviewing drafts"
+(ACCEPTED), and the fix is **not a step of this cycle**. It reverses §4's "Reviewing drafts"
 row and adds deliverables the In Scope list does not carry, so under
-[docs/plans/TEMPLATE.md](../TEMPLATE.md)'s locked-scope rule it is documented for a future
-cycle and referenced here:
+[docs/plans/TEMPLATE.md](../TEMPLATE.md)'s locked-scope rule it was documented as its own cycle
+and is referenced here:
 
 **→ [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)**
-— not started, gated on ADR-0025 being accepted. It carries the file-changes table and the
+— its Steps 1, 2 and 4 shipped on 2026-08-17. It carries the file-changes table and the
 command-file / guard-test / end-to-end steps, and its Step 3 is what Step 6 above waits on.
 
-Nothing from it is implemented, so the branch as it stands is documentation only: the shipped
-command still gates every tick on `requested: yes`, its step 0 rejects any word it does not
-recognize as a reviewer type, and step 7 re-demands the request before posting.
+So the split is implemented: the shipped command parses `--once`, `--on-request` and both
+`--reviewer` spellings, its step 2 table has an explicit column and a watch column, its
+pre-post gate is mode-aware, and the driver handoff sits in its own step 11 after the outcome
+is known. What remains for **this** cycle is unchanged by that: Step 6's sequence still has to
+be run, and Step 7's two deploys still wait for the merge.
 
 ## 6. Verification Plan
 

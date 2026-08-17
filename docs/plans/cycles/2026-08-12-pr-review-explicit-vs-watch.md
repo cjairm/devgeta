@@ -2,9 +2,12 @@
 
 **Date:** 2026-08-12
 **Estimated Duration:** ~3 hours
-**Status:** Blocked — gated on
+**Status:** In Progress — Steps 1, 2 and 4 are implemented, committed and reviewed, and
 [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
-being accepted (it is PROPOSED). Nothing below is implemented.
+is ACCEPTED. **Step 3 (manual end-to-end) has not been run** — it drives the command against a
+real pull request and posts real reviews, so it was left to the maintainer rather than run
+unattended. That is the only outstanding work here; the two `dg configure --force` deploys are
+out of scope by §4 and belong after the branch merges.
 
 ---
 
@@ -62,8 +65,8 @@ here and referenced there as deferred.
     revised.
   - `docs/decisions/ADR-0025-…md` — the decision this cycle implements; §1 carries the two
     tables, §4 the handoff rule, §5 the flag spellings, §6 the mode-aware gate.
-  - `docs/decisions/ADR-0022-…md` — carries two narrowing notes that say "proposed, not yet in
-    force"; they flip when the behavior lands.
+  - `docs/decisions/ADR-0022-…md` — carried two narrowing notes that said "proposed, not yet in
+    force"; both were flipped to in force in Step 4, once the behavior had landed.
 
 - **Key facts involved:**
   - No Go code changes outside the guard tests. The flags are parsed by the agent reading the
@@ -98,16 +101,16 @@ file, `docs/spec.md`, and the guard tests all saying so.
 
 ### In Scope
 
-- [ ] `configs/shared/commands/pr-review-loop.md`: parse `--once` / `--on-request` /
+- [x] `configs/shared/commands/pr-review-loop.md`: parse `--once` / `--on-request` /
       `--reviewer[= ]<type>`; the two-mode decision table; the handoff moved out of step 0;
       the mode-aware pre-post gate; step 11's next-tick line
-- [ ] `docs/spec.md`: the `/pr-review-loop` narrative — usage line, explicit vs watch tick,
+- [x] `docs/spec.md`: the `/pr-review-loop` narrative — usage line, explicit vs watch tick,
       `--once`, the moved handoff
-- [ ] One guard test per clause ADR-0025's Negative section names as able to rot silently
-- [ ] ADR-0025 `Status: PROPOSED` → `ACCEPTED`, and ADR-0022's two narrowing notes flipped
+- [x] One guard test per clause ADR-0025's Negative section names as able to rot silently
+- [x] ADR-0025 `Status: PROPOSED` → `ACCEPTED`, and ADR-0022's two narrowing notes flipped
       from "proposed, not yet in force" to in force — in the same change that lands the behavior
 - [ ] The four end-to-end cases the 2026-08-06 cycle's Step 6 lacks, then a re-run of that
-      sequence whole
+      sequence whole — **not done**, see Step 3
 
 ### Explicitly Out of Scope
 
@@ -126,11 +129,12 @@ cycle and reference here.
 
 ## 5. Implementation Plan
 
-Landing ADR-0025's prose alone would be worse than landing nothing: the shipped command still
-gates every tick on `requested: yes`, its step 0 rejects any word it does not recognize as a
-reviewer type, and step 7 re-demands the request before posting — so an explicit review would
-either stop at the parse, stop at the table, or run the whole cross-model review and post
-nothing.
+Landing ADR-0025's prose alone would have been worse than landing nothing. Before this cycle
+the shipped command gated every tick on `requested: yes`, its step 0 rejected any word it did
+not recognize as a reviewer type, and step 7 re-demanded the request before posting — so an
+explicit review would have stopped at the parse, stopped at the table, or run the whole
+cross-model review and posted nothing. Steps 1 and 2 closed all three, in the same change as
+the status flip.
 
 ### File Changes
 
@@ -152,26 +156,27 @@ command file, and `review-run` already takes `--reviewer` exactly as ADR-0025 §
 
 #### Step 1: The command file
 
-- [ ] Usage line gains the new spellings:
+- [x] Usage line gains the new spellings:
       `/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--reviewer <type>] [--note <text>] [--once] [--on-request]`
-- [ ] Step 0 accepts `--reviewer <type>` and `--reviewer=<type>` as a second spelling of a
+- [x] Step 0 accepts `--reviewer <type>` and `--reviewer=<type>` as a second spelling of a
       bare word — same three values, same verbatim forwarding to
       `review-run --reviewer`, still no `doc` alias (ADR-0025 §5)
-- [ ] Step 0 recognizes `--once` and `--on-request` as flags rather than reviewer types.
+- [x] Step 0 recognizes `--once` and `--on-request` as flags rather than reviewer types.
       Without this the existing "anything else: stop before reading any state" rule is what
       swallows them, which is how `--reviewer=document` reached nothing on 2026-08-12
-- [ ] Step 2's table splits into the explicit and watch columns of ADR-0025 §1, keeping the
+- [x] Step 2's table splits into the explicit and watch columns of ADR-0025 §1, keeping the
       current top-to-bottom first-match-wins order and every row's full state
-- [ ] Step 7's pre-post gate becomes mode-aware (ADR-0025 §6): explicit = still neither
+- [x] Step 7's pre-post gate becomes mode-aware (ADR-0025 §6): explicit = still neither
       merged nor closed **and** `head` unchanged; watch = unchanged. This is the one edit
       whose omission fails silently — the review runs and nothing posts
-- [ ] The handoff moves out of step 0 to its own step after the outcome is known: an explicit,
+- [x] The handoff moves out of step 0 to its own step after the outcome is known: an explicit,
       non-terminal tick without `--once` starts
       `/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request` and says it
       did; a `--on-request` tick starts nothing, whatever its outcome (ADR-0025 §4)
-- [ ] Step 11's next-tick line follows the new rule: name the driver this tick just started,
+- [x] The next-tick line follows the new rule: name the driver this tick just started,
       or — on `--once`, on OpenCode, or on a terminal exit — say plainly that nothing will
-      run another
+      run another. It is **step 12** in the shipped file: the new handoff step took the
+      number 11, so the report step moved from 11 to 12
 - Verify: read the file end to end as a stranger would; every flag in the usage line is parsed
   in step 0, and every table row still resolves to exactly one action
 
@@ -186,7 +191,7 @@ others describing a handoff that has moved.
 
 **2a. Revise the guards that already exist.**
 
-- [ ] `TestPRReviewLoopStartsTheWatchItPromises` — **fails as soon as Step 1 lands.** It
+- [x] `TestPRReviewLoopStartsTheWatchItPromises` — **fails as soon as Step 1 lands.** It
       asserts that the step 0 section contains `repeat driver`, which is exactly the sentence
       the move deletes. After the change it must read the new handoff step instead and assert
       three things: the driver is started there, that step comes **after** the outcome is
@@ -197,21 +202,23 @@ others describing a handoff that has moved.
       unaffected and stays. Its step 11 half keeps `what will run the next tick` and gains the
       other branch: a tick that starts nothing — `--once`, OpenCode, a terminal exit — must
       say so.
-- [ ] `TestPRReviewLoopForwardsTheNote` — still passes after Step 1, and that is the problem.
+- [x] `TestPRReviewLoopForwardsTheNote` — still passes after Step 1, and that is the problem.
       It reads the driver form out of the **Usage** section only, and after the move the line
       the tick actually runs is the one in the handoff step. Extend the same span check to
       that step's form, so a `--note` dropped from the line that really starts the watch fails
       here rather than in a human's silence. Its wording names step 0 as the handoff site in
       two places — the doc comment's "steps 0 and 5 stay correct" and the failure message's
       "steps 0 and 5 look correct while it happens" — and both need rewording.
-- [ ] `TestPRReviewLoopDescriptionCarriesTriggersNotTheHandoff` — its assertions hold (the
+- [x] `TestPRReviewLoopDescriptionCarriesTriggersNotTheHandoff` — its assertions hold (the
       frontmatter description must carry neither `/loop` nor a `step <n>` reference), but its
       failure message tells the author to "Keep the form in Usage and step 0" — after the move
       that points at the one step that must not carry it. Point it at the handoff step.
-- [ ] `TestPRReviewLoopForwardsReviewerTypes` — assertions hold as written (`$ARGUMENTS` plus
+- [x] `TestPRReviewLoopForwardsReviewerTypes` — assertions hold as written (`$ARGUMENTS` plus
       every `worktree.BuiltinReviewerChoices()` key in step 0); the new spellings are 2b's
       job. Only its anchor moves, and only if step 0's heading is renamed to mention the flags.
-- [ ] `internal/tooling/task/prreviewstate_test.go`'s `TestPRReviewStateDecisionTable` — the
+      It was: `prReviewLoopParseHeading` is now
+      `### 0. Resolve the PR number, the reviewer types, the note, and the mode`.
+- [x] `internal/tooling/task/prreviewstate_test.go`'s `TestPRReviewStateDecisionTable` — the
       three state lines it asserts do not change, because the state read does not. What goes
       stale is its documentation: the comment cites "cycle 2026-08-06-pr-review-loop §5" as
       _the_ decision table, and each row's `action` field (`wait` for a draft, for instance) is
@@ -238,13 +245,16 @@ or every guard reading that section fails on a missing anchor rather than on its
 
 **2b. Add one guard per clause ADR-0025's Negative section names as able to rot silently:**
 
-- [ ] The driver line the file tells the tick to start carries `--on-request`
-- [ ] A `--on-request` tick starts no driver of its own (no second `/loop`)
-- [ ] The explicit rows are not request-gated — draft, unrequested, and already-approved are
-      all reviewed by an explicit tick
-- [ ] The pre-post gate is mode-aware and does not require `requested: yes` on an explicit
-      tick
-- [ ] Both `--reviewer` spellings and `--once` appear in the usage line and step 0
+- [x] The driver line the file tells the tick to start carries `--on-request`
+      — `TestPRReviewLoopMarksTheDriversTicksAsWatchTicks`
+- [x] A `--on-request` tick starts no driver of its own (no second `/loop`)
+      — `TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn`
+- [x] The explicit rows are not request-gated — draft, unrequested, and already-approved are
+      all reviewed by an explicit tick — `TestPRReviewLoopExplicitRowsAreNotRequestGated`
+- [x] The pre-post gate is mode-aware and does not require `requested: yes` on an explicit
+      tick — `TestPRReviewLoopPrePostGateIsModeAware`
+- [x] Both `--reviewer` spellings and `--once` appear in the usage line and step 0
+      — `TestPRReviewLoopParsesBothReviewerSpellingsAndOnce`
 
 Two of these have nothing to revise first: no test reads step 2's decision table or step 7's
 pre-post gate today — neither section has an anchor constant — so the explicit-rows guard and
@@ -257,6 +267,13 @@ clause it now points at is deleted — check both by deleting, not by assuming. 
 that passes against the old wording as well as the new one is pinning nothing.
 
 #### Step 3: End-to-end — the four cases the 2026-08-06 cycle's Step 6 lacks
+
+**NOT RUN.** This step drives the command against a real pull request and posts real reviews
+on it, so it was deliberately left to the maintainer rather than run unattended. Every box
+below is unchecked because none of these cases has been exercised — the behavior they would
+verify is implemented and guarded by tests, but it has not been driven live. The revision this
+step describes has been applied to the 2026-08-06 cycle's Step 6 as documentation; that
+sequence has not been re-run either.
 
 That cycle's Step 6 points 1 and 2 describe watch ticks only, so they are run with
 `--on-request`. These four are new, and come before the rest of that sequence:
@@ -276,12 +293,15 @@ Step 7's two `dg configure --force` deploys after merge.
 
 #### Step 4: Close out the decisions
 
-- [ ] ADR-0025 `Status: PROPOSED` → `ACCEPTED` (maintainer's call, not the implementer's)
-- [ ] ADR-0025 §7's "nothing above is implemented yet" paragraph rewritten to describe what now
+- [x] ADR-0025 `Status: PROPOSED` → `ACCEPTED` (maintainer's call, not the implementer's) —
+      done 2026-08-17 on the go-ahead recorded in §8
+- [x] ADR-0025 §7's "nothing above is implemented yet" paragraph rewritten to describe what now
       ships — a docs-only landing must not have claimed the behavior existed, and an
       implemented one must not still say it does not
-- [ ] ADR-0022's two narrowing notes flipped to in force
-- [ ] Check off the boxes here and in the 2026-08-06 cycle's Step 6
+- [x] ADR-0022's two narrowing notes flipped to in force (its `Related:` line and the §2
+      idempotency sentence went with them)
+- [x] Check off the boxes here and revise the 2026-08-06 cycle's Step 6 — its own sequence
+      stays unchecked, because it has not been re-run
 
 ---
 
@@ -340,6 +360,21 @@ The four cases in Step 3, then the 2026-08-06 cycle's fifteen-point Step 6 seque
 - [ ] Verification is executable?
 - [ ] Risks are realistic?
 
+**The seven boxes above are unchecked because no cross-model document review of this plan was
+ever run.** The maintainer go-ahead below is not one, and must not be read as one.
+
+**Maintainer go-ahead:**
+**Given 2026-08-17.** The maintainer read this plan, judged the `Blocked` header line and the
+"do not start until ADR-0025 is ACCEPTED" implementer rule stale, and said to proceed.
+
+What it authorizes: the work in Steps 1, 2 and 4, and the ADR-0025 status flip from `PROPOSED`
+to `ACCEPTED` once the behavior landed.
+
+What it does **not** authorize or constitute: a cross-model review of this document (the seven
+boxes above stay unchecked), running Step 3's live end-to-end cases, closing out
+[cycle 2026-08-06-pr-review-loop](2026-08-06-pr-review-loop.md), or the two
+`dg configure --force` deploys that §4 puts after the merge.
+
 **Reviewer notes:**
 (Fill in during review.)
 
@@ -349,8 +384,17 @@ The four cases in Step 3, then the 2026-08-06 cycle's fifteen-point Step 6 seque
 
 - **Read ADR-0025 before touching the command file.** Its §1, §4, §5 and §6 are the
   specification; this document is only the file-by-file route.
-- **Do not start until ADR-0025 is ACCEPTED.** While it is PROPOSED, the shipped artifacts
-  correctly describe ADR-0022's behavior, and a half-landing is worse than neither.
+- **Do not land the decision prose without the behavior.** While ADR-0025 was PROPOSED the
+  shipped artifacts correctly described ADR-0022's behavior, and a half-landing is worse than
+  neither: the ADR flipped early would claim a split no artifact carries, and the artifacts
+  changed without the flip would contradict a PROPOSED decision. So land both in the same
+  change and flip the status **last**, in Step 4 — which is why this is not written as "wait
+  for ACCEPTED first". It cannot be: `docs/decisions/README.md` defines `ACCEPTED` as decided
+  **and implemented**, so ADR-0025 could not reach that status until this cycle's behavior
+  shipped. A sibling cycle
+  ([2026-08-12-review-loop-narrows-to-blocking-reviewers](2026-08-12-review-loop-narrows-to-blocking-reviewers.md))
+  hit the same trap and had an early flip reverted for exactly this reason. What the
+  maintainer's go-ahead unblocks is the work; the status is the last step of it.
 - **Nothing here may become devgeta-specific.** `configs/shared/commands/pr-review-loop.md`
   runs in other people's repositories (CLAUDE.md §12).
 - **Both agents, or neither.** Any rule added for Claude Code must hold for OpenCode; the

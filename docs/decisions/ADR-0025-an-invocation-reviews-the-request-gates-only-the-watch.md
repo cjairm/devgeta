@@ -1,7 +1,7 @@
 # ADR-0025: An invocation reviews now; the request field gates only the watch
 
-**Status:** PROPOSED
-**Date:** 2026-08-12
+**Status:** ACCEPTED
+**Date:** 2026-08-12 (accepted 2026-08-17, when the behavior below landed)
 **Deciders:** cjairm
 **Related:** [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) (narrows its §1 trigger rule and §2 handoff order), [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md) (where the defects surfaced), [cycle 2026-08-12-pr-review-explicit-vs-watch](../plans/cycles/2026-08-12-pr-review-explicit-vs-watch.md) (the plan that lands this)
 
@@ -163,7 +163,7 @@ a review request:
 Left as it is, this gate is where the whole change would die silently: an explicit tick would
 run the full cross-model review, reach a gate demanding `requested: yes`, and post nothing.
 
-### 7. Nothing above is implemented yet, and the plan for it lives in the cycle
+### 7. What ships, and where the plan for it lives
 
 This ADR records the decision and its rationale only; the file-by-file plan — the command
 file's parser and tables, `docs/spec.md`, the command guard tests, and the revised end-to-end
@@ -174,13 +174,29 @@ own rather than a step of
 scope is locked and this reverses one of its out-of-scope rows; that cycle references it as
 deferred follow-up work.
 
-While this ADR is PROPOSED, the shipped `configs/shared/commands/pr-review-loop.md`, the
-`docs/spec.md` narrative, and the guard tests all still describe
-[ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md)'s behavior: every tick is
-request-gated, the handoff sits at step 0, and `--once` / `--on-request` / `--reviewer` are not
-spellings the command parses. The split described above therefore exists in no artifact yet,
-and landing the decision prose without that cycle would leave explicit reviews failing exactly as
-they did on 2026-08-12.
+**The split above is implemented.** As of 2026-08-17 the shipped
+`configs/shared/commands/pr-review-loop.md` carries all of it: the usage line offers
+`--reviewer <type>`, `--once`, and `--on-request`; step 0 resolves the mode and both
+`--reviewer` spellings before anything is classified as a reviewer type; step 2's decision
+table has the two columns of §1 above, in the same first-match-wins order; step 7's pre-post
+gate is mode-aware exactly as §6 describes; and the handoff has moved out of step 0 into its
+own step 11, "Start the watch, unless this tick was one", after the outcome is known — which
+renumbered the report step from 11 to 12. `docs/spec.md`'s `/pr-review-loop` narrative
+describes the same two modes and flags.
+
+Because the split lives in prose, `internal/apps/opencode/permissions_test.go` pins the five
+clauses the Negative section below names as able to rot silently — the `--on-request` marker on
+the driver's line, a watch tick starting no driver of its own, the explicit rows not being
+request-gated, the mode-aware pre-post gate, and both `--reviewer` spellings plus `--once`
+being parsed — alongside revisions to the ten pre-existing PR-loop guards that the moved and
+renumbered steps left stale. `internal/tooling/task/prreviewstate_test.go` changed only in its
+comment and its per-row labels: the state read itself is unchanged, so what it documents is now
+which mode each action belongs to.
+
+What is **not** done is the live end-to-end run — the cycle's Step 3, which drives the command
+against a real pull request and posts real reviews — and the two `dg configure --force`
+deploys, which the cycle defers until the branch merges. Neither is an implementation gap; the
+behavior above is in the artifacts a user installs.
 
 ## Consequences
 
