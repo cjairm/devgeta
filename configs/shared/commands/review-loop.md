@@ -1061,22 +1061,22 @@ settled entry's `answer:` line carries an `agent:` rejection awaiting ratificati
 ### Reviewer configuration
 <the block below: the current value of `review.reviewers`, then exactly one of the
 recorded restore command or the reason there is none, plus which check turned
-narrowing off if one did. Required here too — a run can reach a clean approval having
-narrowed the key along the way, and this template is the only thing that says so.>
+narrowing off if one did.>
 ```
 
 Do not write `Round <n> of <cap>` here. The cap counts rounds **within one phase**
 (step 5), so the round number of a whole run routinely exceeds it, and a run of 5
 rounds against a cap of 3 is a normal run rather than a violated limit.
 
+The reviewer-configuration block is required here too — a run can reach a clean approval
+having narrowed the key along the way, and this template is the only thing that says so.
+
 **Report to the human** — everything else, including a reviewer failure (step 2), a round
 that withheld approval without recording a finding (step 3), a finding that needs a human
 (step 4), and the confirming round ending in anything other than a clean approval (step
 5). Hitting the round cap is **not** a report trigger on its own: the cap is per phase, so
 a narrowing phase that reaches it ends that phase and routes to the confirming round (step
-5). Only the confirming phase's ending ends the run. The one run that reports without a
-confirming round at all is the run in which every reviewer failed and none ever approved
-(step 5).
+5). Reaching a cap ends a phase, and only the confirming phase's cap ends the run.
 
 ```
 ## Review loop — report
@@ -1137,7 +1137,7 @@ instruction. Follow it exactly.
 
 ### The reviewer-configuration block
 
-Both templates carry this block, and **no exit path may be silent about
+Both templates carry this block, and **no terminal report may be silent about
 `review.reviewers`** — a human always has to learn whether the loop touched their config.
 This is the second of the two places the loop reports on the key: step 1 puts the restore
 command on screen before the first mutation, precisely because a run that never reaches a
