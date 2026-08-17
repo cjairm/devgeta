@@ -280,16 +280,16 @@ command that runs with whatever this agent's shell can do. A config value is unt
 input to a command line, and untrusted input is validated before use. So single-quote
 each entry and escape any single quote inside it the usual way (`'\''`), in **every**
 command line the loop composes from recorded entries — not just the ones that write the
-key. That is the narrowing write, the restore, the restore command printed for a human,
-**and every comparison string an entry or the entries' `", "` join is embedded in**: the
-proof check above, the pre-write check, the post-round check, the post-restore
-verification, and the expected `<key>: <previous> -> <new>` line a captured write is
-compared against. A `'` is legal inside a stored entry and needs the same `'\''` escape
-in those comparison strings, because each sits inside a `[ … = '…' ]` test — an
-unescaped one closes the string early and the rest of the entry runs as a command, on the
-opening round, before any refusal in this file could have fired. The printed one is not
-the lesser case either — it is the one a human pastes into their own shell, and it is the
-only recovery an interrupted run leaves behind.
+key. That includes the narrowing write, the restore, the restore command printed for a
+human, the report's own display lines, **and every comparison string an entry or the
+entries' `", "` join is embedded in**: the proof check above, the pre-write check, the
+post-round check, the post-restore verification, and the expected `<key>: <previous> ->
+<new>` line a captured write is compared against. A `'` is legal inside a stored entry
+and needs the same `'\''` escape in those comparison strings, because each sits inside a
+`[ … = '…' ]` test — an unescaped one closes the string early and the rest of the entry
+runs as a command, on the opening round, before any refusal in this file could have
+fired. The printed one is not the lesser case either — it is the one a human pastes into
+their own shell, and it is the only recovery an interrupted run leaves behind.
 
 **Quoting protects the shell; it does nothing for the terminal.** Single quotes stop
 `anthropic/a; echo INJECTED` from becoming a second command, and stop nothing about an
@@ -526,15 +526,16 @@ state both checks have just ruled out.
 
 On a mismatch, the write landed on a value the loop never recorded. The end state is the
 same from either write: the key holds the **record** — a narrowing write's round runs on
-and its normal post-round restore puts the record back, and a restore write has already
-put it back. Narrowing stops from there, and the report names the recorded list in the
-escaped rendering, since the loop composed that one, beside the replaced value put
-through the filter. Leaving the key narrowed instead would be strictly worse, which is
-why the round is not aborted. And the loop must **not** try to put the replaced value
-back: that printed string is joined exactly the way `get`'s is, so it carries the same
-one-entry-or-two ambiguity the record's proof exists to avoid, and rebuilding a list from
-a joined string is the exact mistake this whole protocol is built to prevent. Detection
-and an honest report, not a repair.
+and its normal post-round restore puts the record back, unless the post-round check also
+fails in that same round, in which case the value is left as found; and a restore write
+has already put it back. Narrowing stops from there, and the report names the recorded
+list in the escaped rendering, since the loop composed that one, beside the replaced
+value put through the filter. Leaving the key narrowed instead would be strictly worse,
+which is why the round is not aborted. And the loop must **not** try to put the replaced
+value back: that printed string is joined exactly the way `get`'s is, so it carries the
+same one-entry-or-two ambiguity the record's proof exists to avoid, and rebuilding a
+list from a joined string is the exact mistake this whole protocol is built to prevent.
+Detection and an honest report, not a repair.
 
 **Exactly how much that detection is worth, since one part of it does not work.**
 The comparison catches every replaced value whose bytes differ from the expected line — a
@@ -1293,8 +1294,9 @@ Two of the three need their own sentence rather than that generic one:
   one-command race the pre-write check cannot close (step 1). Say that the value is gone,
   print the captured line through the filter, and say plainly that the loop cannot
   reconstruct it, because that string is joined the same ambiguous way `devgeta config get`
-  is. Say also that the round's normal restore still put the record back, so the key is not
-  left narrowed.
+  is. Say also that the round's normal restore put the record back, unless the post-round
+  check also failed in that same round, in which case the value was left as found and the
+  key may still be narrowed.
 
   State the limit in the same breath, since a report implying this check is airtight is
   worse than one that never mentions it: a replacement whose printed form is byte-identical
