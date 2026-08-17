@@ -3163,11 +3163,17 @@ func TestPRReviewLoopMarksTheDriversTicksAsWatchTicks(t *testing.T) {
 // whole-file check green while the two halves of the file contradicted each
 // other.
 //
-// What this catches: the handoff step losing its explicit-only precondition, or
-// either statement of the no-second-driver rule being deleted.
+// What this catches: the handoff step losing its explicit-only precondition,
+// either statement of the no-second-driver rule being deleted, or a fourth
+// occurrence of the driver form `/loop <interval> /pr-review-loop` appearing
+// anywhere in the file. That count is the one structural signal available for
+// "no other site hands this command to a driver" (ADR-0025 §4): the three
+// legitimate sites — Usage, the handoff step, the report step — put the count
+// at exactly 3, so a fourth site anywhere raises it and fails here, whether or
+// not that fourth site's own prose reads correctly on its own.
 // What this does NOT catch: an agent reading the rule and starting a driver
-// anyway, or a handoff added somewhere else in the file — the one-place property
-// is pinned for step 0 only, by TestPRReviewLoopStartsTheWatchItPromises.
+// anyway, or a fourth site that hands off in prose with no `/loop` literal in
+// it — the count only sees the literal form, not a paraphrase of it.
 func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
 	path, body := readSharedCommand(t, "pr-review-loop.md")
 
@@ -3200,6 +3206,28 @@ func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
 				"the flow — the handoff step keeping it is not a reason to drop it here, "+
 				"because the reverse revert is just as easy",
 			path, rule,
+		)
+	}
+
+	// The one structural signal available for "no other site hands this command
+	// to a driver": the three legitimate sites (Usage, the handoff step, the
+	// report step) write the exact form `/loop <interval> /pr-review-loop`
+	// once each, so the count over the whole file is 3. A fourth site anywhere
+	// — a new handoff added in a future step, a stray copy left over from an
+	// edit — raises that count even if its own local prose reads correctly.
+	// Whitespace is collapsed over the whole body first, the same as
+	// flowSection does per-section, so a hand-rewrap that splits the form
+	// across a line break still counts.
+	const driverForm = "/loop <interval> /pr-review-loop"
+	flatBody := strings.Join(strings.Fields(body), " ")
+	if got := strings.Count(flatBody, driverForm); got != 3 {
+		t.Errorf(
+			"%s writes the driver form %q %d times; want exactly 3 (Usage, the "+
+				"handoff step, and the report step — ADR-0025 §4). A count above 3 "+
+				"means a fourth site is handing this command to a driver, which "+
+				"starts a second driver on every tick that fourth site fires; a count "+
+				"below 3 means one of the three legitimate sites lost it",
+			path, driverForm, got,
 		)
 	}
 }
@@ -3255,8 +3283,14 @@ func markdownTableRows(section string) [][]string {
 // not consult `requested:` at all.
 //
 // What this catches: any row's action changing in either column, a row
-// disappearing or its state cells being reworded, and an explicit cell growing a
-// request condition.
+// disappearing or its state cells being reworded, an explicit cell growing a
+// request condition, a cell naming two actions instead of exactly one, and —
+// because the `approved` row and the anything-else row are the only two of the
+// five whose state cells overlap ("anything else" subsumes `approved`) — those
+// two being swapped. A state-cell match alone cannot see the swap, since both
+// rows still exist afterward with the right action in the right column; only
+// their relative order does, and first-match-wins makes that order the thing
+// that actually decides which row a watch tick lands on.
 // What this does NOT catch: an agent reading the right row and taking the wrong
 // action, the prose around the table contradicting it in some wording this does
 // not name, or a sixth row added below (the table is evaluated first-match-wins,
@@ -3293,6 +3327,10 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 	// Column 3 is the explicit tick's action, column 4 the watch tick's, after
 	// the three state columns (`pr:`, `requested:`, `my-review:`).
 	const explicitCol, watchCol = 3, 4
+
+	// Row indexes of the two overlapping rows, filled in as the loop below
+	// finds them, and compared once the loop is done.
+	approvedRowIndex, catchAllRowIndex := -1, -1
 	for _, want := range []struct {
 		state    [3]string
 		explicit string
@@ -3341,10 +3379,12 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 		},
 	} {
 		var cells []string
-		for _, row := range rows {
+		matchedIndex := -1
+		for i, row := range rows {
 			if len(row) > watchCol &&
 				row[0] == want.state[0] && row[1] == want.state[1] && row[2] == want.state[2] {
 				cells = row
+				matchedIndex = i
 				break
 			}
 		}
@@ -3357,6 +3397,13 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 				path, want.state[0], want.state[1], want.state[2],
 			)
 			continue
+		}
+
+		switch want.state[2] {
+		case "`approved`":
+			approvedRowIndex = matchedIndex
+		case "anything else":
+			catchAllRowIndex = matchedIndex
 		}
 
 		if !strings.Contains(cells[explicitCol], want.explicit) {
@@ -3379,6 +3426,38 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 				want.watch, cells[watchCol], want.why,
 			)
 		}
+
+		// Exactly one action per cell, not merely the wanted one present: a cell
+		// carrying two actions ("**Review** — steps 3 to 9, but **Wait** if …")
+		// would pass the two Contains checks above while leaving the actual
+		// choice between them to whichever agent reads it.
+		for _, other := range []string{"Review", "Wait", "Terminal"} {
+			if other != want.explicit && strings.Contains(cells[explicitCol], other) {
+				t.Errorf(
+					"%s step 2's row for pr=%q requested=%q my-review=%q's EXPLICIT cell "+
+						"names %q in addition to its %q action (cell reads %q). A row is "+
+						"supposed to pick exactly one action; a cell naming two leaves the "+
+						"choice between them to whichever agent reads it",
+					path, want.state[0], want.state[1], want.state[2],
+					other, want.explicit, cells[explicitCol],
+				)
+			}
+			if other != want.watch && strings.Contains(cells[watchCol], other) {
+				t.Errorf(
+					"%s step 2's row for pr=%q requested=%q my-review=%q's WATCH cell "+
+						"names %q in addition to its %q action (cell reads %q). A row is "+
+						"supposed to pick exactly one action; a cell naming two leaves the "+
+						"choice between them to whichever agent reads it",
+					path, want.state[0], want.state[1], want.state[2],
+					other, want.watch, cells[watchCol],
+				)
+			}
+		}
+
+		// This fires on any occurrence of "request" in the explicit cell, not
+		// just a condition on `requested:` — a cell reading "**Review** — steps
+		// 3 to 9, request button or not" would trip it too. Tighten the cell's
+		// wording rather than weakening this check.
 		if strings.Contains(cells[explicitCol], "request") {
 			t.Errorf(
 				"%s step 2's row for pr=%q requested=%q my-review=%q makes the EXPLICIT "+
@@ -3389,6 +3468,38 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 				path, want.state[0], want.state[1], want.state[2], cells[explicitCol],
 			)
 		}
+	}
+
+	// The `approved` row and the anything-else row are the only two of the five
+	// whose state cells overlap: "anything else" matches every `my-review:`
+	// value the approved row already claimed, so which one is checked FIRST is
+	// the only thing that tells them apart (ADR-0025 §1's first-match-wins).
+	// Both rows existing with the right action in the right column — which is
+	// all the checks above can see — is not enough: swap their order in the
+	// file and every check above still passes, while a watch tick on a PR this
+	// user already approved now matches the catch-all row first and waits
+	// instead of going terminal.
+	if approvedRowIndex < 0 || catchAllRowIndex < 0 {
+		t.Fatalf(
+			"%s step 2's table is missing the `approved` row, the anything-else "+
+				"row, or both — the order check below has nothing to compare",
+			path,
+		)
+	}
+	if approvedRowIndex >= catchAllRowIndex {
+		t.Errorf(
+			"%s step 2's table has the `open`/`requested: no`/`approved` row (row "+
+				"index %d) at or after the `open`/`requested: no`/anything-else row "+
+				"(row index %d). Rows are evaluated first-match-wins (ADR-0025 §1), "+
+				"and \"anything else\" subsumes `approved`, so with this order a watch "+
+				"tick on a PR this user already approved now matches the catch-all "+
+				"row first and WAITS instead of going terminal — ADR-0025 §3's \"a "+
+				"standing approval is terminal\" is gone, and the driver §4 promised "+
+				"would stop at an approval never stops: it ticks forever on a pull "+
+				"request that is already done. Move the `approved` row back above "+
+				"the anything-else row",
+			path, approvedRowIndex, catchAllRowIndex,
+		)
 	}
 }
 
@@ -3411,8 +3522,12 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 //
 // What this catches: either branch of the mode split disappearing, the explicit
 // branch losing what it now requires instead (neither merged nor closed), the
-// clause that says an absent request cannot cancel an explicit post, and the
-// request requirement migrating into the explicit branch.
+// clause that says an absent request cannot cancel an explicit post, the
+// request requirement migrating into the explicit branch directly
+// (`requested: yes`), and the same migration done additively instead — a
+// rewrite that keeps both pinned explicit phrases but also requires the fresh
+// state to land on the watch branch's Review row, re-gating the explicit tick
+// under a different name.
 // What this does NOT catch: an agent applying the wrong branch, and — because
 // the negative check fires on any mention of `requested: yes` in the explicit
 // branch — a future rewrite that names the flag only to disclaim it will trip
@@ -3426,6 +3541,14 @@ func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 	const (
 		explicitMarker = "**Explicit tick:**"
 		watchMarker    = "**Watch tick (`--on-request`):**"
+		// The next top-level bullet after both mode branches. Bounding each
+		// branch here too — not just at the other branch's marker — keeps the
+		// slicing symmetric: without it, whichever branch comes second in the
+		// file runs to the end of step 7 and swallows "When the condition
+		// fails" and this bullet's own head-moved clause, so a required
+		// substring could be satisfied by that tail instead of by the branch
+		// it is supposed to pin.
+		headBulletMarker = "`head` must still equal"
 	)
 	explicitAt := strings.Index(gate, explicitMarker)
 	watchAt := strings.Index(gate, watchMarker)
@@ -3445,6 +3568,16 @@ func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 		explicitBranch = gate[explicitAt:watchAt]
 	} else {
 		watchBranch = gate[watchAt:explicitAt]
+	}
+	// Bound whichever branch runs to the end at the head bullet instead, so
+	// neither branch's required substring can be satisfied by the shared tail
+	// that follows both of them.
+	if headAt := strings.Index(gate, headBulletMarker); headAt >= 0 {
+		if watchAt > explicitAt {
+			watchBranch = gate[watchAt:headAt]
+		} else {
+			explicitBranch = gate[explicitAt:headAt]
+		}
 	}
 
 	for _, req := range []struct {
@@ -3492,6 +3625,24 @@ func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 			path, strings.TrimSpace(explicitBranch),
 		)
 	}
+
+	// The additive form of the same re-gating: a rewrite can keep both phrases
+	// pinned above word-for-word and still require the fresh state to land on
+	// the watch branch's "Review row" beside them, which re-gates the explicit
+	// post on `requested: yes` under a name this guard's other checks do not
+	// name.
+	if strings.Contains(explicitBranch, "Review row") {
+		t.Errorf(
+			"%s step 7's EXPLICIT branch mentions the \"Review row\" — that is the "+
+				"watch branch's own gate (\"the state must still land on the Review "+
+				"row\"), and requiring it in the explicit branch too re-gates the post "+
+				"on `requested: yes` under a different name. This guard's other checks "+
+				"can stay word-for-word correct while this is added beside them, and "+
+				"the tick still runs the whole cross-model review and then silently "+
+				"posts nothing (ADR-0025 §6). The branch reads: %q",
+			path, strings.TrimSpace(explicitBranch),
+		)
+	}
 }
 
 // TestPRReviewLoopParsesBothReviewerSpellingsAndOnce pins the flag spellings the
@@ -3525,6 +3676,11 @@ func TestPRReviewLoopParsesBothReviewerSpellingsAndOnce(t *testing.T) {
 
 	// The synopsis line itself, not the Usage prose around it: it is what a human
 	// copies, and it is the one line in the file that has to list every flag.
+	// This reads the section uncollapsed and splits on "\n", so it assumes the
+	// synopsis stays one physical line inside its fence — a fence is never
+	// hand-rewrapped the way the prose sections are, so nothing here tolerates
+	// it being split. If a future edit ever wraps it, this extraction needs
+	// flowSection's whitespace-collapsing to keep finding it.
 	usage := markdownSection(t, body, prReviewLoopUsageHeading)
 	synopsis := ""
 	for _, line := range strings.Split(usage, "\n") {
