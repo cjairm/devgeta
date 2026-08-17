@@ -318,10 +318,12 @@ the command print it, at which point the raw bytes are already on screen. That i
 whole limit of the rule above. So never run that `get` bare when its output is going to
 be seen; display it through `devgeta config get review.reviewers | LC_ALL=C sed -n l`
 instead, which prints ESC as `\033` and a carriage return as `\r` and marks the end of
-the line with `$`, so nothing raw leaves the pipe. Four displays take this route: the
+the line with `$`, so nothing raw leaves the pipe. Five displays take this route: the
 `get` line at step 0, the found value in a mid-round mismatch, the current value in both
-report templates, and the value `devgeta config set` reports it replaced — which is a
-config value the loop did not compose either, captured first and then filtered (below).
+report templates, the value `devgeta config set` reports it replaced — which is a
+config value the loop did not compose either, captured first and then filtered (below) —
+and whatever `devgeta config set` puts on stderr when a write exits non-zero, also
+captured first and then filtered.
 The proof checks take neither route, because `$( )` and `| wc -l` never put the stored
 bytes on screen.
 
@@ -576,10 +578,12 @@ below, and they are not met on every round — run these six steps in this order
 reorder them:
 
 1. **Check.** The key still holds the recorded list: the two checks above, run against the
-   record. If either fails, this round does not narrow at all — go straight to step 3 and
-   run on the config as it stands, with narrowing off for the rest of the run.
+   record. If either fails, steps 2, 4 and 5 do not run this round — go straight to step 3,
+   run on the config as it stands, then step 6, with narrowing off for the rest of the run.
 2. **Narrow.** `devgeta config set review.reviewers` with one single-quoted argument per
-   still-blocking entry, captured and compared as above.
+   still-blocking entry, captured and compared as above. If this write exits non-zero,
+   steps 4 and 5 do not run this round either — go straight to step 3, run on the config as
+   it stands, then step 6, with narrowing off for the rest of the run.
 3. **Run.** `devgeta task review-run`, with whatever step 0 resolved.
 4. **Check again.** The key still holds the narrowed list: the same two checks, run against
    the narrowed list this time. If either fails, do not restore — leave the value exactly
@@ -612,8 +616,7 @@ loop did not write, which is why the report names both.
 set has to be a **strict subset** of the recorded list, **and** every check above has to
 have passed:
 
-- the record proved — the `get` output one line, and byte-identical to the labels joined
-  with `", "`;
+- the record proved — both checks under **Prove the record before using it** passed;
 - every recorded entry one `devgeta config set` can write back;
 - every recorded entry free of control bytes;
 - no earlier round having ended with the key holding something other than the narrowed list
@@ -622,7 +625,7 @@ have passed:
 - and the key still holding the recorded list when checked immediately before this write.
 
 Otherwise the round runs on the config exactly as the user left it: no write, no restore.
-Eight cases land there, each for its own reason.
+Eight narrowing-set cases land there, each for its own reason.
 
 - **A one-reviewer set, configured or the unset default.** A single reviewer that withheld
   approval is already the whole set, so there is nothing to drop. This is what makes an
@@ -665,10 +668,13 @@ touches the key. That window opens only on the rounds that drop someone.
 it refuses, so a failed write changes nothing. That is what the `|| exit 1` in the
 captured-write snippet above ends: the one shell command, so the comparison never runs
 against output the command never produced. It does not end the loop — never read it as an
-instruction to abandon the run. Treat it as a refusal: the loop does not narrow this round,
-narrowing is off for the rest of the run, and the report names the write that failed along
-with whatever `devgeta config set` put on stderr. That is the same branch as the refusals
-above — full configured list every round from here, `review.reviewers` never written again.
+instruction to abandon the run. Treat it as a refusal: if the write that failed was the
+narrowing write, the loop does not narrow this round; if it was the restore, the round
+already narrowed. Either way narrowing is off for the rest of the run, and the report names
+the write that failed along with whatever `devgeta config set` put on stderr, captured and
+shown through the same `LC_ALL=C sed -n l` filter as the replaced-value line above. That is
+the same branch as the refusals above — full configured list every round from here,
+`review.reviewers` never written again.
 A rejected value should be unreachable by this point, since every recorded entry was
 screened for writability before the first narrowing write; this is the branch for a write
 that fails anyway. One thing to state rather than leave to be worked out: if it was the
