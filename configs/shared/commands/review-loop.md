@@ -92,7 +92,9 @@ it:
   recorded — checked again immediately before every narrowing write, not assumed from
   an earlier check.
 - It restores the key after every single round, never held narrowed for a whole phase:
-  narrow, run the round, restore, before the key is touched again for the next round.
+  narrow, run the round, restore, before the key is touched again for the next round. If a
+  restore ever fails or does not land, the run stops there rather than carry on against a
+  key the loop cannot put back — see `### 1`.
 - It writes the key at all only when the narrowing set is a strict subset of the
   recorded list. A round that would narrow to the same list it already holds makes no
   write and runs on the configured value as it stands.
@@ -105,7 +107,9 @@ it:
 - If the key no longer holds what the loop expects to find there — the recorded list
   before a narrowing write, or the narrowed list before a restore — because something
   else changed it in between, the loop leaves the key exactly as found and stops
-  narrowing for the rest of the run.
+  narrowing for the rest of the run. It stops the run itself as well, unless what it
+  found is the recorded list: a key the loop may no longer write and can no longer show
+  holds the record is one no confirming round may run against — see `### 1`.
 
 ## Flow
 
@@ -454,7 +458,10 @@ succeeds — the joined record quoted and escaped by the quoting rule above, the
 the proof check. Both passing means the key still holds the list the loop recorded, so the
 narrowed list overwrites nothing the user added and the restore afterwards puts back what
 is actually there. Either failing means something outside the loop changed the key: **do
-not write, and do not narrow again for the rest of the run.**
+not write, do not narrow again for the rest of the run, and do not run this round at
+all** — the key holds a value the loop may not write and cannot show is the record, and
+the mismatch branch below says where the run goes instead. It is the same destination a
+post-round mismatch reaches, for the same reason.
 
 Here is what that prevents, because the failure is not obvious and it is the whole reason
 a check after the round does not cover it. Without a pre-write check, a
@@ -527,8 +534,8 @@ state both checks have just ruled out.
 On a mismatch, the write landed on a value the loop never recorded. The end state is the
 same from either write: the key holds the **record** — a narrowing write's round runs on
 and its normal post-round restore puts the record back, unless the post-round check also
-fails in that same round, in which case the value is left as found; and a restore write
-has already put it back. Narrowing stops from there, and the report names the recorded
+fails in that same round, in which case the value is left as found and that check's own
+branch below decides whether the run goes on; and a restore write has already put it back. Narrowing stops from there, and the report names the recorded
 list in the escaped rendering, since the loop composed that one, beside the replaced
 value put through the filter. Leaving the key narrowed instead would be strictly worse,
 which is why the round is not aborted. And the loop must **not** try to put the replaced
@@ -563,7 +570,7 @@ in every other comparison. Both passing means the key still holds exactly what t
 wrote, so writing the record back restores the user's own list and touches nothing else.
 Either failing means something other than the loop wrote the key during the round: **do
 not write.** Leave the value exactly as found, and narrowing is off for the rest of the
-run.
+run — and unless the value found is the record itself, so is the run.
 
 That comparison is exact even though `get` is lossy in general, because the loop is never
 inferring a list from the string. The narrowed list is one it composed from the proved
@@ -580,9 +587,25 @@ for the same reason: the record was proved by matching the labels against the co
 list, and a key something else has rewritten voids that proof, so every later narrowing
 write would be composed from a stale record and every later restore would clobber the new
 value. There is nothing to re-prove it with, either — labels only arrive from a round,
-and only the opening round runs the full list. From that point every round runs the key
-exactly as it now stands, `review.reviewers` is never written again, and the report
-carries that fact.
+and only the opening round runs the full list.
+
+**Stopping narrowing is not enough here: unless the value found is the record, the run
+stops too.** `devgeta task review-run` reads the key, and from this point the loop may
+never write it again, so every later round would run whatever that value is. The
+confirming round is where that turns from odd into wrong, exactly as it does for a failed
+restore below: it is defined as running every configured reviewer, and it is the only round
+that can produce a clean approval — so a confirming round run against a value the loop
+cannot show is the recorded list would hand back a clean approval that some configured
+reviewer may never have given, indistinguishable in the report from a real one. The loop
+cannot tell the two apart either: the only thing it has to check the key against is the
+record, and this value is not it. And it may not simply put the record back — that would
+overwrite a change the loop did not make, which the paragraph above forbids outright. So
+stop: do not run another round, go to the terminal report naming the mismatch as the
+reason, and leave whatever this round left open still open — a fix made now could only be
+confirmed by a later round, and there is no later round to confirm it in. The pre-write
+check above reaches this same stop, one step earlier: it fires before its round has run, so
+there is nothing that round left open, and the value it found is never the record — that is
+the very comparison it just failed. Everything else about the stop is the same.
 
 Report the state, rather than guessing at its cause. The loop normally cannot know _who_
 wrote the key, so it reports what it expected and what it found, each by the route that
@@ -593,23 +616,31 @@ which makes it the least trustworthy string in the whole report. Say also that t
 wrote nothing. One cause is cheap enough to tell apart that it is worth naming rather than
 guessing at: if the current value is byte-identical to the **record's** join, the narrowing
 write never landed, so the config already holds the recorded list and nothing was lost —
-say that, rather than reporting a change the user did not make. Narrowing still stops,
-because a write that does not land is not a state to keep narrowing on.
+say that, rather than reporting a change the user did not make. That is also the one
+mismatch the run survives, and it is the only one: the key holds the recorded list on the
+same showing the pre-write check accepts before every narrowing write, so every later round
+— the confirming round included — runs the full configured list. Narrowing still stops,
+because a write that does not land is not a state to keep narrowing on; the run does not.
 
 **Verify every restore that does happen** by re-running the two checks against the record:
 the `get` output is still one line, and still byte-identical to the joined record — quoted
 and escaped by the quoting rule above, like every other comparison string. A match
 means the config holds the record. A mismatch means the restore did not land, which is
 worth catching for the same reason the pre-write check exists — it is a state only a human
-can fix, and the restore command already printed above is what fixes it.
+can fix, and the restore command already printed above is what fixes it. It also ends the
+run, on the same grounds as a restore that exits non-zero: the key is not holding the
+record, every later round reads the key, and the loop may not write it again — so stop here
+and go to the terminal report rather than run another round against it.
 
 **The order a narrowing round runs in.** When this round narrows — the conditions are
 below, and they are not met on every round — run these six steps in this order, and do not
 reorder them:
 
 1. **Check.** The key still holds the recorded list: the two checks above, run against the
-   record. If either fails, steps 2, 4 and 5 do not run this round — go straight to step 3,
-   run on the config as it stands, then step 6, with narrowing off for the rest of the run.
+   record. If either fails, none of the steps below runs and neither does this round: the
+   key holds a value the loop may not write and cannot show is the record, so narrowing is
+   off and the **run** ends — go to the terminal report, naming the mismatch as the reason
+   (the mismatch branch above).
 2. **Narrow.** `devgeta config set review.reviewers` with one single-quoted argument per
    still-blocking entry, captured and compared as above. If this write exits non-zero,
    steps 4 and 5 do not run this round either — go straight to step 3, run on the config as
@@ -617,9 +648,16 @@ reorder them:
 3. **Run.** `devgeta task review-run`, with whatever step 0 resolved.
 4. **Check again.** The key still holds the narrowed list: the same two checks, run against
    the narrowed list this time. If either fails, do not restore — leave the value exactly
-   as found, go to step 6, and narrowing is off for the rest of the run.
+   as found, and narrowing is off for the rest of the run. Where the loop goes next depends
+   on what it found: the **record's** own join means the narrowing write never landed and
+   the key holds the recorded list, so go to step 6 and the run carries on with full-list
+   rounds; any other value ends the run — leave whatever this round left open still open
+   and go to the terminal report, whose journal section carries it.
 5. **Restore, immediately.** `devgeta config set review.reviewers` with one single-quoted
-   argument per recorded entry, captured and compared the same way, then verified.
+   argument per recorded entry, captured and compared the same way, then verified. If this
+   write exits non-zero, or the verification after it does not match, the key is left
+   narrowed and the loop cannot put it back: what stops is the **run**, not just narrowing —
+   the failed-write branch below says why, and what the report has to carry.
 6. **Then read the journal.**
 
 Both writes pass one quoted argument per entry. Nothing in this sequence interpolates an
@@ -638,9 +676,10 @@ write rather than once after the opening round.
 afterwards.** Neither failure branch is "carry on anyway". If the key no longer holds the
 **recorded** list before the write, the loop does not narrow this round at all. If it no
 longer holds the **narrowed** list after the round, the loop does not restore. Either way
-the value is left exactly as found, and narrowing stops for the rest of the run. These are
-the only two points in a round that can end with `review.reviewers` holding something the
-loop did not write, which is why the report names both.
+the value is left exactly as found, narrowing stops for the rest of the run, and — unless
+what the check found is the record itself — so does the run. These are the only two points
+in a round that can end with `review.reviewers` holding something the loop did not write,
+which is why the report names both.
 
 **The loop writes the key only when narrowing actually drops a reviewer.** The narrowing
 set has to be a **strict subset** of the recorded list, **and** every check above has to
@@ -650,14 +689,18 @@ have passed:
 - every recorded entry one `devgeta config set` can write back;
 - every recorded entry free of control bytes;
 - no earlier round having ended with the key holding something other than the narrowed list
-  it was given;
+  it was given — which by then can only mean it held the **record**, since any other value
+  ends the run rather than reaching a later write;
 - no earlier narrowing write having reported replacing a value the loop never recorded;
-- no earlier `devgeta config set` — the narrowing write or the restore — having exited
-  non-zero (the failed-write branch below);
+- no earlier narrowing write having exited non-zero (the failed-write branch below; a
+  failed restore never reaches a later round at all, because it ends the run);
 - and the key still holding the recorded list when checked immediately before this write.
 
-Otherwise the round runs on the config exactly as the user left it: no write, no restore.
-Eight narrowing-set cases land there, each for its own reason.
+Otherwise there is no write and no restore. Six of the eight cases below then run the round
+on the config exactly as the user left it; the two a key-state check caught — the pre-write
+mismatch and the post-round one — end the run instead, for the reason the mismatch branches
+above give, unless the value found there was the record, which is the one such value a later
+round may run against. Eight narrowing-set cases land there, each for its own reason.
 
 - **A one-reviewer set, configured or the unset default.** A single reviewer that withheld
   approval is already the whole set, so there is nothing to drop. This is what makes an
@@ -672,48 +715,76 @@ Eight narrowing-set cases land there, each for its own reason.
 - **A recorded list holding an entry with a control byte.** Also off for the entire run: the
   restore command for such a list cannot be both pasteable and safe to print, so the loop
   never creates the need for one.
-- **A round whose pre-write check found the key no longer holding the record.** Narrowing is
-  off from that round onward. Nothing was overwritten, because the check runs before the
-  write.
+- **A round whose pre-write check found the key no longer holding the record.** Nothing was
+  overwritten, because the check runs before the write — and nothing is narrowed again
+  either, because there is no round after it: the run ends there, and that round never runs
+  at all, since the loop can no longer show a confirming round would get the full configured
+  list.
 - **A round that returned with the key no longer holding the narrowed list.** Narrowing is
-  off from that round onward, so every later round is a full-list round.
+  off from that round onward. There is a later round only when what the check found was the
+  **record** — the case where the narrowing write never landed — and then every later round
+  is a full-list round. Any other value ends the run.
 - **A round whose own write reported replacing a value the loop never recorded.** The
   one-command race no check can close: the previous value `devgeta config set` reported was
   not what the check immediately before it had just confirmed, so the write landed on a
   change made in between. Narrowing is off from that round onward. Unlike the two above,
   this one ends with the key holding the **record** — the round's restore still runs, or has
   already run — because leaving it narrowed would be strictly worse, unless the post-round
-  check also fails in that same round, in which case the value is left as found. Either
-  way the value that was replaced is gone and cannot be reconstructed, which is why the
-  report names it.
+  check also fails in that same round, in which case the value is left as found and that
+  round is the run's last. Either way the value that was replaced is gone and cannot be
+  reconstructed, which is why the report names it.
 
 Those last three are the only ones of the eight that stop narrowing part-way through a run
 rather than before it starts; the other five refuse before the first write. The first two of
 the three are also the only cases in the whole protocol that leave the key holding a value
 the loop did not write, and what separates them is only when the change was noticed: before
-the loop overwrote anything, or after the round it ran alongside. The report names all
-three.
+the loop overwrote anything, or after the round it ran alongside. Both end the run as well,
+on the same grounds as a failed restore — the loop may not write the key again and cannot
+show it holds the record, so no confirming round may run against it — the single exception
+being a post-round check that found the record itself. The third does not end the run: its
+round's restore still puts the record back. The report names all three.
 
 A round that does not narrow also has no interruption window at all, because it never
 touches the key. That window opens only on the rounds that drop someone.
 
-**A write that exits non-zero did not happen, and it is not the end of the run.**
-`devgeta config set` validates before it stores anything and leaves the key untouched when
-it refuses, so a failed write changes nothing. That is what the `|| exit 1` in the
-captured-write snippet above ends: the one shell command, so the comparison never runs
-against output the command never produced. It does not end the loop — never read it as an
-instruction to abandon the run. Treat it as a refusal: if the write that failed was the
-narrowing write, the loop does not narrow this round; if it was the restore, the round
-already narrowed. Either way narrowing is off for the rest of the run, and the report names
-the write that failed along with whatever `devgeta config set` put on stderr, captured and
-shown through the same `LC_ALL=C sed -n l` filter as the replaced-value line above. That is
-the same branch as the refusals above — full configured list every round from here,
-`review.reviewers` never written again.
+**A write that exits non-zero did not happen, and which write it was decides whether the
+run goes on.** `devgeta config set` validates before it stores anything and leaves the key
+untouched when it refuses, so a failed write changes nothing. That is what the `|| exit 1`
+in the captured-write snippet above ends: the one shell command, so the comparison never
+runs against output the command never produced. Treat it as a refusal — and split it by
+which write failed, because "changes nothing" leaves the key in two very different states.
 A rejected value should be unreachable by this point, since every recorded entry was
 screened for writability before the first narrowing write; this is the branch for a write
-that fails anyway. One thing to state rather than leave to be worked out: if it was the
-**restore** that failed, the key is still holding the narrowed list, so say that outright in
-the report — the restore command printed before the first write is then the only way back.
+that fails anyway. Either way the report names the write that failed along with whatever
+`devgeta config set` put on stderr, captured and shown through the same `LC_ALL=C sed -n l`
+filter as the replaced-value line above.
+
+**A failed narrowing write does not end the loop** — never read it as an instruction to
+abandon the run. Nothing was written, so the key still holds the record, and this round
+runs on the configured list exactly as the user left it. Narrowing is off for the rest of
+the run: the same branch as the refusals above — full configured list every round from
+here, `review.reviewers` never written again.
+
+**A failed restore ends the run.** Here the narrowing write already landed, so "changes
+nothing" means the key is left holding the **narrowed** list, and the write that would have
+put the record back is the one that just failed. Do not read this as the branch above:
+`devgeta task review-run` reads the key, and no further write is permitted, so every later
+round would run that narrowed subset rather than the full configured list, and the loop has
+no way to correct it. The confirming round is where that turns from expensive into wrong.
+It is defined as running every configured reviewer, and it is the only round that can
+produce a clean approval — so a confirming round run against a stuck-narrowed key would
+return a clean approval that the reviewers narrowing dropped never took part in, which is
+precisely what the phase structure exists to prevent and is indistinguishable in the report
+from a real one. So stop: do not run another round, and go to the terminal report naming
+the failed restore as the reason. Leave whatever this round left open still open, and let
+the report's journal section carry it — a fix made now could only be confirmed by a later
+round, and there is no later round to confirm it in.
+
+The recovery is the human's, and it is already on their screen: the restore command printed
+before the first narrowing write. Say outright in the report that the key is still holding
+the narrowed list, that pasting that command is the only way back, and that the run stopped
+rather than continue on a subset — a human told only "narrowing is off" will read it as the
+harmless branch above and leave their config narrowed.
 
 **Never narrow to an empty set by clearing the key.** `devgeta config set review.reviewers`
 with no values after it is rejected outright, and `devgeta config unset review.reviewers` —
@@ -924,9 +995,12 @@ settled.
 
 ### 5. Stop for anything escalated, enforce the phase cap, then route to the next phase
 
-Every round ends here. A round whose findings were settled, a round that only failed,
-and a round where every reviewer approved outside the confirming round all arrive at
-this step. Work through these three checks in this order.
+Every round that gets this far ends here. A round whose findings were settled, a round
+that only failed, and a round where every reviewer approved outside the confirming round
+all arrive at this step. The rounds that do not are the ones `### 1` stops the run in —
+a failed restore, or a key-state check that found a value the loop did not write and could
+not show was the record; those go straight to the terminal report, and no routing decision
+below applies to them. Work through these three checks in this order.
 
 **First, stop for anything still open.** If anything is still open after this round —
 step 4's triage left it for a human, or the fix subagent escalated it back while
@@ -990,10 +1064,17 @@ here".
     in the confirming round stops the loop (`### 2`) — so it would buy a full round of
     reviewer time to reach the same report. This is not an exotic path. One configured
     reviewer with a dead model id produces it: it fails the opening round, fails one
-    narrowing round, and that is the whole run. **This is the only case in which the
-    confirming round is skipped.** It does not contradict the rule that the confirming
-    round is otherwise mandatory — that rule exists to stop an approval being trusted
-    after the branch moved under it, and here there is no approval to protect.
+    narrowing round, and that is the whole run. **This is the only case in this routing in
+    which the confirming round is skipped.** It does not contradict the rule that the
+    confirming round is otherwise mandatory — that rule exists to stop an approval being
+    trusted after the branch moved under it, and here there is no approval to protect. Two
+    other things end a run before the confirming round, and neither is a routing decision at
+    all. A restore that failed or did not land leaves `review.reviewers` stuck on the
+    narrowed list; and a pre-write or post-round check that found the key holding a value
+    the loop did not write, and cannot show is the recorded list, leaves it holding that.
+    `### 1` stops the run in both cases rather than let the confirming round run on a list
+    it cannot show is the full configured one and call the result clean. Both serve the same
+    rule from the other side — refusing an approval the full configured list never gave.
 - **This round was the phase's cap-th narrowing round:** the narrowing phase is over. Go
   to the **confirming round** — return to step 1 with the full configured list. The cap
   ends the phase, not the loop.
@@ -1110,8 +1191,11 @@ having narrowed the key along the way, and this template is the only thing that 
 
 **Report to the human** — everything else, including a reviewer failure (step 2), a round
 that withheld approval without recording a finding (step 3), a finding that needs a human
-(step 4), and the confirming round ending in anything other than a clean approval (step
-5). Hitting the round cap is **not** a report trigger on its own: the cap is per phase, so
+(step 4), a restore that failed or did not land and stopped the run with the key still
+narrowed (step 1), a key-state check that found the key holding a value the loop did not
+write and could not show was the recorded list, which stops the run the same way (step 1),
+and the confirming round ending in anything other than a clean approval
+(step 5). Hitting the round cap is **not** a report trigger on its own: the cap is per phase, so
 a narrowing phase that reaches it ends that phase and routes to the confirming round (step
 5). Reaching a cap ends a phase; only the confirming round's ending ends the run.
 
@@ -1241,24 +1325,31 @@ enters the recorded command, which still prints literally and is still correct.
 ### When narrowing stopped early, name the check that stopped it
 
 Say which one it was and what tripped it, so the extra cost of full-list rounds is
-explained rather than looking like narrowing silently failing:
+explained rather than looking like narrowing silently failing — and, for the checks that
+stop the run rather than let it carry on full-list, say that too, since a reader who sees
+only "narrowing stopped" will assume the run ran its phases out:
 
 - **A recorded entry `devgeta config set` cannot write back** — name the entry.
   No-command branch.
 - **A recorded entry holding a control byte** — name the entry. No-command branch.
 - **The record could not be proved** — name the `get` line and the joined labels that did
   not match it. No-command branch.
-- **A round before which the key no longer held the record** — the pre-write check.
+- **A round before which the key no longer held the record** — the pre-write check. The run
+  stopped there and that round never ran, so say so, and say that no confirming round ran.
   Recorded-command branch.
 - **A round after which the key no longer held the narrowed list** — the post-round check.
-  Recorded-command branch.
+  Unless what it found was the record itself, the run stopped there too and no confirming
+  round ran; say which of the two it was. Recorded-command branch.
 - **A round whose write reported replacing a value the loop never recorded** — the
   captured-output comparison. Recorded-command branch.
 - **A `devgeta config set` that exited non-zero** — say which write it was, the narrowing
   one or the restore, and show whatever it put on stderr, captured and shown through the
-  filter (step 1). If it was the **restore** that failed, say outright that the key is
-  still holding the narrowed list, so the restore command is the only way back.
-  Recorded-command branch.
+  filter (step 1). If it was the **narrowing** write, nothing was written and the run went
+  on with narrowing off. If it was the **restore**, narrowing did not merely stop: the run
+  stopped there, so say outright that the key is still holding the narrowed list, that no
+  confirming round ran, and that pasting the restore command is the only way back. Say the
+  same for a restore that exited zero but failed its post-restore verification, which ends
+  the run the same way (step 1). Recorded-command branch.
 
 The first three are refusals on the record itself, which is why they take the no-command
 branch; the rest refuse part-way through a run on a record that was already accepted, so
@@ -1282,13 +1373,18 @@ the only ones about the **user's value** rather than about the record's shape. F
 name the round it happened in, say which side of the round the loop noticed on, say what it
 wrote and what it left as found, and print the recorded restore command beside it — the
 same string the block above carries — so the human can put the original list back if the
-change was not theirs.
+change was not theirs. For the two that end the run — the pre-write mismatch, and the
+post-round mismatch unless it found the record — say outright that the run stopped there,
+that no confirming round ran, and therefore that no approval anywhere in this report is a
+clean one. A human told only "narrowing is off" will read it as one of the harmless
+refusals and assume the run finished its phases.
 
 Two of the three need their own sentence rather than that generic one:
 
 - **A post-round mismatch that found the record itself.** The narrowing write never landed,
   so the config already holds the recorded list and there is nothing to put back (step 1).
-  Say that, rather than reporting a change the user did not make.
+  Say that, rather than reporting a change the user did not make — and say that this is the
+  one mismatch the run continued through, on full-list rounds.
 - **A write whose captured `<key>: <previous> -> <new>` output did not match the line the
   loop composed for it.** The write landed on a value the loop never recorded — the
   one-command race the pre-write check cannot close (step 1). Say that the value is gone,
