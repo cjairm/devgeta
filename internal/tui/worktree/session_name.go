@@ -30,25 +30,28 @@ const defaultSessionLabel = "root"
 // name, useless as a label — and a folder whose name flattens to nothing (empty
 // or the filesystem root) falls back to defaultSessionLabel.
 func sessionLabelForDir(workdir string) string {
-	// Canonicalize BOTH sides. CanonicalRepoPath resolves symlinks, and workdir
-	// arrives unresolved (it is whatever validateSessionDirFn returned), so
-	// canonicalizing only the home side meant a home reached through a symlink
-	// never matched - the label silently fell through to the basename, which for
-	// a home directory is the opaque account name this branch exists to avoid.
-	// The empty string is excluded rather than canonicalized: CanonicalRepoPath("")
-	// resolves to the current directory, which would make a blank workdir report
-	// "home" whenever devgeta happened to be run from home, instead of taking the
-	// defaultSessionLabel fallback below.
-	if workdir != "" &&
-		config.CanonicalRepoPath(workdir) == config.CanonicalRepoPath(paths.Paths.Home.Root) {
-		return "home"
-	}
 	// Guard the raw basename before flattening: filepath.Base("") is "." and
 	// Base("/") is "/", neither of which is a usable label — flattening would
 	// turn "." into "_" and hide the fallback.
+	//
+	// This has to run BEFORE the home check, not after: canonicalizing makes a
+	// path absolute, so both "" and "." resolve to the process's working
+	// directory, and either would then report "home" whenever devgeta happened
+	// to be run from home instead of taking this fallback. Guarding "" alone in
+	// the condition below leaves "." doing exactly that.
 	base := filepath.Base(workdir)
 	if base == "" || base == "/" || base == "." {
 		return defaultSessionLabel
+	}
+	// Canonicalize BOTH sides, never just one: workdir arrives however the
+	// folder-pick step spelled it (a "~" prefix, a trailing separator, a home
+	// reached through a symlink such as /home/x -> /mnt/data/x), while
+	// CanonicalRepoPath resolves symlinks. Comparing a raw path against a
+	// resolved one silently misses home and falls through to the basename,
+	// which for a home directory is the opaque account name this branch exists
+	// to avoid.
+	if config.CanonicalRepoPath(workdir) == config.CanonicalRepoPath(paths.Paths.Home.Root) {
+		return "home"
 	}
 	return worktree.TmuxSessionName(base)
 }

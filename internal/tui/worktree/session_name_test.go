@@ -1,6 +1,9 @@
 package tuiworktree
 
 import (
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -108,11 +111,85 @@ func TestSessionLabelForDir(t *testing.T) {
 		{"unresolved home still maps to home", paths.Paths.Home.Root, "home"},
 		{"filesystem root falls back", "/", defaultSessionLabel},
 		{"empty falls back", "", defaultSessionLabel},
+		{"dot falls back", ".", defaultSessionLabel},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := sessionLabelForDir(tc.workdir); got != tc.want {
 				t.Errorf("sessionLabelForDir(%q) = %q, want %q", tc.workdir, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSessionLabelForDirRecognizesHomeHoweverSpelled pins the home branch to the
+// folder rather than to one string form of it. The regression it guards is a
+// real-world home reached through a symlink (/home/x -> /mnt/data/x on Linux, a
+// relocated home on macOS): when only one side of the comparison was
+// symlink-resolved, the branch silently missed and the session label fell back to
+// the basename — the opaque account name.
+func TestSessionLabelForDirRecognizesHomeHoweverSpelled(t *testing.T) {
+	tempDir := t.TempDir()
+	realHome := filepath.Join(tempDir, "real-home")
+	if err := os.MkdirAll(realHome, 0o755); err != nil {
+		t.Fatalf("failed to create the real home dir: %v", err)
+	}
+	linkedHome := filepath.Join(tempDir, "linked-home")
+	if err := os.Symlink(realHome, linkedHome); err != nil {
+		t.Fatalf("failed to symlink home: %v", err)
+	}
+
+	oldHome := paths.Paths.Home.Root
+	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
+	paths.Paths.Home.Root = linkedHome
+	// ExpandHome resolves "~" from HOME, not from paths.Paths, so the tilde case
+	// needs both pointed at the same symlinked home.
+	t.Setenv("HOME", linkedHome)
+
+	cases := []struct {
+		name    string
+		workdir string
+	}{
+		{"unresolved symlinked home", linkedHome},
+		{"resolved home", config.CanonicalRepoPath(linkedHome)},
+		{"trailing separator", linkedHome + string(filepath.Separator)},
+		{"tilde", "~"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sessionLabelForDir(tc.workdir); got != "home" {
+				t.Errorf("sessionLabelForDir(%q) = %q, want %q", tc.workdir, got, "home")
+			}
+		})
+	}
+}
+
+// TestSessionLabelForDirDotFallsBackEvenFromHome is the counterpart to the test
+// above, and the reason the basename guard runs before the home check rather
+// than after it. Canonicalizing makes a path absolute, so "." becomes the
+// working directory — and when that directory IS home, a home check placed
+// first matches and labels a blank workdir "home" instead of taking the
+// fallback. The bug is invisible from anywhere else, which is why this test
+// moves into home rather than relying on the table above: `go test` runs in the
+// package directory, where "." and home differ and the wrong order still passes.
+func TestSessionLabelForDirDotFallsBackEvenFromHome(t *testing.T) {
+	home := t.TempDir()
+
+	oldHome := paths.Paths.Home.Root
+	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
+	paths.Paths.Home.Root = home
+	t.Setenv("HOME", home)
+	t.Chdir(home)
+
+	for _, workdir := range []string{".", ""} {
+		t.Run("workdir "+strconv.Quote(workdir), func(t *testing.T) {
+			if got := sessionLabelForDir(workdir); got != defaultSessionLabel {
+				t.Errorf(
+					"sessionLabelForDir(%q) from home = %q, want %q — a blank workdir must take the fallback, not resolve to the current directory and report home",
+					workdir,
+					got,
+					defaultSessionLabel,
+				)
 			}
 		})
 	}
