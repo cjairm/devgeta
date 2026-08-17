@@ -2746,6 +2746,21 @@ const (
 	prReviewLoopReportHeading  = "### 12. Report the tick"
 )
 
+// prReviewLoopReportSection returns the report step's content, whitespace-collapsed
+// the way flowSection does it. It cannot go through markdownSection: the step's
+// template is a fenced block whose first line starts with `## PR #<n>`, which reads
+// as the next heading and truncates the section before the rules that follow it. So
+// this anchors on everything after the heading instead — which also takes in the
+// "Notes" section below it, harmless for the phrases its callers look for.
+func prReviewLoopReportSection(t *testing.T, path, body string) string {
+	t.Helper()
+	reportAt := strings.Index(body, prReviewLoopReportHeading)
+	if reportAt < 0 {
+		t.Fatalf("%s no longer has a %q section", path, prReviewLoopReportHeading)
+	}
+	return strings.Join(strings.Fields(body[reportAt:]), " ")
+}
+
 // TestPRReviewLoopStartsTheWatchItPromises guards the gap that made a real user
 // think a watch was running when none was. The command's trigger offers to watch
 // a PR "unattended", but one invocation is deliberately one tick — so a bare
@@ -2885,16 +2900,7 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 		)
 	}
 
-	// The report section cannot go through markdownSection: its template is a
-	// fenced block whose first line starts with `## PR #<n>`, which reads as the
-	// next heading and truncates the section before the rules that follow it. So
-	// anchor on everything after the heading instead, whitespace-collapsed the
-	// same way flowSection does it.
-	reportAt := strings.Index(body, prReviewLoopReportHeading)
-	if reportAt < 0 {
-		t.Fatalf("%s no longer has a %q section", path, prReviewLoopReportHeading)
-	}
-	report := strings.Join(strings.Fields(body[reportAt:]), " ")
+	report := prReviewLoopReportSection(t, path, body)
 	if !strings.Contains(report, "what will run the next tick") {
 		t.Errorf(
 			"%s's report step no longer requires the report to say what will run the "+
@@ -3053,6 +3059,547 @@ func TestPRReviewLoopCleansScratchOnEveryExitAfterAllocation(t *testing.T) {
 				"cleaning the reports directory it allocated",
 			path,
 		)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The explicit/watch split (ADR-0025).
+//
+// A tick is either explicit (a human typed it) or a watch tick (a repeat driver
+// fired it, and the line it fired carries `--on-request`). The split lives
+// entirely in this file's prose — there is no code path to test — and its
+// Consequences/Negative section names four clauses that can rot without any
+// visible failure. The five guards below are those clauses plus the flag
+// spellings the split is carried by.
+//
+// Two of the sections they read had no test reader before this, so the anchors
+// are new.
+// ---------------------------------------------------------------------------
+
+const (
+	prReviewLoopDecisionHeading = "### 2. Take exactly one row of the table"
+	prReviewLoopPrePostHeading  = "### 7. Re-check the state and the head before posting"
+)
+
+// TestPRReviewLoopMarksTheDriversTicksAsWatchTicks pins the one argument on the
+// driver's line that the invocation itself never had: `--on-request` (ADR-0025
+// §1). It is the whole carrier of the explicit/watch split — a flag rather than
+// an inference about the surrounding prompt, precisely so a guard test can read
+// it — and it does two jobs on every tick the driver fires: it request-gates the
+// tick, and it stops that tick from starting a driver of its own.
+//
+// So a driver form written without it starts a watch made of EXPLICIT ticks, and
+// both jobs fail at once: every fired tick reviews and posts regardless of
+// whether a review was requested, and every fired tick starts another driver.
+// Nothing about the file reads wrong while that happens, and the human who asked
+// for the watch is by definition not watching it.
+//
+// The form is written at three sites and each is asserted on its own, because a
+// revert of one leaves the others matching: Usage documents the shape, the
+// handoff step is the line the tick actually runs, and the report step is the
+// form a human is handed when no driver is repeating this command (so a form
+// missing the marker there hands them the self-multiplying watch by hand).
+//
+// What this catches: `--on-request` being dropped from any one of the three
+// driver forms.
+// What this does NOT catch: the flag being present but the tick ignoring it —
+// that is what the two guards below pin from the receiving end, and neither can
+// execute the prose.
+func TestPRReviewLoopMarksTheDriversTicksAsWatchTicks(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	for _, site := range []struct {
+		where   string
+		section string
+		why     string
+	}{
+		{
+			where:   "Usage",
+			section: flowSection(t, body, prReviewLoopUsageHeading),
+			why: "this is the documented shape of the watch, so the next hand that " +
+				"copies it into the handoff step copies the loss",
+		},
+		{
+			where:   "the handoff step",
+			section: flowSection(t, body, prReviewLoopHandoffHeading),
+			why: "this is the line the tick actually starts, so every tick the watch " +
+				"fires is an explicit tick: each reviews and posts with no request, and " +
+				"each starts a driver of its own",
+		},
+		{
+			where:   "the report step",
+			section: prReviewLoopReportSection(t, path, body),
+			why: "this is the form the report hands a human when nothing is watching " +
+				"the PR, so they would start the multiplying watch themselves",
+		},
+	} {
+		span := prReviewLoopDriverForm(t, path, site.where, site.section)
+		if !strings.Contains(span, "--on-request") {
+			t.Errorf(
+				"%s writes the driver form `%s` in %s without --on-request. That flag is "+
+					"the only thing that tells a fired tick it is a watch tick (ADR-0025 §1): "+
+					"without it the driver's ticks are explicit, so each one reviews and posts "+
+					"whether or not a review was requested, and each one starts another driver. "+
+					"Here, %s",
+				path, span, site.where, site.why,
+			)
+		}
+	}
+}
+
+// TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn pins the receiving end of the
+// marker: only an explicit tick ever starts a driver (ADR-0025 §4). The driver
+// that fired a watch tick is already running, so a handoff there starts a second
+// driver on every tick — and each of those ticks starts another. The failure is
+// exponential and completely silent from inside the file: every individual tick
+// behaves correctly, and the human sees only a PR reviewed more and more often.
+//
+// Two things are asserted in the handoff step and they are not the same
+// assertion. The precondition is what an agent evaluates ("this tick is
+// explicit — `--on-request` was not on its command line"); the restated rule is
+// what survives a rewrite of the precondition list into prose. The rule sentence
+// is written twice in the file — once in Usage, once in the handoff step — so
+// each site is asserted separately: a revert of one alone would leave a single
+// whole-file check green while the two halves of the file contradicted each
+// other.
+//
+// What this catches: the handoff step losing its explicit-only precondition, or
+// either statement of the no-second-driver rule being deleted.
+// What this does NOT catch: an agent reading the rule and starting a driver
+// anyway, or a handoff added somewhere else in the file — the one-place property
+// is pinned for step 0 only, by TestPRReviewLoopStartsTheWatchItPromises.
+func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	const rule = "A `--on-request` tick starts no driver"
+
+	handoff := flowSection(t, body, prReviewLoopHandoffHeading)
+	if !strings.Contains(handoff, "`--on-request` was not on its command line") {
+		t.Errorf(
+			"%s's handoff step (%q) no longer requires the tick to be explicit before "+
+				"it starts a driver. That precondition is the one an agent actually "+
+				"evaluates, and without it a watch tick starts a second driver — then each "+
+				"tick of each driver starts another (ADR-0025 §4)",
+			path, prReviewLoopHandoffHeading,
+		)
+	}
+	if !strings.Contains(handoff, rule) {
+		t.Errorf(
+			"%s's handoff step (%q) no longer states that %q, whatever its outcome. The "+
+				"precondition list above it can be rewritten; this sentence is what says "+
+				"the rule outright, at the one step that could break it",
+			path, prReviewLoopHandoffHeading, rule,
+		)
+	}
+
+	usage := flowSection(t, body, prReviewLoopUsageHeading)
+	if !strings.Contains(usage, rule) {
+		t.Errorf(
+			"%s's Usage section no longer states that %q. This is the second of the "+
+				"two places the rule is written, and it is the one a reader meets before "+
+				"the flow — the handoff step keeping it is not a reason to drop it here, "+
+				"because the reverse revert is just as easy",
+			path, rule,
+		)
+	}
+}
+
+// markdownTableRows returns the rows of the pipe table in section, each split
+// into its cells, trimmed, with the outer empties dropped and the `---`
+// separator skipped. The header row comes back as a row like any other; callers
+// look rows up by their leading cells, which no header matches.
+//
+// The section is read uncollapsed on purpose: a markdown table row is already
+// one line, so nothing here needs flowSection's rewrap tolerance, and collapsing
+// would run the rows together into one string with no cell boundaries left.
+func markdownTableRows(section string) [][]string {
+	var rows [][]string
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if strings.HasPrefix(cells[0], "---") {
+			continue
+		}
+		rows = append(rows, cells)
+	}
+	return rows
+}
+
+// TestPRReviewLoopExplicitRowsAreNotRequestGated pins step 2's decision table
+// column by column, which is where ADR-0025's central reversal lives: an
+// explicit tick reviews unless the pull request is over, and GitHub's request
+// field gates the watch only (§1, §2).
+//
+// This is the clause the ADR was written for. Before it, every tick was
+// request-gated, so `/pr-review-loop <n>` on a PR nobody had requested a review
+// on printed three lines of state and stopped — the human had already said what
+// they wanted by typing the command, and the file made them say it again in
+// prose (ADR-0025 Context, 2026-08-12). Two of the rows an explicit tick now
+// reviews existed to protect the AUTHOR from a review they did not ask to
+// receive — a draft, and a PR this user already approved — and neither reason
+// survives a human asking for one deliberately.
+//
+// The check is per-cell rather than per-phrase because the property is
+// structural: each state row must carry the right action in the right column,
+// and prose elsewhere can claim the split while the table contradicts it. The
+// watch column is asserted too, in the same pass — it is what ADR-0025 §3 keeps
+// unchanged from ADR-0022, and a table edited to review on every tick regardless
+// of mode would otherwise pass a check that only looked at the explicit side.
+// The negative on the explicit column is the ADR's actual claim: those cells may
+// not consult `requested:` at all.
+//
+// What this catches: any row's action changing in either column, a row
+// disappearing or its state cells being reworded, and an explicit cell growing a
+// request condition.
+// What this does NOT catch: an agent reading the right row and taking the wrong
+// action, the prose around the table contradicting it in some wording this does
+// not name, or a sixth row added below (the table is evaluated first-match-wins,
+// so a row appended after these five is unreachable for the states they already
+// match — but a row inserted ABOVE them is not, and nothing here notices it).
+func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	section := markdownSection(t, body, prReviewLoopDecisionHeading)
+
+	// The generalization the rows are an instance of. Pinned as well as the cells
+	// because it is what an agent applies to a state the table's rows do not
+	// obviously cover, and a table-only revert and a prose-only revert are
+	// separate edits.
+	const rule = "An explicit tick reviews unless the pull request is over"
+	if !strings.Contains(flowSection(t, body, prReviewLoopDecisionHeading), rule) {
+		t.Errorf(
+			"%s step 2 no longer says that %q. The table's cells are the mechanism; "+
+				"this sentence is the rule they implement, and it is what tells an agent "+
+				"that only merged and closed stop an explicit tick (ADR-0025 §2)",
+			path, rule,
+		)
+	}
+
+	rows := markdownTableRows(section)
+	if len(rows) == 0 {
+		t.Fatalf(
+			"%s step 2 no longer has a decision table at all — the state-to-action "+
+				"mapping is the whole of what this step does",
+			path,
+		)
+	}
+
+	// Column 3 is the explicit tick's action, column 4 the watch tick's, after
+	// the three state columns (`pr:`, `requested:`, `my-review:`).
+	const explicitCol, watchCol = 3, 4
+	for _, want := range []struct {
+		state    [3]string
+		explicit string
+		watch    string
+		why      string
+	}{
+		{
+			state:    [3]string{"`merged`/`closed`", "any", "any"},
+			explicit: "Terminal",
+			watch:    "Terminal",
+			why: "a review posted on a finished pull request is noise nobody can act " +
+				"on, and this row is the ONLY thing that stops an explicit tick — lose " +
+				"it and \"reviews unless the pull request is over\" has no over",
+		},
+		{
+			state:    [3]string{"`draft`", "any", "any"},
+			explicit: "Review",
+			watch:    "Wait",
+			why: "a draft is exactly when an author wants a private read of unfinished " +
+				"work, so a human asking for one gets it; the watch still waits, so " +
+				"nothing unattended lands on a draft",
+		},
+		{
+			state:    [3]string{"`open`", "`yes`", "any"},
+			explicit: "Review",
+			watch:    "Review",
+			why: "this is the one row both modes share — the requested review the watch " +
+				"exists for. It is also read BEFORE the standing-approval row below, " +
+				"which is what makes an author's re-request reach a PR this user already " +
+				"approved",
+		},
+		{
+			state:    [3]string{"`open`", "`no`", "`approved`"},
+			explicit: "Review",
+			watch:    "Terminal",
+			why: "\"review it again\" after a rebase or a late doubt is a normal ask, and " +
+				"answering it with a three-line refusal is the failure ADR-0025 exists to " +
+				"remove; for the watch the standing approval is still the end of the loop",
+		},
+		{
+			state:    [3]string{"`open`", "`no`", "anything else"},
+			explicit: "Review",
+			watch:    "Wait",
+			why: "this is the row the 2026-08-12 failure landed on: the human typed the " +
+				"command, and the tick answered that the ball was with the author",
+		},
+	} {
+		var cells []string
+		for _, row := range rows {
+			if len(row) > watchCol &&
+				row[0] == want.state[0] && row[1] == want.state[1] && row[2] == want.state[2] {
+				cells = row
+				break
+			}
+		}
+		if cells == nil {
+			t.Errorf(
+				"%s step 2's table has no row for pr=%q requested=%q my-review=%q. The "+
+					"rows are matched here by their state cells, so a reworded state is a "+
+					"test change in the same commit — but a DELETED row leaves that state "+
+					"with no action at all in either mode",
+				path, want.state[0], want.state[1], want.state[2],
+			)
+			continue
+		}
+
+		if !strings.Contains(cells[explicitCol], want.explicit) {
+			t.Errorf(
+				"%s step 2's row for pr=%q requested=%q my-review=%q no longer gives an "+
+					"EXPLICIT tick %q — it now reads %q (ADR-0025 §1). Why the row is what it "+
+					"is: %s",
+				path, want.state[0], want.state[1], want.state[2],
+				want.explicit, cells[explicitCol], want.why,
+			)
+		}
+		if !strings.Contains(cells[watchCol], want.watch) {
+			t.Errorf(
+				"%s step 2's row for pr=%q requested=%q my-review=%q no longer gives a "+
+					"WATCH tick %q — it now reads %q. ADR-0025 §3 keeps the watch column "+
+					"exactly as ADR-0022 decided it, because GitHub's request field is still "+
+					"the only memory an unattended loop has: a watch that stops taking these "+
+					"rows reposts on every tick. Why the row is what it is: %s",
+				path, want.state[0], want.state[1], want.state[2],
+				want.watch, cells[watchCol], want.why,
+			)
+		}
+		if strings.Contains(cells[explicitCol], "request") {
+			t.Errorf(
+				"%s step 2's row for pr=%q requested=%q my-review=%q makes the EXPLICIT "+
+					"tick's action depend on a request (%q). A human typing the command IS "+
+					"the request — addressed to this tool, by the person running it, about "+
+					"the PR they named — so gating the explicit column on GitHub's field "+
+					"makes this file ask for a permission it was just handed (ADR-0025 §1)",
+				path, want.state[0], want.state[1], want.state[2], cells[explicitCol],
+			)
+		}
+	}
+}
+
+// TestPRReviewLoopPrePostGateIsModeAware pins step 7, which ADR-0025 §6 calls
+// the place the whole change would die silently. The gate re-reads the state
+// after the reviewer runs, and while every tick was request-gated it could
+// simply demand the Review row again. Left that way, an explicit tick does all
+// the work — fetches the refs, runs every reviewer over every model, spends the
+// minutes — reaches a gate demanding `requested: yes`, and posts nothing. No
+// error, no missing section, nothing in the report that reads as a bug.
+//
+// So the gate has to carry both modes, and the two branches are asserted from
+// their own slices of the section rather than from the section as a whole:
+// `requested: yes` is REQUIRED in the watch branch and must not appear in the
+// explicit one, which a whole-section check could not tell apart.
+//
+// The gate's other condition — head unchanged since the reviewers read it — is
+// mode-independent and is not this guard's clause; ADR-0023 and step 7's own
+// prose carry it.
+//
+// What this catches: either branch of the mode split disappearing, the explicit
+// branch losing what it now requires instead (neither merged nor closed), the
+// clause that says an absent request cannot cancel an explicit post, and the
+// request requirement migrating into the explicit branch.
+// What this does NOT catch: an agent applying the wrong branch, and — because
+// the negative check fires on any mention of `requested: yes` in the explicit
+// branch — a future rewrite that names the flag only to disclaim it will trip
+// this too. The file's own wording for that disclaimer is the phrase pinned
+// below; keep using it rather than weakening the check.
+func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	gate := flowSection(t, body, prReviewLoopPrePostHeading)
+
+	const (
+		explicitMarker = "**Explicit tick:**"
+		watchMarker    = "**Watch tick (`--on-request`):**"
+	)
+	explicitAt := strings.Index(gate, explicitMarker)
+	watchAt := strings.Index(gate, watchMarker)
+	if explicitAt < 0 || watchAt < 0 {
+		t.Fatalf(
+			"%s step 7's pre-post gate no longer splits by mode: it is missing %q "+
+				"(found=%t) or %q (found=%t). One gate for both modes is where ADR-0025 "+
+				"dies silently — an explicit tick runs the whole cross-model review, then "+
+				"fails a gate that wants a review request, and posts nothing (§6)",
+			path, explicitMarker, explicitAt >= 0, watchMarker, watchAt >= 0,
+		)
+	}
+	// Slice each branch off at the other's marker, in whichever order they appear
+	// — their order is not a property this pins.
+	explicitBranch, watchBranch := gate[explicitAt:], gate[watchAt:]
+	if watchAt > explicitAt {
+		explicitBranch = gate[explicitAt:watchAt]
+	} else {
+		watchBranch = gate[watchAt:explicitAt]
+	}
+
+	for _, req := range []struct {
+		branch string
+		substr string
+		why    string
+	}{
+		{
+			branch: explicitBranch,
+			substr: "neither `merged` nor `closed`",
+			why: "this is what the explicit branch requires INSTEAD of a review request, " +
+				"so without it the branch names a mode and no condition — and the tick " +
+				"either posts onto a pull request that closed mid-review or falls back to " +
+				"the watch's requirement",
+		},
+		{
+			branch: explicitBranch,
+			substr: "`requested: no` cannot",
+			why: "nothing then states that an absent review request cannot cancel an " +
+				"explicit post, which is the exact re-gating ADR-0025 §6 warns about and " +
+				"the one that shows up as a silent no-op rather than an error",
+		},
+		{
+			branch: watchBranch,
+			substr: "`requested: yes`",
+			why: "the watch branch stops requiring the request, so an unattended tick " +
+				"posts again on a PR whose request someone else already answered — the " +
+				"dedup ADR-0022 rests on and ADR-0025 §3 keeps",
+		},
+	} {
+		if !strings.Contains(req.branch, req.substr) {
+			t.Errorf(
+				"%s step 7's pre-post gate is missing %q from the branch that needs it: %s",
+				path, req.substr, req.why,
+			)
+		}
+	}
+
+	if strings.Contains(explicitBranch, "`requested: yes`") {
+		t.Errorf(
+			"%s step 7's EXPLICIT branch names `requested: yes`. On an explicit tick "+
+				"the request was usually never `yes` — the human's own invocation is the "+
+				"request — so a gate that asks for it here runs every reviewer over every "+
+				"model and then posts nothing at all (ADR-0025 §6). The branch reads: %q",
+			path, strings.TrimSpace(explicitBranch),
+		)
+	}
+}
+
+// TestPRReviewLoopParsesBothReviewerSpellingsAndOnce pins the flag spellings the
+// explicit/watch split is driven by, in the two places a flag has to appear to
+// have any effect: the usage line a human copies from, and step 0, the only step
+// that reads $ARGUMENTS.
+//
+// `--reviewer` is here because of a failure that already happened.
+// `/pr-review-loop --reviewer=document <n>` selected no reviewer on 2026-08-12:
+// step 0 read bare words only, `--reviewer <type>` is the sibling `/review-loop`
+// command's spelling, and a human moving between the two typed the sibling's
+// flag — which resolved to nothing, silently (ADR-0025 Context). Both spellings
+// are one vocabulary, not a translation layer: the value still reaches
+// `devgeta task review-run --reviewer` verbatim, which is what
+// TestPRReviewLoopForwardsReviewerTypes pins.
+//
+// `--once` has no such history. It is this cycle's own addition and it is
+// asserted for the structural reason: it is the only way to ask for the single
+// look a bare invocation used to be, and a flag documented but not parsed does
+// nothing while reading as if it works. Its parse-step assertion is the sentence
+// that classifies it — a flag, not a value — because that is what stops `--once`
+// being read as a reviewer type and rejected as an unknown one.
+//
+// What this catches: either `--reviewer` spelling or `--once` leaving the usage
+// line or step 0.
+// What this does NOT catch: step 0 naming a flag and then doing nothing with it,
+// or the two spellings drifting to mean different things — prose can say either
+// and this is a substring check.
+func TestPRReviewLoopParsesBothReviewerSpellingsAndOnce(t *testing.T) {
+	path, body := readSharedCommand(t, "pr-review-loop.md")
+
+	// The synopsis line itself, not the Usage prose around it: it is what a human
+	// copies, and it is the one line in the file that has to list every flag.
+	usage := markdownSection(t, body, prReviewLoopUsageHeading)
+	synopsis := ""
+	for _, line := range strings.Split(usage, "\n") {
+		if line = strings.TrimSpace(line); strings.HasPrefix(line, "/pr-review-loop") {
+			synopsis = line
+			break
+		}
+	}
+	if synopsis == "" {
+		t.Fatalf(
+			"%s's Usage section no longer opens with a `/pr-review-loop …` synopsis "+
+				"line — that line is the command's whole documented shape",
+			path,
+		)
+	}
+	for _, req := range []struct {
+		flag string
+		why  string
+	}{
+		{
+			flag: "--reviewer <type>",
+			why: "this is the spelling the sibling `/review-loop` takes, so it is the one " +
+				"a human moving between the two types; unlisted here it looks like it was " +
+				"never accepted",
+		},
+		{
+			flag: "--once",
+			why: "nothing then documents how to ask for a single look, and since any " +
+				"other explicit invocation starts a standing watch, the human is left " +
+				"with a driver they never asked for",
+		},
+	} {
+		if !strings.Contains(synopsis, req.flag) {
+			t.Errorf(
+				"%s's usage line (`%s`) no longer lists %s — %s",
+				path, synopsis, req.flag, req.why,
+			)
+		}
+	}
+
+	const equalsSpelling = "--reviewer=<type>"
+	if !strings.Contains(flowSection(t, body, prReviewLoopUsageHeading), equalsSpelling) {
+		t.Errorf(
+			"%s's Usage section no longer documents the %s spelling. The synopsis line "+
+				"shows the space form only, so this is the sole place a reader learns the "+
+				"`=` form is accepted — and it is the exact form that silently selected no "+
+				"reviewer on 2026-08-12",
+			path, equalsSpelling,
+		)
+	}
+
+	parse := flowSection(t, body, prReviewLoopParseHeading)
+	for _, req := range []struct {
+		substr string
+		why    string
+	}{
+		{
+			substr: "`--reviewer <type>` or `--reviewer=<type>`",
+			why: "step 0 is the only place $ARGUMENTS is read, so a spelling missing " +
+				"here is a spelling Usage advertises and nothing resolves — which is the " +
+				"2026-08-12 failure exactly: the flag was typed and the tick reviewed " +
+				"nothing. Both forms are named in one clause on purpose; a step 0 that " +
+				"parses only one of them accepts half of what Usage documents",
+		},
+		{
+			substr: "`--once` and `--on-request` are flags, not values",
+			why: "these two are the only arguments that are neither a PR number nor a " +
+				"reviewer type. Unclassified, `--once` falls through to the type check " +
+				"and stops the tick as an unknown value — and `--on-request` with it, " +
+				"which breaks every tick a driver fires",
+		},
+	} {
+		if !strings.Contains(parse, req.substr) {
+			t.Errorf("%s step 0 is missing %q — %s", path, req.substr, req.why)
+		}
 	}
 }
 
