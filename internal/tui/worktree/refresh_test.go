@@ -343,25 +343,85 @@ func TestFastTickStaleSessionHalfDroppedButPaneHalfStillApplies(t *testing.T) {
 	}
 }
 
-// The fast tick is tmux-only by design (ADR-0024): it must never recompute the
-// diff pane, which is git-backed and belongs to the slow half. A future step
-// routing the fast path through applyStatuses (the slow load's diff-refresh
-// helper) would reintroduce a git process on every 3-second tick without any
-// other test catching it.
-func TestTmuxStateMsgNeverProducesDiffMsg(t *testing.T) {
-	m := makeTestModel(testStatuses())
+// The fast tick is tmux-only by design (ADR-0024): a fast tick that does not
+// move the selection must recompute nothing at all, not even a debounce timer
+// — because after Task 7 every diff arrives one message later behind a
+// diffDebounceMsg, so a test that only checked for a synchronous diffMsg would
+// pass for any message type and could not catch a future step that routes the
+// fast path through applyStatuses (the slow load's diff-refresh helper),
+// which sets forceDiff and would make the wrapper arm a debounce on every
+// 3-second tick regardless of whether anything moved.
+func TestFastTickWithUnchangedSelectionRecomputesNothing(t *testing.T) {
+	m := makeTestModel(testStatuses()) // cursor on repo-a/feature-a, /tmp/a
 	m.mgr = newTestWorktreeManager()
+	before := m.selectedPath()
 
-	_, cmd := m.Update(tmuxStateMsg{layer: worktree.StateLayer{}, gen: m.sessionGen})
+	mi, cmd := m.Update(tmuxStateMsg{layer: worktree.StateLayer{}, gen: m.sessionGen})
+	m = mi.(Model)
 
+	if m.selectedPath() != before {
+		t.Fatalf(
+			"this test needs the selection to stay put, got %q (was %q)",
+			m.selectedPath(),
+			before,
+		)
+	}
+	if m.forceDiff {
+		t.Error("a fast tick that doesn't move the selection must not set forceDiff")
+	}
 	for _, msg := range flattenCmd(cmd) {
-		if _, ok := msg.(diffMsg); ok {
+		switch msg.(type) {
+		case diffMsg:
 			t.Fatalf(
 				"the fast tick's tmuxStateMsg handler must never produce a diffMsg, got %+v",
 				msg,
 			)
+		case diffDebounceMsg:
+			t.Fatalf(
+				"a fast tick that doesn't move the selection must not arm the diff debounce, got %+v",
+				msg,
+			)
 		}
 	}
+}
+
+// A fast tick CAN move the selection: the pane half of a tmuxStateMsg is a
+// layer applied unconditionally, and when it changes which rows qualify for
+// pane-row expansion, rebuildRows' ClampCursor can land the cursor on a
+// different worktree than before. That is a genuine selection change, so it
+// debounces a diff exactly like a keypress would (ADR-0024 §3) — the idle-cost
+// win the test above pins only holds when the dashboard is actually idle.
+func TestFastTickThatMovesSelectionArmsDebounce(t *testing.T) {
+	// One repo, two worktrees: feature-a starts with 2 stateful panes (so it
+	// has pane rows), feature-b has none. Rows: repo header, feature-a,
+	// feature-a's two pane rows, feature-b.
+	statuses := append(paneRowTestStatuses(), worktree.WorktreeStatus{
+		Name:       "feature-b",
+		Repo:       "repo-a",
+		Path:       "/tmp/b",
+		TmuxWindow: worktree.GetWindowName("repo-a", "feature-b"),
+	})
+	m := makeTestModel(statuses)
+	m.mgr = newTestWorktreeManager()
+	m.cursor = 2 // the first pane row under feature-a
+	before := m.selectedPath()
+	if before != "" {
+		t.Fatalf("expected the cursor to start on a pane row (no selected path), got %q", before)
+	}
+
+	// The scan reports no panes at all for feature-a's window, so it no longer
+	// qualifies for pane rows and both pane rows disappear. ClampCursor then
+	// slides the numeric cursor position onto feature-b, a different worktree.
+	mi, cmd := m.Update(tmuxStateMsg{layer: worktree.StateLayer{}, gen: m.sessionGen})
+	m = mi.(Model)
+
+	if m.selectedPath() != "/tmp/b" {
+		t.Fatalf(
+			"this test needs the fast tick to relocate the cursor onto feature-b, got %q",
+			m.selectedPath(),
+		)
+	}
+	assertDebouncedDiff(t, m, flattenCmd(cmd), "/tmp/b")
 }
 
 // --- The diff: debounce, staleness, and the explicit refresh key ---
@@ -507,6 +567,21 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 				return m
 			},
 			msg:      tea.PasteMsg{Content: "x"},
+			wantPath: "/tmp/x",
+		},
+		{
+			// model.go's placeCursorOnActive, reached from the sessionsMsg
+			// handler when the session list is the second of the two initial
+			// loads to arrive: it jumps the cursor onto the row for the tmux
+			// session dg ws is actually running in.
+			name: "sessionsMsg arriving second places the cursor on the active session's row",
+			setup: func(t *testing.T) Model {
+				m := makeTestModel(testStatuses())
+				m.loaded = true // the worktree load already arrived
+				m.currentSessionFn = func() (string, bool) { return "repo-b", true }
+				return m
+			},
+			msg:      sessionsMsg{sessions: testSessions()},
 			wantPath: "/tmp/x",
 		},
 	}
