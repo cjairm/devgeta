@@ -30,7 +30,17 @@ const defaultSessionLabel = "root"
 // name, useless as a label — and a folder whose name flattens to nothing (empty
 // or the filesystem root) falls back to defaultSessionLabel.
 func sessionLabelForDir(workdir string) string {
-	if workdir == config.CanonicalRepoPath(paths.Paths.Home.Root) {
+	// Canonicalize BOTH sides. CanonicalRepoPath resolves symlinks, and workdir
+	// arrives unresolved (it is whatever validateSessionDirFn returned), so
+	// canonicalizing only the home side meant a home reached through a symlink
+	// never matched - the label silently fell through to the basename, which for
+	// a home directory is the opaque account name this branch exists to avoid.
+	// The empty string is excluded rather than canonicalized: CanonicalRepoPath("")
+	// resolves to the current directory, which would make a blank workdir report
+	// "home" whenever devgeta happened to be run from home, instead of taking the
+	// defaultSessionLabel fallback below.
+	if workdir != "" &&
+		config.CanonicalRepoPath(workdir) == config.CanonicalRepoPath(paths.Paths.Home.Root) {
 		return "home"
 	}
 	// Guard the raw basename before flattening: filepath.Base("") is "." and

@@ -100,6 +100,12 @@ func TestSessionLabelForDir(t *testing.T) {
 		{"plain folder", "/Users/x/dev/myrepo", "myrepo"},
 		{"dots and colons flattened", "/Users/x/dev/my.app:v2", "my_app_v2"},
 		{"home maps to home", home, "home"},
+		// The raw, unresolved home - which is what production actually passes,
+		// since sessionWorkdir is whatever validateSessionDirFn returned and is
+		// never symlink-resolved. When home is reached through a symlink this
+		// differs from the canonical form above, and comparing only the canonical
+		// home made it fall through to the account-name basename.
+		{"unresolved home still maps to home", paths.Paths.Home.Root, "home"},
 		{"filesystem root falls back", "/", defaultSessionLabel},
 		{"empty falls back", "", defaultSessionLabel},
 	}
