@@ -797,6 +797,26 @@ they came from were scratch files that do not survive the worktree.
   helpers extracted to a `refresh.go` — the tests already went to their own `refresh_test.go`
   and the implementation did not follow. `worktree.go` (~2760) wants `StateLayer` and its two
   methods in a `state_layer.go`.
+- `sessionLabelForDir`'s home check excludes `""` from canonicalization but not `"."`, and
+  `config.CanonicalRepoPath(".")` resolves to the working directory — so
+  `sessionLabelForDir(".")` returns `"home"` whenever devgeta is run from home, instead of the
+  `defaultSessionLabel` fallback. That is the same defect `64e5221` fixed for the empty
+  string, one input over. Latent, like that one was:
+  `ValidateDirPath` canonicalizes before `sessionWorkdir` is set, so no production path passes
+  a bare `"."` today. Found while the `pr-review-explicit-vs-watch` branch independently fixed
+  the same symlinked-home bug; that duplicate was dropped in favour of `64e5221` at the merge
+  gate, and its four extra subtests — symlinked home, trailing separator, `~`, and the
+  resolved form — are parked on `backup/pr-review-pre-rebase` if this is ever picked up.
+  Moving the empty/`/`/`.` guard **above** the home check closes it, which is what that
+  dropped commit did.
+- `internal/tui/worktree/model_test.go:1130` carries a lint-suppression comment of the kind
+  CLAUDE.md §6 rules out entirely. Pre-existing and unrelated to this cycle's work, but it is
+  a standing exception to a rule the repo otherwise enforces structurally.
+- `internal/tui/worktree/model_test.go:49`'s `validateSessionDirFn` double is an identity
+  function where production canonicalizes, so nothing pins the contract that `sessionWorkdir`
+  arrives canonical. Leaving it divergent was deliberate — a faithful double would have made
+  the symlinked-home test pass with the bug still in place — but a future consumer that
+  assumes canonicality would not be caught by these tests.
 
 **Test strength** — each of these passes today and would keep passing if the behavior it
 names regressed, which is why they are worth fixing rather than leaving:

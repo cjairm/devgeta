@@ -405,3 +405,52 @@ boxes above stay unchecked), running Step 3's live end-to-end cases, closing out
   runs in other people's repositories (CLAUDE.md §12).
 - **Both agents, or neither.** Any rule added for Claude Code must hold for OpenCode; the
   permissions test fails the build on asymmetry either way.
+
+---
+
+## Follow-ups
+
+Recorded here because the per-task review notes they came from were scratch files that do
+not survive the worktree. Only the first blocks anything.
+
+**Blocking a release, not the merge**
+
+- **Step 3 has not been run.** The four explicit-tick cases and the 2026-08-06 cycle's
+  sequence (now sixteen points, not fifteen) drive the command against a real pull request
+  and post real reviews, so they were left to the maintainer rather than run unattended.
+  Nothing has yet observed an agent _executing_ this prose: the guards prove the file says the
+  right words, not that a tick behaves. Until then the motivating failure —
+  `/pr-review-loop <n>` on an open, unrequested PR doing nothing — is fixed only on paper.
+  Then that cycle's Step 7 `dg configure --force` deploys, after merge.
+
+**A gap in this plan, worth fixing in the next one**
+
+- Step 2b's checklist was "one guard per clause ADR-0025's **Negative** section names". All
+  four of those are covered — but §4's two headline consequences are not in that section, so
+  `--once` starts nothing and a first-look approval starts nothing both shipped **unpinned**.
+  Deleting either sentence from the command file left all fifteen guards green while `--once`
+  became documented, parsed, and ignored. The final whole-branch review caught it; the
+  checklist would have, worded as "any precondition the handoff step evaluates". Both are
+  pinned now, each proved by deleting its clause.
+
+**Known limits of the guards, none worth changing yet**
+
+- Two step-0 sentences are pinned verbatim, so a meaning-preserving reorder ("`--on-request`
+  and `--once` are flags, not values") fails them. That is where a future maintainer deletes a
+  guard instead of fixing the prose. The pre-post gate's guard discloses its equivalent risk in
+  a comment; step 0's does not.
+- The decision-table guard parses its section twice, `markdownSection` then `flowSection` on
+  the same heading. Cosmetic; one collapsed read would do.
+- Of the four pre-existing guards this cycle "revised", one has a byte-identical body — it
+  counts as revised only because a shared anchor constant it reads changed. Anyone
+  re-auditing by diffing function bodies alone will count three.
+
+**A case ADR-0025 does not decide**
+
+- An **explicit** tick whose head moves mid-review posts nothing (step 7's head check fails),
+  exits non-terminal, and therefore starts a **request-gated** driver — which then waits
+  forever, because on an explicit tick there is typically no request for it to trigger on. The
+  human's review is silently dropped, and only re-running the command reviews the new head.
+  The shipped file now says so plainly at steps 7, 11 and 12 rather than promising a watch
+  that cannot fire, but that is prose describing a gap, not a decision closing it. If the
+  watch should survive that case, it needs an ADR.
