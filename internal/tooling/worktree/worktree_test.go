@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -205,6 +206,21 @@ func countExecCommandCallsWithDir(mockBase *commands.MockBaseCommand, dir string
 				count++
 				break
 			}
+		}
+	}
+	return count
+}
+
+// countTmuxSubcommandCalls counts ExecCommand calls whose first argument is
+// subcommand - i.e. how many `tmux <subcommand> ...` execs a call ran. Used to
+// pin the exec count of one specific tmux query ("list-panes", the expensive
+// one ADR-0024's split exists to stop duplicating) rather than the mock's
+// total call count, which also includes the cheap `list-sessions`.
+func countTmuxSubcommandCalls(mockBase *commands.MockBaseCommand, subcommand string) int {
+	count := 0
+	for _, c := range mockBase.ExecCommandCalls {
+		if len(c.Args) > 0 && c.Args[0] == subcommand {
+			count++
 		}
 	}
 	return count
@@ -623,7 +639,10 @@ func TestList(t *testing.T) {
 	// Before this task, List() called Tmux.WindowSession() once per worktree,
 	// and each of those calls ran its own fresh list-windows -a scan (N tmux
 	// execs per dashboard refresh). List() must now call Tmux.PaneStates()
-	// exactly once regardless of how many worktrees it finds.
+	// exactly once regardless of how many worktrees it finds. (The scan is
+	// preceded by one `list-sessions`, which ScanTmuxState always takes and
+	// List() discards - a fixed cost, not one that grows with the worktree
+	// count, which is what this test guards.)
 	t.Run("single tmux scan regardless of worktree count", func(t *testing.T) {
 		wm, mockGitBase, mockTmuxBase := newListTestWM(t)
 		chdirToNonRepo(t)
@@ -659,9 +678,9 @@ func TestList(t *testing.T) {
 		if err != nil {
 			t.Fatalf("List failed: %v", err)
 		}
-		if got := mockTmuxBase.GetExecCommandCallCount(); got != 1 {
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-panes"); got != 1 {
 			t.Errorf(
-				"expected exactly 1 tmux exec call for %d worktrees, got %d",
+				"expected exactly 1 list-panes scan for %d worktrees, got %d",
 				len(statuses),
 				got,
 			)
@@ -993,6 +1012,473 @@ func TestEnumerateWorktrees(t *testing.T) {
 				s.TmuxWindow,
 				s.WindowActive,
 				s.AgentState,
+			)
+		}
+	})
+}
+
+// tmuxScanMock answers `list-sessions` with sessions and `list-panes` with
+// panes, keyed off the command rather than call order, so a test asserting
+// scan counts stays honest if the number or order of tmux queries changes.
+func tmuxScanMock(sessions, panes string) *commands.MockBaseCommand {
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if len(c.Args) > 0 && c.Args[0] == "list-sessions" {
+			return sessions, "", nil
+		}
+		return panes, "", nil
+	}
+	return mockTmuxBase
+}
+
+// TestListWorktreesOnly covers ADR-0024's slow half on its own: the git
+// enumeration with no tmux work at all, which is what lets the dashboard run
+// it on a 30-second timer instead of every 3 seconds.
+func TestListWorktreesOnly(t *testing.T) {
+	wm, mockGitBase, mockTmuxBase := newListTestWM(t)
+	t.Chdir(t.TempDir())
+
+	mainRoot := filepath.Join(t.TempDir(), "slowrepo")
+	wtPath := createWorktreeDir(t, "slowrepo", "featx")
+	mockGitBase.SetExecCommandResults(
+		commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist),
+		commands.ExecCommandResult(
+			worktreePorcelain(mainRoot, [2]string{wtPath, "feature-x"}), "", nil,
+		),
+	)
+
+	statuses, err := wm.ListWorktreesOnly()
+	if err != nil {
+		t.Fatalf("ListWorktreesOnly failed: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("expected 1 status, got %d: %+v", len(statuses), statuses)
+	}
+	s := statuses[0]
+	if s.Name != "featx" || s.Path != wtPath || s.Branch != "feature-x" || s.Repo != "slowrepo" {
+		t.Errorf("got %+v, want the git-derived fields of the worktree at %q", s, wtPath)
+	}
+	if s.TmuxWindow != "" || s.WindowActive || s.AgentState != "" || s.Panes != nil {
+		t.Errorf("expected zero-value tmux fields, got %+v", s)
+	}
+	// The whole point of this half: no tmux process runs.
+	testutil.VerifyNoRealCommands(t, mockTmuxBase)
+}
+
+// TestScanTmuxState covers ADR-0024's fast half: one list-sessions plus one
+// list-panes -a, indexed both ways so a single scan serves the worktree rows
+// and the session rows.
+func TestScanTmuxState(t *testing.T) {
+	t.Run("indexes one scan's panes by window and by session", func(t *testing.T) {
+		mockTmuxBase := tmuxScanMock(
+			"myrepo\t1\nnotes\t0\n",
+			"myrepo\twt-myrepo-feat\t%1\t0\tclaude\tbusy\n"+
+				"myrepo\tshell\t%2\t1\tzsh\t\n"+
+				"notes\tnotes\t%3\t0\tvim\t\n",
+		)
+		wm := &WorktreeManager{Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase}}
+
+		layer, err := wm.ScanTmuxState()
+		if err != nil {
+			t.Fatalf("ScanTmuxState failed: %v", err)
+		}
+		if got := len(layer.Sessions); got != 2 {
+			t.Errorf("expected 2 sessions, got %d: %+v", got, layer.Sessions)
+		}
+		if got := len(layer.PanesByWindow["wt-myrepo-feat"]); got != 1 {
+			t.Errorf("expected 1 pane indexed under the worktree window, got %d", got)
+		}
+		if got := len(layer.PanesBySession["myrepo"]); got != 2 {
+			t.Errorf("expected 2 panes indexed under session myrepo, got %d", got)
+		}
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-panes"); got != 1 {
+			t.Errorf("expected exactly 1 list-panes scan, got %d", got)
+		}
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-sessions"); got != 1 {
+			t.Errorf("expected exactly 1 list-sessions call, got %d", got)
+		}
+	})
+
+	t.Run("no server: empty layer, no error, and no pane scan", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResult(
+			"",
+			"error connecting to /tmp/tmux-1000/default (No such file or directory)",
+			errors.New("exit status 1"),
+		)
+		wm := &WorktreeManager{Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase}}
+
+		layer, err := wm.ScanTmuxState()
+		if err != nil {
+			t.Fatalf("expected the no-server case to be tolerated, got: %v", err)
+		}
+		if len(layer.Sessions) != 0 || len(layer.PanesByWindow) != 0 {
+			t.Errorf("expected an empty layer, got %+v", layer)
+		}
+		// A pane cannot exist without a session, so there is nothing to scan for.
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-panes"); got != 0 {
+			t.Errorf("expected no list-panes scan when there are no sessions, got %d", got)
+		}
+	})
+
+	t.Run("a real list-sessions failure is returned with an empty layer", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResult(
+			"",
+			"some unexpected tmux failure",
+			errors.New("exit status 1"),
+		)
+		wm := &WorktreeManager{Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase}}
+
+		layer, err := wm.ScanTmuxState()
+		if err == nil {
+			t.Fatal("expected the error to be propagated, got nil")
+		}
+		if len(layer.Sessions) != 0 || len(layer.PanesByWindow) != 0 {
+			t.Errorf("expected an empty layer on error, got %+v", layer)
+		}
+	})
+}
+
+// TestStateLayerApplyTo pins the ownership rule the dashboard depends on: the
+// apply half reads its input and writes a new slice, so the producer of a
+// []WorktreeStatus stays its only writer even while a tmux layer taken on
+// another goroutine is applied to it.
+func TestStateLayerApplyTo(t *testing.T) {
+	t.Run("does not mutate its input slice", func(t *testing.T) {
+		window := GetWindowName("repoA", "feat")
+		layer := StateLayer{
+			PanesByWindow: map[string][]tmux.PaneState{
+				window: {{Session: "s", Window: window, PaneID: "%1", State: AgentStateBusy}},
+			},
+		}
+		input := []WorktreeStatus{{Name: "feat", Path: "/tmp/feat", Branch: "b", Repo: "repoA"}}
+
+		applied := layer.ApplyTo(input)
+
+		if input[0].TmuxWindow != "" || input[0].WindowActive ||
+			input[0].AgentState != "" || input[0].Panes != nil {
+			t.Errorf("input row was mutated, its tmux fields written in place: %+v", input[0])
+		}
+		if len(applied) != 1 {
+			t.Fatalf("expected 1 applied row, got %d", len(applied))
+		}
+		if applied[0].TmuxWindow != window || !applied[0].WindowActive ||
+			applied[0].AgentState != AgentStateBusy || len(applied[0].Panes) != 1 {
+			t.Errorf("expected the layer applied to the returned row, got %+v", applied[0])
+		}
+		if &applied[0] == &input[0] {
+			t.Error("expected a new slice, got the input slice back")
+		}
+	})
+
+	t.Run(
+		"a window absent from the layer clears rather than keeps stale state",
+		func(t *testing.T) {
+			// The dashboard applies successive layers to the same rows, so a
+			// window that has since been killed must not keep the state an
+			// earlier layer wrote.
+			input := []WorktreeStatus{{
+				Name: "feat", Repo: "repoA",
+				TmuxWindow:   GetWindowName("repoA", "feat"),
+				WindowActive: true,
+				AgentState:   AgentStateBusy,
+				Panes:        []tmux.PaneState{{PaneID: "%1", State: AgentStateBusy}},
+			}}
+
+			applied := StateLayer{PanesByWindow: map[string][]tmux.PaneState{}}.ApplyTo(input)
+
+			if applied[0].WindowActive || applied[0].AgentState != "" ||
+				len(applied[0].Panes) != 0 {
+				t.Errorf("expected the row cleared of tmux state, got %+v", applied[0])
+			}
+			if applied[0].Panes == nil {
+				t.Error("expected an empty Panes slice, not nil")
+			}
+		},
+	)
+}
+
+// TestRefreshState is the saving ADR-0024 is after: both halves of a refresh
+// off ONE `tmux list-panes -a`. Before the split, List() and ListSessions()
+// took one scan each.
+func TestRefreshState(t *testing.T) {
+	t.Run("takes exactly one list-panes scan for both halves", func(t *testing.T) {
+		window := GetWindowName("myrepo", "feat")
+		mockTmuxBase := tmuxScanMock(
+			"myrepo\t1\nnotes\t0\n",
+			"myrepo\t"+window+"\t%1\t0\tclaude\tbusy\n"+
+				"notes\tnotes\t%2\t0\tclaude\tblocked\n",
+		)
+		wm := &WorktreeManager{Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase}}
+
+		statuses, sessions, err := wm.RefreshState(
+			[]WorktreeStatus{{Name: "feat", Repo: "myrepo"}},
+		)
+		if err != nil {
+			t.Fatalf("RefreshState failed: %v", err)
+		}
+
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-panes"); got != 1 {
+			t.Errorf(
+				"expected exactly 1 list-panes scan for both halves, got %d: %+v",
+				got,
+				mockTmuxBase.ExecCommandCalls,
+			)
+		}
+		if got := countTmuxSubcommandCalls(mockTmuxBase, "list-sessions"); got != 1 {
+			t.Errorf("expected exactly 1 list-sessions call, got %d", got)
+		}
+		if got := mockTmuxBase.GetExecCommandCallCount(); got != 2 {
+			t.Errorf(
+				"expected exactly 2 tmux execs in total, got %d: %+v",
+				got,
+				mockTmuxBase.ExecCommandCalls,
+			)
+		}
+
+		// Both halves came out of that one scan.
+		if len(statuses) != 1 || !statuses[0].WindowActive ||
+			statuses[0].AgentState != AgentStateBusy {
+			t.Errorf("expected the worktree row layered from the scan, got %+v", statuses)
+		}
+		// "myrepo" hosts a wt- window, so only "notes" is standalone.
+		if len(sessions) != 1 || sessions[0].Name != "notes" ||
+			sessions[0].AgentState != AgentStateBlocked {
+			t.Errorf("expected only the standalone session notes, got %+v", sessions)
+		}
+	})
+
+	t.Run("returns the git rows even when the tmux scan fails", func(t *testing.T) {
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResult(
+			"",
+			"some unexpected tmux failure",
+			errors.New("exit status 1"),
+		)
+		wm := &WorktreeManager{Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase}}
+
+		statuses, sessions, err := wm.RefreshState(
+			[]WorktreeStatus{{Name: "feat", Path: "/tmp/feat", Repo: "myrepo"}},
+		)
+		if err == nil {
+			t.Fatal("expected the tmux error to be surfaced to the dashboard, got nil")
+		}
+		if len(statuses) != 1 || statuses[0].Path != "/tmp/feat" || statuses[0].WindowActive {
+			t.Errorf("expected the git-backed row back with no tmux state, got %+v", statuses)
+		}
+		if sessions != nil {
+			t.Errorf("expected no sessions, got %+v", sessions)
+		}
+	})
+
+	t.Run("List tolerates the same failure rather than dropping its rows", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+		wm.Tmux.Base = commands.NewMockBaseCommand()
+		wm.Tmux.Base.(*commands.MockBaseCommand).
+			SetExecCommandResult("", "some unexpected tmux failure", errors.New("exit status 1"))
+
+		mainRoot := filepath.Join(t.TempDir(), "tolerant")
+		wtPath := createWorktreeDir(t, "tolerant", "featx")
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist),
+			commands.ExecCommandResult(
+				worktreePorcelain(mainRoot, [2]string{wtPath, "feature-x"}), "", nil,
+			),
+		)
+
+		statuses, err := wm.List()
+		if err != nil {
+			t.Fatalf("a broken tmux server must not fail List: %v", err)
+		}
+		if len(statuses) != 1 || statuses[0].Path != wtPath {
+			t.Errorf("expected the git-backed row, got %+v", statuses)
+		}
+	})
+}
+
+// TestGlobalConfigCache covers the memoized config.Load() knownRepoAnchorGroups
+// reads the recent-repos store through (ADR-0024): reused while the file is
+// unchanged, dropped when it changes on disk, and dropped by recordRepoUsed -
+// the one place devgeta itself writes that store, whose same-second write of
+// an unchanged size a stat cannot see.
+func TestGlobalConfigCache(t *testing.T) {
+	// writeRecentRepo saves a config whose only recent repo is repoPath, with
+	// a fixed LastUsed so two calls with equal-length paths produce
+	// byte-identical file sizes - which is what lets a subtest hide a change
+	// from the mtime/size check.
+	writeRecentRepo := func(t *testing.T, repoPath string) {
+		t.Helper()
+		gc := &config.GlobalConfig{}
+		if err := gc.Create(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := gc.Load(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		gc.Worktree.RecentRepos = []config.RecentRepo{{
+			Path:     repoPath,
+			LastUsed: time.Date(2026, 8, 12, 9, 0, 0, 0, time.UTC),
+		}}
+		if err := gc.Save(); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+	}
+	stat := func(t *testing.T) os.FileInfo {
+		t.Helper()
+		fi, err := os.Stat(config.GlobalConfigFilePath())
+		if err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		return fi
+	}
+	// twoRepos returns two existing repo directories whose paths have the same
+	// length, so swapping one for the other in the config leaves its size
+	// unchanged.
+	twoRepos := func(t *testing.T) (string, string) {
+		t.Helper()
+		parent := t.TempDir()
+		a := filepath.Join(parent, "repo-a")
+		b := filepath.Join(parent, "repo-b")
+		for _, p := range []string{a, b} {
+			if err := os.MkdirAll(p, 0o755); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+		}
+		return a, b
+	}
+
+	t.Run("reuses the parsed config while the file looks unchanged", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+		repoA, repoB := twoRepos(t)
+
+		writeRecentRepo(t, repoA)
+		fi := stat(t)
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+
+		// Swap the store's contents behind the cache's back: same size, and
+		// the mtime put back to what it was.
+		writeRecentRepo(t, repoB)
+		if got := stat(t).Size(); got != fi.Size() {
+			t.Fatalf("setup: expected an equal-size rewrite, got %d then %d", fi.Size(), got)
+		}
+		if err := os.Chtimes(
+			config.GlobalConfigFilePath(),
+			fi.ModTime(),
+			fi.ModTime(),
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, repoA); got != 2 {
+			t.Errorf("expected the cached anchor %q on both enumerations, got %d calls", repoA, got)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, repoB); got != 0 {
+			t.Errorf(
+				"expected the cache to serve the old store, but %q was queried %d times",
+				repoB,
+				got,
+			)
+		}
+	})
+
+	t.Run("reloads when the config file changes out of process", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+		repoA, repoB := twoRepos(t)
+
+		writeRecentRepo(t, repoA)
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+
+		// What a `dg wt new` in another shell leaves behind: a rewritten file.
+		writeRecentRepo(t, repoB)
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+		if got := countExecCommandCallsWithDir(mockGitBase, repoB); got != 1 {
+			t.Errorf(
+				"expected the out-of-process change to be picked up (anchor %q queried once), got %d calls",
+				repoB,
+				got,
+			)
+		}
+	})
+
+	// The reason the cache is mutex-guarded at all: the dashboard reads it
+	// from Bubble Tea command goroutines, and its fast and slow refreshes can
+	// overlap. Run under -race, this fails without the lock.
+	t.Run("concurrent readers and an invalidation are race-free", func(t *testing.T) {
+		wm, _, _ := newListTestWM(t)
+		repoA, _ := twoRepos(t)
+		writeRecentRepo(t, repoA)
+
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for range 20 {
+					if _, err := wm.globalConfig(); err != nil {
+						t.Errorf("globalConfig failed: %v", err)
+						return
+					}
+				}
+			}()
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for range 20 {
+				wm.invalidateGlobalConfig()
+			}
+		}()
+		wg.Wait()
+	})
+
+	t.Run("recordRepoUsed drops the cache", func(t *testing.T) {
+		wm, mockGitBase, _ := newListTestWM(t)
+		t.Chdir(t.TempDir())
+		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+		repoA, repoB := twoRepos(t)
+
+		writeRecentRepo(t, repoA)
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+		if wm.configCache == nil {
+			t.Fatal("expected the first enumeration to populate the cache")
+		}
+
+		wm.recordRepoUsed(repoB)
+
+		// The drop is what makes devgeta's own create visible immediately: its
+		// write can land in the same second at the same size, which the
+		// mtime/size check would not see.
+		if wm.configCache != nil {
+			t.Error("expected recordRepoUsed to drop the cache")
+		}
+		if _, err := wm.ListWorktreesOnly(); err != nil {
+			t.Fatalf("ListWorktreesOnly failed: %v", err)
+		}
+		if got := countExecCommandCallsWithDir(
+			mockGitBase,
+			config.CanonicalRepoPath(repoB),
+		); got != 1 {
+			t.Errorf(
+				"expected the just-recorded repo %q to be enumerated once, got %d calls",
+				repoB,
+				got,
 			)
 		}
 	})

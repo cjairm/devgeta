@@ -120,7 +120,7 @@ func TestRemoveFromInstalled(t *testing.T) {
 func tempFileGlobs(t *testing.T) []string {
 	t.Helper()
 	matches, err := filepath.Glob(
-		filepath.Join(filepath.Dir(getGlobalConfigFilePath()), ".*.tmp.*"),
+		filepath.Join(filepath.Dir(GlobalConfigFilePath()), ".*.tmp.*"),
 	)
 	if err != nil {
 		t.Fatalf("failed to glob for leftover temp files: %v", err)
@@ -166,7 +166,7 @@ func TestSave_NeverLeavesTruncatedFileOnDirFailure(t *testing.T) {
 		t.Fatalf("initial Save failed: %v", err)
 	}
 
-	before, err := os.ReadFile(getGlobalConfigFilePath())
+	before, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config before failing save: %v", err)
 	}
@@ -174,7 +174,7 @@ func TestSave_NeverLeavesTruncatedFileOnDirFailure(t *testing.T) {
 	// Make the config directory read-only so the temp file used by the next
 	// Save() can't be created; the write must fail before touching the real
 	// file, proving there is no window where the config is left truncated.
-	configDir := filepath.Dir(getGlobalConfigFilePath())
+	configDir := filepath.Dir(GlobalConfigFilePath())
 	if err := os.Chmod(configDir, 0o555); err != nil {
 		t.Fatalf("failed to make config dir read-only: %v", err)
 	}
@@ -188,7 +188,7 @@ func TestSave_NeverLeavesTruncatedFileOnDirFailure(t *testing.T) {
 
 	_ = os.Chmod(configDir, 0o755)
 
-	after, err := os.ReadFile(getGlobalConfigFilePath())
+	after, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config after failed save: %v", err)
 	}
@@ -242,12 +242,12 @@ func TestReset_NeverLeavesTruncatedFileOnDirFailure(t *testing.T) {
 		t.Fatalf("initial Save failed: %v", err)
 	}
 
-	before, err := os.ReadFile(getGlobalConfigFilePath())
+	before, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config before failing reset: %v", err)
 	}
 
-	configDir := filepath.Dir(getGlobalConfigFilePath())
+	configDir := filepath.Dir(GlobalConfigFilePath())
 	if err := os.Chmod(configDir, 0o555); err != nil {
 		t.Fatalf("failed to make config dir read-only: %v", err)
 	}
@@ -260,7 +260,7 @@ func TestReset_NeverLeavesTruncatedFileOnDirFailure(t *testing.T) {
 
 	_ = os.Chmod(configDir, 0o755)
 
-	after, err := os.ReadFile(getGlobalConfigFilePath())
+	after, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config after failed reset: %v", err)
 	}
@@ -283,7 +283,7 @@ func TestRecentRepos_YAMLRoundTripIsRFC3339(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	raw, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -311,7 +311,7 @@ shell:
 worktree:
   default_ai: opencode
 `
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
@@ -350,7 +350,7 @@ worktree:
     - path: /repo/one
       last_used: 2026-07-15T10:30:00Z
 `
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
@@ -428,7 +428,7 @@ func TestSave_DefaultAIOmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	raw, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -457,7 +457,7 @@ func TestSave_LocationOmittedWhenEmpty(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	raw, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}
@@ -511,7 +511,7 @@ shell:
 worktree:
   default_ai: ""
 `
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
@@ -661,7 +661,7 @@ shell:
 worktree:
   default_ai: claude
 `
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
@@ -695,7 +695,7 @@ func TestSave_NotifySoundOmittedWhenFalse(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	raw, err := os.ReadFile(getGlobalConfigFilePath())
+	raw, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		t.Fatalf("failed to read config: %v", err)
 	}

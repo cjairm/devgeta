@@ -290,7 +290,12 @@ type GlobalConfig struct {
 	Review              ReviewConfig           `yaml:"review,omitempty"`
 }
 
-func getGlobalConfigFilePath() string {
+// GlobalConfigFilePath returns the absolute path of the global config file
+// Load/Save read and write. Exported so callers outside this package can
+// observe the file itself rather than reassembling the path from
+// paths.Paths.Config.Root - e.g. a caller caching a Load() result needs the
+// file's mtime and size to know when its cache went stale.
+func GlobalConfigFilePath() string {
 	return filepath.Join(
 		paths.Paths.Config.Root,
 		constants.App.Name,
@@ -299,7 +304,7 @@ func getGlobalConfigFilePath() string {
 }
 
 func (gc *GlobalConfig) Load() error {
-	globalConfigFile, err := os.ReadFile(getGlobalConfigFilePath())
+	globalConfigFile, err := os.ReadFile(GlobalConfigFilePath())
 	if err != nil {
 		return err
 	}
@@ -311,7 +316,7 @@ func (gc *GlobalConfig) Save() error {
 	if err != nil {
 		return err
 	}
-	return files.WriteFileAtomic(getGlobalConfigFilePath(), data, files.FilePermission)
+	return files.WriteFileAtomic(GlobalConfigFilePath(), data, files.FilePermission)
 }
 
 func (gc *GlobalConfig) Reset() error {
@@ -321,11 +326,11 @@ func (gc *GlobalConfig) Reset() error {
 	if err != nil {
 		return err
 	}
-	return files.WriteFileAtomic(getGlobalConfigFilePath(), data, files.FilePermission)
+	return files.WriteFileAtomic(GlobalConfigFilePath(), data, files.FilePermission)
 }
 
 func (gc *GlobalConfig) Create() error {
-	globalConfigFilePath := getGlobalConfigFilePath()
+	globalConfigFilePath := GlobalConfigFilePath()
 	if paths.FileAlreadyExist(globalConfigFilePath) {
 		return nil
 	}

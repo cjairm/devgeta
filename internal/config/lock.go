@@ -24,7 +24,7 @@ const globalConfigLockFile = "global_config.lock"
 var lockAcquireTimeout = 10 * time.Second
 
 func getGlobalConfigLockFilePath() string {
-	return filepath.Join(filepath.Dir(getGlobalConfigFilePath()), globalConfigLockFile)
+	return filepath.Join(filepath.Dir(GlobalConfigFilePath()), globalConfigLockFile)
 }
 
 // Update runs fn against a freshly loaded config while holding an exclusive

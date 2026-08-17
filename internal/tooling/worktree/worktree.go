@@ -16,7 +16,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
@@ -129,6 +131,27 @@ type WorktreeManager struct {
 	// directly to stdout underneath a running Bubble Tea alt-screen program
 	// would corrupt its rendering.
 	WarnFn func(msg string)
+
+	// configMu guards configCache. It is the manager's only mutable receiver
+	// state: the cache is read from Bubble Tea command goroutines, and the
+	// dashboard's fast (tmux) and slow (git) refreshes can overlap, so a
+	// plain field would be a data race.
+	configMu sync.Mutex
+	// configCache holds the last global config knownRepoAnchorGroups loaded,
+	// keyed by the config file's identity at load time (see cachedConfig).
+	// nil means "nothing cached yet, or the last load failed".
+	configCache *cachedConfig
+}
+
+// cachedConfig is one memoized config.Load() result plus the identity of the
+// file it came from. path is part of the key because paths.Paths.Config.Root
+// can be repointed (tests do it per case), so a cached entry from one root
+// must never be served under another.
+type cachedConfig struct {
+	path    string
+	modTime time.Time
+	size    int64
+	gc      *config.GlobalConfig
 }
 
 // New creates a new WorktreeManager instance
@@ -733,6 +756,62 @@ func AggregateAgentState(states []string) string {
 	return tmux.AggregateAgentState(states)
 }
 
+// globalConfig returns the global config, re-reading and re-parsing the YAML
+// only when the file it came from has changed. knownRepoAnchorGroups is on the
+// dashboard's refresh path and used to pay a full read+unmarshal per refresh
+// for a file that changes only when a worktree is created; ADR-0024's slow tick
+// still calls it every 30 seconds, and every mutation calls it again.
+//
+// Staleness is bounded from both ends:
+//
+//   - out of process (a `dg wt new` in another shell) by the file's mtime and
+//     size, stat'd on every call - three orders of magnitude cheaper than the
+//     git exec this same enumeration is about to run per repo.
+//   - in process by recordRepoUsed, the one place devgeta writes recent-repos,
+//     which drops the cache outright. This matters because a same-second write
+//     of the same size is invisible to a stat, and it is exactly what devgeta's
+//     own create does.
+//
+// The stat happens before the load, never after, so cached content is always at
+// least as new as the stamp it is filed under: a write racing the load leaves a
+// newer file with a newer stamp, and the next call reloads. The returned config
+// is shared with every other caller and must be treated as read-only.
+func (w *WorktreeManager) globalConfig() (*config.GlobalConfig, error) {
+	path := config.GlobalConfigFilePath()
+	var modTime time.Time
+	var size int64
+	if fi, err := os.Stat(path); err == nil {
+		modTime = fi.ModTime()
+		size = fi.Size()
+	}
+
+	w.configMu.Lock()
+	defer w.configMu.Unlock()
+
+	if c := w.configCache; c != nil && c.path == path && c.size == size &&
+		c.modTime.Equal(modTime) {
+		return c.gc, nil
+	}
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Load(); err != nil {
+		// Nothing worth caching: a missing or unreadable config is retried on
+		// the next call, exactly as it was before this cache existed.
+		w.configCache = nil
+		return nil, err
+	}
+	w.configCache = &cachedConfig{path: path, modTime: modTime, size: size, gc: gc}
+	return gc, nil
+}
+
+// invalidateGlobalConfig drops the memoized config so the next globalConfig()
+// call re-reads the file. Called by recordRepoUsed - see globalConfig.
+func (w *WorktreeManager) invalidateGlobalConfig() {
+	w.configMu.Lock()
+	defer w.configMu.Unlock()
+	w.configCache = nil
+}
+
 // anchorGroup is a set of candidate anchor paths that are all believed to
 // belong to the same repo. List() tries the anchors in a group in order and
 // stops at the first one that resolves (a husk sibling never hides a good
@@ -758,9 +837,11 @@ type anchorGroup []string
 //     reimplemented with GetRepoRoot) - a single-anchor group, since it's
 //     already known to be one specific repo's root.
 //  2. the recent-repos store (gc.Worktree.PrunedRecentRepos(), already
-//     filters paths no longer on disk - reused rather than reimplemented). A
-//     config load failure is tolerated as "no config yet, skip this source",
-//     matching RepoCandidates' own convention. Each recent repo is likewise a
+//     filters paths no longer on disk - reused rather than reimplemented),
+//     read through w.globalConfig() so a dashboard refreshing on a timer
+//     re-parses the YAML only when the file actually changed. A config load
+//     failure is tolerated as "no config yet, skip this source", matching
+//     RepoCandidates' own convention. Each recent repo is likewise a
 //     single-anchor group.
 //  3. one group per shared-root repo-slug directory, containing every
 //     subdirectory found under that slug - not just the first. A repo-slug
@@ -783,8 +864,7 @@ func (w *WorktreeManager) knownRepoAnchorGroups() []anchorGroup {
 		groups = append(groups, anchorGroup{cwdRoot})
 	}
 
-	gc := &config.GlobalConfig{}
-	if err := gc.Load(); err == nil {
+	if gc, err := w.globalConfig(); err == nil {
 		for _, r := range gc.Worktree.PrunedRecentRepos() {
 			groups = append(groups, anchorGroup{r.Path})
 		}
@@ -936,42 +1016,177 @@ func (w *WorktreeManager) enumerateWorktrees() []WorktreeStatus {
 	return statuses
 }
 
-// List returns all worktrees with their window status across all repos.
-// enumerateWorktrees does all the git-backed resolution (see its doc
-// comment); List's own job is layering tmux state on top via a single
-// PaneStates() scan, instead of a WindowSession() call per worktree - each of
-// which ran its own fresh list-windows -a scan (N tmux execs per 3-second
-// refresh). paneStatesByWindow is indexed by window name: a window's
-// presence as a key is the direct equivalent of "does a window with this
-// name exist" (PaneStates enumerates every pane on the server, and a window
-// with zero panes cannot exist in tmux), and its slice of pane states is
-// what AggregateAgentState reduces to AgentState. See ADR-0005.
-func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
-	paneStatesByWindow := make(map[string][]string)
-	paneFullStatesByWindow := make(map[string][]tmux.PaneState)
-	for _, ps := range w.Tmux.PaneStates() {
-		paneStatesByWindow[ps.Window] = append(paneStatesByWindow[ps.Window], ps.State)
-		paneFullStatesByWindow[ps.Window] = append(paneFullStatesByWindow[ps.Window], ps)
-	}
+// StateLayer is one tmux scan's worth of state: everything the dashboard
+// shows that comes from tmux rather than git. It is the unit ADR-0024's fast
+// refresh moves around - taken by ScanTmuxState, applied by ApplyTo and
+// SessionStatuses - so the fast tick can refresh tmux state without touching
+// git, and both applications work off the same single scan instead of one
+// each.
+//
+// A StateLayer is read-only once built (ScanTmuxState never hands out one it
+// still writes to), which is what lets the TUI carry it across a command
+// goroutine into Update.
+type StateLayer struct {
+	// PanesByWindow indexes the scan's panes by tmux window name. A window's
+	// presence as a key is the direct equivalent of "does a window with this
+	// name exist": PaneStates enumerates every pane on the server, and a
+	// window with zero panes cannot exist in tmux.
+	PanesByWindow map[string][]tmux.PaneState
+	// PanesBySession indexes those same panes by the session that owns them.
+	PanesBySession map[string][]tmux.PaneState
+	// Sessions is the `tmux list-sessions` result, unfiltered - which of them
+	// count as standalone is SessionStatuses' decision, not the scan's.
+	Sessions []tmux.SessionInfo
+}
 
-	statuses := w.enumerateWorktrees()
-	for i := range statuses {
-		windowName := GetWindowName(statuses[i].Repo, statuses[i].Name)
-		// Comma-ok reports key presence, not slice non-emptiness: a window
-		// in the index always has at least one pane state appended above, so
-		// ok alone is the "window exists" signal.
-		states, windowActive := paneStatesByWindow[windowName]
-		panes := paneFullStatesByWindow[windowName]
+// ScanTmuxState takes the whole tmux-derived layer in one `tmux list-sessions`
+// plus one `tmux list-panes -a`. That single pane scan is the point: List()
+// and ListSessions() used to take one each, so a refresh that wanted both -
+// which the dashboard does, every tick - paid for two (ADR-0024).
+//
+// The pane scan is skipped entirely when there are no sessions, since a pane
+// cannot exist outside one; that is also the no-tmux-server case, where
+// ListSessions() returns (nil, nil) and this returns an empty layer, not an
+// error.
+//
+// An error means `tmux list-sessions` genuinely failed (not "no server"), and
+// is returned with an empty layer.
+func (w *WorktreeManager) ScanTmuxState() (StateLayer, error) {
+	sessions, err := w.Tmux.ListSessions()
+	if err != nil {
+		return StateLayer{}, err
+	}
+	layer := StateLayer{
+		PanesByWindow:  make(map[string][]tmux.PaneState),
+		PanesBySession: make(map[string][]tmux.PaneState),
+		Sessions:       sessions,
+	}
+	if len(sessions) == 0 {
+		return layer, nil
+	}
+	for _, ps := range w.Tmux.PaneStates() {
+		layer.PanesByWindow[ps.Window] = append(layer.PanesByWindow[ps.Window], ps)
+		layer.PanesBySession[ps.Session] = append(layer.PanesBySession[ps.Session], ps)
+	}
+	return layer, nil
+}
+
+// ApplyTo returns a copy of statuses with the tmux-derived fields
+// (TmuxWindow, WindowActive, AgentState, Panes) filled in from this layer.
+// Every other field is git-derived and passes through untouched.
+//
+// statuses is READ-ONLY here and the result is a new slice. The caller that
+// enumerated a list stays its only writer, which is what lets the dashboard
+// hand a layer to Update and apply it to a list the model already holds
+// without racing whoever produced that list.
+func (l StateLayer) ApplyTo(statuses []WorktreeStatus) []WorktreeStatus {
+	applied := make([]WorktreeStatus, len(statuses))
+	copy(applied, statuses)
+	for i := range applied {
+		windowName := GetWindowName(applied[i].Repo, applied[i].Name)
+		// Comma-ok reports key presence, not slice non-emptiness: a window in
+		// the index always has at least one pane, so ok alone is the "window
+		// exists" signal.
+		panes, windowActive := l.PanesByWindow[windowName]
 		if panes == nil {
 			panes = []tmux.PaneState{}
 		}
-		statuses[i].TmuxWindow = windowName
-		statuses[i].WindowActive = windowActive
-		statuses[i].AgentState = AggregateAgentState(states)
-		statuses[i].Panes = panes
+		applied[i].TmuxWindow = windowName
+		applied[i].WindowActive = windowActive
+		applied[i].AgentState = aggregatePaneStates(panes)
+		applied[i].Panes = panes
 	}
+	return applied
+}
 
-	return statuses, nil
+// SessionStatuses reduces this layer to the standalone sessions the workspace
+// dashboard lists on their own - those with no worktree-backed window, since a
+// worktree-backed session already appears as a worktree row. The exclusion and
+// the per-session aggregation both live here, off an already-taken scan,
+// rather than in ListSessions() taking a second one of its own.
+func (l StateLayer) SessionStatuses() []SessionStatus {
+	var statuses []SessionStatus
+	for _, s := range l.Sessions {
+		panes := l.PanesBySession[s.Name]
+		if slices.ContainsFunc(panes, func(ps tmux.PaneState) bool {
+			return isWorktreeWindow(ps.Window)
+		}) {
+			continue
+		}
+		statuses = append(statuses, SessionStatus{
+			Name:       s.Name,
+			Attached:   s.Attached,
+			AgentState: aggregatePaneStates(panes),
+			Panes:      panes,
+		})
+	}
+	return statuses
+}
+
+// aggregatePaneStates reduces a window's or a session's panes to the single
+// agent state its row reports, per ADR-0005's precedence. The one adapter
+// between a []tmux.PaneState and tmux.AggregateAgentState's []string, shared
+// by both halves of the apply step so neither grows its own copy.
+func aggregatePaneStates(panes []tmux.PaneState) string {
+	states := make([]string, 0, len(panes))
+	for _, p := range panes {
+		states = append(states, p.State)
+	}
+	return tmux.AggregateAgentState(states)
+}
+
+// RefreshState layers one fresh tmux scan onto statuses, returning the applied
+// worktree rows and the standalone-session rows from that same scan. This is
+// the whole refresh in one call for callers that want both halves - the
+// dashboard's slow tick, and List() below.
+//
+// statuses is read-only (see ApplyTo). The applied rows are returned even when
+// the scan failed: an empty layer applies cleanly - every window absent - which
+// is exactly what a caller saw before this split when tmux was unreachable, so
+// a broken tmux server costs the tmux columns and never the git-backed rows.
+func (w *WorktreeManager) RefreshState(
+	statuses []WorktreeStatus,
+) ([]WorktreeStatus, []SessionStatus, error) {
+	layer, err := w.ScanTmuxState()
+	return layer.ApplyTo(statuses), layer.SessionStatuses(), err
+}
+
+// ListWorktreesOnly returns every worktree across every known repo with only
+// its git-derived fields populated (Name/Path/Branch/Repo); the tmux-derived
+// ones are left zero for RefreshState to fill in. This is ADR-0024's slow
+// half on its own, for the dashboard's 30-second git tick. The error return
+// exists for symmetry with List() and to leave room for enumeration to start
+// reporting failures; it is always nil today.
+func (w *WorktreeManager) ListWorktreesOnly() ([]WorktreeStatus, error) {
+	return w.enumerateWorktrees(), nil
+}
+
+// List returns all worktrees with their window status across all repos - the
+// git enumeration and the tmux layer in one call, which is what every non-TUI
+// caller (dg wt list, ListNames, shell completion) wants. Composed from the
+// two halves the dashboard refreshes separately, so the combined path and the
+// split one cannot drift. The cost of composing rather than duplicating is one
+// `tmux list-sessions` whose result List() discards - a single fixed exec on a
+// call that already spawns a git process per known repo.
+//
+// A tmux failure is not a List failure: the git-backed rows are still correct
+// and worth returning when no tmux server is reachable, which is how this
+// behaved before the split (PaneStates() has always tolerated the same failure
+// by returning nil). The dashboard, which does care, gets the error from
+// RefreshState.
+func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
+	statuses, err := w.ListWorktreesOnly()
+	if err != nil {
+		return nil, err
+	}
+	applied, _, err := w.RefreshState(statuses)
+	if err != nil {
+		logger.L().Debugw(
+			"worktree: tmux scan failed, listing worktrees without tmux state",
+			"error", err,
+		)
+	}
+	return applied, nil
 }
 
 // ListNames returns just the worktree names across all repos for shell completion.
@@ -989,50 +1204,20 @@ func (w *WorktreeManager) ListNames() ([]string, error) {
 
 // ListSessions returns tmux sessions with no worktree-backed window - plain
 // sessions the workspace dashboard should list on their own, since a
-// worktree-backed session already appears via List(). A single
-// Tmux.PaneStates() scan (same primitive List() uses, see its comment above)
-// serves both jobs at once: isWorktreeWindow(ps.Window) over the scan finds
-// every session hosting a wt-prefixed window (excluded here, since it
-// already appears via List()), and the same scan's panes, grouped by
-// session, are what AggregateAgentState reduces to each SessionStatus's
-// AgentState.
+// worktree-backed session already appears via List(). Composed from the same
+// scan and the same apply half RefreshState uses (see StateLayer), so the two
+// paths cannot drift and a caller wanting both lists pays for one scan, not
+// two.
 //
 // Errors from Tmux.ListSessions() propagate unchanged, including its (nil,
 // nil) no-server result, which flows through as an empty list here rather
 // than an error.
 func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
-	sessions, err := w.Tmux.ListSessions()
+	layer, err := w.ScanTmuxState()
 	if err != nil {
 		return nil, err
 	}
-	if len(sessions) == 0 {
-		return nil, nil
-	}
-
-	worktreeSessions := make(map[string]bool, len(sessions))
-	panesBySession := make(map[string][]tmux.PaneState)
-	statesBySession := make(map[string][]string)
-	for _, ps := range w.Tmux.PaneStates() {
-		if isWorktreeWindow(ps.Window) {
-			worktreeSessions[ps.Session] = true
-		}
-		panesBySession[ps.Session] = append(panesBySession[ps.Session], ps)
-		statesBySession[ps.Session] = append(statesBySession[ps.Session], ps.State)
-	}
-
-	var statuses []SessionStatus
-	for _, s := range sessions {
-		if worktreeSessions[s.Name] {
-			continue
-		}
-		statuses = append(statuses, SessionStatus{
-			Name:       s.Name,
-			Attached:   s.Attached,
-			AgentState: AggregateAgentState(statesBySession[s.Name]),
-			Panes:      panesBySession[s.Name],
-		})
-	}
-	return statuses, nil
+	return layer.SessionStatuses(), nil
 }
 
 // findRepoForWorktree searches every known repo (via enumerateWorktrees, the
@@ -2549,10 +2734,17 @@ func (w *WorktreeManager) recordRepoUsed(repoRoot string) {
 	canonical := config.CanonicalRepoPath(repoRoot)
 
 	now := time.Now()
-	if err := config.Update(func(gc *config.GlobalConfig) error {
+	err := config.Update(func(gc *config.GlobalConfig) error {
 		gc.Worktree.UpsertRecentRepo(canonical, now)
 		return nil
-	}); err != nil {
+	})
+	// Unconditionally, including on failure: a failed Update can still have
+	// written, and this is the one place devgeta writes recent-repos, so
+	// anything memoized from before it is now suspect. A same-second write of
+	// the same size is invisible to globalConfig's stat, which is why the
+	// write site drops the cache itself rather than relying on it.
+	w.invalidateGlobalConfig()
+	if err != nil {
 		w.warnRepoRecordFailure(canonical, err)
 	}
 }

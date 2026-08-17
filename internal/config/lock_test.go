@@ -17,7 +17,7 @@ func TestGetGlobalConfigLockFilePath_IsSidecarNotConfigFile(t *testing.T) {
 	setupIsolatedConfigPaths(t)
 
 	lockPath := getGlobalConfigLockFilePath()
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 
 	assert.NotEqual(
 		t,
@@ -207,7 +207,7 @@ func TestUpdate_ConcurrentUpdatesBothLand(t *testing.T) {
 func TestUpdate_ConcurrentFirstRunUpdatesBothLand(t *testing.T) {
 	setupIsolatedConfigPaths(t)
 
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf(
 			"precondition failed: config file must not exist yet, stat returned: %v",
@@ -280,7 +280,7 @@ func TestUpdate_ConcurrentFirstRunUpdatesBothLand(t *testing.T) {
 func TestUpdate_MalformedConfigReturnsErrorWithoutClobberingFile(t *testing.T) {
 	setupIsolatedConfigPaths(t)
 
-	configPath := getGlobalConfigFilePath()
+	configPath := GlobalConfigFilePath()
 	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
 		t.Fatalf("failed to create config dir: %v", err)
 	}
