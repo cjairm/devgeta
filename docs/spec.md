@@ -808,7 +808,9 @@ list it found, and it prints that list and the restore command before the first 
 write, not only in the terminal report, so an interruption mid-run (Ctrl-C, a crash) still
 finds the restore instruction already on screen. That does not close the gap itself: a
 process that is gone prints nothing further, so an interrupted run leaves `review.reviewers`
-narrowed until someone runs the printed restore command by hand.
+narrowed until someone runs the printed restore command by hand — and re-running the loop
+before that happens records the narrowed list as the new run's baseline, making the
+narrowing permanent and silent.
 It parses `--reviewer` and `--note` from its own arguments once, before the first round, and
 forwards both to every `review-run` call it makes — the note verbatim, never summarized or
 answered by the loop itself. It reads the open ids from `review-notes` after each round,

@@ -66,8 +66,8 @@ This loop runs three phases, always in this order, though a phase can be skipped
 
 1. **Opening round.** Every reviewer configured in `review.reviewers` runs. Nothing has
    been narrowed yet, so this round establishes who is actually blocking.
-2. **Narrowing rounds.** Only the reviewers that did not approve in the previous round
-   run. A reviewer whose outcome was `APPROVE` drops out of this phase's set; any other
+2. **Narrowing rounds.** Only the reviewers that have not yet approved in this run take
+   part. A reviewer whose outcome was `APPROVE` drops out of this phase's set; any other
    outcome (`REQUEST CHANGES`, `NEEDS DISCUSSION`, an error, or no verdict at all) keeps
    it in — unless it has just failed twice in a row, which drops it instead (see `### 2`).
    Findings are triaged and settled exactly as in any other round — only which reviewers
@@ -190,6 +190,13 @@ label. A round that fails as a whole prints no verdict lines at all, so a half-r
 not a state that can exist: either the loop has every label, or it has none and narrowing
 never starts.
 
+**A round that returns no verdict lines at all did not complete, and it is never an
+approval.** It produced no outcomes, so every rule this file phrases over "every
+outcome" — "every reviewer's outcome this round is `APPROVE`" in `### 3` above all — is
+**not** satisfied by it: an empty set of outcomes satisfies such a phrase vacuously, and
+reading it that way turns an abandoned round into a clean approval. Surface the error the
+round printed and go to the terminal report, naming that round as failed.
+
 **The `get` line is not the record, and must never be split into one.**
 `devgeta config get review.reviewers` prints the list joined with a comma and a space,
 and an entry only has to contain a `/` that is neither its first nor its last character —
@@ -231,7 +238,8 @@ a judgement to make:
    line, so no stored entry contains a newline.
 2. `[ "$(devgeta config get review.reviewers)" = '<the labels joined with ", ">' ]`
    succeeds — the joined labels are byte-identical to the `get` line, with the joined
-   string single-quoted per the quoting rule below.
+   string single-quoted **and every `'` inside it escaped `'\''`**, per the quoting rule
+   below. That rule covers this comparison, not only the writes.
 
 Neither puts the stored bytes on screen: `$( )` captures and `| wc -l` counts. Read that
 together with step 0's filtered display as one rule — **a `get` is either compared or
@@ -270,10 +278,18 @@ and newlines are all legal inside one, before or after the slash. Interpolated b
 `anthropic/a b` becomes two reviewers and `anthropic/a; <command>` becomes a second
 command that runs with whatever this agent's shell can do. A config value is untrusted
 input to a command line, and untrusted input is validated before use. So single-quote
-each entry and escape any single quote inside it the usual way (`'\''`), in **all three**
-places entries appear: the narrowing write, the restore, and the restore command printed
-for a human. The printed one is not the lesser case — it is the one a human pastes into
-their own shell, and it is the only recovery an interrupted run leaves behind.
+each entry and escape any single quote inside it the usual way (`'\''`), in **every**
+command line the loop composes from recorded entries — not just the ones that write the
+key. That is the narrowing write, the restore, the restore command printed for a human,
+**and every comparison string an entry or the entries' `", "` join is embedded in**: the
+proof check above, the pre-write check, the post-round check, the post-restore
+verification, and the expected `<key>: <previous> -> <new>` line a captured write is
+compared against. A `'` is legal inside a stored entry and needs the same `'\''` escape
+in those comparison strings, because each sits inside a `[ … = '…' ]` test — an
+unescaped one closes the string early and the rest of the entry runs as a command, on the
+opening round, before any refusal in this file could have fired. The printed one is not
+the lesser case either — it is the one a human pastes into their own shell, and it is the
+only recovery an interrupted run leaves behind.
 
 **Quoting protects the shell; it does nothing for the terminal.** Single quotes stop
 `anthropic/a; echo INJECTED` from becoming a second command, and stop nothing about an
@@ -413,7 +429,11 @@ Print it here rather than only in the terminal report, and know why: this is the
 of the restore story that survives an interruption. A session killed between a
 `devgeta config set` and its restore emits no terminal report at all, so anything stated
 only in the report is lost, while anything printed before the first mutation is already
-on the human's screen.
+on the human's screen. Say what is at stake beside it, because it is the part an
+interrupted human most needs and nothing else states: the key is left narrowed, and
+running `/review-loop` again before pasting that command records the **narrowed** list as
+the new run's baseline — which makes the narrowing permanent, and silent, since every
+later restore then puts the narrowed list back.
 
 The order matters the other way too. When any refusal above fires, the loop prints **no
 restore command at all** — it prints the refusal and the offending value in the escaped
@@ -430,7 +450,8 @@ reopens before every narrowing write rather than only the first. Guard it with t
 two commands, run against the **record**:
 `devgeta config get review.reviewers | wc -l` reads 1, and
 `[ "$(devgeta config get review.reviewers)" = '<the record joined with ", ">' ]`
-succeeds. Both passing means the key still holds the list the loop recorded, so the
+succeeds — the joined record quoted and escaped by the quoting rule above, the same as
+the proof check. Both passing means the key still holds the list the loop recorded, so the
 narrowed list overwrites nothing the user added and the restore afterwards puts back what
 is actually there. Either failing means something outside the loop changed the key: **do
 not write, and do not narrow again for the rest of the run.**
@@ -485,6 +506,10 @@ else
 fi
 ```
 
+That snippet's entries are tame so it stays readable. In the real command the quoting rule
+above applies to both halves — the `set` arguments **and** the expected
+`<key>: <previous> -> <new>` string, which embeds the entries and their join.
+
 Two things must never be done to that string, and each has a concrete failure. **Never
 split a previous value out of it** by cutting at the first `" -> "`: an entry may legally
 contain `" -> "`, so that read both hides a real change (a concurrent single entry
@@ -532,7 +557,8 @@ human — nominally unattended, not absent — from running
 `devgeta config set review.reviewers …` in another shell while one runs. So before
 writing the record back, run the same two checks against the **narrowed** list instead of
 the record: the `get` output is one line, and it is byte-identical to the narrowed
-entries joined with `", "`. Both passing means the key still holds exactly what the loop
+entries joined with `", "` — that join quoted and escaped by the quoting rule above, as
+in every other comparison. Both passing means the key still holds exactly what the loop
 wrote, so writing the record back restores the user's own list and touches nothing else.
 Either failing means something other than the loop wrote the key during the round: **do
 not write.** Leave the value exactly as found, and narrowing is off for the rest of the
@@ -570,7 +596,8 @@ say that, rather than reporting a change the user did not make. Narrowing still 
 because a write that does not land is not a state to keep narrowing on.
 
 **Verify every restore that does happen** by re-running the two checks against the record:
-the `get` output is still one line, and still byte-identical to the joined record. A match
+the `get` output is still one line, and still byte-identical to the joined record — quoted
+and escaped by the quoting rule above, like every other comparison string. A match
 means the config holds the record. A mismatch means the restore did not land, which is
 worth catching for the same reason the pre-write check exists — it is a state only a human
 can fix, and the restore command already printed above is what fixes it.
@@ -624,6 +651,8 @@ have passed:
 - no earlier round having ended with the key holding something other than the narrowed list
   it was given;
 - no earlier narrowing write having reported replacing a value the loop never recorded;
+- no earlier `devgeta config set` — the narrowing write or the restore — having exited
+  non-zero (the failed-write branch below);
 - and the key still holding the recorded list when checked immediately before this write.
 
 Otherwise the round runs on the config exactly as the user left it: no write, no restore.
@@ -652,8 +681,10 @@ Eight narrowing-set cases land there, each for its own reason.
   not what the check immediately before it had just confirmed, so the write landed on a
   change made in between. Narrowing is off from that round onward. Unlike the two above,
   this one ends with the key holding the **record** — the round's restore still runs, or has
-  already run — because leaving it narrowed would be strictly worse; but the value that was
-  replaced is gone and cannot be reconstructed, which is why the report names it.
+  already run — because leaving it narrowed would be strictly worse, unless the post-round
+  check also fails in that same round, in which case the value is left as found. Either
+  way the value that was replaced is gone and cannot be reconstructed, which is why the
+  report names it.
 
 Those last three are the only ones of the eight that stop narrowing part-way through a run
 rather than before it starts; the other five refuse before the first write. The first two of
@@ -736,7 +767,7 @@ This loop never re-runs a round to paper over a failure inside that same round �
 round and a broken one look the same from here, so both are handled by the schedule above
 rather than an out-of-band immediate rerun. One level below, `review-run` does its own
 retry: a reviewer whose attempt produced no report at all is launched once more inside the
-same round (devgeta's ADR-0020), and the outcome you are reading already accounts for it.
+same round — once, never more — and the outcome you are reading already accounts for it.
 So a failure that reaches you has already survived the only within-round retry there is;
 the per-reviewer retry above, spanning rounds rather than happening inside one, is a
 second, different thing.
@@ -761,6 +792,11 @@ its earlier approval as clean would have shipped that defect. So check the phase
 anything else: if every outcome is `APPROVE` and nothing is under `open:` but this is not
 the confirming round, this is not a clean approval — see the last bullet below for where it
 goes.
+
+None of this reaches a round that printed no verdict lines at all. Such a round did not
+complete, so it has no outcomes, and neither "every outcome is `APPROVE`" here nor "every
+non-approving outcome was `ERROR` or `NO VERDICT`" below is satisfied by that empty set —
+the rule and its destination are stated in `### 1`.
 
 If every reviewer's outcome this round is `APPROVE`, nothing is under `open:`, and this
 round is the confirming round, look at its settled entries.
@@ -923,7 +959,7 @@ here".
   optional here. See the two paragraphs below, which are about exactly this case.
 - **Any reviewer withheld approval** — `REQUEST CHANGES`, `NEEDS DISCUSSION`, `ERROR`,
   or `NO VERDICT`: go to the **narrowing phase**. Return to step 1 and run the next
-  round with the narrowing set, which `### 2` defines.
+  round with the narrowing set, defined in `## Phases` and narrowed further by `### 2`.
 
 **After a narrowing round:**
 
@@ -1076,7 +1112,7 @@ that withheld approval without recording a finding (step 3), a finding that need
 (step 4), and the confirming round ending in anything other than a clean approval (step
 5). Hitting the round cap is **not** a report trigger on its own: the cap is per phase, so
 a narrowing phase that reaches it ends that phase and routes to the confirming round (step
-5). Reaching a cap ends a phase, and only the confirming phase's cap ends the run.
+5). Reaching a cap ends a phase; only the confirming round's ending ends the run.
 
 ```
 ## Review loop — report
@@ -1273,8 +1309,8 @@ Two of the three need their own sentence rather than that generic one:
   authorization for the whole cycle, and an unattended loop that stops to ask before each
   round is not unattended. The single exception is retiring an agent's rejection, which
   stays the human's call (see the report section above).
-- Never invent a reviewer's verdict, and never present a run that failed, or a run that
-  ended at the round cap without a clean approval, as one that passed.
+- Never invent a reviewer's verdict, and never present a run that failed, or a phase that
+  ended at its cap without a clean approval, as one that passed.
 - If `devgeta task review-run` itself refuses to run (default branch, detached HEAD, a
   branch that changes nothing at all, or a blank `--note`), surface that error as-is and
   stop before running anything else.
