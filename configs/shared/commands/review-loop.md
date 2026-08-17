@@ -82,8 +82,9 @@ This loop runs three phases, always in this order:
 to the still-blocking reviewers for one round, then putting the original list back —
 never left narrowed for a whole phase. Every read and write of that key goes only
 through `devgeta config get` and `devgeta config set`; the loop never reads devgeta's
-stored config directly. The rule that governs every one of those reads and writes,
-stated here in full because later steps refer back to it rather than repeating it:
+stored config directly. The rule that governs every one of those reads and writes is
+stated here once in full, and the flow steps below carry the mechanics that implement
+it:
 
 - The loop narrows `review.reviewers` only while the key still holds the exact list it
   recorded — checked again immediately before every narrowing write, not assumed from
@@ -135,7 +136,9 @@ Print it through that filter. Never run the `get` bare and restate what it said:
 sequence has already moved the cursor by the time the loop sees it, and there is no later
 point at which the loop could take that back. `sed -n l` prints ESC as `\033`, a carriage
 return as `\r`, and marks the end of the line with a `$`, so nothing raw leaves the pipe.
-Step 0 has run no checks and knows nothing about the value it is showing, so the filtered
+BSD `sed` also wraps long output at about 70 columns, inserting a trailing backslash and
+a newline — that wrap is the filter's own, not a stored byte. Step 0 has run no checks
+and knows nothing about the value it is showing, so the filtered
 form is the only form it emits. Use `sed`, not `cat -v` — `l` is POSIX `sed`, while `cat`
 is commonly a user's alias for something else entirely.
 
@@ -233,9 +236,9 @@ a judgement to make:
    succeeds — the joined labels are byte-identical to the `get` line, with the joined
    string single-quoted per the quoting rule below.
 
-Neither prints anything: `$( )` captures and `| wc -l` counts. Read that together with
-step 0's filtered display as one rule — **a `get` is either compared or filtered, never
-emitted.**
+Neither puts the stored bytes on screen: `$( )` captures and `| wc -l` counts. Read that
+together with step 0's filtered display as one rule — **a `get` is either compared or
+filtered, never emitted.**
 
 Both checks are needed, and the pair is exactly sufficient. `get` prints the stored
 entries joined with `", "` and nothing else. Trimming, dropping and collapsing only ever
@@ -293,8 +296,12 @@ came from.
 
 **The escaped rendering** is the route for a value the loop composed. Print the value
 inside backticks, and before printing replace every byte that is not printable ASCII
-(`0x20` through `0x7e`) with a visible escape: `\t`, `\n`, `\r`, `\e` for ESC (`0x1b`),
-and `\xNN` with two lowercase hex digits for anything else. A value holding a newline
+(`0x20` through `0x7e`) **and every backtick (`0x60`)** with a visible escape: `\t`,
+`\n`, `\r`, `\e` for ESC (`0x1b`), and `\xNN` with two lowercase hex digits for
+anything else — a backtick prints as `\x60`. A backtick is printable, but it is also
+the delimiter of the span the value is printed in, so leaving it literal lets the
+value close that span early and format the rest of the line as markdown. A value
+holding a newline
 therefore prints on one line as `` `anthropic/a\nopenai/b` ``, and a value holding ESC
 prints the two letters `\e` instead of moving the cursor. Non-ASCII bytes are escaped per
 byte too, so a model id with a non-ASCII character displays as hex — ugly, and
@@ -320,7 +327,8 @@ the line with `$`, so nothing raw leaves the pipe. Four displays take this route
 `get` line at step 0, the found value in a mid-round mismatch, the current value in both
 report templates, and the value `devgeta config set` reports it replaced — which is a
 config value the loop did not compose either, captured first and then filtered (below).
-The proof checks take neither route, because `$( )` and `| wc -l` print nothing at all.
+The proof checks take neither route, because `$( )` and `| wc -l` never put the stored
+bytes on screen.
 
 **What neither route covers.** `devgeta task review-run`
 prints each reviewer's label raw on stdout and again in its stderr progress lines, and

@@ -659,9 +659,12 @@ costs the user their configuration.
   **The escaped rendering** — define it once here, and use the term wherever a value
   the loop composed is displayed (Step 7 especially) rather than restating it. Print
   the value inside backticks, and before printing
-  replace every byte that is not printable ASCII (`0x20`–`0x7e`) with a visible
-  escape: `\t`, `\n`, `\r`, `\e` for ESC (`0x1b`), and `\xNN` with two lowercase hex
-  digits for anything else. A value holding a newline therefore prints on one line
+  replace every byte that is not printable ASCII (`0x20`–`0x7e`) **and every backtick
+  (`0x60`)** with a visible escape: `\t`, `\n`, `\r`, `\e` for ESC (`0x1b`), and
+  `\xNN` with two lowercase hex digits for anything else — a backtick prints as
+  `\x60`. A backtick is printable, but it is also the delimiter of the span the
+  value is printed in, so leaving it literal lets the value close that span early
+  and format the rest of the line as markdown. A value holding a newline therefore prints on one line
   as `` `anthropic/a\nopenai/b` ``, and a value holding ESC prints the two letters
   `\e` instead of moving the cursor. Non-ASCII bytes are escaped per byte too, so a
   model id with a UTF-8 character displays as hex — ugly, and deliberate: printable
