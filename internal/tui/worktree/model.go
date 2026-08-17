@@ -56,9 +56,8 @@ type (
 		gen      int
 	}
 	// sessionsMsg carries a successful whole-session-list result, stamped with
-	// the sessionGen it was dispatched with. Its producers are the fast tick's
-	// message (below) and sessionsLoadCmd; see sessionsLoadCmd for the
-	// success/failure split.
+	// the sessionGen it was dispatched with. Its only producer is
+	// sessionsLoadCmd; see sessionsLoadCmd for the success/failure split.
 	sessionsMsg struct {
 		sessions []worktree.SessionStatus
 		gen      int
@@ -461,21 +460,9 @@ func (m Model) Init() tea.Cmd {
 func (m Model) loadCmd(gen int) tea.Cmd {
 	mgr := m.mgr
 	return func() tea.Msg {
-		statuses, err := mgr.ListWorktreesOnly()
+		applied, err := mgr.List()
 		if err != nil {
 			return statusMsg("failed to list worktrees: " + err.Error())
-		}
-		applied, _, err := mgr.RefreshState(statuses)
-		if err != nil {
-			// Debug, not the status line: RefreshState still returns the rows
-			// with every tmux field left at its zero value, so the git-backed
-			// list is intact and worth showing. The fast tick is already
-			// reporting the same tmux failure to the user every 3 seconds, so
-			// repeating it here would only duplicate that warning.
-			logger.L().Debugw(
-				"worktree: tmux scan failed during the slow refresh, showing git state only",
-				"err", err,
-			)
 		}
 		return statusesMsg{statuses: applied, gen: gen}
 	}
@@ -498,7 +485,7 @@ func (m Model) scanTmuxCmd(gen int) tea.Cmd {
 	return func() tea.Msg {
 		layer, err := mgr.ScanTmuxState()
 		if err != nil {
-			return statusMsg("failed to refresh tmux state: " + err.Error())
+			return statusMsg("failed to list sessions: " + err.Error())
 		}
 		return tmuxStateMsg{layer: layer, gen: gen}
 	}
@@ -944,7 +931,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case repairDoneMsg:
 		m.status = msg.status
-		return m, m.dispatchSlowLoad()
+		load := m.dispatchSlowLoad()
+		return m, load
 
 	case diffMsg:
 		m.diffContent = msg.content
@@ -974,7 +962,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Slow refresh: the git enumeration. This is the safety net for
 		// worktrees created outside devgeta; anything the dashboard does itself
 		// dispatches its own load immediately (see dispatchSlowLoad).
-		return m, tea.Batch(m.dispatchSlowLoad(), m.slowTickCmd())
+		load := m.dispatchSlowLoad()
+		return m, tea.Batch(load, m.slowTickCmd())
 
 	case statusMsg:
 		m.status = string(msg)
@@ -999,7 +988,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// switches-and-quits directly from that tea.Cmd without ever
 		// producing this message.
 		m.status = "session created: " + msg.name
-		return m, m.dispatchSessionsLoad()
+		load := m.dispatchSessionsLoad()
+		return m, load
 
 	case sessionKilledMsg:
 		// Removal by identity plus a sessionGen bump, the same division of

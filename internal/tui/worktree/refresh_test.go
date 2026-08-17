@@ -9,6 +9,7 @@ package tuiworktree
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
@@ -341,6 +343,27 @@ func TestFastTickStaleSessionHalfDroppedButPaneHalfStillApplies(t *testing.T) {
 	}
 }
 
+// The fast tick is tmux-only by design (ADR-0024): it must never recompute the
+// diff pane, which is git-backed and belongs to the slow half. A future step
+// routing the fast path through applyStatuses (the slow load's diff-refresh
+// helper) would reintroduce a git process on every 3-second tick without any
+// other test catching it.
+func TestTmuxStateMsgNeverProducesDiffMsg(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+
+	_, cmd := m.Update(tmuxStateMsg{layer: worktree.StateLayer{}, gen: m.sessionGen})
+
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(diffMsg); ok {
+			t.Fatalf(
+				"the fast tick's tmuxStateMsg handler must never produce a diffMsg, got %+v",
+				msg,
+			)
+		}
+	}
+}
+
 // --- Repair ---
 
 // Both repair outcomes need the git re-read, for different reasons: a success
@@ -400,4 +423,95 @@ func TestRefreshRepairDispatchesSlowLoadOnBothOutcomes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The auto-repair inside attachToWindowCmd has four outcomes once the window
+// is missing: ResolveLayout fails, repairFn fails (covered by
+// TestCreateSuccessAttachFailureTriggersRefresh in create_flow_test.go), the
+// repaired window still can't be found, or attaching after a successful
+// repair fails. All four must report a repairDoneMsg and dispatch the slow
+// load stamped with the freshly bumped stateGen - the last two are exactly
+// the "repaired successfully, then failed to attach" cases where a forgotten
+// refresh would be silent.
+func assertRepairDoneDispatchesSlowLoad(
+	t *testing.T,
+	m Model,
+	done repairDoneMsg,
+	wantStatus string,
+) {
+	t.Helper()
+	if !strings.Contains(done.status, wantStatus) {
+		t.Errorf("expected a %q status, got %q", wantStatus, done.status)
+	}
+
+	before := m.stateGen
+	mi, loadCmd := m.Update(done)
+	m = mi.(Model)
+
+	if m.stateGen != before+1 {
+		t.Errorf("repairDoneMsg should bump stateGen to %d, got %d", before+1, m.stateGen)
+	}
+	sm, found := findStatusesMsg(t, loadCmd)
+	if !found {
+		t.Fatal("repairDoneMsg must dispatch the slow load, not only set the status")
+	}
+	if sm.gen != m.stateGen {
+		t.Errorf(
+			"the load repairDoneMsg dispatches must carry the number the bump produced (%d), got %d",
+			m.stateGen,
+			sm.gen,
+		)
+	}
+}
+
+func TestAttachToWindowCmdResolveLayoutErrorDispatchesSlowLoad(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
+	m.gc = &config.GlobalConfig{Worktree: config.WorktreeConfig{DefaultLayout: "not-a-real-layout"}}
+
+	cmd := m.attachToWindowCmd("repo-a", "feature-a")
+	done, ok := cmd().(repairDoneMsg)
+	if !ok {
+		t.Fatalf("a ResolveLayout failure must report a repairDoneMsg, not a bare statusMsg")
+	}
+	assertRepairDoneDispatchesSlowLoad(t, m, done, "repair failed")
+}
+
+func TestAttachToWindowCmdWindowNotFoundAfterRepairDispatchesSlowLoad(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
+	m.repairFn = func(_, _ string, _ worktree.Layout) error { return nil }
+
+	cmd := m.attachToWindowCmd("repo-a", "feature-a")
+	done, ok := cmd().(repairDoneMsg)
+	if !ok {
+		t.Fatalf("a repaired-but-missing window must report a repairDoneMsg, not a bare statusMsg")
+	}
+	assertRepairDoneDispatchesSlowLoad(t, m, done, "window not found")
+}
+
+func TestAttachToWindowCmdAttachAfterRepairFailureDispatchesSlowLoad(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+	calls := 0
+	m.windowSessionFn = func(_ string) (string, bool) {
+		calls++
+		if calls == 1 {
+			return "", false // missing before repair, triggers auto-repair
+		}
+		return "test-session", true // present after repair
+	}
+	m.repairFn = func(_, _ string, _ worktree.Layout) error { return nil }
+	m.attachFn = func(_, _ string) error { return fmt.Errorf("attach unavailable") }
+
+	cmd := m.attachToWindowCmd("repo-a", "feature-a")
+	done, ok := cmd().(repairDoneMsg)
+	if !ok {
+		t.Fatalf(
+			"a failed attach after a successful repair must report a repairDoneMsg, not a bare statusMsg",
+		)
+	}
+	assertRepairDoneDispatchesSlowLoad(t, m, done, "attach after repair failed")
 }
