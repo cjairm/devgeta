@@ -3223,10 +3223,14 @@ func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
 	if got := strings.Count(flatBody, driverForm); got != 3 {
 		t.Errorf(
 			"%s writes the driver form %q %d times; want exactly 3 (Usage, the "+
-				"handoff step, and the report step — ADR-0025 §4). A count above 3 "+
-				"means a fourth site is handing this command to a driver, which "+
-				"starts a second driver on every tick that fourth site fires; a count "+
-				"below 3 means one of the three legitimate sites lost it",
+				"handoff step, and the report step — ADR-0025 §4). If the count is "+
+				"below 3, one of those three legitimate sites lost the form. If it is "+
+				"above 3, a new site now writes it — that is not necessarily a bug: "+
+				"check what the new site is before changing anything. If it hands this "+
+				"command to a driver, that starts a second driver on every tick the new "+
+				"site fires, so remove it. If it is a legitimate mention instead (a new "+
+				"example, or prose describing the driver), update the count this test "+
+				"wants and say in the same change which site is new",
 			path, driverForm, got,
 		)
 	}
@@ -3532,7 +3536,11 @@ func TestPRReviewLoopExplicitRowsAreNotRequestGated(t *testing.T) {
 // the negative check fires on any mention of `requested: yes` in the explicit
 // branch — a future rewrite that names the flag only to disclaim it will trip
 // this too. The file's own wording for that disclaimer is the phrase pinned
-// below; keep using it rather than weakening the check.
+// below; keep using it rather than weakening the check. The "Review row" check
+// has the same shape: an explicit branch that mentions the Review row only to
+// contrast it (as in "unlike the watch's Review row, …") trips it too. That
+// check is also case-sensitive — a rewrite that lowercases it to "review row"
+// evades it silently.
 func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 	path, body := readSharedCommand(t, "pr-review-loop.md")
 
@@ -3541,14 +3549,14 @@ func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 	const (
 		explicitMarker = "**Explicit tick:**"
 		watchMarker    = "**Watch tick (`--on-request`):**"
-		// The next top-level bullet after both mode branches. Bounding each
-		// branch here too — not just at the other branch's marker — keeps the
-		// slicing symmetric: without it, whichever branch comes second in the
-		// file runs to the end of step 7 and swallows "When the condition
-		// fails" and this bullet's own head-moved clause, so a required
-		// substring could be satisfied by that tail instead of by the branch
-		// it is supposed to pin.
-		headBulletMarker = "`head` must still equal"
+		// The paragraph shared by both branches, immediately after whichever
+		// sub-bullet comes second. Bounding the second branch here — not just
+		// at the other branch's marker — keeps the slicing symmetric: without
+		// it, whichever branch comes second in the file runs into "When the
+		// condition fails", a paragraph that is mode-independent and follows
+		// BOTH sub-bullets, so a required substring could be satisfied by that
+		// shared tail instead of by the branch it is supposed to pin.
+		tailMarker = "When the condition fails"
 	)
 	explicitAt := strings.Index(gate, explicitMarker)
 	watchAt := strings.Index(gate, watchMarker)
@@ -3564,20 +3572,39 @@ func TestPRReviewLoopPrePostGateIsModeAware(t *testing.T) {
 	// Slice each branch off at the other's marker, in whichever order they appear
 	// — their order is not a property this pins.
 	explicitBranch, watchBranch := gate[explicitAt:], gate[watchAt:]
+	secondAt := explicitAt
 	if watchAt > explicitAt {
 		explicitBranch = gate[explicitAt:watchAt]
+		secondAt = watchAt
 	} else {
 		watchBranch = gate[watchAt:explicitAt]
 	}
-	// Bound whichever branch runs to the end at the head bullet instead, so
-	// neither branch's required substring can be satisfied by the shared tail
-	// that follows both of them.
-	if headAt := strings.Index(gate, headBulletMarker); headAt >= 0 {
-		if watchAt > explicitAt {
-			watchBranch = gate[watchAt:headAt]
-		} else {
-			explicitBranch = gate[explicitAt:headAt]
-		}
+	// Bound whichever branch runs second at the shared tail paragraph instead,
+	// so neither branch's required substring can be satisfied by prose that
+	// applies to both modes. The anchor is required, not optional: a rewrite
+	// that drops or relocates it must fail this test loudly rather than widen
+	// the slice back to the rest of the section silently, and the ordering
+	// check (tailAt > secondAt) stops a future edit that moves this paragraph
+	// ABOVE the mode branches from turning the slice below into a panic.
+	tailAt := strings.Index(gate, tailMarker)
+	if tailAt < 0 || tailAt <= secondAt {
+		t.Fatalf(
+			"%s step 7's pre-post gate no longer has %q positioned after both mode "+
+				"sub-bullets (found at byte %d; explicit branch starts at %d, watch "+
+				"branch starts at %d — want the anchor after whichever of those is "+
+				"larger). This guard needs that anchor to stop the second branch's "+
+				"slice before the paragraph shared by both modes; without it, either "+
+				"the slice runs to the end of the section and a required substring "+
+				"could be satisfied by that shared tail instead of by the branch it "+
+				"pins, or the anchor moved above the branches and slicing on it would "+
+				"panic",
+			path, tailMarker, tailAt, explicitAt, watchAt,
+		)
+	}
+	if watchAt > explicitAt {
+		watchBranch = gate[watchAt:tailAt]
+	} else {
+		explicitBranch = gate[explicitAt:tailAt]
 	}
 
 	for _, req := range []struct {
