@@ -815,9 +815,9 @@ Where a round that is not a clean approval goes next depends on why it fell shor
   where the reviewer never got the chance to state one.
 - **Nothing under `open:`, and every non-approving outcome was `ERROR` or `NO VERDICT`:**
   nothing is open because the reviewer never finished, not because it had nothing to
-  record. Do not stop — fall through to step 5, which applies the consecutive-failure count
-  and the phase routing, and runs the next round. A retry here is not a bet that the tree
-  will change; it is a bet that the reviewer completes this time.
+  record. Do not stop — fall through to step 5, which applies the phase routing and
+  decides which round runs next. A retry here is not a bet that the tree will change; it
+  is a bet that the reviewer completes this time.
 - **Every outcome was `APPROVE`, nothing is under `open:`, and this is not the confirming
   round:** covered above — this is not a clean approval, and it has no finding for step 4
   to triage either. Fall through to step 5, the same destination as a retried failure,
@@ -886,17 +886,101 @@ settled.
 
 ### 5. Stop for anything escalated, then enforce the round cap
 
-After this round's findings are handled:
+Every round ends here. A round whose findings were settled, a round that only failed,
+and a round where every reviewer approved outside the confirming round all arrive at
+this step. Work through these three checks in this order.
 
-- If anything is still open after this round — step 4's triage left it for a human, or the
-  fix subagent escalated it back while verifying — stop; go to the terminal report, even if
-  rounds remain. The journal you re-read at the end of step 4 decides this: any id still
-  under `open:` counts, whichever way it got there. Another round cannot clear it: the
-  finding is still open, so step 3 could never call the result a clean approval, and every
-  further round pays the reviewers to raise it again and waits on the same answer.
-- Otherwise read `devgeta config get review.rounds`. If this was that many rounds, stop —
-  go to the terminal report regardless of what the branch's state is at that point.
-- Otherwise return to step 1 and run another round.
+**First, stop for anything still open.** If anything is still open after this round —
+step 4's triage left it for a human, or the fix subagent escalated it back while
+verifying — stop; go to the terminal report, even if rounds remain. The journal you
+re-read at the end of step 4 decides this: any id still under `open:` counts, whichever
+way it got there. Another round cannot clear it: the finding is still open, so step 3
+could never call the result a clean approval, and every further round pays the reviewers
+to raise it again and waits on the same answer.
+
+**Then check the cap, which counts rounds within the current phase.** Read `devgeta
+config get review.rounds`. That number is how many rounds **one phase** may run, not how
+many the whole loop may run: the count restarts at one whenever a new phase begins, so a
+narrowing round is compared against how many narrowing rounds have run and against
+nothing else. Reaching the cap ends the **current phase**; where the loop goes when a
+phase ends is the routing below, and only the confirming round's ending is the end of
+the loop. The opening round and the confirming round are one round each by
+construction, so the cap only ever bites in the narrowing phase, and a whole run is at
+most the cap plus two rounds.
+
+**Then route to the next phase.** Take the first case below that applies to the round
+that just ran. Every case names where the loop goes; there is no "no rule fits, so stop
+here".
+
+**After the opening round:**
+
+- **Every reviewer's outcome was `APPROVE`:** the narrowing phase has nothing to do, so
+  skip it and run the **confirming round** next — return to step 1 with the full
+  configured list. This is not the end of the loop, and the confirming round is not
+  optional here. See the two paragraphs below, which are about exactly this case.
+- **Any reviewer withheld approval** — `REQUEST CHANGES`, `NEEDS DISCUSSION`, `ERROR`,
+  or `NO VERDICT`: go to the **narrowing phase**. Return to step 1 and run the next
+  round with the narrowing set, which `### 2` defines.
+
+**After a narrowing round:**
+
+- **Every reviewer that ran this round approved:** go to the **confirming round** —
+  return to step 1 with the full configured list. Those approvals are provisional, which
+  is why the confirming round still has to run.
+- **The next round's narrowing set is empty for any other reason** — every reviewer left
+  in it was dropped for two consecutive failures (`### 2`), whether or not others left
+  it by approving. Do not read that empty set as "every remaining reviewer approved":
+  that sentence is true of an empty set only because there is nobody left in it to
+  disagree, which is not the same thing as an approval and is not what happened here.
+  Route it by the two cases below instead. They are one question asked from either end,
+  because an empty narrowing set means every configured reviewer either approved or was
+  dropped:
+  - **At least one reviewer approved at any point in this run:** go to the **confirming
+    round**. Its set is the full configured list, so it is not empty, and the reviewers
+    that approved are known to run. Their approvals are provisional and the branch moved
+    under them while the narrowing phase settled findings, which is the whole reason the
+    confirming round exists. The failure-dropped reviewers get one more attempt as a
+    side effect of that round running everyone — no indulgence, since the confirming
+    round re-runs a dropped reviewer in every other scenario too.
+  - **No reviewer approved at any point in this run:** go straight to the **terminal
+    report**, with **no confirming round**. Name every reviewer as failed, each with its
+    last reason reported verbatim by `### 2`'s rules. There is no approval to confirm,
+    so the confirming round has no job here, and it could not end anywhere else anyway:
+    it would consist entirely of reviewers that failed twice each, and a single failure
+    in the confirming round stops the loop (`### 2`) — so it would buy a full round of
+    reviewer time to reach the same report. This is not an exotic path. One configured
+    reviewer with a dead model id produces it: it fails the opening round, fails one
+    narrowing round, and that is the whole run. **This is the only case in which the
+    confirming round is skipped.** It does not contradict the rule that the confirming
+    round is otherwise mandatory — that rule exists to stop an approval being trusted
+    after the branch moved under it, and here there is no approval to protect.
+- **This round was the phase's cap-th narrowing round:** the narrowing phase is over. Go
+  to the **confirming round** — return to step 1 with the full configured list. The cap
+  ends the phase, not the loop.
+- **Otherwise:** return to step 1 and run another **narrowing round**, with the narrowing
+  set as `### 2` leaves it.
+
+**After the confirming round:** go to the **terminal report**, always. A clean approval
+already stopped at step 3; anything else is the report. There is no phase after this one,
+no second confirming round, and no remaining rounds to spend — whatever the cap says.
+
+**The confirming round is mandatory, including after a unanimous opening round.** A
+unanimous opening round skips the **narrowing phase**; it does not end the loop. This is
+the one case where the confirming round looks cheap and obviously redundant — the branch
+has not changed since those approvals were given — and that is exactly why it is the one
+most likely to get skipped. The loop pays for two full-reviewer rounds on purpose, so
+that no run ever ends on an approval given to a branch that has since changed. Run it.
+
+**A phase whose reviewer set is empty is skipped, never run — and the narrowed list is
+never written empty.** The routing above always sends an empty set somewhere other than
+a round, and that is deliberate, because there is no way to express "run nobody" through
+the config and both attempts at it end badly. `devgeta config set review.reviewers` with
+no values after it is rejected outright, so the round would die on a config error rather
+than skip. And clearing the key some other way does not run nobody either: an unset or
+all-blank `review.reviewers` means **one reviewer on OpenCode's own default model**, so
+the round would run a model the human never configured and report its verdict as if it
+were theirs. `### 1`'s strict-subset condition already keeps the loop from writing such
+a list; this is why that condition matters here.
 
 ### 6. The fix subagent
 
