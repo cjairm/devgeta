@@ -641,6 +641,15 @@ removed from any one file.
 
 ### Step 5: `/pr-review-loop` command file
 
+> **This step records the pre-split design and is kept as written, because this cycle's scope
+> is locked.** What the command does now is governed by
+> [ADR-0025 §1](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
+> and by the shipped `configs/shared/commands/pr-review-loop.md`: a tick is explicit or a watch
+> tick, the single Action column below is two columns there, the driver's line carries
+> `--on-request`, and the handoff is its own step 11 with the report at 12. The rows themselves
+> are unchanged — each still exists, now with a per-mode action — so §6's "every row of the §5
+> decision table has a test" still holds.
+
 `configs/shared/commands/pr-review-loop.md`. Frontmatter: `description` only.
 
 The file carries a standing-authorization section (per CLAUDE.md's posting/unattended
@@ -799,15 +808,17 @@ Steps 1 and 2), so the sequence has been rewritten to match what the command now
 it is still outstanding — it was not re-run when the split landed, because it posts real
 reviews on a real pull request.
 
-Two things changed in it. **Points 1 and 2 describe watch ticks only, so they are run with
-`--on-request`** — without that flag both now review instead of waiting, which is the point of
-the split, not a failure. And **four new cases come first**: an explicit tick reviewing an
-unrequested PR, an explicit tick reviewing a draft and an already-approved PR, the driver being
-started at the end of a non-terminal tick and not started on a terminal one, and `--once` plus
-both `--reviewer` spellings reaching `review-run`. Those four are written out and tracked as
-**Step 3 of
+Two things changed in it. **Every point that describes watch-tick behavior is run with
+`--on-request`** — points 1, 2, 12 and 15 — because without that flag each of them now reviews
+instead of waiting or stopping, which is the point of the split, not a failure. Point 12 was
+split in two for that reason: someone else answering the request cancels the post only on a
+watch tick, while the PR closing (point 13) cancels it in both modes. And **four new cases come
+first**: an explicit tick reviewing an unrequested PR, an explicit tick reviewing a draft and an
+already-approved PR, the driver being started at the end of a non-terminal tick and not started
+on a terminal one, and `--once` plus both `--reviewer` spellings reaching `review-run`. Those
+four are written out and tracked as **Step 3 of
 [cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)** —
-they belong to that cycle's scope, not to this one's; run them before the fifteen points here.
+they belong to that cycle's scope, not to this one's; run them before the sixteen points here.
 
 1. Not requested, run with `--on-request` → tick waits, takes no action
 2. Draft + requested, run with `--on-request` → tick waits (the row that must not fall through
@@ -829,15 +840,21 @@ they belong to that cycle's scope, not to this one's; run them before the fiftee
 11. Push a commit to the PR while a review is running → step 7's head re-check
     reports "head moved during review", posts nothing; the next tick reviews the
     new head
-12. Answer the request from another session (or close the PR) while a review is
-    running → step 7's state re-check posts nothing and takes the fresh state's row
-13. Inspect a posted review on GitHub → it is anchored to the reviewed SHA
+12. Answer the request from another session while a review is running, run with
+    `--on-request` → step 7's state re-check posts nothing and takes the fresh state's
+    row. This is a watch tick only: on an explicit tick someone else answering the
+    request does **not** cancel the post, because only `merged`/`closed` fails that
+    gate
+13. Close the PR while a review is running (either mode) → step 7's state re-check
+    posts nothing and takes the terminal row
+14. Inspect a posted review on GitHub → it is anchored to the reviewed SHA
     (`commit_id`), and its journal entries stamp the same SHA
-14. Dismiss your own approval on the PR → next tick reports `my-review: none`, not
-    `approved`, and the loop keeps watching instead of stopping — this is the one
-    wire fact the dismissed-approval rule rests on (gh reporting `DISMISSED`
-    rather than `APPROVED`), and nothing else here probes it live
-15. Merge the PR → tick reports closed, stops
+15. Dismiss your own approval on the PR, then run a tick with `--on-request` → it
+    reports `my-review: none`, not `approved`, and the watch keeps going instead of
+    stopping — this is the one wire fact the dismissed-approval rule rests on (gh
+    reporting `DISMISSED` rather than `APPROVED`), and nothing else here probes it
+    live
+16. Merge the PR → tick reports closed, stops
 
 ### Step 7: Docs + close out — DONE for the docs half (2026-08-10)
 
@@ -850,7 +867,7 @@ subcommands) and the check-off above.
 
 What is **not** done, so the header status is not `Done`:
 
-- Step 6's fifteen-point live sequence has not been run — its first two points were, on
+- Step 6's sixteen-point live sequence has not been run — its first two points were, on
   2026-08-12, and they turned up the two defects
   [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
   answers. That follow-up —
@@ -901,7 +918,7 @@ the working tree elsewhere entirely.
 
 ### Manual
 
-Step 6's fifteen-point live sequence, plus:
+Step 6's sixteen-point live sequence, plus:
 
 1. **Fork PR** — `pr-review-target` resolves head via `refs/pull/<n>/head` and the
    review shows the fork's changes

@@ -277,7 +277,7 @@ verify is implemented and guarded by tests, but it has not been driven live. The
 step describes has been applied to the 2026-08-06 cycle's Step 6 as documentation; that
 sequence has not been re-run either.
 
-That cycle's Step 6 points 1 and 2 describe watch ticks only, so they are run with
+That cycle's Step 6 points 1, 2, 12 and 15 describe watch ticks only, so they are run with
 `--on-request`. These four are new, and come before the rest of that sequence:
 
 - [ ] Explicit tick on an open, **unrequested** PR → reviews and posts (the exact 2026-08-12
@@ -323,7 +323,7 @@ the change is under `configs/` (CLAUDE.md §6, "Which tests to run").
 
 ### Manual
 
-The four cases in Step 3, then the 2026-08-06 cycle's fifteen-point Step 6 sequence whole.
+The four cases in Step 3, then the 2026-08-06 cycle's sixteen-point Step 6 sequence whole.
 
 ### Regression Check
 

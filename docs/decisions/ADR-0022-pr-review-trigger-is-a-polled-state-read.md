@@ -50,7 +50,7 @@ not a CI job.
 ## Decision
 
 **The trigger is a poll of GitHub's `reviewRequests` field. One invocation of
-`/pr-review-loop` is one idempotent tick for the watch's own ticks — ADR-0025 narrows this
+`/pr-review-loop` is one tick, idempotent for the watch's own ticks — ADR-0025 narrows this
 for explicit ticks; the repetition belongs to an external driver. Only a request that names
 the authenticated user triggers a review.**
 
@@ -119,7 +119,11 @@ hold: `/loop` is cron-backed, and cron fires at the next match rather than on cr
 handing off first answers the human with a state read and defers their review by a whole
 interval. **As shipped, the tick runs first and the driver is started at the end, only on a
 non-terminal explicit tick that did not pass `--once`** — which also retired this section's
-other cost, a driver still ticking after the approval it was started for. Under either order
+other cost in its first-look form: a tick that approves on its own first look is terminal, so
+no driver is started for an approval that has already happened. A driver started by an earlier
+non-terminal tick still outlives an approval that arrives later, including one `/review-pr`
+posts itself on its no-new-findings branch (the tick reports `reviewed`, which is
+non-terminal), and nothing in the command can stop a driver already running. Under either order
 the tick itself holds no timer and no state between runs, and repetition still belongs to the
 harness rather than to this command.
 
@@ -131,7 +135,7 @@ between runs in either mode, so a tick after a crash is still safe.
 
 ### 3. Personal request only
 
-A tick triggers only when the authenticated user's own login is in `reviewRequests`. A
+A watch tick triggers only when the authenticated user's own login is in `reviewRequests`. A
 team-level request that does not name them does not trigger.
 
 This is the rule the user already applies by hand: a request addressed to a team is a

@@ -65,7 +65,7 @@ still wanted.
 A tick is **explicit** (a human typed it) or a **watch tick** (a repeat driver fired it).
 Watch ticks carry `--on-request`, which only the handoff writes and no human ever types.
 
-The marker is a flag rather than a judgment on purpose. The current file asserts that "a
+The marker is a flag rather than a judgment on purpose. The file used to assert that "a
 driver-fired tick arrives … and carries no request to watch" — an inference about the
 surrounding prompt, which an agent cannot check and a guard test cannot pin. A flag on the
 command line is a fact both can read.
@@ -228,9 +228,9 @@ behavior above is in the artifacts a user installs.
   existed to prevent. Accepted, because the human asked on purpose — and the watch's own
   ticks still let drafts wait, so nothing unattended lands on unfinished work.
 - **A watch can be running that the human did not think about.** Any non-terminal explicit
-  invocation without `--once` starts one — a watch tick still starts nothing. Bounded by the driver's own limits (a cron loop expires after
-  seven days, and it dies with the session) and by the terminal-exit rule, but it is a real
-  change from "one invocation does one thing".
+  invocation without `--once` starts one — a watch tick still starts nothing. Bounded by the
+  driver's own limits (a cron loop expires after seven days, and it dies with the session) and
+  by the terminal-exit rule, but it is a real change from "one invocation does one thing".
 - **OpenCode gets the first half only.** It has no repeat driver, so the explicit review
   works identically and the auto-started watch does not exist there — the same asymmetry
   ADR-0022 accepted, in the same place.
@@ -256,8 +256,8 @@ that the button, not the human, is the authority.
 ### Infer the caller from the prompt
 
 Keep one table and let the tick decide whether it was human-fired by how the invocation looks
-— which is what the file does today when it says a driver-fired tick "carries no request to
-watch".
+— which is what the file did before this change, when it said a driver-fired tick "carries no
+request to watch".
 
 Rejected. It is not checkable at runtime and not pinnable in a test, so it is exactly the
 class of convention CLAUDE.md §4 says to replace with something structural. The flag costs
