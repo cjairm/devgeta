@@ -797,18 +797,18 @@ they came from were scratch files that do not survive the worktree.
   helpers extracted to a `refresh.go` — the tests already went to their own `refresh_test.go`
   and the implementation did not follow. `worktree.go` (~2760) wants `StateLayer` and its two
   methods in a `state_layer.go`.
-- `sessionLabelForDir`'s home check excludes `""` from canonicalization but not `"."`, and
-  `config.CanonicalRepoPath(".")` resolves to the working directory — so
-  `sessionLabelForDir(".")` returns `"home"` whenever devgeta is run from home, instead of the
-  `defaultSessionLabel` fallback. That is the same defect `64e5221` fixed for the empty
-  string, one input over. Latent, like that one was:
-  `ValidateDirPath` canonicalizes before `sessionWorkdir` is set, so no production path passes
-  a bare `"."` today. Found while the `pr-review-explicit-vs-watch` branch independently fixed
-  the same symlinked-home bug; that duplicate was dropped in favour of `64e5221` at the merge
-  gate, and its four extra subtests — symlinked home, trailing separator, `~`, and the
-  resolved form — are parked on `backup/pr-review-pre-rebase` if this is ever picked up.
-  Moving the empty/`/`/`.` guard **above** the home check closes it, which is what that
-  dropped commit did.
+- ~~`sessionLabelForDir`'s home check excludes `""` from canonicalization but not `"."`.~~
+  **Closed by `485101e`.** `config.CanonicalRepoPath(".")` resolves to the working directory,
+  so `sessionLabelForDir(".")` returned `"home"` whenever devgeta ran from home — the same
+  defect `64e5221` fixed for the empty string, one input over, and latent for the same reason
+  (`ValidateDirPath` canonicalizes before `sessionWorkdir` is set). Fixed by ordering rather
+  than a second exclusion: the basename guard now runs **before** the home check, so every
+  spelling that flattens to nothing takes the fallback before canonicalization can turn it
+  into a real directory. Its regression test uses `t.Chdir` into home, because `go test` runs
+  in the package directory where `"."` and home differ and the wrong order still passes. The
+  symlinked-home, trailing-separator and tilde cases came over in the same commit from the
+  `pr-review-explicit-vs-watch` branch, which had fixed the symlink half independently; they
+  pass against `64e5221` too and are coverage of the property, not of either defect.
 - `internal/tui/worktree/model_test.go:1130` carries a lint-suppression comment of the kind
   CLAUDE.md §6 rules out entirely. Pre-existing and unrelated to this cycle's work, but it is
   a standing exception to a rule the repo otherwise enforces structurally.
