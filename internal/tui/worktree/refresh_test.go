@@ -18,6 +18,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
@@ -577,6 +578,41 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 			msg:      sessionsMsg{sessions: testSessions()},
 			wantPath: "/tmp/x",
 		},
+		{
+			// The mirror of TestMovingFromPaneRowToDifferentWorktreeArmsDebounce:
+			// that test moves OFF a pane row onto a different worktree; this one
+			// moves the cursor so it LANDS ON a pane row belonging to a different
+			// worktree than the one it started on. This is the exact gap the
+			// Critical regression hid in — selectedPath (via selectedDiffStatus)
+			// must resolve the pane row the cursor lands ON to its own enclosing
+			// worktree, not stay pinned to the worktree the cursor left.
+			name: "k moves the cursor onto a different worktree's pane row",
+			setup: func(t *testing.T) Model {
+				statuses := append(paneRowTestStatuses(), worktree.WorktreeStatus{
+					Name:       "feature-x",
+					Repo:       "repo-b",
+					Path:       "/tmp/x",
+					TmuxWindow: worktree.GetWindowName("repo-b", "feature-x"),
+					Panes: []tmux.PaneState{
+						{
+							PaneID:         "%9",
+							PaneIndex:      "0",
+							CurrentCommand: "zsh",
+							State:          worktree.AgentStateIdle,
+						},
+					},
+				})
+				m := makeTestModel(statuses)
+				if _, ok := m.focusRow(func(r row) bool {
+					return r.kind == rowWorktree && r.status.Path == "/tmp/x"
+				}); !ok {
+					t.Fatal("test setup: expected to find feature-x's worktree row")
+				}
+				return m
+			},
+			msg:      tea.KeyPressMsg{Code: 'k'},
+			wantPath: "/tmp/a",
+		},
 	}
 
 	for _, tc := range cases {
@@ -792,6 +828,99 @@ func TestMovingFromPaneRowToDifferentWorktreeArmsDebounce(t *testing.T) {
 	assertDebouncedDiff(t, m2, flattenCmd(cmd), "/tmp/b")
 }
 
+// TestPaneRowLandingHealsAfterFoldingBackOntoWorktree pins the exact Critical
+// regression this cycle fixes. Two keypresses, mirroring the bug report:
+//
+//  1. k moves the cursor off feature-b's worktree row and lands it on
+//     feature-a's last pane row. selectedPath now resolves to /tmp/a, so a
+//     debounce arms and — this is the fix — the debounce that elapses while
+//     the cursor sits on that pane row must still compute feature-a's diff.
+//     Before Fix 1, the diffDebounceMsg handler asked selectedStatus (not
+//     selectedDiffStatus), which reports ok=false on a pane row, so the
+//     debounce computed nothing and the stale /tmp/b diff stayed on screen.
+//  2. h folds feature-a's panes back, landing the cursor on feature-a's own
+//     worktree row. The path doesn't change, so no new debounce arms — the
+//     diff pane must already be correct from step 1, because nothing else
+//     will ever correct it (that was the unrecoverable half of the bug).
+func TestPaneRowLandingHealsAfterFoldingBackOntoWorktree(t *testing.T) {
+	statuses := append(paneRowTestStatuses(), worktree.WorktreeStatus{
+		Name:       "feature-b",
+		Repo:       "repo-a",
+		Path:       "/tmp/b",
+		TmuxWindow: worktree.GetWindowName("repo-a", "feature-b"),
+	})
+	m := makeTestModel(statuses)
+	m.mgr = newTestWorktreeManager()
+	m.diffFn = func(path string) (task.BranchDiffResult, error) {
+		return task.BranchDiffResult{Content: "diff for " + path, Files: 1}, nil
+	}
+
+	// Seed the diff pane as if it were already showing feature-b's diff -
+	// the starting state in the bug report.
+	if _, ok := m.focusRow(func(r row) bool {
+		return r.kind == rowWorktree && r.status.Path == "/tmp/b"
+	}); !ok {
+		t.Fatal("test setup: expected to find feature-b's worktree row")
+	}
+	updated, seedCmd := m.Update(diffMsg{path: "/tmp/b", content: "diff for /tmp/b"})
+	m = updated.(Model)
+	if seedCmd != nil {
+		t.Fatal("test setup: diffMsg handler must not return a command")
+	}
+	if m.diffPath != "/tmp/b" {
+		t.Fatalf("test setup: expected the diff pane preloaded for /tmp/b, got %q", m.diffPath)
+	}
+
+	// Step 1: k lands the cursor on feature-a's last pane row.
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: 'k'})
+	m = updated.(Model)
+	if got := m.selectedPath(); got != "/tmp/a" {
+		t.Fatalf("expected k to land the cursor on a pane row resolving to /tmp/a, got %q", got)
+	}
+	m, next := resolveDiffDebounceIn(t, m, flattenCmd(cmd))
+	for _, msg := range flattenCmd(next) {
+		if d, ok := msg.(diffMsg); ok {
+			updated, _ = m.Update(d)
+			m = updated.(Model)
+		}
+	}
+	if m.diffPath != "/tmp/a" {
+		t.Fatalf(
+			"expected the debounce armed while landing on feature-a's pane row to compute its diff, got path=%q",
+			m.diffPath,
+		)
+	}
+
+	// Step 2: h folds feature-a's panes back onto its own worktree row.
+	updated, cmd = m.Update(tea.KeyPressMsg{Code: 'h'})
+	m = updated.(Model)
+	if m.rows[m.cursor].kind != rowWorktree {
+		t.Fatalf(
+			"expected h to fold back onto feature-a's worktree row, got kind=%d",
+			m.rows[m.cursor].kind,
+		)
+	}
+	if got := m.selectedPath(); got != "/tmp/a" {
+		t.Fatalf("expected the folded cursor to resolve to /tmp/a, got %q", got)
+	}
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(diffDebounceMsg); ok {
+			t.Error(
+				"folding back onto the same worktree must not need a new debounce to be correct",
+			)
+		}
+	}
+
+	if m.diffPath != "/tmp/a" || !strings.Contains(m.diffContent, "/tmp/a") {
+		t.Errorf(
+			"regression: after k lands on a neighbour's pane row and h folds back onto it, "+
+				"the diff pane must show that worktree's own diff, got path=%q content=%q",
+			m.diffPath,
+			m.diffContent,
+		)
+	}
+}
+
 // The debounce only earns its keep if the moves it coalesces cost nothing:
 // holding j through fifteen rows arms fifteen timers, and fourteen of them must
 // land on a superseded generation and compute no diff at all.
@@ -1001,6 +1130,9 @@ func assertRepairDoneDispatchesSlowLoad(
 	mi, loadCmd := m.Update(done)
 	m = mi.(Model)
 
+	if !strings.Contains(m.status, wantStatus) {
+		t.Errorf("expected m.status to contain %q after Update, got %q", wantStatus, m.status)
+	}
 	if m.stateGen != before+1 {
 		t.Errorf("repairDoneMsg should bump stateGen to %d, got %d", before+1, m.stateGen)
 	}
