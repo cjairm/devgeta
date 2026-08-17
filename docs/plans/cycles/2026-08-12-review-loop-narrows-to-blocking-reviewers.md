@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-12
 **Estimated Duration:** ~3 hours
-**Status:** In Progress
+**Status:** Done
 
 ---
 
@@ -286,7 +286,7 @@ config is never written.
 
 ### In Scope
 
-- [ ] **The gate first, before any of the rest:** no edit to
+- [x] **The gate first, before any of the rest:** no edit to
       `configs/shared/commands/review-loop.md` begins until the decision is recorded in
       ADR-0026 — it is — **and** the maintainer has given an explicit go-ahead on this
       plan, recorded in Step 0. The gate is deliberately **not** "ADR-0026's `Status`
@@ -294,28 +294,28 @@ config is never written.
       `ACCEPTED` as decided _and implemented_, so that condition cannot honestly be true
       before the work it gates exists (Step 0 spells this out). This is a precondition on
       the work, not a deliverable of it
-- [ ] Three phases in `review-loop.md`: opening round (all), narrowing rounds
+- [x] Three phases in `review-loop.md`: opening round (all), narrowing rounds
       (non-approvers only), confirming round (all)
-- [ ] Only the confirming round can yield a clean approval; earlier approvals are
+- [x] Only the confirming round can yield a clean approval; earlier approvals are
       provisional
-- [ ] Every phase transition is stated, including the unanimous opening round that
+- [x] Every phase transition is stated, including the unanimous opening round that
       skips narrowing and goes straight to confirming, and **both** ways the
       narrowing set can empty — everyone approved, or everyone left in it was
       dropped for repeated failure — each with its destination named outright
       rather than inferred from an empty set vacuously satisfying "all approved"
-- [ ] Round cap applies per phase
-- [ ] A failure is a non-approval that keeps the reviewer in the narrowing set;
+- [x] Round cap applies per phase
+- [x] A failure is a non-approval that keeps the reviewer in the narrowing set;
       two consecutive failures drop it and report it as failed; any other outcome
       resets that reviewer's count; a failure in the confirming round still stops
       the loop
-- [ ] Step 3's "withheld approval but recorded no finding" stop splits: a stated
+- [x] Step 3's "withheld approval but recorded no finding" stop splits: a stated
       position still stops the loop, a failed round goes on to the next one
-- [ ] Narrowing via `review.reviewers`, restored after **every** round rather than
+- [x] Narrowing via `review.reviewers`, restored after **every** round rather than
       held narrowed for a whole phase
-- [ ] A restore writes only onto the narrowed list the loop itself wrote: the key is
+- [x] A restore writes only onto the narrowed list the loop itself wrote: the key is
       checked before that write, and a value changed during the round is left exactly
       as found, with narrowing off for the rest of the run and the fact reported
-- [ ] A narrowing write happens only while the key still holds the **recorded** list —
+- [x] A narrowing write happens only while the key still holds the **recorded** list —
       checked immediately before every write, not once after the opening round, because
       the journal read and the previous round's fixes sit in between. A value changed in
       that gap is left as found, narrowing stops, and the report names it. The
@@ -324,34 +324,34 @@ config is never written.
       never field-split and never printed bare, the replaced value is never
       reconstructed, and the report states that a replacement printing the same string
       as the expected one is not detected at all
-- [ ] The config is written only when the narrowing set is a strict subset of the
+- [x] The config is written only when the narrowing set is a strict subset of the
       recorded list. A one-reviewer set — configured, or the unset key that means
       OpenCode's default model — and a round in which nobody approved run with no
       write and no restore; the protocol has no `config unset` step
-- [ ] The record of what to restore comes from `devgeta` commands only — the
+- [x] The record of what to restore comes from `devgeta` commands only — the
       opening round's verdict labels, checked against `devgeta config get
 review.reviewers` — and **never** from reading `global_config.yaml`, which no
       shipped agent permission reaches; restore passes one argument per recorded
       entry, never a comma-joined string
-- [ ] The shipped command states **why** it does not read that file, and identifies
+- [x] The shipped command states **why** it does not read that file, and identifies
       it descriptively — never by filename and never by path — so Step 8's negative
       anchor on both literals stays an exact substring check. The reason for the
       wording rule stays in the cycle doc and the test comment, out of the shipped
       artifact (§12)
-- [ ] The record is **proved before it is used**: single-line `get` output, and
+- [x] The record is **proved before it is used**: single-line `get` output, and
       `get` output byte-identical to the labels joined with `", "`. Any mismatch
       turns narrowing off for the whole run
-- [ ] The recorded list and the exact restore command are printed **before** the
+- [x] The recorded list and the exact restore command are printed **before** the
       first narrowing write — the only part of the restore story that survives an
       interruption, since an interrupted run cannot print a report
-- [ ] Narrowing is refused for the **whole run** unless every recorded entry is one
+- [x] Narrowing is refused for the **whole run** unless every recorded entry is one
       `config set` can write back **and** free of control bytes; the loop never
       narrows first and repairs a partial restore afterwards
-- [ ] Every reviewer entry the loop puts on a command line — the narrowing write,
+- [x] Every reviewer entry the loop puts on a command line — the narrowing write,
       the restore, and the restore command printed for a human to paste — is one
       quoted shell word, because a valid entry may contain spaces and shell
       metacharacters
-- [ ] Every reviewer entry or config value the loop **displays** has its control
+- [x] Every reviewer entry or config value the loop **displays** has its control
       bytes made visible, by whichever of the two routes fits where the string came
       from: a string the loop composed — the recorded entries, the expected value in a
       mismatch, the entry that turned narrowing off — is printed in the escaped
@@ -362,15 +362,15 @@ review.reviewers` — and **never** from reading `global_config.yaml`, which no
       never leave the pipe. Quoting
       keeps a stored entry out of the shell; this keeps it out of the terminal, as
       far as the loop's own output goes
-- [ ] Terminal report states which reviewers ran per round, and the config's
+- [x] Terminal report states which reviewers ran per round, and the config's
       current value in every exit path. Beside that value it prints **exactly one**
       of two things: the recorded restore command, literal and quoted, whenever the
       loop holds a record it proved and accepted; or, when it holds no such record —
       narrowing refused, or `review.reviewers` unset — a statement that the key was
       never written and the value shown is the user's own. Never both, never neither,
       so no exit path is forced to print a command that would be unsafe or wrong
-- [ ] New guard tests for the restore invariant and the confirming-round rule
-- [ ] `docs/spec.md` brought to the new contract — it is
+- [x] New guard tests for the restore invariant and the confirming-round rule
+- [x] `docs/spec.md` brought to the new contract — it is
       [CLAUDE.md §2](../../../CLAUDE.md)'s **first** source of truth and it currently
       documents the loop this cycle replaces: a whole-loop round cap, a clean approval
       with no confirming round, and a reviewer failure as a terminal outcome. The

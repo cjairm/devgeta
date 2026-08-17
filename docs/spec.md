@@ -341,8 +341,8 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 **Review config keys** (`global_config.yaml`, under `review:` — see
 [ADR-0017](decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)):
 
-- `reviewers` — list of AI reviewer models `dg task review-run` runs headless, each written as `provider/model` (e.g. `anthropic/claude-opus-4-6`). Default: empty, which runs one reviewer on OpenCode's own default model. Validation only checks the shape (at least one `/`, non-empty on both sides of the first one) — a stale or unconfigured provider is not caught here; it surfaces as an `ERROR(<reason>)` outcome from `review-run` at run time instead.
-- `rounds` — max review rounds `/review-loop` performs before settling on a verdict. Default: `3`. Valid range: `1`–`5`; anything outside it is rejected by `dg config set`, not clamped.
+- `reviewers` — list of AI reviewer models `dg task review-run` runs headless, each written as `provider/model` (e.g. `anthropic/claude-opus-4-6`). Default: empty, which runs one reviewer on OpenCode's own default model. Validation only checks the shape (at least one `/`, non-empty on both sides of the first one) — a stale or unconfigured provider is not caught here; it surfaces as an `ERROR(<reason>)` outcome from `review-run` at run time instead. `/review-loop` narrows this key mid-run to just the reviewers still blocking, and restores it after every round — see `/review-loop` below for the mechanics and the interruption residual.
+- `rounds` — max review rounds `/review-loop` performs **per phase** before moving on. Default: `3`. Valid range: `1`–`5`; anything outside it is rejected by `dg config set`, not clamped. A full run is at most this cap plus 2 rounds — the one opening round and the one confirming round that bracket the phase this caps.
 
 **Flag for `create`**:
 
@@ -535,7 +535,7 @@ dg config set worktree.scan_depth 6                 # Validate and persist
 dg config set worktree.search_paths ~/code ~/work   # stringlist keys accept several values
 dg config unset worktree.attach_after_create        # Clear back to default (true)
 dg config set review.reviewers anthropic/claude-opus-4-6 openai/gpt-5.2
-dg config set review.rounds 5                       # Cap /review-loop at 5 rounds
+dg config set review.rounds 5                       # Cap /review-loop at 5 rounds per phase
 ```
 
 #### `dg ws`
@@ -782,11 +782,31 @@ no pointer and reads the live journal exactly as before.
 
 `configs/shared/commands/review-loop.md` (`/review-loop`) is the agent-side driver built on
 top of `review-run`: it runs a round, verifies and settles each open finding with the
-`receiving-code-review` skill's rigor, and repeats — up to `review.rounds` rounds (default
-3, max 5) — until one of exactly two outcomes: a clean approval (every reviewer APPROVEs,
-the journal lists nothing under `open:`, and no agent-authored rejection is still awaiting
-ratification), or a report to the human (persistent disagreement, an open finding not yet
-settled, the round cap, a reviewer failure, or an unratified rejection).
+`receiving-code-review` skill's rigor, and moves through three phases in order — an
+**opening round** that runs every reviewer configured in `review.reviewers`, **narrowing
+rounds** that run only the reviewers that have not yet approved, and a **confirming round**
+that runs every reviewer again. `review.rounds` caps rounds **per phase**, not the run as a
+whole: the counter restarts at the start of each phase, so the narrowing phase alone can run
+up to `review.rounds` rounds (default 3, max 5), and a full run is at most the cap plus 2
+rounds — the one opening round and the one confirming round bracketing it.
+Only the confirming round can produce a clean approval (every reviewer APPROVEs, the journal
+lists nothing under `open:`, and no agent-authored rejection is still awaiting ratification);
+an approval given during the opening round or a narrowing round is provisional, since the
+branch can keep changing after it was given. The loop stops at one of exactly two outcomes: a
+clean approval, or a report to the human (persistent disagreement, an open finding not yet
+settled, the round cap, two consecutive failures by the same reviewer, every configured
+reviewer failing, a failure in the confirming round, or an unratified rejection). A single
+reviewer failure does not by itself reach the report: it is retried and the reviewer stays in
+the narrowing set; only two consecutive failures drop it from that set and name it failed in
+the report.
+Narrowing works by rewriting `review.reviewers` down to the still-blocking reviewers for one
+round, then restoring the original list — after every single round, never left narrowed for a
+whole phase. It refuses to narrow at all unless it has first proved it can restore the exact
+list it found, and it prints that list and the restore command before the first narrowing
+write, not only in the terminal report, so an interruption mid-run (Ctrl-C, a crash) still
+finds the restore instruction already on screen. That does not close the gap itself: a
+process that is gone prints nothing further, so an interrupted run leaves `review.reviewers`
+narrowed until someone runs the printed restore command by hand.
 It parses `--reviewer` and `--note` from its own arguments once, before the first round, and
 forwards both to every `review-run` call it makes — the note verbatim, never summarized or
 answered by the loop itself. It reads the open ids from `review-notes` after each round,
@@ -986,10 +1006,12 @@ pull request and answers a review request on it, assembled from the three pieces
 above: `pr-review-state` for the trigger, `pr-review-target` for the immutable
 review target, and `review-run`'s explicit-range mode for the reviewers. It is the
 PR-side counterpart to `/review-loop` — the same cross-model reviewers, the same
-journal — with two deliberate differences: it reviews and posts, never fixes (that
-is the author's `/address-feedback`, or `/review-loop` on their side), and it has no
-round cap of its own, because a "round" here is triggered from outside. GitHub's
-re-request button is the round counter, so `review.rounds` does not apply.
+journal — with three deliberate differences: it reviews and posts, never fixes (that
+is the author's `/address-feedback`, or `/review-loop` on their side); it has no
+round cap of its own, because a "round" here is triggered from outside, so GitHub's
+re-request button is the round counter and `review.rounds` does not apply; and it runs
+every configured reviewer on every tick, never narrowing to just the reviewers still
+blocking the way `/review-loop`'s narrowing rounds do.
 
 **The trigger is GitHub's own state, polled — not an event, and not a local log.** A
 tick reads `pr-review-state` once and acts on that read; presence in the PR's
