@@ -124,19 +124,19 @@ current idle CPU.
 
 ### In Scope
 
-- [ ] `enter` on a pane row switches the tmux client to that exact pane
-- [ ] `e` toggles the left pane between default (35) and double (70), both
+- [x] `enter` on a pane row switches the tmux client to that exact pane
+- [x] `e` toggles the left pane between default (35) and double (70), both
       clamped to 60% of the terminal
-- [ ] A scroll viewport for the left list, via a `visibleWindow` moved into
+- [x] A scroll viewport for the left list, via a `visibleWindow` moved into
       `internal/tui/components` and shared with `internal/tui/inventory`
-- [ ] The fast/slow refresh split from ADR-0024, including merging the two
+- [x] The fast/slow refresh split from ADR-0024, including merging the two
       `tmux list-panes -a` scans into one
-- [ ] Diff recomputes on debounced selection change, on the slow tick, and on an
+- [x] Diff recomputes on debounced selection change, on the slow tick, and on an
       explicit `ctrl+r` refresh; never on the 3s tick
-- [ ] Stale `diffMsg` (path ≠ selected row) is dropped
-- [ ] The two full-tree diffs inside `collectWorktreeDiff` run concurrently
-- [ ] `config.Load()` inside `knownRepoAnchorGroups` is cached, invalidated on create
-- [ ] Hint bar and help popup document `e` and the refresh key
+- [x] Stale `diffMsg` (path ≠ selected row) is dropped
+- [x] The two full-tree diffs inside `collectWorktreeDiff` run concurrently
+- [x] `config.Load()` inside `knownRepoAnchorGroups` is cached, invalidated on create
+- [x] Hint bar and help popup document `e` and the refresh key
 
 ### Explicitly Out of Scope
 
