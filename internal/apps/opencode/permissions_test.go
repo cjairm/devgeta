@@ -1656,7 +1656,7 @@ func TestReviewLoopTrustsTheJournalOverTheSubagent(t *testing.T) {
 	stopSection := flowSection(
 		t,
 		body,
-		"### 5. Stop for anything escalated, then enforce the round cap",
+		"### 5. Stop for anything escalated, enforce the phase cap, then route to the next phase",
 	)
 	if !strings.Contains(stopSection, "still open") ||
 		!strings.Contains(stopSection, "any id still under") {
@@ -1705,6 +1705,301 @@ func TestReviewLoopFixedSettlementNamesTheTestEvidence(t *testing.T) {
 			"%s step 6's never-do list no longer requires the test command and its "+
 				"result in the `--note` — that rule is what makes the fix verifiable "+
 				"by whoever reads the journal later",
+			path,
+		)
+	}
+}
+
+// TestReviewLoopRestoresReviewerConfig guards the only thing this loop does
+// that can damage something the user owns. Narrowing works by rewriting
+// `review.reviewers` down to the reviewers still blocking, running one round,
+// and putting the original list back, so a run that narrows and never restores
+// leaves the human's configured reviewer list permanently replaced by whichever
+// subset happened to be blocking when the loop stopped.
+//
+// The restore is specified in TWO places and both are required. Step 1 prints
+// the recorded list and the exact restore command BEFORE the first narrowing
+// write; the terminal report's reviewer-configuration block prints it again.
+// The step 1 copy matters most: it is the only one an interrupted run ever
+// reaches, because a session killed between the narrowing write and the restore
+// emits no terminal report at all. The other half of that rule is anchored in
+// both places too, since a later edit is most likely to drop it as an apparent
+// inconsistency: when the loop holds no proved record, both places print NO
+// restore command and say the key was never written instead.
+//
+// The remaining assertions are what keep the restore honest rather than merely
+// present — the entries survive the shell as one argument each, the three
+// screens that refuse narrowing outright rather than narrowing onto a record
+// that cannot be put back, the two key-state checks that gate the writes, and
+// the whole-string comparison of the write's own output.
+//
+// The negative assertion is the one rule a substring check can enforce properly
+// rather than gesture at, so it is stated precisely: neither `global_config.yaml`
+// nor `.config/devgeta` may appear anywhere in the shipped body, checked
+// case-sensitively over the WHOLE file rather than one section so the failure
+// names which literal appeared. Both halves are needed — the filename alone
+// misses `~/.config/devgeta/*.yaml`, and the directory alone misses
+// `$XDG_CONFIG_HOME/devgeta/global_config.yaml`, since that variable need not
+// expand to anything containing `.config`. Between them they cover every
+// path-shaped way to reach devgeta's stored config, which is the rule most
+// likely to be undone by someone reaching for the "obvious" source of the
+// reviewer list.
+//
+// Why that file is banned, and why the guard over-catches on purpose (an
+// innocent mention fails too): the file sits outside the repository under
+// review, and the only external directory either shipped agent grants is the
+// disposable scratch root (`external_directory` in
+// configs/opencode/opencode.json.tmpl, `additionalDirectories` in
+// configs/claude/settings.json.tmpl). A read outside it prompts, and a headless
+// run has nobody to answer, so it auto-rejects — the run this cycle came from
+// produced four such auto-rejections. Widening the grant is an agent-permission
+// change, which CLAUDE.md §10 lists as never-silently. Because the assertion is
+// an exact substring check, the shipped command has to explain the ban while
+// identifying that file DESCRIPTIVELY, never by name or path; that wording rule
+// is Step 2 of
+// docs/plans/cycles/2026-08-12-review-loop-narrows-to-blocking-reviewers.md.
+// This comment is the only place a puzzled implementer can read either fact,
+// because the shipped command may not carry devgeta's own reasoning
+// (CLAUDE.md §12).
+//
+// What this catches: the restore, its pre-mutation print, its no-record branch,
+// the quoting rule, any of the three refusal screens, either key-state check, or
+// the captured-write comparison being deleted from the shipped command — and a
+// path-shaped read of devgeta's stored config being written back in.
+// What this does NOT catch: any of it being disobeyed at run time. An executing
+// agent can skip the restore, print the command after the mutation instead of
+// before it, run the checks and ignore the answer, quote the entries in prose
+// while interpolating them bare in practice, or name the escaped rendering and
+// then echo a value raw; a substring check over prose cannot execute the
+// instructions, and no harness in this repo can (see
+// TestCommittingCommandsDeclareStandingAuthorization). And one thing no test or
+// prose reaches at all: `devgeta task review-run` prints each reviewer's label
+// raw before the loop ever reads it, so these assertions bound the loop's own
+// output, not everything a round puts on screen.
+func TestReviewLoopRestoresReviewerConfig(t *testing.T) {
+	path, body := readReviewLoop(t)
+
+	// Step 1 is where the record is derived from the opening round's labels,
+	// proved, screened, and printed with its restore command before the first
+	// mutation — so every rule that keeps the round-trip exact lives there.
+	roundSection := flowSection(t, body, "### 1. Run a round")
+	roundRules := []struct{ want, why string }{
+		{
+			"devgeta config set review.reviewers <entry> <entry> …",
+			"that command IS the restore; without it the loop can narrow the key " +
+				"with no recorded way back to the user's own list",
+		},
+		{
+			"before the first narrowing write",
+			"the recorded list and its restore command must be on screen before " +
+				"the key is mutated — stated only in the terminal report they are " +
+				"lost for exactly the run that needs them, since a session killed " +
+				"mid-round emits no report at all",
+		},
+		{
+			"no restore command at all",
+			"a run whose refusal turned narrowing off must print no restore " +
+				"command; printing one anyway tells the human to paste back a " +
+				"change nobody made",
+		},
+		{
+			"never writes the key",
+			"the no-command branch has to say the key was left untouched, or its " +
+				"silence reads as the restore line having gone missing",
+		},
+		{
+			"one argument per entry",
+			"`devgeta config set` takes one argument per entry — a comma-joined " +
+				"string is stored as one bogus model id, so the restore writes a " +
+				"list the user never had",
+		},
+		{
+			"single-quote each entry",
+			"a stored entry may legally hold spaces, `;` or `$( )`, so an " +
+				"unquoted one splits into two reviewers or runs as a second command",
+		},
+		{
+			"cannot write back",
+			"a recorded entry `devgeta config set` would reject must refuse " +
+				"narrowing outright; narrowing first and restoring only the entries " +
+				"that validate drops the rest permanently",
+		},
+		{
+			`the labels joined with ", "`,
+			"the record is accepted only when the joined labels are byte-identical " +
+				"to the `get` line — without that comparison the loop restores a " +
+				"list it never proved the user had",
+		},
+		{
+			"Any mismatch turns narrowing off",
+			"the join check has to be a condition on narrowing, not a note; a " +
+				"check whose failure changes nothing is not a check",
+		},
+		{
+			"contains a byte below `0x20`",
+			"a recorded entry holding a control byte must refuse narrowing, " +
+				"because its restore command cannot be both safe to print and " +
+				"correct to paste",
+		},
+		{
+			"escaped rendering",
+			"a value the loop composed is displayed escaped — printed raw, an " +
+				"entry ending in an erase-line sequence wipes the very line " +
+				"reporting it, including the recovery line",
+		},
+		{
+			"never run that `get` bare",
+			"a `get` whose output is displayed goes through the filter; run bare, " +
+				"the stored bytes have already reached the terminal before the loop " +
+				"can screen them",
+		},
+		{
+			"LC_ALL=C sed -n l",
+			"that filter is the only route for a value the loop did not compose " +
+				"and therefore cannot escape",
+		},
+		{
+			"Narrow onto the recorded list",
+			"a narrowing write may happen only while the key still holds the " +
+				"recorded list, or it overwrites whatever the user changed it to " +
+				"between rounds",
+		},
+		{
+			"immediately before every narrowing write",
+			"that check has to run before EVERY narrowing write, not once after " +
+				"the opening round — the gap between rounds is the widest window " +
+				"the key can change in",
+		},
+		{
+			"Restore onto the narrowed list",
+			"the restore may happen only while the key still holds the narrowed " +
+				"list the loop wrote, or it clobbers a change made during the round",
+		},
+		{
+			"capture the write's stdout and compare the whole string",
+			"the write's own `<key>: <previous> -> <new>` line is the only reading " +
+				"of the value it replaced, and comparing it whole is what makes a " +
+				"write that landed on something else visible",
+		},
+		{
+			"Never split a previous value out of it",
+			"an entry may legally contain `\" -> \"`, so cutting that line at the " +
+				"first one both hides a real change and invents a false one",
+		},
+	}
+	for _, rule := range roundRules {
+		if !strings.Contains(roundSection, rule.want) {
+			t.Errorf(
+				"%s step 1 no longer contains %q — %s",
+				path, rule.want, rule.why,
+			)
+		}
+	}
+
+	// The report is the second of the two places the restore is required. It is
+	// the one a human reading only the outcome sees; step 1's copy is the one an
+	// interrupted run leaves behind. Both, or the story has a hole at one end.
+	reportSection := flowSection(t, body, "### The reviewer-configuration block")
+	reportRules := []struct{ want, why string }{
+		{
+			"devgeta config set review.reviewers <entry> <entry> …",
+			"the terminal report no longer repeats the recorded restore command, " +
+				"so a human reading only the outcome never learns how to put their " +
+				"own reviewer list back",
+		},
+		{
+			"no command",
+			"the report must print no restore command when the loop held no proved " +
+				"record — the same branch step 1 takes, and dropping it here " +
+				"produces a command that writes a list the user may never have had",
+		},
+		{
+			"was never written this run",
+			"the no-command branch has to say `review.reviewers` was never written, " +
+				"or the missing command reads as the report having lost it",
+		},
+	}
+	for _, rule := range reportRules {
+		if !strings.Contains(reportSection, rule.want) {
+			t.Errorf(
+				"%s's reviewer-configuration block no longer contains %q — %s",
+				path, rule.want, rule.why,
+			)
+		}
+	}
+
+	// Case-sensitive, over the whole file, one assertion per literal so the
+	// failure names which one appeared. See this test's doc comment for why the
+	// shipped command must identify that file descriptively instead.
+	for _, forbidden := range []string{"global_config.yaml", ".config/devgeta"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf(
+				"%s names %q — the loop must learn everything about "+
+					"`review.reviewers` from `devgeta config get`/`set`, never by "+
+					"reading devgeta's stored config. That file is outside the "+
+					"repository under review, the only external directory either "+
+					"shipped agent grants is the disposable scratch root, and a read "+
+					"outside it auto-rejects in a headless run instead of prompting — "+
+					"so a step that reads it cannot reliably reach its first round. "+
+					"If this fired on prose explaining the ban rather than on an "+
+					"instruction to read the file, reword it to identify the file "+
+					"descriptively, without its name or its path",
+				path, forbidden,
+			)
+		}
+	}
+}
+
+// TestReviewLoopCleanApprovalRequiresConfirmingRound is the third condition on
+// the same gate TestReviewLoopCleanApprovalRequiresNothingOpen guards. Narrowing
+// made an approval cheap to collect and easy to over-trust: the opening round
+// and every narrowing round hand out approvals while the branch is still being
+// changed by the fix subagents, so by the time the loop would act on one, it is
+// evidence about a version of the branch that no longer exists. A reviewer can
+// approve during narrowing and find something real on its very next look. Only
+// the confirming round — every configured reviewer, run again over the settled
+// branch — can produce a clean approval, and step 3 has to say so, or the loop
+// ends the run on the first unanimous narrowing round and ships whatever the
+// later rounds would have caught.
+//
+// What this catches: the confirming-round condition being dropped from step 3,
+// or kept as a description without being the exclusive one — which would let an
+// all-APPROVE, nothing-open narrowing round read as clean.
+// What this does NOT catch: the same limitation the other step 3 guard carries.
+// This is a substring match over prose, so it proves the concept is still named
+// in the right place and nothing more — it cannot distinguish "only the
+// confirming round produces one" from a reword that mentions the confirming
+// round and no longer requires it, and it cannot make an executing agent obey a
+// correctly-worded instruction.
+func TestReviewLoopCleanApprovalRequiresConfirmingRound(t *testing.T) {
+	path, body := readReviewLoop(t)
+	section := flowSection(t, body, "### 3. Check for clean approval")
+
+	if !strings.Contains(section, "confirming round") {
+		t.Errorf(
+			"%s step 3 no longer names the confirming round at all — with only "+
+				"all-APPROVE and nothing-open left, the first unanimous narrowing "+
+				"round ends the run on approvals given to a branch the fix subagents "+
+				"have since changed",
+			path,
+		)
+	}
+	if !strings.Contains(section, "Only the confirming round") {
+		t.Errorf(
+			"%s step 3 no longer makes the confirming round the ONLY round that can "+
+				"produce a clean approval — naming the phase without making it "+
+				"exclusive is not a gate, and an approval from the opening or a "+
+				"narrowing round is provisional by construction",
+			path,
+		)
+	}
+	if !strings.Contains(section, "is not the confirming round") {
+		t.Errorf(
+			"%s step 3 no longer routes the round that met every other condition "+
+				"but is not the confirming round — without that branch an "+
+				"all-APPROVE, nothing-open narrowing round has nowhere to go, and "+
+				"the reading that sends it to the clean-approval stop is exactly the "+
+				"one this condition exists to forbid",
 			path,
 		)
 	}

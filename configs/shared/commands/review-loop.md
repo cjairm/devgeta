@@ -885,7 +885,7 @@ re-read `devgeta task review-notes` yourself and treat that as the state of the 
 finding the subagent says it settled but the journal still lists under `open:` is not
 settled.
 
-### 5. Stop for anything escalated, then enforce the round cap
+### 5. Stop for anything escalated, enforce the phase cap, then route to the next phase
 
 Every round ends here. A round whose findings were settled, a round that only failed,
 and a round where every reviewer approved outside the confirming round all arrive at
