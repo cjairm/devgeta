@@ -1,7 +1,7 @@
 # ADR-0026 — The review loop narrows to the reviewers still blocking, then confirms with all of them
 
 **Date:** 2026-08-12
-**Status:** PROPOSED
+**Status:** ACCEPTED
 **Related:** [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) (**amends its §1 round cap and its §3 no-retry rule**; the rest of it governs unchanged — see [What this amends in ADR-0017](#what-this-amends-in-adr-0017)), [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) (its within-round retry runs one level below and is untouched), [cycle 2026-08-12-review-loop-narrows-to-blocking-reviewers](../plans/cycles/2026-08-12-review-loop-narrows-to-blocking-reviewers.md)
 
 ## Context

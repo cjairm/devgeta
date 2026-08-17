@@ -1722,6 +1722,21 @@ could make true. The instruction is recorded here so it is not lost, and so the 
 are not flipped back without the README gaining a state that fits; whether it counts as
 the go-ahead above is the maintainer's to say.
 
+**ADR-0026 status flip (the last step, per §5's table):**
+**Given 2026-08-13**, after all nine steps shipped and the branch's verification gate came
+back green (`go test . ./internal/apps/opencode/ ./internal/apps/claude/` — 484 passing —
+and `make lint`). The maintainer's instruction was to mark the work approved and merge it.
+ADR-0026 moved `PROPOSED` → `ACCEPTED` on that instruction, which is what §5's table and
+Step 0 reserve to the maintainer; the condition the earlier reverted attempt failed —
+[docs/decisions/README.md](../../decisions/README.md)'s definition of `ACCEPTED` as decided
+**and implemented** — is satisfied this time, because the implementation is what the flip
+now follows.
+
+Recorded here rather than left in a chat log, for the same reason the go-ahead above is.
+**Not covered by it:** §6's fourteen manual checks were not run. The maintainer was told so
+before merging and chose to proceed, so the shell-quoting and mid-round config-change
+behaviour ship on review evidence rather than an observed run.
+
 **Reviewer notes:**
 Reviewed by `github-copilot/gpt-5.6-terra` and `github-copilot/gemini-3.6-flash` via
 `/review-loop --reviewer document` over seven rounds on 2026-08-12, ending in a clean
