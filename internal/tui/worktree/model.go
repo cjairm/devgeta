@@ -17,6 +17,7 @@ import (
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/githubcli"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
+	"github.com/cjairm/devgeta/pkg/logger"
 )
 
 const (
@@ -171,6 +172,8 @@ type Model struct {
 	currentSessionFn         func() (string, bool)
 	createSessionFn          func(name, workdir string) error
 	switchToSessionFn        func(name string) error
+	switchToPaneFn           func(session, window, paneID string) error
+	clearAgentStateForPaneFn func(paneID string) error
 	killSessionFn            func(name string) error
 	listSessionNamesFn       func() ([]string, error)
 	repoCandidatesFn         func(cursorRepoSlug string) ([]string, error)
@@ -228,6 +231,8 @@ func newModel(
 	m.currentSessionFn = tmuxApp.CurrentSession
 	m.createSessionFn = tmuxApp.CreateSession
 	m.switchToSessionFn = tmuxApp.SwitchToSession
+	m.switchToPaneFn = tmuxApp.SwitchToPane
+	m.clearAgentStateForPaneFn = tmuxApp.ClearAgentStateForPane
 	m.killSessionFn = tmuxApp.KillSession
 	// listSessionNamesFn feeds the blank-name auto-namer's collision check: it
 	// needs every session on the tmux server (not just the standalone ones the
@@ -487,6 +492,21 @@ func (m Model) selectedSession() (worktree.SessionStatus, bool) {
 		return worktree.SessionStatus{}, false
 	}
 	return r.session, true
+}
+
+// selectedPane mirrors selectedStatus/selectedSession for rowPane rows: it
+// reports the cursor's pane (ok=true) only when the cursor sits on a rowPane
+// leaf, so handleKey can branch enter to handleSwitchToPane the same way it
+// branches to handleSwitchToSession/handleAttach today.
+func (m Model) selectedPane() (tmux.PaneState, bool) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
+		return tmux.PaneState{}, false
+	}
+	r := m.rows[m.cursor]
+	if r.kind != rowPane {
+		return tmux.PaneState{}, false
+	}
+	return r.pane, true
 }
 
 func (m *Model) rebuildRows() {
@@ -951,6 +971,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case "enter":
+		if _, ok := m.selectedPane(); ok {
+			return m.handleSwitchToPane()
+		}
 		if _, ok := m.selectedSession(); ok {
 			return m.handleSwitchToSession()
 		}
@@ -1080,6 +1103,48 @@ func (m Model) handleAttach() (tea.Model, tea.Cmd) {
 	// must never block the attach itself.
 	_ = m.clearAgentStateFn(windowName)
 	return m, m.attachToWindowCmd(sel.Repo, sel.Name)
+}
+
+// handleSwitchToPane is enter's rowPane counterpart to handleAttach and
+// handleSwitchToSession: switches the attached client straight to the
+// selected pane's session, window, and pane, then quits. Guarded by the same
+// $TMUX check and message as those two, since moving the client requires one
+// to already be attached.
+//
+// The agent-state clear is best-effort, same treatment as handleAttach's own
+// clearAgentStateFn call: a failed clear must never stop the switch, since
+// the switch is the point of pressing enter. Unlike handleAttach, the error
+// is not silently dropped - ClearAgentStateForPane returns it specifically so
+// a caller can log it (CLAUDE.md forbids discarding an error outright), so it
+// goes to the logger at debug level, matching this dashboard's existing
+// best-effort-failure logging (see run.go's WarnFn sink).
+func (m Model) handleSwitchToPane() (tea.Model, tea.Cmd) {
+	sel, ok := m.selectedPane()
+	if !ok {
+		return m, nil
+	}
+
+	if os.Getenv("TMUX") == "" {
+		m.status = notInsideTmuxStatus
+		return m, nil
+	}
+
+	switchFn := m.switchToPaneFn
+	clearFn := m.clearAgentStateForPaneFn
+	session, window, paneID := sel.Session, sel.Window, sel.PaneID
+	return m, func() tea.Msg {
+		if err := clearFn(paneID); err != nil {
+			logger.L().Debugw(
+				"worktree: failed to clear agent state for pane",
+				"pane", paneID,
+				"err", err,
+			)
+		}
+		if err := switchFn(session, window, paneID); err != nil {
+			return statusMsg("switch failed: " + err.Error())
+		}
+		return tea.QuitMsg{}
+	}
 }
 
 // attachToWindowCmd looks up repo/name's tmux window (auto-repairing it

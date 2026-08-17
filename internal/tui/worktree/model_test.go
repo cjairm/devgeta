@@ -42,6 +42,8 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.currentSessionFn = func() (string, bool) { return "", false }
 	m.createSessionFn = func(_, _ string) error { return nil }
 	m.switchToSessionFn = func(_ string) error { return nil }
+	m.switchToPaneFn = func(_, _, _ string) error { return nil }
+	m.clearAgentStateForPaneFn = func(_ string) error { return nil }
 	m.killSessionFn = func(_ string) error { return nil }
 	m.listSessionNamesFn = func() ([]string, error) { return nil, nil }
 	m.repoCandidatesFn = func(_ string) ([]string, error) { return nil, nil }
