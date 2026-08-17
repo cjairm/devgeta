@@ -545,7 +545,7 @@ this tick posted a review, that already cleared the request, so the first fired 
 `requested: no` and waits. If it posted nothing, a request still standing on the PR is exactly
 what a watch tick should review.
 
-Otherwise start nothing, and let step 12 say so:
+Otherwise start nothing, and let step 12 name what will run the next tick:
 
 - **A `--on-request` tick starts no driver, whatever its outcome.** The driver that fired it is
   already running, so a handoff here would start a second one on every tick and each of those
@@ -578,16 +578,17 @@ On a non-terminal exit, that last line must also say **what will run the next ti
 driver, when one is repeating this command, which is the one step 11 just started or the one
 that fired this tick, or **nothing**, when no driver is repeating this command. The "nothing"
 case is the one that matters: a lone tick leaves the PR unwatched, and a line that only says
-what the next tick expects reads as a watch this invocation never started. So whenever no
-driver is repeating this command — on `--once`, or on a harness with no repeat driver — say
-plainly that **nothing will run another tick**, and name what would start one
+what the next tick expects reads as a watch this invocation never started. So on every tick
+where this command has no driver behind it — `--once`, or a harness with no repeat driver —
+say plainly that **nothing will run another tick**, and name what would start one
 (`/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request` on Claude Code,
 carrying this tick's own arguments so the watch reviews what this tick reviewed, or a tick per
 invocation by hand where the harness has no driver), so the human is one step from a real
 watch.
 
-On an escalation, name the failing run and its reason verbatim in place of the next-tick
-line. On a terminal exit, say the watch is over explicitly: step 11 started nothing, and
+On an escalation, name whatever caused it — a failing run, no run at all, or a command that
+refused to run — and its reason, verbatim, in place of the next-tick line. On a terminal
+exit, say the watch is over explicitly: step 11 started nothing, and
 stopping a driver that may still be running is the human's or the harness's action, not this
 file's.
 

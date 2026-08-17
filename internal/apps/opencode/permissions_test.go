@@ -2202,14 +2202,18 @@ func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 // missing so an unattended watch starts asking permission every tick.
 //
 // Step 0's closing bullet — "anything still left over … stops the tick before
-// any state is read" — is what makes its flag list exhaustive, and it is also
-// exactly what swallowed one on 2026-08-12: before that rule recognized --once
-// and --on-request as flags at all, they fell through to this same catch-all and
-// were rejected as unknown words, so a bare invocation with --reviewer=document
-// reached no reviewer. Anything the Usage line advertises has to be recognized
-// by name before this bullet runs, or it silently does nothing — the failure
-// TestPRReviewLoopForwardsReviewerTypes and TestPRReviewLoopStartsTheWatchItPromises
-// exist to keep from happening again to --reviewer, --once, and --on-request.
+// any state is read" — is what makes its flag list exhaustive, and getting
+// that list right matters because of what already happened once:
+// `/pr-review-loop --reviewer=document <n>` reviewed nothing on 2026-08-12,
+// because step 0 back then only ever read bare words (`code document skill`) —
+// `--reviewer <type>` is the sibling `/review-loop` command's spelling, and a
+// human moving between the two typed the sibling's flag, which silently
+// resolved to nothing instead of selecting the document reviewer. `--once` and
+// `--on-request` are this cycle's own additions: they did not exist on
+// 2026-08-12 and had nothing to do with that failure.
+// TestPRReviewLoopForwardsReviewerTypes is the guard that pins the bare-word
+// reviewer vocabulary to the review-run registry's own keys today, so it
+// cannot silently drift the way the missing --reviewer spelling once did.
 //
 // The derived authorization tests above do not reach this file: it posts only
 // through /review-pr and /approve-pr, so it contains no literal outward
@@ -2783,15 +2787,25 @@ const (
 // that fired the tick — so the weaker condition is true on every watch tick and
 // would have the report claim nothing repeats while the watch keeps going.
 //
+// The condition is stated twice in the step — once naming the "nothing" branch
+// of what runs next, once introducing the instruction to actually say so — and
+// each of the two sites is worded differently and asserted on its own below.
+// A single check for one phrase would still pass if only the other site were
+// reverted, because the surviving site's wording would still match it.
+//
 // What this catches: the handoff being reduced back to a passing mention (by
 // dropping the driver form from Usage or from the handoff step), the handoff
 // drifting back above the posting step, step 0 growing a second handoff (in
 // either its literal or its old prose form), the report losing either branch of
-// what happens next, and the "nothing repeats" branch drifting back onto "step
-// 11 started none" so it fires on a watch tick too.
-// What this does NOT catch: whether the harness's driver actually starts, or an
-// agent reading a correct instruction and skipping it — this is a substring
-// check over prose, not an execution of it.
+// what happens next, and either of the two "nothing repeats" sites drifting
+// back onto "step 11 started none" so it fires on a watch tick too.
+// What this does NOT catch: whether the harness's driver actually starts, an
+// agent reading a correct instruction and skipping it, or a step 0 that keeps
+// "Nothing is handed off for repetition here" while adding a second, prose-only
+// handoff beneath it — the negative check above finds no `/loop` literal and
+// the positive check finds the sentence still there, so a self-contradictory
+// step 0 like that passes both. This is a substring check over prose, not an
+// execution of it.
 func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 	path, body := readSharedCommand(t, "pr-review-loop.md")
 
@@ -2902,15 +2916,32 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 			path,
 		)
 	}
+	// The "no driver repeating this command" condition is stated at two
+	// separate sites in the step, worded differently, and each is asserted on
+	// its own here — a single check for one phrase would still pass if only
+	// the other site were reverted, because the surviving site's wording would
+	// still match it (see the comment above this test).
 	if !strings.Contains(report, "no driver is repeating this command") {
 		t.Errorf(
-			"%s's report step no longer conditions the \"nothing repeats\" branch on no "+
-				"driver repeating this command. Conditioning it on step 11 having started "+
-				"none instead makes the branch true on a watch tick too — step 11 starts no "+
-				"driver on a watch tick, but a driver IS repeating the command (the one that "+
-				"fired this tick), so the report would say nothing will run another tick "+
-				"while the driver keeps firing, and point the human at the very form that "+
-				"starts a second one",
+			"%s's report step no longer conditions \"what will run the next tick\" "+
+				"on no driver repeating this command. Conditioning it on step 11 "+
+				"having started none instead makes the branch true on a watch tick "+
+				"too — step 11 starts no driver on a watch tick, but a driver IS "+
+				"repeating the command (the one that fired this tick), so the report "+
+				"would claim nothing repeats while the driver keeps firing",
+			path,
+		)
+	}
+	if !strings.Contains(report, "this command has no driver behind it") {
+		t.Errorf(
+			"%s's report step no longer conditions the \"nothing will run another "+
+				"tick\" instruction on this command having no driver behind it. "+
+				"Wording it as \"step 11 started none\" instead makes the instruction "+
+				"fire on a watch tick too — step 11 always starts none there, but a "+
+				"driver (the one that fired this tick) is still repeating the "+
+				"command, so the report would tell the human nothing repeats while "+
+				"the watch keeps going, and point them at the very form that starts "+
+				"a second driver",
 			path,
 		)
 	}
