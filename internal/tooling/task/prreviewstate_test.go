@@ -61,9 +61,20 @@ func wantState(pr, requested, myReview string) string {
 }
 
 // TestPRReviewStateDecisionTable walks every row of /pr-review-loop's decision
-// table (cycle 2026-08-06-pr-review-loop §5) plus each my-review value, and
-// asserts the three lines a tick would read. The `action` field is the row the
-// caller must land on — it is what each case exists to make reachable.
+// table (ADR-0025 §1) plus each my-review value, and asserts the three lines a
+// tick would read. The `action` field is the row the caller must land on — it is
+// what each case exists to make reachable.
+//
+// A row's action depends on the tick's mode as well as its state, so `action`
+// names both. An explicit tick — a human typed the command — reviews unless the
+// PR is merged or closed, because running the command is the request. A watch
+// tick — one a repeat driver fired, carrying `--on-request` — is gated on
+// GitHub's request field, which is the older behavior and still the whole of the
+// watch's memory.
+//
+// What this command prints is the same in both modes: the mode lives in the
+// caller's own arguments, not in the state read, which is why splitting the
+// action column changed no assertion below.
 func TestPRReviewStateDecisionTable(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -80,7 +91,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			requests: []string{ghUserRequest(stateTestLogin)},
 			reviews:  []string{ghReview(stateTestLogin, "APPROVED", "2026-08-06T10:00:00Z")},
 			want:     wantState("merged", "yes", "approved"),
-			action:   "terminal: closed",
+			action:   "terminal: closed, both modes",
 		},
 		{
 			name:     "closed outranks everything below it",
@@ -90,7 +101,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 				ghReview(stateTestLogin, "CHANGES_REQUESTED", "2026-08-06T10:00:00Z"),
 			},
 			want:   wantState("closed", "yes", "changes-requested"),
-			action: "terminal: closed",
+			action: "terminal: closed, both modes",
 		},
 		{
 			// The row the loop must not fall through: a requested draft is
@@ -101,14 +112,14 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			isDraft:  true,
 			requests: []string{ghUserRequest(stateTestLogin)},
 			want:     wantState("draft", "yes", "none"),
-			action:   "wait",
+			action:   "explicit: review / watch: wait",
 		},
 		{
 			name:    "an unrequested draft is a draft too",
 			state:   "OPEN",
 			isDraft: true,
 			want:    wantState("draft", "no", "none"),
-			action:  "wait",
+			action:  "explicit: review / watch: wait",
 		},
 		{
 			// GitHub lets a draft be closed. `closed` must win, or the loop
@@ -117,14 +128,14 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			state:   "CLOSED",
 			isDraft: true,
 			want:    wantState("closed", "no", "none"),
-			action:  "terminal: closed",
+			action:  "terminal: closed, both modes",
 		},
 		{
 			name:     "open and requested with no prior review",
 			state:    "OPEN",
 			requests: []string{ghUserRequest(stateTestLogin)},
 			want:     wantState("open", "yes", "none"),
-			action:   "review",
+			action:   "review, both modes",
 		},
 		{
 			// A re-request after an approval: the standing approval does not
@@ -135,14 +146,14 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			requests: []string{ghUserRequest(stateTestLogin)},
 			reviews:  []string{ghReview(stateTestLogin, "APPROVED", "2026-08-06T10:00:00Z")},
 			want:     wantState("open", "yes", "approved"),
-			action:   "review",
+			action:   "review, both modes",
 		},
 		{
 			name:    "open, not requested, standing approval",
 			state:   "OPEN",
 			reviews: []string{ghReview(stateTestLogin, "APPROVED", "2026-08-06T10:00:00Z")},
 			want:    wantState("open", "no", "approved"),
-			action:  "terminal: approved",
+			action:  "explicit: review / watch: terminal: approved",
 		},
 		{
 			name:  "open, not requested, changes requested",
@@ -151,7 +162,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 				ghReview(stateTestLogin, "CHANGES_REQUESTED", "2026-08-06T10:00:00Z"),
 			},
 			want:   wantState("open", "no", "changes-requested"),
-			action: "wait",
+			action: "explicit: review / watch: wait",
 		},
 		{
 			// Verified live: a comment-only review clears the request too, so
@@ -161,13 +172,13 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			state:   "OPEN",
 			reviews: []string{ghReview(stateTestLogin, "COMMENTED", "2026-08-06T10:00:00Z")},
 			want:    wantState("open", "no", "commented"),
-			action:  "wait",
+			action:  "explicit: review / watch: wait",
 		},
 		{
 			name:   "open, not requested, never reviewed",
 			state:  "OPEN",
 			want:   wantState("open", "no", "none"),
-			action: "wait",
+			action: "explicit: review / watch: wait",
 		},
 		{
 			// ADR-0022 §3: a request addressed to a team the user may well be
@@ -176,7 +187,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 			state:    "OPEN",
 			requests: []string{ghTeamRequest("reviewers"), ghUserRequest(stateTestOtherLogin)},
 			want:     wantState("open", "no", "none"),
-			action:   "wait",
+			action:   "explicit: review / watch: wait",
 		},
 		{
 			name:  "a request naming the user among others does trigger",
@@ -187,7 +198,7 @@ func TestPRReviewStateDecisionTable(t *testing.T) {
 				ghUserRequest(stateTestLogin),
 			},
 			want:   wantState("open", "yes", "none"),
-			action: "review",
+			action: "review, both modes",
 		},
 	}
 

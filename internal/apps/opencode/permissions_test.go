@@ -2213,7 +2213,7 @@ func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 // reviewer-invocation step — the pair every "documented but does nothing" flag
 // bug lives between.
 const (
-	prReviewLoopParseHeading = "### 0. Resolve the PR number, the reviewer types, and the note"
+	prReviewLoopParseHeading = "### 0. Resolve the PR number, the reviewer types, the note, and the mode"
 	prReviewLoopRunHeading   = "### 5. Run the reviewers, one run per type"
 )
 
@@ -2274,6 +2274,34 @@ func TestPRReviewLoopForwardsReviewerTypes(t *testing.T) {
 	}
 }
 
+// prReviewLoopDriverForm returns the repeat-driver invocation written inside
+// section: everything from `/loop <interval> /pr-review-loop` up to the backtick
+// that closes it, which is the closing backtick of an inline span in prose and
+// the opening backtick of the closing fence in a fenced block. section must be
+// whitespace-collapsed (flowSection), so a hand-rewrapped form still reads as one
+// line.
+//
+// It fatals when the form is absent: every caller asserts something ABOUT that
+// line, and a missing line is a different failure with its own guard
+// (TestPRReviewLoopStartsTheWatchItPromises).
+func prReviewLoopDriverForm(t *testing.T, path, where, section string) string {
+	t.Helper()
+	const driverForm = "/loop <interval> /pr-review-loop"
+	formAt := strings.Index(section, driverForm)
+	if formAt < 0 {
+		t.Fatalf(
+			"%s %s no longer names the driver form %q — see "+
+				"TestPRReviewLoopStartsTheWatchItPromises",
+			path, where, driverForm,
+		)
+	}
+	span := section[formAt:]
+	if end := strings.Index(span, "`"); end >= 0 {
+		span = span[:end]
+	}
+	return span
+}
+
 // TestPRReviewLoopForwardsTheNote is the --note half of the same guard, for the
 // same failure: a flag documented in Usage but never parsed or passed on does
 // nothing, and the human's steering silently never reaches a reviewer. Step 0
@@ -2282,13 +2310,20 @@ func TestPRReviewLoopForwardsReviewerTypes(t *testing.T) {
 // There is a third place the note can be dropped, and it is the worst of the
 // three: the standing-watch handoff. A repeat driver re-runs the command line it
 // was handed, so a driver form written as `/loop <interval> /pr-review-loop [n]
-// [types]` silently strips the note from EVERY tick it ever fires — steps 0 and
-// 5 stay correct and forward a note that no longer arrives, and the human who
-// asked for the watch is by definition not watching. So the driver form's own
-// code span must name the flag.
+// [types]` silently strips the note from EVERY tick it ever fires — the parse
+// and run steps stay correct and forward a note that no longer arrives, and the
+// human who asked for the watch is by definition not watching. So the driver
+// form's own code span must name the flag.
+//
+// The form is written twice, and both copies are checked, because the two have
+// different jobs and only one of them is executed: Usage documents the shape,
+// while the handoff step is the line the tick actually runs. A `--note` present
+// in Usage and missing from the handoff step would read correctly and still
+// strip the note from every tick.
 //
 // What this catches: `--note` being dropped from step 0, from step 5, or from
-// the driver form in Usage, while the Usage section keeps advertising it.
+// the driver form in either Usage or the handoff step, while the Usage section
+// keeps advertising it.
 // What this does NOT catch: the tick summarizing or answering the note instead
 // of passing it verbatim — that is judgment, which the instruction states
 // plainly but no substring check can verify.
@@ -2299,33 +2334,37 @@ func TestPRReviewLoopForwardsTheNote(t *testing.T) {
 		t.Fatalf("%s no longer documents --note <text> at all", path)
 	}
 
-	// The driver form is a backtick code span inside the Usage prose, so it can
-	// wrap across lines: collapse whitespace first, then read the span that
-	// starts at the form and ends at its closing backtick.
-	usage := flowSection(t, body, prReviewLoopUsageHeading)
-	const driverForm = "/loop <interval> /pr-review-loop"
-	formAt := strings.Index(usage, driverForm)
-	if formAt < 0 {
-		t.Fatalf(
-			"%s Usage no longer names the driver form %q — see "+
-				"TestPRReviewLoopStartsTheWatchItPromises",
-			path, driverForm,
-		)
+	for _, site := range []struct {
+		heading string
+		where   string
+		why     string
+	}{
+		{
+			heading: prReviewLoopUsageHeading,
+			where:   "Usage",
+			why: "the documented shape of the watch is missing the flag, so the next " +
+				"hand that copies it into the handoff step copies the loss",
+		},
+		{
+			heading: prReviewLoopHandoffHeading,
+			where:   "the handoff step",
+			why: "this is the line the tick actually runs, so the note is stripped " +
+				"from every tick the watch fires no matter how Usage reads",
+		},
+	} {
+		span := prReviewLoopDriverForm(t, path, site.where, flowSection(t, body, site.heading))
+		if !strings.Contains(span, "--note") {
+			t.Errorf(
+				"%s hands the repeat driver `%s` in %s without --note. The driver "+
+					"re-runs exactly this command line, so the human's reviewer emphasis "+
+					"is stripped from every tick the watch ever fires — and step 0 and "+
+					"step 5 look correct while it happens, because they forward a note "+
+					"that is never passed in. Here, %s",
+				path, span, site.where, site.why,
+			)
+		}
 	}
-	span := usage[formAt:]
-	if end := strings.Index(span, "`"); end >= 0 {
-		span = span[:end]
-	}
-	if !strings.Contains(span, "--note") {
-		t.Errorf(
-			"%s hands the repeat driver `%s` without --note. The driver re-runs "+
-				"exactly this command line, so the human's reviewer emphasis is "+
-				"stripped from every tick the watch ever fires — and steps 0 and 5 "+
-				"look correct while it happens, because they forward a note that is "+
-				"never passed in",
-			path, span,
-		)
-	}
+
 	parseSection := flowSection(t, body, prReviewLoopParseHeading)
 	if !strings.Contains(parseSection, "--note") {
 		t.Errorf(
@@ -2677,33 +2716,55 @@ func TestPRReviewLoopScratchVariableCannotCollideWithReviewPR(t *testing.T) {
 	}
 }
 
-// prReviewLoopUsageHeading, prReviewLoopNotesHeading and
-// prReviewLoopReportHeading anchor the three sections the two tests below read:
-// where the driver handoff is described, where the generic command-failure rule
-// lives, and where the tick reports what happens next.
+// These four anchor the sections the tests below read: where the driver handoff
+// is described, where the generic command-failure rule lives, the step that
+// actually starts the driver, and where the tick reports what happens next.
+//
+// The handoff is its own numbered step, and it has to stay numbered ABOVE the
+// report step: the report names the driver this tick just started, which it can
+// only do once the handoff has run. That is also why the report step is 12 and
+// not 11 — the handoff was inserted directly before it so steps 0 through 10
+// kept their numbers.
 const (
-	prReviewLoopUsageHeading  = "## Usage"
-	prReviewLoopNotesHeading  = "## Notes"
-	prReviewLoopReportHeading = "### 11. Report the tick"
+	prReviewLoopUsageHeading   = "## Usage"
+	prReviewLoopNotesHeading   = "## Notes"
+	prReviewLoopHandoffHeading = "### 11. Start the watch, unless this tick was one"
+	prReviewLoopReportHeading  = "### 12. Report the tick"
 )
 
 // TestPRReviewLoopStartsTheWatchItPromises guards the gap that made a real user
 // think a watch was running when none was. The command's trigger offers to watch
-// a PR "unattended", but one invocation is deliberately one tick
-// (ADR-0022) — so a bare invocation that only described the driver in passing
-// answered once and then nothing ever ticked again, silently.
+// a PR "unattended", but one invocation is deliberately one tick — so a bare
+// invocation that only described the driver in passing answered once and then
+// nothing ever ticked again, silently.
 //
-// Two halves close that, and both are asserted here because either alone leaves
-// the same surprise. The Usage section must make the handoff an obligation and
-// name the driver form, and step 0 must actually perform it before the state
-// read; otherwise the file still only mentions a driver a human has to know to
-// type. And step 11 must report what will run the NEXT tick — including that
-// nothing will, where the harness has no driver — so a lone tick can never read
+// Four things close that, and all are asserted here because each alone leaves the
+// same surprise:
+//
+//   - Usage must make the handoff an obligation and name the driver form,
+//     otherwise the file only mentions a driver a human has to know to type.
+//   - The handoff step must actually start one. That is a step of its own, and it
+//     is the only place in the flow that starts a driver.
+//   - That step must come AFTER the posting step (ADR-0025 §4). A driver is
+//     cron-backed and fires at its next scheduled match, never on creation, so a
+//     handoff placed before the review answers the human with a state read now and
+//     their review one whole interval later — the failure that moved it here. The
+//     check is an index comparison rather than a phrase, because prose can claim
+//     "after the outcome is known" from anywhere in the file.
+//   - Step 0 must NOT start one. Two places that both hand off start two drivers
+//     on one invocation, and the second is invisible until the PR gets reviewed
+//     twice per interval.
+//
+// The report step then has to name the result either way: the driver that will
+// run the next tick, or — on --once and on a harness with no driver — that
+// nothing will. (A terminal exit starts nothing too and says so as "the watch is
+// over", which the report template already carries.) A lone tick must never read
 // as a watch.
 //
-// What this catches: the handoff being reduced back to a passing mention (either
-// by dropping it from step 0 or by dropping the driver form from Usage), and the
-// report losing the line that says whether anything is repeating this command.
+// What this catches: the handoff being reduced back to a passing mention (by
+// dropping the driver form from Usage or from the handoff step), the handoff
+// drifting back above the posting step, step 0 growing a second handoff, and the
+// report losing either branch of what happens next.
 // What this does NOT catch: whether the harness's driver actually starts, or an
 // agent reading a correct instruction and skipping it — this is a substring
 // check over prose, not an execution of it.
@@ -2729,13 +2790,43 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 		)
 	}
 
-	parseSection := flowSection(t, body, prReviewLoopParseHeading)
-	if !strings.Contains(parseSection, "repeat driver") {
+	handoff := flowSection(t, body, prReviewLoopHandoffHeading)
+	if !strings.Contains(handoff, "/loop <interval> /pr-review-loop") {
 		t.Errorf(
-			"%s step 0 no longer hands repetition to the harness's repeat driver before "+
-				"the state read. Describing the driver in Usage without ever acting on it "+
-				"leaves the watch un-started, and nothing later in the flow starts one",
-			path,
+			"%s's handoff step (%q) no longer starts the harness's repeat driver. "+
+				"Describing the driver in Usage without any step acting on it leaves the "+
+				"watch un-started, and no other step starts one",
+			path, prReviewLoopHandoffHeading,
+		)
+	}
+
+	// flowSection above already fataled if the handoff heading is gone, so only
+	// the posting heading still needs checking before the comparison.
+	handoffAt := strings.Index(body, prReviewLoopHandoffHeading)
+	postAt := strings.Index(body, prReviewLoopPostHeading)
+	if postAt < 0 {
+		t.Fatalf("%s no longer has a %q section", path, prReviewLoopPostHeading)
+	}
+	if handoffAt < postAt {
+		t.Errorf(
+			"%s puts the handoff step (%q) BEFORE the posting step (%q). A repeat "+
+				"driver fires at its next scheduled match and never on creation, so a "+
+				"handoff that runs before the review answers the human who asked for one "+
+				"with a state read now and their review a whole interval later. The "+
+				"handoff also cannot know whether a watch is still wanted until the "+
+				"outcome exists — a first-look approval must start nothing",
+			path, prReviewLoopHandoffHeading, prReviewLoopPostHeading,
+		)
+	}
+
+	parseSection := flowSection(t, body, prReviewLoopParseHeading)
+	if strings.Contains(parseSection, "/loop <interval> /pr-review-loop") {
+		t.Errorf(
+			"%s step 0 starts a repeat driver again. The handoff belongs to one step "+
+				"only (%q); two places that both hand off start two drivers on one "+
+				"invocation, and the second one is invisible until the PR is reviewed "+
+				"twice per interval",
+			path, prReviewLoopHandoffHeading,
 		)
 	}
 
@@ -2751,10 +2842,22 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 	report := strings.Join(strings.Fields(body[reportAt:]), " ")
 	if !strings.Contains(report, "what will run the next tick") {
 		t.Errorf(
-			"%s step 11 no longer requires the report to say what will run the next "+
-				"tick. That line is what tells a human a lone tick left the PR unwatched; "+
-				"without it, a report about what the next tick expects promises a watch "+
-				"the invocation never started",
+			"%s's report step no longer requires the report to say what will run the "+
+				"next tick. That line is what tells a human a lone tick left the PR "+
+				"unwatched; without it, a report about what the next tick expects promises "+
+				"a watch the invocation never started",
+			path,
+		)
+	}
+	if !strings.Contains(report, "nothing will run another tick") {
+		t.Errorf(
+			"%s's report step no longer has the branch where nothing repeats. Plenty of "+
+				"ticks start no driver — --once, and any harness with no repeat driver — "+
+				"and for those the report has to say so in as many words. (A terminal exit "+
+				"starts nothing either, and says it as \"the watch is over\"; this is the "+
+				"non-terminal case, which the next-tick line above would otherwise leave "+
+				"reading as a watch that was never started — the original failure in a new "+
+				"place)",
 			path,
 		)
 	}
@@ -2773,12 +2876,13 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 // rule that makes the handoff correct lives in the body it skipped: carry the PR
 // number, the types and `--note` through verbatim (see
 // TestPRReviewLoopForwardsTheNote — a dropped flag is dropped from every tick the
-// watch fires), hand off and exit so two ticks never run at once, and treat the
-// handoff as impossible rather than optional on a harness with no driver
-// (OpenCode). A description that names the driver form invites exactly the
+// watch fires), add `--on-request` so the fired ticks are request-gated and start
+// no further drivers, start the driver only after the tick's own review, and
+// treat the handoff as impossible rather than optional on a harness with no
+// driver (OpenCode). A description that names the driver form invites exactly the
 // ungated handoff those rules exist to prevent. Internal step numbers have no
-// place there either: nothing in a menu entry resolves "step 0", and renumbering
-// the flow would silently falsify it.
+// place there either: nothing in a menu entry resolves "step 11", and
+// renumbering the flow would silently falsify it.
 //
 // What this catches: the driver form or a step reference migrating back into the
 // description.
@@ -2805,9 +2909,11 @@ func TestPRReviewLoopDescriptionCarriesTriggersNotTheHandoff(t *testing.T) {
 		t.Errorf(
 			"%s description names the repeat-driver form. An agent can act on the "+
 				"description alone, so the handoff would run without the body's rules "+
-				"about it — forwarding every argument, exiting instead of also ticking, "+
-				"and having no driver at all on OpenCode. Keep the form in Usage and "+
-				"step 0; leave the description to say when this command is the right one",
+				"about it — forwarding every argument, marking the fired ticks with "+
+				"--on-request, starting the driver only after this tick's own review, and "+
+				"having no driver at all on OpenCode. Keep the form in Usage and in the "+
+				"handoff step; leave the description to say when this command is the "+
+				"right one",
 			path,
 		)
 	}

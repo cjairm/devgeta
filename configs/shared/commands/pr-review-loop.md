@@ -1,11 +1,22 @@
 ---
-description: Use when a pull request should be watched and answered unattended — read the PR's review state and, when a review is requested of you, run the reviewer agents over its own diff and post at most one review or approval. Use for a single look at one PR or for a standing watch on it ("watch PR 213", "keep answering reviews on it")
+description: Use when a pull request should be reviewed now, or watched and answered unattended — read the PR's review state, run the reviewer agents over its own diff, and post at most one review or approval. Running it reviews the named PR; an unattended tick reviews when a review is requested of you. Use for a single look at one PR or for a standing watch on it ("review PR 213", "watch PR 213", "keep answering reviews on it")
 ---
 
-Watch one pull request and answer a review request on it. **One invocation is one tick:**
+Review one pull request and answer review requests on it. **One invocation is one tick:**
 read the PR's current state, take exactly one action, exit. This file holds no timer and
-keeps nothing between runs — GitHub's own review-request field is the memory, so running a
-tick twice in a row, by hand, or after a crash is always safe.
+keeps nothing between runs.
+
+A tick comes from one of two places, and that is the only thing that changes what it does:
+
+- An **explicit tick** is one a human typed. It reviews, because running the command is the
+  request — it was addressed to this tool, by the person running it, about the PR they named.
+- A **watch tick** is one a repeat driver fired. It carries `--on-request`, and it reviews
+  only when GitHub says a review is requested of the authenticated user.
+
+GitHub's own review-request field is the watch's whole memory, so running a watch tick twice
+in a row, or again after a crash, is always safe. An explicit invocation is not idempotent and
+is not meant to be: typing the command twice reviews twice, because asking twice is asking
+again.
 
 The PR does not have to be checked out. Every step below reads the PR's own commits,
 fetched read-only into refs nothing else drives, so the working tree is never the source
@@ -15,11 +26,11 @@ is mid-edit in the same clone.
 ## Usage
 
 ```
-/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--note <text>]
+/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--reviewer <type>] [--note <text>] [--once] [--on-request]
 ```
 
 `PR_NUMBER` is optional and resolves from the current branch's PR when omitted — the same
-inference every PR command makes. Pass it when watching a PR whose branch is not the
+inference every PR command makes. Pass it when reviewing a PR whose branch is not the
 checkout, which is the normal case for reviewing someone else's work.
 
 The types name **which reviewer agents run**, and more than one is allowed: `code document`
@@ -29,35 +40,59 @@ three values are `code`, `document`, and `skill` — exactly the keys the `--rev
 shorthand; a friendlier spelling here would be a second vocabulary that can drift from the
 one the runner validates against. Types omitted → judge them from what the PR changes.
 
+`--reviewer <type>` and `--reviewer=<type>` are a second **spelling** of those same three
+values, accepted because it is the flag the sibling `/review-loop` takes and therefore what
+a human moving between the two actually types. The spellings mix freely and mean exactly
+the same thing: `code --reviewer=document` is two runs. Nothing is translated on the way
+through, so `doc` is still an error however it is written.
+
 `--note <text>` is the human's own emphasis, forwarded verbatim to every reviewer run of
 the tick (e.g. `--note "the retry path is the risky part"`). It adds context; it never
 narrows what gets reviewed.
 
-**Repetition belongs to the driver, not to this file — but handing it over is part of the
-job.** One tick watches nothing, so when what was asked for is a standing watch ("watch PR
-213", "keep answering reviews on it") rather than a single look, start the harness's own
-repeat driver on this command and let it run the ticks: on Claude Code,
-`/loop <interval> /pr-review-loop [n] [types] [--note <text>]`, with the interval the human
-named or the driver's default when they named none. That handoff is the whole of such an
-invocation — do it first and exit, rather than also ticking here, so two ticks never run at
-once.
+`--once` reviews and starts no repeat driver — a single look, after which nothing watches the
+PR.
+
+`--on-request` marks a tick a repeat driver fired. **No human ever types it.** It does two
+things and nothing else: it makes the tick request-gated, so an unattended watch reviews only
+when GitHub says a review is asked of this user, and it stops that tick from starting a driver
+of its own.
+
+**Repetition belongs to the driver, not to this file — but starting it is part of the job.**
+One tick watches nothing, so an explicit tick whose outcome leaves the pull request still
+worth watching starts the harness's own repeat driver on this command and lets it run the
+ticks from then on: on
+Claude Code, `/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request`, with
+the interval the human named or the driver's default when they named none. A standing watch
+("watch PR 213", "keep answering reviews on it") is what that gives them, and it is the
+default; `--once` is how a human asks for the single look instead.
+
+**The handoff happens at the end of the tick, not the start.** A repeat driver fires at its
+next scheduled match and never on creation, so handing off first would answer the person who
+asked for a review with a state read now and the review a whole interval later. Step 11 starts
+the driver, after the review this invocation was asked for and after the outcome is known —
+which is also what lets a first-look approval start nothing at all.
 
 **Hand the driver every argument, the note included.** A repeat driver re-runs the command
 line it was given and nothing else, so whatever is left out of the handoff is left out of
 every tick it ever fires — and the human is not there to notice. Carry the PR number, the
 types, and the `--note` text through verbatim and still quoted, so the note reaches the
-reviewers on tick fifty the same way it would have on a single look.
+reviewers on tick fifty the same way it would have on a single look. `--on-request` is the one
+argument on the driver's line that the invocation did not have: it is what tells each fired
+tick that it is a watch tick.
+
+**A `--on-request` tick starts no driver, whatever it finds.** The driver that fired it is
+already running, so a handoff there would start a second driver on every tick, and each of
+those would start another — a watch that multiplies instead of repeating. Starting and
+stopping the driver both stay outside this file: a watch tick reviews or waits, reports, and
+exits.
 
 Where the harness has no repeat driver (OpenCode has none), the handoff is impossible rather
-than optional: run the one tick and let step 11 say plainly that nothing will run another, so
-the human knows the watch is theirs to press.
+than optional: run the tick — it still reviews — and let step 12 say plainly that nothing will
+run another, so the human knows the watch is theirs to press.
 
-A driver-fired tick arrives as `/pr-review-loop [n] [types] [--note <text>]` — the same
-argument list the handoff gave it — and carries no request to watch, so it starts no second
-driver: the handoff happens once, where the watch was asked for. A bare invocation is one tick
-by design: it is how a human takes a single look, and it is how the driver's own ticks arrive.
-Either way, the review runs at most once per tick and at most one review is posted per tick —
-step 9's single re-ask is the only repeat of the posting step.
+In both modes, the review runs at most once per tick and at most one review is posted per
+tick — step 9's single re-ask is the only repeat of the posting step.
 
 ## Authority to post
 
@@ -66,9 +101,8 @@ read-only fetch of the PR's refs, the reviewer runs, and the posting step at the
 whether that step is `/review-pr` or `/approve-pr`. **Do not ask before any of it, do not
 show the review or the approval for confirmation first, and do not stop at "shall I post
 this?".** A watch that pauses for a go-ahead each tick is not unattended, and the human
-started the loop precisely so they would not have to be present for it. Asking for a standing
-watch authorizes step 0's handoff to the driver the same way — start it, do not stop to
-confirm it.
+started the loop precisely so they would not have to be present for it. Step 11's handoff to
+the repeat driver is authorized the same way — start it, do not stop to confirm it.
 
 This authorizes _acting unprompted_, nothing else. Every gate below still holds: the
 decision table still picks exactly one action, the pre-post re-check at step 7 can still
@@ -77,7 +111,8 @@ read, and an escalation is still reported to the human instead of decided for th
 
 ## What this drives
 
-- `devgeta task pr-review-state --pr <n>` — the trigger read. Prints exactly three lines
+- `devgeta task pr-review-state --pr <n>` — the state read, and the trigger a watch tick is
+  gated on. Prints exactly three lines
   and nothing else: `pr:` (`open | draft | merged | closed`), `requested:` (`yes | no` —
   whether the authenticated user is in the PR's review requests **right now**), and
   `my-review:` (`approved | changes-requested | commented | none` — that user's latest
@@ -116,31 +151,41 @@ installed binary is available in this environment.
 
 ## Flow
 
-### 0. Resolve the PR number, the reviewer types, and the note
+### 0. Resolve the PR number, the reviewer types, the note, and the mode
 
 Parse `$ARGUMENTS` once, before anything else. The values resolved here are used unchanged
 for the rest of the tick.
 
 - A bare number is `PR_NUMBER`. With none given, run `devgeta task current-pr` and use what
   it prints. If it reports that the branch has no pull request, stop and say so — there is
-  nothing to watch.
-- Bare words are reviewer types. Each one must be `code`, `document`, or `skill`. Anything
+  nothing to review.
+- `--once` and `--on-request` are flags, not values. Recognize both here, before anything
+  else is classified, so neither is ever read as a reviewer type. `--on-request` makes this a
+  **watch tick** that a repeat driver fired; without it the tick is **explicit**, typed by a
+  human. `--once` means start no driver at the end of the tick. A tick may carry neither,
+  either, or both.
+- Reviewer types arrive in two spellings, and both are read here: a bare word (`document`),
+  and `--reviewer <type>` or `--reviewer=<type>`. Take them in any mix and in the order given.
+  Each resolved value must be `code`, `document`, or `skill`. Anything
   else: stop before reading any state, and report that the types are `code`, `document`, or
   `skill`, naming the value that was actually passed. Do not guess which one was meant, and
   do not map a near-miss like `doc` or `docs` onto `document` — these values are forwarded
-  to `devgeta task review-run --reviewer` verbatim, and this file owns no translation.
+  to `devgeta task review-run --reviewer` verbatim, and this file owns no translation. A
+  `--reviewer` with nothing after it is that same error, reported the same way.
 - No types at all is normal, not an error: step 3 judges them from the PR's changed files.
 - `--note <text>` is carried verbatim into every `review-run` call this tick makes. Pass it
   exactly as written — never summarize it, extend it, or answer it yourself. It is the
   human's message to the reviewers, not an instruction to this loop. Omit the flag entirely
   when no note was given.
+- Anything still left over once the above have been taken — an unknown flag, a word that is
+  neither a number nor a type — stops the tick before any state is read, naming the value.
+  That rule is what makes the list above exhaustive, so it must never be what swallows a flag
+  the Usage line advertises: a flag documented up there and missing from here silently does
+  nothing at all.
 
-Then settle repetition, before the state read: if a standing watch was asked for and the
-harness has a repeat driver, hand it this command with **every** argument just resolved — the
-PR number, the types, and the `--note` text verbatim and still quoted — then exit. See
-"Repetition belongs to the driver" above; an argument dropped here is dropped from every tick
-the driver fires. Everything from step 1 on is one tick, whether a driver fired it or a human
-did.
+Nothing is handed off for repetition here. That is step 11, after the tick's outcome is known.
+Everything from step 1 on is one tick, whether a driver fired it or a human did; only which
+rows of step 2's table apply, and whether step 11 starts anything, differ between the two.
 
 ### 1. Read the state once
 
@@ -148,39 +193,61 @@ did.
 devgeta task pr-review-state --pr <n>
 ```
 
-Read the three lines exactly as printed. This one read selects the tick's action; nothing
-else does. Do not re-read it here to "confirm" anything — the only other state read in the
-tick is step 7's, which exists for a different reason.
+Read the three lines exactly as printed. This one read, plus the mode step 0 resolved, selects
+the tick's action; nothing else does. Do not re-read it here to "confirm" anything — the only
+other state read in the tick is step 7's, which exists for a different reason.
 
 ### 2. Take exactly one row of the table
 
-Rows are evaluated top to bottom, and **the first match wins:**
+The row depends on the state; the action depends on the row **and** on the mode step 0
+resolved. Rows are evaluated top to bottom, and **the first match wins** — every row states
+the full state it matches, so read `requested:` off the row rather than checking it
+separately:
 
-| `pr:`             | `requested:` | `my-review:`  | Action                                                                               |
-| ----------------- | ------------ | ------------- | ------------------------------------------------------------------------------------ |
-| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop                                          |
-| `draft`           | any          | any           | Wait. A draft is unfinished work; a formal review on it is noise even when requested |
-| `open`            | `yes`        | any           | **Review** — steps 3 to 9                                                            |
-| `open`            | `no`         | `approved`    | **Terminal: approved.** Report, stop the loop                                        |
-| `open`            | `no`         | anything else | Wait — the ball is with the author                                                   |
+| `pr:`             | `requested:` | `my-review:`  | Explicit tick                               | Watch tick (`--on-request`)                   |
+| ----------------- | ------------ | ------------- | ------------------------------------------- | --------------------------------------------- |
+| `merged`/`closed` | any          | any           | **Terminal: closed.** Report, stop the loop | **Terminal: closed.** Report, stop the loop   |
+| `draft`           | any          | any           | **Review** — steps 3 to 9                   | Wait — a formal review on unfinished work     |
+| `open`            | `yes`        | any           | **Review** — steps 3 to 9                   | **Review** — steps 3 to 9                     |
+| `open`            | `no`         | `approved`    | **Review** — steps 3 to 9                   | **Terminal: approved.** Report, stop the loop |
+| `open`            | `no`         | anything else | **Review** — steps 3 to 9                   | Wait — the ball is with the author            |
 
-Draft is checked **before** the request state on purpose: a requested draft waits. A draft
-is work the author is still shaping, and a formal review posted on it is noise the author
-did not ask to receive yet, request button or not.
+**An explicit tick reviews unless the pull request is over.** Only `merged` and `closed` stop
+it: there is nothing left to review, and a review posted on a closed PR is noise nobody can
+act on. Every other row is a review, request button or not — the human typed the command, and
+that is a request already, addressed to this tool about the PR they named. Gating it on a
+GitHub field would make this file ask for a permission it was just handed.
 
-**Wait** means exactly that: report the tick in the shape step 11 gives and take no other
-action. No fetch, no reviewer run, nothing posted. Most ticks are this row, which is why
-they are cheap.
+The two rows an explicit tick overrides exist to protect the **author** from a review they did
+not ask to receive, and neither reason survives a human asking for one deliberately. A draft is
+exactly when an author wants a private read of their own unfinished work, and "review it again"
+is a normal ask after a rebase or a late doubt.
+
+**A watch tick takes the rows as written**, and that is what keeps an unattended watch from
+reposting: submitting any review removes the user from the PR's review requests, so the watch
+tick after a post reads `requested: no` and waits, and the author's re-request is the next
+trigger. Draft is checked **before** the request state on purpose, so a requested draft still
+waits on a watch tick: a draft is work the author is still shaping, and a formal review posted
+on it unattended is noise they did not ask to receive yet, request button or not.
+
+Reading `requested:` off the row is also what keeps the two request states apart. An author who
+re-requests a review on a PR this user already approved matches the `requested: yes` row and is
+reviewed, never the standing-approval row below it.
+
+**Wait** means exactly that: report the tick in the shape step 12 gives and take no other
+action. No fetch, no reviewer run, nothing posted, and step 11 starts nothing new. Most watch
+ticks are a wait row, which is why they are cheap.
 
 **Terminal** means the watch is over: report it, run step 10's ref cleanup, and say plainly
 that the loop should be stopped, so a human or a driver reading the report knows not to tick
-again. Nothing in this file can stop the driver by itself.
+again. A terminal tick also starts no driver at step 11, so a first-look approval leaves
+nothing running. Nothing in this file can stop a driver that is already running.
 
 Two consequences of reading current state rather than a local log are worth knowing, because
 both look like bugs and are neither. A colleague who answers the request first removes the
-user from the request list, so the next tick simply waits. And a dismissed approval reports
-`my-review: none` rather than `approved`, so the loop keeps watching an approval GitHub has
-already thrown away instead of stopping on it.
+user from the request list, so the next watch tick simply waits. And a dismissed approval
+reports `my-review: none` rather than `approved`, so the watch keeps going on an approval
+GitHub has already thrown away instead of stopping on it.
 
 ### 3. Resolve the review target
 
@@ -224,10 +291,10 @@ naming the files you could not place, and post nothing.
 
 If `files:` prints `(none)`, the whole range is either empty or excluded as noise, so there
 is nothing for a reviewer lens to judge. End the tick without running a reviewer and without
-posting, and report it as `nothing to review` — its own status word in step 11, because
-nothing is pending on anyone and calling it a wait would misdescribe it. The request stays
-pending, so the report is what tells the human this PR needs their own eyes; a review of an
-empty file list would say nothing and still cost a post.
+posting, and report it as `nothing to review` — its own status word in step 12, because
+nothing is pending on anyone and calling it a wait would misdescribe it. Any review request on
+the PR stays pending, so the report is what tells the human this PR needs their own eyes; a
+review of an empty file list would say nothing and still cost a post.
 
 ### 4. Allocate the scratch directory
 
@@ -320,18 +387,29 @@ devgeta task pr-review-state --pr <n>
 devgeta task pr-review-target --pr <n>
 ```
 
-Two conditions, and **either one failing means post nothing:**
+Two conditions, and **either one failing means post nothing.** The first is mode-aware — it is
+step 2's split applied a second time, to the fresh read — and the second is the same in both
+modes:
 
-- **The state must still land on the Review row** (`open` and `requested: yes`). Anything
-  else means the PR merged, closed, or went draft, or that someone else already answered the
-  request — so posting now would be a duplicate or an unsolicited review. Take the row the
-  fresh state selects (terminal or wait) instead, then go to step 10.
+- **The PR must still be somewhere a review belongs**, which is the row this tick's mode takes:
+  - **Explicit tick:** `pr:` must still be neither `merged` nor `closed`. Nothing else here can
+    cancel the post. In particular `requested: no` cannot: on most explicit ticks it was never
+    `yes`, and requiring it would run the whole cross-model review and then post nothing.
+  - **Watch tick (`--on-request`):** the state must still land on the Review row (`open` and
+    `requested: yes`). Anything else means the PR merged, closed, or went draft, or that
+    someone else already answered the request — so posting now would be a duplicate or an
+    unsolicited review.
+
+  When the condition fails, take the row the fresh state selects for this tick's mode
+  (terminal or wait) instead, then go to step 10.
+
 - **`head` must still equal the sha the reviewers read.** If it moved, the author pushed
   mid-review: the reviews describe code the PR no longer is, and an approval would cover
   commits no reviewer saw. Post nothing, end the tick reporting that the head moved during
-  the review, and go to step 10. The request is still pending, so the next tick reviews the
-  new head from scratch. An author pushing repeatedly just defers the review, which is the
-  correct outcome rather than starvation.
+  the review, and go to step 10. A moved head is a non-terminal exit, so the refs are kept and
+  a watch is still wanted — and on the watch side the request is still pending, so the next
+  tick reviews the new head from scratch. An author pushing repeatedly just defers the review,
+  which is the correct outcome rather than starvation.
 
 ### 8. Post exactly one review
 
@@ -391,11 +469,11 @@ Only the approval path has an outcome to read. `/approve-pr` prints one line:
 
 The review path has nothing to parse. `/review-pr` prints its own summary line; record it in
 the tick report and keep listening. Posting any review — approve, comment, or request
-changes — removes the user from the PR's review requests, so the next tick reads
+changes — removes the user from the PR's review requests, so the next **watch** tick reads
 `requested: no` and waits. The author's re-request is the next trigger. `/review-pr` can
 itself decide to approve — its own no-new-findings branch — and this tick still reports
-`reviewed`, which names what it ran rather than what the PR now is; the next tick's state read
-sees `my-review: approved` with `requested: no` and stops on the terminal-approved row, so
+`reviewed`, which names what it ran rather than what the PR now is; the next watch tick's state
+read sees `my-review: approved` with `requested: no` and stops on the terminal-approved row, so
 that reading corrects itself without a second check here.
 
 ### 10. Clean up
@@ -437,7 +515,54 @@ table too (closed, or approved with no review this tick): a previous tick may ha
 them. They are keyed by PR number and reused per tick, so a killed tick leaks one pair and
 the leftovers are bounded by the number of distinct PRs reviewed, not by ticks.
 
-### 11. Report the tick
+### 11. Start the watch, unless this tick was one
+
+The tick's outcome is known by now, which is the whole reason this step sits here and not at
+the top: the review the human asked for has already happened, and whether a watch is still
+wanted depends on how the tick ended.
+
+Start a repeat driver only when all four of these hold:
+
+- **This tick is explicit** — `--on-request` was not on its command line.
+- **`--once` was not passed.**
+- **The exit is not terminal** — not approved, not closed, not escalated.
+- **The harness has a repeat driver at all.**
+
+Then start the harness's own repeat driver on this command and say in the report that you did.
+On Claude Code:
+
+```
+/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request
+```
+
+Every argument travels verbatim and still quoted — the PR number, the types, the `--note` text
+— plus `--on-request`, which is what makes each fired tick a watch tick. A driver re-runs
+exactly the line it was handed and nothing else, so an argument dropped here is dropped from
+every tick the watch ever fires, and the human is not there to notice. The interval is the one
+the human named, or the driver's default when they named none.
+
+The driver's own first firing is harmless whenever it lands, because it is request-gated. If
+this tick posted a review, that already cleared the request, so the first fired tick reads
+`requested: no` and waits. If it posted nothing, a request still standing on the PR is exactly
+what a watch tick should review.
+
+Otherwise start nothing, and let step 12 say so:
+
+- **A `--on-request` tick starts no driver, whatever its outcome.** The driver that fired it is
+  already running, so a handoff here would start a second one on every tick and each of those
+  would start another — a watch that multiplies instead of repeating.
+- **A terminal exit starts nothing.** The watch is over, so a driver started here would be one
+  the human has to remember to stop.
+- **`--once` starts nothing.** That is the whole of what the flag is for.
+- **A harness with no repeat driver starts nothing** (OpenCode has none), because there is
+  nothing to start. The tick still reviews; only the repetition is missing.
+
+Never ask before starting the driver — see "Authority to post". And note the asymmetry: this
+step can start a driver but can never stop one. A driver already running keeps firing until the
+human or the harness stops it, however this tick ended, which is why a terminal exit has to say
+so in the report.
+
+### 12. Report the tick
 
 Three lines at most: what the state read said, what ran and what it returned, and what
 happens next. A tick is a line in a log a human skims, not a document.
@@ -451,26 +576,30 @@ happens next. A tick is a line in a log a human skims, not a document.
 ```
 
 On a non-terminal exit, that last line must also say **what will run the next tick** — the
-driver, when one is repeating this command, or **nothing**, when no driver is. The "nothing"
+driver, when one is repeating this command, which is the one step 11 just started or the one
+that fired this tick, or **nothing**, when step 11 started none. The "nothing"
 case is the one that matters: a lone tick leaves the PR unwatched, and a line that only says
-what the next tick expects reads as a watch this invocation never started. Name what would
-start one (`/loop <interval> /pr-review-loop <n> [types] [--note <text>]` on Claude Code,
+what the next tick expects reads as a watch this invocation never started. So whenever step 11
+started none — on `--once`, or on a harness with no repeat driver — say plainly that **nothing
+will run another tick**, and name what would start one
+(`/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request` on Claude Code,
 carrying this tick's own arguments so the watch reviews what this tick reviewed, or a tick per
 invocation by hand where the harness has no driver), so the human is one step from a real
 watch.
 
 On an escalation, name the failing run and its reason verbatim in place of the next-tick
-line. On a terminal exit, say the watch is over explicitly, because stopping the driver is
-the human's or the harness's action, not this file's.
+line. On a terminal exit, say the watch is over explicitly: step 11 started nothing, and
+stopping a driver that may still be running is the human's or the harness's action, not this
+file's.
 
 ## Notes
 
 - Run the whole tick yourself, without asking — see "Authority to post" above. Running the
   command is the authorization for every part of it, posting included, and a watch that
   stops to confirm each tick costs the human exactly the attention the loop exists to save.
-- One invocation is one tick — or, when step 0 hands the command to a repeat driver, no tick
-  and one driver started. This file owns no repetition either way: it never sleeps, never
-  retries a tick, and never loops back to step 1 within a run.
+- One invocation is one tick — plus, when step 11 hands this command to a repeat driver, one
+  driver started. This file owns no repetition either way: it never sleeps, never retries a
+  tick, and never loops back to step 1 within a run.
 - At most one review reaches the PR per tick: step 6 picks one path, step 8 runs one command
   once, and step 9's single re-ask is the only repeat of either.
 - This tick never edits code, never resolves threads, never re-requests reviewers, and never
