@@ -794,8 +794,10 @@ lists nothing under `open:`, and no agent-authored rejection is still awaiting r
 an approval given during the opening round or a narrowing round is provisional, since the
 branch can keep changing after it was given. The loop stops at one of exactly two outcomes: a
 clean approval, or a report to the human (persistent disagreement, an open finding not yet
-settled, the round cap, two consecutive failures by the same reviewer, every configured
-reviewer failing, a failure in the confirming round, or an unratified rejection). A single
+settled, two consecutive failures by the same reviewer, every configured reviewer failing,
+a failure in the confirming round, or an unratified rejection). Hitting the round cap is
+not a report trigger on its own: reaching it ends the current phase, and only the
+confirming round's ending is the end of the loop. A single
 reviewer failure does not by itself reach the report: it is retried and the reviewer stays in
 the narrowing set; only two consecutive failures drop it from that set and name it failed in
 the report.
