@@ -779,8 +779,44 @@ neither would have failed the suite:
   stale diff that used to heal on `h` into a permanent one. Fixed and pinned by a
   two-keypress reproduction test.
 
-Deferred to follow-up issues, none blocking: the agent-state mirror aggregate keys on
-`(Session, window name)`, so two same-named windows in _one_ session still merge (needs
-`#{window_id}` threaded through `PaneStates()`); `ClearAgentStateForPane`'s "clear
-succeeded, mirror write failed" path is untested; `model.go` (~2200 lines) wants a
-`refresh.go` and `worktree.go` (~2760) a `state_layer.go`.
+### Follow-ups
+
+None of these block the merge; they are recorded here because the per-task review notes
+they came from were scratch files that do not survive the worktree.
+
+**Behavior and structure**
+
+- The agent-state mirror aggregate keys on `(Session, window name)`, so two same-named
+  windows in _one_ session still merge into one aggregate. Cross-session collisions are
+  handled; this residual case needs `#{window_id}` threaded through `PaneStates()`, which
+  also touches `ClearAgentStateForWindow` — too wide to have patched at the merge gate. The
+  write target is never wrong, only the mirror's value.
+- `ClearAgentStateForPane`'s "clear succeeded, mirror write failed" path (the one that
+  returns `mirrorErr`) has no test.
+- `model.go` (~2200 lines) wants the tick commands, load commands, counters, and dispatch
+  helpers extracted to a `refresh.go` — the tests already went to their own `refresh_test.go`
+  and the implementation did not follow. `worktree.go` (~2760) wants `StateLayer` and its two
+  methods in a `state_layer.go`.
+
+**Test strength** — each of these passes today and would keep passing if the behavior it
+names regressed, which is why they are worth fixing rather than leaving:
+
+- `internal/apps/tmux/tmux_test.go` — the `busy` subtest indexes `calls[2]` without first
+  asserting `len(calls) == 3`, so a dropped call panics instead of failing readably. No
+  fixture covers a pane with an empty `@dg_agent_state`, so the rank-zero non-contributor
+  fallback is untested at that level.
+- `internal/commands/mock_test.go` — the `OnStdoutLine` subtest never asserts the calls were
+  recorded, unlike the two subtests beside it.
+- `internal/tooling/task/branchdiff_test.go` — `meet` discards the ordering wait's result, so
+  an unenforced ordering is invisible; and `worktreeDiffScript.defaultBranch` doubles as
+  `answerFor`'s catch-all, so an unexpected git call silently receives `origin/main` instead
+  of failing the test.
+- `internal/tui/worktree/refresh_test.go` — the pane-row landing cases assert only that the
+  resolved path is `/tmp/a`, which is also the parent worktree row's path; both would keep
+  passing, and silently stop covering the pane-row landing, if `rowPane` ever left
+  `leafIndices`. A one-line `kind == rowPane` assertion makes them self-guarding.
+- `internal/tooling/worktree/worktree_test.go:1382` — `if sessions != nil` asserts nothing,
+  since `SessionStatuses()` on an empty layer returns nil unconditionally.
+- `internal/tui/worktree/pane_flow_test.go:175` — the section comment still says only
+  `selectedPath` resolves to the parent for diff bookkeeping; `selectedDiffStatus` is now the
+  resolver and the second consumer.
