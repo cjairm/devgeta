@@ -3,6 +3,7 @@ package task
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	git_app "github.com/cjairm/devgeta/internal/apps/git"
 )
@@ -80,15 +81,43 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 		args = append(args, "--color=always")
 	}
 	args = append(args, base, "--", ".")
-	diff, err := g.RunCapture(append(args, exclusionPathspecs()...)...)
-	if err != nil {
-		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", err)
+	diffArgs := append(args, exclusionPathspecs()...)
+	numstatArgs := atDir(dir, "diff", "--numstat", "--no-renames", base)
+
+	// The rendered diff and the numstat are two reads of the same commit range;
+	// neither mutates the repository and neither needs the other's output, so
+	// they run together instead of one after the other — on a large branch that
+	// halves the wait the `dg ws` diff pane shows. The merge-base above stays
+	// sequential because it produces the `base` both of these need, and the
+	// untracked listing below stays sequential too (see the return value).
+	var (
+		wg         sync.WaitGroup
+		diff       string
+		diffErr    error
+		numstatOut string
+		numstatErr error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		diff, diffErr = g.RunCapture(diffArgs...)
+	}()
+	go func() {
+		defer wg.Done()
+		numstatOut, numstatErr = g.RunCapture(numstatArgs...)
+	}()
+	wg.Wait()
+
+	// Checked in a fixed order, not in the order they finished: when both fail
+	// the caller must get the same error every run, and the rendered diff is
+	// the pane's primary content so its failure is the one worth reporting.
+	if diffErr != nil {
+		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", diffErr)
+	}
+	if numstatErr != nil {
+		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", numstatErr)
 	}
 
-	numstatOut, err := g.RunCapture(atDir(dir, "diff", "--numstat", "--no-renames", base)...)
-	if err != nil {
-		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", err)
-	}
 	changes, err := parseNumstat(numstatOut)
 	if err != nil {
 		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", err)

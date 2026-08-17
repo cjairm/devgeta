@@ -3,6 +3,7 @@ package commands
 import (
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // MockCommand provides a mock implementation of the Command interface for testing
@@ -195,7 +196,32 @@ type execResult struct {
 
 // MockBaseCommand provides a mock implementation for BaseCommand methods
 // This allows tests to avoid running actual system commands
+//
+// # Concurrency
+//
+// ExecCommand is safe to call from several goroutines at once: the call
+// recorder and the positional result queue are guarded by mu, so code under
+// test may run two mocked executions in parallel. That is the whole of the
+// guarantee — it does NOT make every field safe to touch at any moment. The
+// contract the mutex assumes, and which every caller in this repo already
+// honors, is:
+//
+//   - ExecCommandFn, ExecCommandStdout/Stderr/Error and the positional queue
+//     (SetExecCommandResults) are CONFIGURED BEFORE the call under test starts.
+//     No production code assigns them; test setup does, ahead of the call it
+//     scripts.
+//   - ExecCommandCalls is READ AFTER that call has joined — every read is a
+//     post-call assertion, including testutil.VerifyNoRealCommands.
+//
+// Neither during. Assigning a field or reading the recorder while a mocked
+// execution is in flight is outside the contract and is a defect in the test,
+// not something the mock defends against.
 type MockBaseCommand struct {
+	// mu guards ExecCommandCalls and the positional queue below against
+	// concurrent ExecCommand calls. See the type's Concurrency section for what
+	// it does and does not cover.
+	mu sync.Mutex
+
 	// Tracks all ExecCommand calls for verification
 	ExecCommandCalls []CommandParams
 
@@ -266,6 +292,8 @@ func (m *MockBaseCommand) IsMac() bool {
 // to ExecCommand returns the next entry; once exhausted the last entry repeats.
 // Falls back to the single ExecCommandStdout/Stderr/Error fields when empty.
 func (m *MockBaseCommand) SetExecCommandResults(results ...execResult) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.execResults = results
 	m.execCallIdx = 0
 }
@@ -283,9 +311,30 @@ func ExecCommandResult(stdout, stderr string, err error) execResult {
 // the same order the real executor produces (every line during the run, the
 // whole string after it). Without this, a test could script a tool's output
 // and still never exercise the caller's live-progress path.
+//
+// The lock is held for BOOKKEEPING ONLY — recording the call, and popping the
+// positional queue when no ExecCommandFn is set. Both callbacks this method
+// invokes belong to the caller and may reach back into the mock
+// (ExecCommandFn is a test's own function, OnStdoutLine is production code),
+// so they run after the unlock. Holding the lock across them would deadlock
+// any callback that touches the mock, and would serialize every mocked
+// execution so concurrent callers could never actually overlap.
 func (m *MockBaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
+	m.mu.Lock()
 	m.ExecCommandCalls = append(m.ExecCommandCalls, cmd)
-	stdout, stderr, err := m.execCommandResult(cmd)
+	// Snapshot the hook under the lock but call it outside: it outranks every
+	// other source of an answer, so nothing else may be consumed when it is set.
+	fn := m.ExecCommandFn
+	var stdout, stderr string
+	var err error
+	if fn == nil {
+		stdout, stderr, err = m.execCommandResultLocked()
+	}
+	m.mu.Unlock()
+
+	if fn != nil {
+		stdout, stderr, err = fn(cmd)
+	}
 	if cmd.OnStdoutLine != nil {
 		for _, line := range strings.Split(stdout, "\n") {
 			cmd.OnStdoutLine(line)
@@ -294,13 +343,16 @@ func (m *MockBaseCommand) ExecCommand(cmd CommandParams) (string, string, error)
 	return stdout, stderr, err
 }
 
-// execCommandResult resolves which canned answer this call gets, in the
-// documented precedence order: ExecCommandFn, then the per-call sequence, then
-// the fixed fields.
-func (m *MockBaseCommand) execCommandResult(cmd CommandParams) (string, string, error) {
-	if m.ExecCommandFn != nil {
-		return m.ExecCommandFn(cmd)
-	}
+// execCommandResultLocked resolves the canned answer for one call from the
+// per-call sequence, falling back to the fixed fields. ExecCommandFn is not
+// consulted here: it outranks both, and ExecCommand handles it separately so
+// the caller's function runs outside the lock.
+//
+// The caller MUST already hold m.mu — this helper never takes it. ExecCommand
+// calls it on the same goroutine that locked, and Go's sync.Mutex is not
+// reentrant, so locking here too would deadlock every mocked execution in the
+// repo rather than only a concurrent one.
+func (m *MockBaseCommand) execCommandResultLocked() (string, string, error) {
 	if len(m.execResults) > 0 {
 		idx := m.execCallIdx
 		if idx >= len(m.execResults) {
@@ -362,6 +414,8 @@ func (m *MockBaseCommand) InstallFontFromURL(url, fontFileName string, runCache 
 
 // Reset clears all tracked state for reuse in multiple tests
 func (m *MockBaseCommand) ResetExecCommand() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.ExecCommandCalls = []CommandParams{}
 	m.ExecCommandStdout = ""
 	m.ExecCommandStderr = ""
@@ -377,6 +431,8 @@ func (m *MockBaseCommand) ResetExecCommand() {
 
 // SetExecCommandResult configures the return values for ExecCommand
 func (m *MockBaseCommand) SetExecCommandResult(stdout, stderr string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.ExecCommandStdout = stdout
 	m.ExecCommandStderr = stderr
 	m.ExecCommandError = err
@@ -385,6 +441,8 @@ func (m *MockBaseCommand) SetExecCommandResult(stdout, stderr string, err error)
 // GetLastExecCommandCall returns the most recent ExecCommand call parameters
 // Returns nil if no calls have been made
 func (m *MockBaseCommand) GetLastExecCommandCall() *CommandParams {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if len(m.ExecCommandCalls) == 0 {
 		return nil
 	}
@@ -393,6 +451,8 @@ func (m *MockBaseCommand) GetLastExecCommandCall() *CommandParams {
 
 // GetExecCommandCallCount returns the number of times ExecCommand was called
 func (m *MockBaseCommand) GetExecCommandCallCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return len(m.ExecCommandCalls)
 }
 

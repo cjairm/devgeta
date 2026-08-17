@@ -54,10 +54,12 @@ func newFakeRepo(t *testing.T) *fakeRepo {
 
 // newFakeRepoAt builds a fixture over an existing root, which is how a test
 // gets a SECOND, independent view of the same repository — the stand-in for a
-// second devgeta process. It has to be a separate fixture rather than a shared
-// one because MockBaseCommand records every call into a plain slice with no
-// synchronization, so two goroutines driving one mock would race on the
-// recorder instead of on the journal under test.
+// second devgeta process. Two fixtures rather than one shared one is the point,
+// not a workaround for the mock: each fixture owns its own Manager, so a test
+// can hold one "process" mid-cycle (by replacing only that Manager's NowFn)
+// while the other runs, which is what makes the two views able to disagree.
+// MockBaseCommand's recorder is synchronized, so sharing a single mock would be
+// safe — it would just stop modelling two processes.
 func newFakeRepoAt(t *testing.T, root string) *fakeRepo {
 	t.Helper()
 	repoDir := filepath.Join(root, "work")
