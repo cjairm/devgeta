@@ -1434,8 +1434,17 @@ func (m Model) renderLeft(width int) string {
 
 	const branchChar = "∕" // U+2215 DIVISION SLASH — branch glyph (1 display col)
 
+	// Scroll viewport: only rows[start:end] are rendered, so a list longer
+	// than the pane's height no longer hides its tail (nor lets the cursor
+	// move into it) — isLastChild above deliberately still scans the full
+	// m.rows slice, not this window, or the tree connectors would break at
+	// the window edge.
+	viewportHeight := max(m.height-2, 0)
+	start, end := tuicomponents.VisibleWindow(len(m.rows), m.cursor, viewportHeight)
+
 	var sb strings.Builder
-	for i, r := range m.rows {
+	for i, r := range m.rows[start:end] {
+		idx := start + i
 		var line string
 		if r.kind == rowRepo {
 			// A repo has no single tmux window, so there's no natural
@@ -1465,7 +1474,7 @@ func (m Model) renderLeft(width int) string {
 			badgeW := ansi.StringWidth(badge)
 			text = ansi.Truncate(text, max(0, width-2-badgeW-1), "")
 			pad := strings.Repeat(" ", max(0, width-2-ansi.StringWidth(text)-badgeW))
-			if i == m.cursor {
+			if idx == m.cursor {
 				// Cursor landed here after h — show repo header with selection highlight.
 				g := m.palette.StatusGlyph(state)
 				line = m.palette.Selected.Render(g + " " + text + pad + badge)
@@ -1508,7 +1517,7 @@ func (m Model) renderLeft(width int) string {
 				state = tuicomponents.SessionStateFromAgent(true, r.session.AgentState, 0)
 			}
 
-			if i == m.cursor {
+			if idx == m.cursor {
 				var g string
 				if hasAgentState {
 					g = m.palette.StatusGlyph(state)
@@ -1544,7 +1553,7 @@ func (m Model) renderLeft(width int) string {
 			// are treated.
 			state := tuicomponents.SessionStateFromAgent(true, r.pane.State, 0)
 
-			if i == m.cursor {
+			if idx == m.cursor {
 				g := m.palette.StatusGlyph(state)
 				plainText := indent + g + " " + r.pane.Window + ":" + r.pane.PaneIndex + " " + r.pane.CurrentCommand
 				plainText = ansi.Truncate(plainText, width, "")
@@ -1572,7 +1581,7 @@ func (m Model) renderLeft(width int) string {
 			// Tree connector: "└ " for last child, "  " otherwise (both 2 display cols).
 			connectorRaw := "  "
 			connectorStyled := "  "
-			if isLastChild(i) {
+			if isLastChild(idx) {
 				connectorRaw = "└ "
 				connectorStyled = m.palette.Divider.Render("└") + " "
 			}
@@ -1582,7 +1591,7 @@ func (m Model) renderLeft(width int) string {
 			pendingKey := r.status.Repo + "/" + r.status.Name
 			padding := strings.Repeat(" ", max(0, width-7-ansi.StringWidth(name)))
 
-			if i == m.cursor {
+			if idx == m.cursor {
 				g := m.palette.StatusGlyph(state)
 				plainText := chevronPrefix + connectorRaw + g + branchChar + " " + name
 				if m.pendingDelete == pendingKey || m.pendingSessionDelete == pendingKey {

@@ -194,7 +194,7 @@ func (m model) renderContent() string {
 	if viewportHeight < 1 {
 		viewportHeight = 1
 	}
-	start, end := visibleWindow(len(m.rows), m.cursor, viewportHeight)
+	start, end := tuicomponents.VisibleWindow(len(m.rows), m.cursor, viewportHeight)
 
 	var lines []string
 	for i := start; i < end; i++ {
@@ -233,27 +233,6 @@ func (m model) renderHelpOverlay() string {
 		{Key: "q / ctrl+c", Desc: "quit"},
 	}
 	return m.palette.HelpOverlay("Keybindings", entries, m.width, m.height)
-}
-
-// visibleWindow returns [start, end) into a rowsLen-length list such that the
-// window has at most viewportHeight rows and always contains cursor.
-func visibleWindow(rowsLen, cursor, viewportHeight int) (start, end int) {
-	if rowsLen <= viewportHeight {
-		return 0, rowsLen
-	}
-	start = cursor - viewportHeight/2
-	if start < 0 {
-		start = 0
-	}
-	end = start + viewportHeight
-	if end > rowsLen {
-		end = rowsLen
-		start = end - viewportHeight
-		if start < 0 {
-			start = 0
-		}
-	}
-	return start, end
 }
 
 func (m model) renderRow(i int) string {
