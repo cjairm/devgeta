@@ -596,13 +596,15 @@ gains its own `▼`/`▶` chevron (the same convention as a repo header), and `h
 hide its **pane rows** — one child row per pane, indented further than the parent, showing
 the pane's index, the command currently running in it, and that pane's own dot. This answers
 "which pane wants attention," not just "which window": a window with a working coder and a
-finished reviewer side by side shows exactly which one is which once expanded. A parent with
+finished reviewer side by side shows exactly which one is which once expanded. `enter` on a
+pane row switches the attached tmux client straight to that exact pane, not just its window.
+A parent with
 zero or one stateful pane never gets a chevron — a single pane's state is already exactly what
 the parent's own dot says, so a chevron there would be noise. Collapsing a worktree/session's
 pane rows is independent of collapsing a repo header, even when a repo and a standalone
 session happen to share the same name.
 
-Attaching to a row (`enter`) clears its state — attaching is the user acknowledging it.
+Attaching to a row, or switching to a pane (`enter`), clears its state — attaching is the user acknowledging it.
 tmux's own status bar (`configs/tmux/tmux.conf.tmpl`) separately flags any other window in the
 current session whose coder wants attention while you're looking elsewhere, so `dg ws`
 doesn't have to stay open to notice. That status bar only paints windows of the **attached**

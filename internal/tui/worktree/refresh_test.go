@@ -787,31 +787,7 @@ func TestRefreshRepairDispatchesSlowLoadOnBothOutcomes(t *testing.T) {
 					"repair must report a repairDoneMsg, not a plain statusMsg that refreshes nothing",
 				)
 			}
-			if !strings.Contains(done.status, tc.wantStatus) {
-				t.Errorf("expected a %q status, got %q", tc.wantStatus, done.status)
-			}
-
-			before := m.stateGen
-			mi, cmd = m.Update(done)
-			m = mi.(Model)
-
-			if !strings.Contains(m.status, tc.wantStatus) {
-				t.Errorf("repairDoneMsg should set the status, got %q", m.status)
-			}
-			if m.stateGen != before+1 {
-				t.Errorf("repairDoneMsg should bump stateGen to %d, got %d", before+1, m.stateGen)
-			}
-			sm, found := findStatusesMsg(t, cmd)
-			if !found {
-				t.Fatal("repairDoneMsg must dispatch the slow load, not only set the status")
-			}
-			if sm.gen != m.stateGen {
-				t.Errorf(
-					"the load repairDoneMsg dispatches must carry the number the bump produced (%d), got %d",
-					m.stateGen,
-					sm.gen,
-				)
-			}
+			assertRepairDoneDispatchesSlowLoad(t, m, done, tc.wantStatus)
 		})
 	}
 }

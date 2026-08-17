@@ -927,7 +927,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return next, cmd
 	}
 	next.forceDiff = false
-	return next, tea.Batch(cmd, next.armDiffDebounce())
+	debounce := next.armDiffDebounce()
+	return next, tea.Batch(cmd, debounce)
 }
 
 func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1036,7 +1037,8 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if sel, ok := m.selectedStatus(); ok {
-			return m, m.selectionChangedCmd(sel)
+			selectionCmd := m.selectionChangedCmd(sel)
+			return m, selectionCmd
 		}
 		return m, nil
 
@@ -1517,8 +1519,17 @@ func (m Model) handleAttach() (tea.Model, tea.Cmd) {
 	// the window you're about to sit in doesn't keep showing a stale ◆/!/✕.
 	// No-op when the window doesn't exist yet. Best-effort: a failed clear
 	// is cosmetic (the dot stays stale until the next real state write), it
-	// must never block the attach itself.
-	_ = m.clearAgentStateFn(windowName)
+	// must never block the attach itself. Logged at debug rather than
+	// silently discarded, matching handleSwitchToPane's treatment of the
+	// same best-effort failure (CLAUDE.md forbids discarding an error
+	// outright).
+	if err := m.clearAgentStateFn(windowName); err != nil {
+		logger.L().Debugw(
+			"worktree: failed to clear agent state for window",
+			"window", windowName,
+			"err", err,
+		)
+	}
 	return m, m.attachToWindowCmd(sel.Repo, sel.Name)
 }
 
@@ -2242,7 +2253,7 @@ func (m Model) renderHelpPopup() string {
 	entries := []tuicomponents.WhichKeyEntry{
 		{
 			Key:  "enter",
-			Desc: "attach (auto-repairs missing window); on a session row: switch to it",
+			Desc: "attach (auto-repairs missing window); on a session row: switch to it; on a pane row: switch to that exact pane",
 		},
 		{Key: "n", Desc: "create a new worktree (repo picker → name prompt)"},
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},

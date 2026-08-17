@@ -1723,6 +1723,37 @@ func TestToggleLeftPaneWidthAfterMouseDrag(t *testing.T) {
 	}
 }
 
+// TestWindowSizeMsgDiscardsADraggedWidth pins a maintainer-decided behavior
+// (see model.go's leftPaneTarget comment): a terminal resize re-derives
+// leftPaneWidth from the e-toggle's bool and discards any width the user set
+// by dragging the divider, rather than clamping the dragged value. This is a
+// real user-visible change from the previous behavior and was escalated to
+// the maintainer, who decided to keep it - this test is the guard against an
+// accidental revert to clamp-instead-of-replace.
+func TestWindowSizeMsgDiscardsADraggedWidth(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m3 := m2.(Model)
+
+	// Drag to a width that matches neither toggle target and is within the cap.
+	m3.dragging = true
+	m4, _ := m3.Update(tea.MouseMotionMsg{X: 50, Y: 0})
+	m5 := m4.(Model)
+	if m5.leftPaneWidth != 50 {
+		t.Fatalf("expected drag to set left pane width to 50, got %d", m5.leftPaneWidth)
+	}
+
+	m6, _ := m5.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m7 := m6.(Model)
+	if want := m7.leftPaneTarget(); m7.leftPaneWidth != want {
+		t.Errorf(
+			"expected WindowSizeMsg to discard the dragged width 50 and re-derive %d, got %d",
+			want,
+			m7.leftPaneWidth,
+		)
+	}
+}
+
 func TestHelpOverlayShowsDashboardBackground(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.showHelp = true

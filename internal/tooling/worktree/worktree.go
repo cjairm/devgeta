@@ -780,6 +780,11 @@ func (w *WorktreeManager) globalConfig() (*config.GlobalConfig, error) {
 	path := config.GlobalConfigFilePath()
 	var modTime time.Time
 	var size int64
+	// A failed stat (missing file, permission error) is not reported here: it
+	// leaves modTime/size at their zero value, so the cache lookup below misses
+	// and falls through to Load(), which either fails and caches nothing or
+	// succeeds and caches under a zero stamp that a later successful stat will
+	// never match - so the zero stamp never causes a stale hit.
 	if fi, err := os.Stat(path); err == nil {
 		modTime = fi.ModTime()
 		size = fi.Size()
@@ -1176,10 +1181,12 @@ func (w *WorktreeManager) ListWorktreesOnly() ([]WorktreeStatus, error) {
 // call that already spawns a git process per known repo.
 //
 // A tmux failure is not a List failure: the git-backed rows are still correct
-// and worth returning when no tmux server is reachable, which is how this
-// behaved before the split (PaneStates() has always tolerated the same failure
-// by returning nil). The dashboard, which does care, gets the error from
-// RefreshState.
+// and worth returning even when tmux state can't be layered on. That matches
+// the old no-server behavior (a (nil, nil) ScanTmuxState result applies
+// cleanly), but for a genuine list-sessions error it is a narrowing: before
+// the split, List() never called ListSessions() at all and took its pane scan
+// unconditionally, so this is new tolerance, not a preserved behavior. The
+// dashboard, which does care, gets the error from RefreshState.
 func (w *WorktreeManager) List() ([]WorktreeStatus, error) {
 	statuses, err := w.ListWorktreesOnly()
 	if err != nil {
