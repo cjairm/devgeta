@@ -2,7 +2,10 @@
 
 **Date:** 2026-08-12
 **Estimated Duration:** ~6 hours
-**Status:** In Progress
+**Status:** Done — all nine steps implemented, reviewed, and green (2026-08-17). Three
+decisions were escalated to the maintainer during execution and are recorded in §8.
+Manual verification steps 1, 5, and 10 still want a human; the rest are covered by tests
+(see §6).
 
 ---
 
@@ -728,13 +731,56 @@ go test ./...
 
 ## 8. Cross-Model Review Notes
 
-- [ ] Domain context clear?
-- [ ] Engineer context sufficient?
-- [ ] Objective unambiguous?
-- [ ] Scope actually locked?
-- [ ] Steps actionable?
-- [ ] Verification executable?
-- [ ] Risks realistic?
+- [x] Domain context clear?
+- [x] Engineer context sufficient?
+- [x] Objective unambiguous?
+- [x] Scope actually locked?
+- [x] Steps actionable?
+- [x] Verification executable?
+- [x] Risks realistic?
 
 **Reviewer notes:**
-(Fill in during review.)
+
+Executed one step at a time, each with a fresh implementer and a per-step spec+quality
+review, then a whole-branch review over `ddcd584..HEAD`. Final state: 3523 tests passing,
+5 skipped, `make lint` clean. The one failing test in the tree,
+`internal/tui/worktree`'s `TestNewSessionEnterEmptyAutoGeneratesName`, **predates this
+branch** — it reads the launch directory instead of the sandboxed HOME, so `go test ./...`
+is red from any working directory but `$HOME`. That will block the §9 release gate and
+wants its own branch.
+
+Three decisions the plan did not settle went to the maintainer during execution:
+
+1. **A resize discards a mouse-dragged left-pane width.** Step 3's "`WindowSizeMsg`
+   re-derives the width from the bool", read literally, means any resize snaps back to the
+   toggle target and wipes a drag. Kept as written; now pinned by
+   `TestWindowSizeMsgDiscardsADraggedWidth` so it reads as a decision, not a bug.
+2. **§4's "never on the 3s tick" is not literally achievable.** A fast tick can move the
+   cursor through `ClampCursor` when pane rows change, which Step 7's structural wrapper
+   correctly reads as a selection change. Resolved as _selection change wins_: a fast tick
+   that does not move the selection recomputes nothing (pinned by
+   `TestFastTickWithUnchangedSelectionRecomputesNothing`); one that does debounces like any
+   other cursor move. The idle-cost win is unaffected — an idle dashboard's panes do not
+   change.
+3. **A pane row's diff resolves to its parent worktree.** Not covered by the plan at all.
+   `selectedPath()` returned `""` for a pane row, so drilling worktree → `l` → pane both
+   armed a pointless debounce and made the stale-diff guard discard the diff already
+   computing for that very worktree. `selectedDiffStatus()` now resolves a pane row to its
+   enclosing worktree for diff bookkeeping only — `selectedStatus()` is untouched, so
+   `d`/`D`/`r`/`R` stay inert on pane rows per §4.
+
+Two defects were caught by review rather than by tests, both worth recording because
+neither would have failed the suite:
+
+- An unspecified-evaluation-order return (`return next, tea.Batch(cmd, next.armDiffDebounce())`)
+  could have silently disabled _every_ debounced diff, invisibly to `-race`. Four instances
+  across the branch; all hoisted.
+- Decision 3's first implementation only made half the diff path pane-aware, turning a
+  stale diff that used to heal on `h` into a permanent one. Fixed and pinned by a
+  two-keypress reproduction test.
+
+Deferred to follow-up issues, none blocking: the agent-state mirror aggregate keys on
+`(Session, window name)`, so two same-named windows in _one_ session still merge (needs
+`#{window_id}` threaded through `PaneStates()`); `ClearAgentStateForPane`'s "clear
+succeeded, mirror write failed" path is untested; `model.go` (~2200 lines) wants a
+`refresh.go` and `worktree.go` (~2760) a `state_layer.go`.
