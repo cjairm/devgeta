@@ -1566,6 +1566,131 @@ func TestNarrowTerminalNoPanic(t *testing.T) {
 	}
 }
 
+// --- e toggles left-pane width (Step 3) ---
+
+// TestToggleLeftPaneWidthDefaultAndWide verifies the plain default<->wide
+// toggle on a comfortably wide terminal, where safeMaxLeft() never binds.
+func TestToggleLeftPaneWidthDefaultAndWide(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m3 := m2.(Model)
+	if m3.leftPaneWidth != defaultLeftPaneWidth {
+		t.Fatalf(
+			"expected default left pane width %d after resize, got %d",
+			defaultLeftPaneWidth,
+			m3.leftPaneWidth,
+		)
+	}
+
+	m4, _ := m3.Update(tea.KeyPressMsg{Code: 'e'})
+	m5 := m4.(Model)
+	if !m5.leftPaneWide {
+		t.Error("expected leftPaneWide to be true after first e press")
+	}
+	if want := defaultLeftPaneWidth * 2; m5.leftPaneWidth != want {
+		t.Errorf("expected wide left pane width %d, got %d", want, m5.leftPaneWidth)
+	}
+
+	m6, _ := m5.Update(tea.KeyPressMsg{Code: 'e'})
+	m7 := m6.(Model)
+	if m7.leftPaneWide {
+		t.Error("expected leftPaneWide to be false after second e press")
+	}
+	if m7.leftPaneWidth != defaultLeftPaneWidth {
+		t.Errorf(
+			"expected default left pane width %d after second e press, got %d",
+			defaultLeftPaneWidth,
+			m7.leftPaneWidth,
+		)
+	}
+}
+
+// TestToggleLeftPaneWidthNarrowTerminalClampsBothTargets is the guard the
+// brief names: at width 36, safeMaxLeft() is 21 - below defaultLeftPaneWidth
+// (35) - so BOTH toggle targets must clamp to 21, not just the wide one. A
+// bare defaultLeftPaneWidth on the narrow branch would hand back 35 (70% of
+// the terminal, past the 60% cap) and, on presses past this width, could
+// leave rightPaneWidth() at 0 with no way back.
+func TestToggleLeftPaneWidthNarrowTerminalClampsBothTargets(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 36, Height: 20})
+	m3 := m2.(Model)
+
+	if got := m3.safeMaxLeft(); got != 21 {
+		t.Fatalf("expected safeMaxLeft() 21 at width 36, got %d", got)
+	}
+	if m3.leftPaneWidth != 21 {
+		t.Fatalf("expected WindowSizeMsg to clamp default target to 21, got %d", m3.leftPaneWidth)
+	}
+
+	// First e: default -> wide. Still clamped to 21, not defaultLeftPaneWidth
+	// (35) and not defaultLeftPaneWidth*2 (70).
+	m4, _ := m3.Update(tea.KeyPressMsg{Code: 'e'})
+	m5 := m4.(Model)
+	if m5.leftPaneWidth != 21 {
+		t.Errorf("expected wide target clamped to 21 at width 36, got %d", m5.leftPaneWidth)
+	}
+	if m5.rightPaneWidth() <= 0 {
+		t.Errorf(
+			"expected the diff pane to survive (rightPaneWidth > 0), got %d",
+			m5.rightPaneWidth(),
+		)
+	}
+
+	// Second e: wide -> default. Still 21, not 35.
+	m6, _ := m5.Update(tea.KeyPressMsg{Code: 'e'})
+	m7 := m6.(Model)
+	if m7.leftPaneWidth != 21 {
+		t.Errorf("expected default target clamped to 21 at width 36, got %d", m7.leftPaneWidth)
+	}
+	if m7.rightPaneWidth() <= 0 {
+		t.Errorf(
+			"expected the diff pane to survive (rightPaneWidth > 0), got %d",
+			m7.rightPaneWidth(),
+		)
+	}
+}
+
+// TestToggleLeftPaneWidthAfterMouseDrag exercises the reason leftPaneWide is
+// a bool rather than a width comparison: a mouse drag can leave leftPaneWidth
+// at an arbitrary value that matches neither toggle target, and e must still
+// flip to the correct target from the bool's own state, not from comparing
+// against the dragged width.
+func TestToggleLeftPaneWidthAfterMouseDrag(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	m3 := m2.(Model)
+
+	// Simulate a mouse-drag resize to a width that is neither toggle target.
+	m3.dragging = true
+	m4, _ := m3.Update(tea.MouseMotionMsg{X: 50, Y: 0})
+	m5 := m4.(Model)
+	if m5.leftPaneWidth != 50 {
+		t.Fatalf(
+			"expected drag to set an arbitrary left pane width of 50, got %d",
+			m5.leftPaneWidth,
+		)
+	}
+	if m5.leftPaneWide {
+		t.Fatal("drag alone must not flip leftPaneWide")
+	}
+
+	// leftPaneWide is still false, so e must move to the wide target, not
+	// toggle back to default just because 50 happens to be closer to it.
+	m6, _ := m5.Update(tea.KeyPressMsg{Code: 'e'})
+	m7 := m6.(Model)
+	if !m7.leftPaneWide {
+		t.Error("expected leftPaneWide to become true after e post-drag")
+	}
+	if want := defaultLeftPaneWidth * 2; m7.leftPaneWidth != want {
+		t.Errorf(
+			"expected e to move the dragged width to the wide target %d, got %d",
+			want,
+			m7.leftPaneWidth,
+		)
+	}
+}
+
 func TestHelpOverlayShowsDashboardBackground(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.showHelp = true
@@ -2517,6 +2642,22 @@ func TestRenderHelpPopupIncludesReview(t *testing.T) {
 	}
 	if !strings.Contains(out, "kick a review") {
 		t.Errorf("expected help popup to include the review entry, got:\n%s", out)
+	}
+}
+
+func TestRenderHintDefaultListIncludesWidthToggle(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHint(200))
+	if !strings.Contains(out, "e") || !strings.Contains(out, "width") {
+		t.Errorf("expected default hint bar to include 'e: width', got %q", out)
+	}
+}
+
+func TestRenderHelpPopupIncludesWidthToggle(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHelpPopup())
+	if !strings.Contains(out, "toggle left pane width") {
+		t.Errorf("expected help popup to include the width-toggle entry, got:\n%s", out)
 	}
 }
 

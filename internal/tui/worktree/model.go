@@ -117,6 +117,11 @@ type Model struct {
 	palette *tuicomponents.Palette
 
 	leftPaneWidth int
+	// leftPaneWide tracks the e-toggle's own state, independent of
+	// leftPaneWidth's actual value — a mouse drag can leave leftPaneWidth at
+	// an arbitrary width, so the toggle can't just compare it against
+	// defaultLeftPaneWidth to know which way to flip. See leftPaneTarget.
+	leftPaneWide bool
 
 	dragging   bool
 	dragStartX int
@@ -621,6 +626,20 @@ func (m Model) rightPaneWidth() int {
 	return max(m.width-m.leftPaneWidth-dividerWidth, 0)
 }
 
+// leftPaneTarget derives the left pane width from the e-toggle's bool state
+// rather than from the pane's current (possibly mouse-dragged) width. Both
+// targets are clamped to safeMaxLeft(), not just the wide one: below 59
+// columns safeMaxLeft() already sits under defaultLeftPaneWidth, so an
+// unclamped default-width target would hand back more than the 60% cap
+// WindowSizeMsg otherwise enforces, and on a narrow-enough terminal it would
+// leave rightPaneWidth() at 0 with no way back once toggled.
+func (m Model) leftPaneTarget() int {
+	if m.leftPaneWide {
+		return min(defaultLeftPaneWidth*2, m.safeMaxLeft())
+	}
+	return min(defaultLeftPaneWidth, m.safeMaxLeft())
+}
+
 // Update implements tea.Model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -628,7 +647,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.leftPaneWidth = min(m.leftPaneWidth, m.safeMaxLeft())
+		// Re-derived from the e-toggle's bool, not clamped from whatever
+		// value leftPaneWidth already held: a prior mouse drag can have left
+		// it at an arbitrary width, and clamping that would still let it sit
+		// above the toggle's own targets.
+		m.leftPaneWidth = m.leftPaneTarget()
 		return m, nil
 
 	case tea.MouseClickMsg:
@@ -968,6 +991,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.diffContent != "" {
 			m.diffFocused = true
 		}
+		return m, nil
+
+	case "e":
+		m.leftPaneWide = !m.leftPaneWide
+		m.leftPaneWidth = m.leftPaneTarget()
 		return m, nil
 
 	case "enter":
@@ -1748,6 +1776,7 @@ func (m Model) renderHint(width int) string {
 		{Key: "N", Desc: "new w/ layout"},
 		{Key: "s", Desc: "new session"},
 		{Key: "spc", Desc: "diff"},
+		{Key: "e", Desc: "width"},
 		{Key: "j/k", Desc: "move"},
 		{Key: "h/l", Desc: "fold"},
 		{Key: "z", Desc: "all"},
@@ -1829,6 +1858,7 @@ func (m Model) renderHelpPopup() string {
 		{Key: "R", Desc: "kick a review (picker: code / document / skill)"},
 		{Key: "/", Desc: "filter  esc:clear  enter:keep"},
 		{Key: "space", Desc: "focus diff pane (esc returns to the list)"},
+		{Key: "e", Desc: "toggle left pane width (default / double)"},
 		{Key: "ctrl+d / ctrl+u", Desc: "scroll diff down / up"},
 		{Key: "[ / ]", Desc: "previous / next file (diff focused)"},
 		{Key: "g / G", Desc: "diff top / bottom (diff focused)"},
