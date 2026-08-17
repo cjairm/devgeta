@@ -50,8 +50,9 @@ not a CI job.
 ## Decision
 
 **The trigger is a poll of GitHub's `reviewRequests` field. One invocation of
-`/pr-review-loop` is one idempotent tick; the repetition belongs to an external driver.
-Only a request that names the authenticated user triggers a review.**
+`/pr-review-loop` is one idempotent tick for the watch's own ticks — ADR-0025 narrows this
+for explicit ticks; the repetition belongs to an external driver. Only a request that names
+the authenticated user triggers a review.**
 
 ### 1. Poll GitHub state, not events
 
@@ -122,8 +123,8 @@ other cost, a driver still ticking after the approval it was started for. Under 
 the tick itself holds no timer and no state between runs, and repetition still belongs to the
 harness rather than to this command.
 
-Because a tick is idempotent, running it by hand, twice in a row, or after a crash is
-always safe. There is no resume path to get wrong. That idempotency is now a property of
+Because a tick is idempotent, running it twice in a row, or after a crash, is always safe.
+There is no resume path to get wrong. That idempotency is now a property of
 **watch** ticks specifically: ADR-0025 gives it up for an explicit tick on purpose, because
 typing the command a second time is a request to review a second time. Nothing persists
 between runs in either mode, so a tick after a crash is still safe.

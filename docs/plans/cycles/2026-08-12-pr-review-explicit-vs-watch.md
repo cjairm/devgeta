@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-12
 **Estimated Duration:** ~3 hours
-**Status:** In Progress — Steps 1, 2 and 4 are implemented, committed and reviewed, and
+**Status:** In Progress — Steps 1 and 2 are implemented, committed and reviewed; Step 4 is
+this change, and
 [ADR-0025](../../decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)
 is ACCEPTED. **Step 3 (manual end-to-end) has not been run** — it drives the command against a
 real pull request and posts real reviews, so it was left to the maintainer rather than run
@@ -52,13 +53,13 @@ here and referenced there as deferred.
 
 - **Relevant files and their purposes:**
   - `configs/shared/commands/pr-review-loop.md` — the agent-side tick: usage line, step 0
-    argument parsing, the step 2 decision table, step 7's pre-post gate, step 11's next-tick
+    argument parsing, the step 2 decision table, step 7's pre-post gate, step 12's next-tick
     report, and the driver handoff. This is where nearly all of the change lands. It ships to
     both AI coders and to every user's other repos, so it may carry no devgeta-specific
     decision (CLAUDE.md §12).
   - `docs/spec.md` — the `/pr-review-loop` narrative and flag list.
   - `internal/apps/opencode/permissions_test.go` — the guard-test family that pins the shipped
-    command's prose clauses. Ten tests there read `pr-review-loop.md`, each isolating one
+    command's prose clauses. Fifteen tests there read `pr-review-loop.md`, each isolating one
     section by its **exact** heading text, so they are not only additive work: one of them,
     `TestPRReviewLoopStartsTheWatchItPromises`, asserts that the step 0 section contains the
     repeat-driver handoff, which is the sentence this cycle moves. Step 2 lists what has to be
@@ -103,7 +104,7 @@ file, `docs/spec.md`, and the guard tests all saying so.
 
 - [x] `configs/shared/commands/pr-review-loop.md`: parse `--once` / `--on-request` /
       `--reviewer[= ]<type>`; the two-mode decision table; the handoff moved out of step 0;
-      the mode-aware pre-post gate; step 11's next-tick line
+      the mode-aware pre-post gate; step 12's next-tick line
 - [x] `docs/spec.md`: the `/pr-review-loop` narrative — usage line, explicit vs watch tick,
       `--once`, the moved handoff
 - [x] One guard test per clause ADR-0025's Negative section names as able to rot silently
@@ -243,7 +244,8 @@ Folding the handoff into an existing step, or appending it so nothing below move
 renumbering entirely; if a heading's text does change, update its constant in the same commit
 or every guard reading that section fails on a missing anchor rather than on its own clause.
 
-**2b. Add one guard per clause ADR-0025's Negative section names as able to rot silently:**
+**2b. Add one guard per clause: the four ADR-0025's Negative section names as able to rot
+silently, plus the flag spellings §5 adds:**
 
 - [x] The driver line the file tells the tick to start carries `--on-request`
       — `TestPRReviewLoopMarksTheDriversTicksAsWatchTicks`
@@ -256,9 +258,9 @@ or every guard reading that section fails on a missing anchor rather than on its
 - [x] Both `--reviewer` spellings and `--once` appear in the usage line and step 0
       — `TestPRReviewLoopParsesBothReviewerSpellingsAndOnce`
 
-Two of these have nothing to revise first: no test reads step 2's decision table or step 7's
-pre-post gate today — neither section has an anchor constant — so the explicit-rows guard and
-the mode-aware-gate guard are purely additive.
+Two of these had nothing to revise first: no test read step 2's decision table or step 7's
+pre-post gate before this step — neither section had an anchor constant — so the
+explicit-rows guard and the mode-aware-gate guard were purely additive.
 
 Verify: `go test ./internal/apps/opencode/` and `go test ./internal/tooling/task/`, plus
 `go test .` because the change is under `configs/` (CLAUDE.md §6). Each new guard must fail
@@ -364,8 +366,12 @@ The four cases in Step 3, then the 2026-08-06 cycle's fifteen-point Step 6 seque
 ever run.** The maintainer go-ahead below is not one, and must not be read as one.
 
 **Maintainer go-ahead:**
-**Given 2026-08-17.** The maintainer read this plan, judged the `Blocked` header line and the
-"do not start until ADR-0025 is ACCEPTED" implementer rule stale, and said to proceed.
+**Given 2026-08-17**, as the argument to the implementation command. The maintainer's words:
+_"docs/plans/cycles/2026-08-12-pr-review-explicit-vs-watch.md — the maintainer approved this
+plan, go ahead and implement it; the Status: Blocked line and the Notes-for-Implementers rule
+to wait until ADR-0025 is ACCEPTED are stale because he forgot to update them, so clear the
+Blocked status and proceed, and keep the ADR-0025 PROPOSED to ACCEPTED flip where the cycle
+already schedules it as an in-scope deliverable rather than doing it up front"_.
 
 What it authorizes: the work in Steps 1, 2 and 4, and the ADR-0025 status flip from `PROPOSED`
 to `ACCEPTED` once the behavior landed.

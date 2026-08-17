@@ -176,20 +176,21 @@ deferred follow-up work.
 
 **The split above is implemented.** As of 2026-08-17 the shipped
 `configs/shared/commands/pr-review-loop.md` carries all of it: the usage line offers
-`--reviewer <type>`, `--once`, and `--on-request`; step 0 resolves the mode and both
-`--reviewer` spellings before anything is classified as a reviewer type; step 2's decision
+`--reviewer <type>`, `--once`, and `--on-request`; step 0 resolves the mode before anything is
+classified as a reviewer type, and reads both `--reviewer` spellings; step 2's decision
 table has the two columns of §1 above, in the same first-match-wins order; step 7's pre-post
 gate is mode-aware exactly as §6 describes; and the handoff has moved out of step 0 into its
 own step 11, "Start the watch, unless this tick was one", after the outcome is known — which
 renumbered the report step from 11 to 12. `docs/spec.md`'s `/pr-review-loop` narrative
 describes the same two modes and flags.
 
-Because the split lives in prose, `internal/apps/opencode/permissions_test.go` pins the five
+Because the split lives in prose, `internal/apps/opencode/permissions_test.go` pins the four
 clauses the Negative section below names as able to rot silently — the `--on-request` marker on
 the driver's line, a watch tick starting no driver of its own, the explicit rows not being
-request-gated, the mode-aware pre-post gate, and both `--reviewer` spellings plus `--once`
-being parsed — alongside revisions to the ten pre-existing PR-loop guards that the moved and
-renumbered steps left stale. `internal/tooling/task/prreviewstate_test.go` changed only in its
+request-gated, and the mode-aware pre-post gate — plus the flag spellings §5 adds, both
+`--reviewer` spellings and `--once` being parsed — alongside revisions to four of the ten
+pre-existing PR-loop guards, the ones the moved and renumbered steps left stale.
+`internal/tooling/task/prreviewstate_test.go` changed only in its
 comment and its per-row labels: the state read itself is unchanged, so what it documents is now
 which mode each action belongs to.
 
