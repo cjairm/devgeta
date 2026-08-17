@@ -1354,6 +1354,107 @@ func TestCreationCommandForPanesWithNoLaunch(t *testing.T) {
 	})
 }
 
+// --- pane 0's two command accessors: pane0CreatedCommand and pane0TypedCommand ---
+
+// TestPane0AccessorsOnEmptyLayoutReturnEmptyString pins the documented
+// fallback for a layout with no panes: both accessors return "" rather than
+// panicking or erroring. No caller can reach this today (every
+// validateLayout call site gates on len(Panes) > 0), but the accessors must
+// still behave if that ever changed.
+func TestPane0AccessorsOnEmptyLayoutReturnEmptyString(t *testing.T) {
+	empty := Layout{Name: "empty"}
+
+	if got := empty.pane0CreatedCommand(testShell); got != "" {
+		t.Errorf("pane0CreatedCommand on an empty layout = %q, want \"\"", got)
+	}
+	if got := empty.pane0TypedCommand(); got != "" {
+		t.Errorf("pane0TypedCommand on an empty layout = %q, want \"\"", got)
+	}
+}
+
+// TestPane0AccessorsReadPane0NotALaterPane uses the two-pane claude-nvim
+// layout, whose two panes have deliberately different Command strings
+// (typedClaude vs "nvim"), to pin that both accessors read pane 0 and never
+// fall through to a later pane.
+func TestPane0AccessorsReadPane0NotALaterPane(t *testing.T) {
+	layout, err := ResolveLayout("claude-nvim", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude-nvim layout: %v", err)
+	}
+	if len(layout.Panes) != 2 {
+		t.Fatalf("expected claude-nvim to have 2 panes, got %d", len(layout.Panes))
+	}
+
+	if got := layout.pane0TypedCommand(); got != typedClaude {
+		t.Errorf("pane0TypedCommand() = %q, want pane 0's typed command %q", got, typedClaude)
+	}
+	if got := layout.pane0TypedCommand(); got == layout.Panes[1].Command {
+		t.Errorf("pane0TypedCommand() returned pane 1's command %q instead of pane 0's", got)
+	}
+
+	wantCreated := layout.Panes[0].creationCommand(testShell)
+	if got := layout.pane0CreatedCommand(testShell); got != wantCreated {
+		t.Errorf(
+			"pane0CreatedCommand(shell) = %q, want pane 0's created command %q",
+			got,
+			wantCreated,
+		)
+	}
+	if got := layout.pane0CreatedCommand(
+		testShell,
+	); got == layout.Panes[1].creationCommand(
+		testShell,
+	) {
+		t.Errorf(
+			"pane0CreatedCommand(shell) returned pane 1's created command %q instead of pane 0's",
+			got,
+		)
+	}
+}
+
+// TestPane0CreatedAndTypedCommandsDifferForAResolvedCoderPane is the coupling
+// warning from the plan turned into a test: pane0CreatedCommand and
+// pane0TypedCommand must return two DIFFERENT strings for the same resolved
+// coder pane. A future edit that collapses the two accessors into one (or
+// has either one read the other's underlying field) fails this test instead
+// of shipping a created-form string to a send-keys call, or a typed-form
+// string to a window/session/split creation call.
+func TestPane0CreatedAndTypedCommandsDifferForAResolvedCoderPane(t *testing.T) {
+	countedProbe(t, foundAt(map[string]string{"claude": "/Users/dev/.local/bin/claude"}))
+
+	layout, err := ResolveLayout("claude", "", nil)
+	if err != nil {
+		t.Fatalf("unexpected error resolving claude layout: %v", err)
+	}
+	prompted, err := layout.WithPrompt("fix issue 1082")
+	if err != nil {
+		t.Fatalf("WithPrompt returned error: %v", err)
+	}
+	resolved, err := prompted.EnsureInstalled()
+	if err != nil {
+		t.Fatalf("unexpected error resolving install: %v", err)
+	}
+
+	created := resolved.pane0CreatedCommand(testShell)
+	typed := resolved.pane0TypedCommand()
+
+	if created == typed {
+		t.Fatalf(
+			"created and typed commands must differ for the same pane, both were %q",
+			created,
+		)
+	}
+	wantCreated := `CLAUDE_CODE_NO_FLICKER=1 '/Users/dev/.local/bin/claude' ` +
+		`'fix issue 1082'; exec '/bin/zsh'`
+	if created != wantCreated {
+		t.Errorf("pane0CreatedCommand(shell) = %q, want %q", created, wantCreated)
+	}
+	wantTyped := typedClaude + " 'fix issue 1082'"
+	if typed != wantTyped {
+		t.Errorf("pane0TypedCommand() = %q, want %q", typed, wantTyped)
+	}
+}
+
 // TestResolvedLayoutDoesNotLeakBetweenCreates is the reason clone exists, applied
 // to the two pieces of state this step adds. `dg ws` resolves a layout ONCE and
 // creates from it repeatedly, so if either the prompt or the probe's resolution

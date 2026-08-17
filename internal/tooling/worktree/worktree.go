@@ -560,7 +560,7 @@ func (w *WorktreeManager) buildWindowFromLayout(windowName, wtPath string, layou
 	if err := w.Tmux.CreateWindow(
 		windowName,
 		wtPath,
-		layout.Panes[0].creationCommand(shell),
+		layout.pane0CreatedCommand(shell),
 	); err != nil {
 		_ = w.Git.RemoveWorktree(wtPath, true, "")
 		return fmt.Errorf("failed to create tmux window: %w", err)
@@ -2197,13 +2197,13 @@ func (w *WorktreeManager) ensureWindow(repoSlug, windowName, wtPath string, layo
 		// no-op rather than an Enter pressed into whatever pane is active -
 		// which, in a window the user has since split, is not necessarily the
 		// pane devgeta made.
-		if layout.Panes[0].Command == "" {
+		if layout.pane0TypedCommand() == "" {
 			return nil
 		}
 		if err := w.Tmux.SendKeysToWindowInSession(
 			session,
 			windowName,
-			layout.Panes[0].Command,
+			layout.pane0TypedCommand(),
 		); err != nil {
 			return fmt.Errorf("failed to launch %s: %w", layout.Name, err)
 		}
@@ -2243,7 +2243,7 @@ func (w *WorktreeManager) createWindowWithLayout(
 	// case - so leaving it out would have kept the truncation bug alive
 	// exactly where users hit it most.
 	shell := w.paneShell()
-	pane0Command := layout.Panes[0].creationCommand(shell)
+	pane0Command := layout.pane0CreatedCommand(shell)
 	if w.Tmux.HasSession(session) {
 		if err := w.Tmux.CreateWindowInSession(
 			session,
