@@ -2648,8 +2648,8 @@ func TestRenderHelpPopupIncludesReview(t *testing.T) {
 func TestRenderHintDefaultListIncludesWidthToggle(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	out := ansi.Strip(m.renderHint(200))
-	if !strings.Contains(out, "e") || !strings.Contains(out, "width") {
-		t.Errorf("expected default hint bar to include 'e: width', got %q", out)
+	if !strings.Contains(out, "e width") {
+		t.Errorf("expected default hint bar to include 'e width', got %q", out)
 	}
 }
 
