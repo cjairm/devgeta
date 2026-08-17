@@ -103,33 +103,27 @@ type Layout struct {
 	Panes []Pane
 }
 
-// pane0CreatedCommand and pane0TypedCommand are the two accessors for pane 0's
-// command, and they exist side by side deliberately: a pane has two different
-// command STRINGS, and collapsing them into one accessor is exactly the
-// mistake ADR-0021's 2026-08-07 amendment warns about (see Pane's doc comment
-// above). Every unguarded `layout.Panes[0]` index in worktree.go goes through
-// one of these instead, so the created-vs-typed distinction lives in one place
-// rather than being rediscovered at each call site.
-//
-// Both return "" for an empty layout (len(l.Panes) == 0) rather than an error
-// or a (string, bool) result. No caller can reach an empty layout today: every
-// validateLayout call site gates on len(Panes) > 0 before either accessor could
-// run, and LaunchReviewInRepo always builds a one-pane layout - so a new error
-// path here would be unreachable code. If that ever changed, "" is still the
-// right fallback for each, for a different reason per accessor:
-//
-//   - pane0CreatedCommand: "" is already the shell pane's legitimate value -
-//     creationCommand returns "" for a pane with no launch and no Command, and
-//     tmux then starts the pane's own shell and nothing else. That beats a
-//     panic.
-//   - pane0TypedCommand: "" makes ensureWindow's repair branch a no-op, which
-//     is exactly what it already does for the shell layout (see ensureWindow).
-
 // pane0CreatedCommand returns pane 0's CREATED command - the form tmux execs as
 // the pane's process when devgeta creates it (Pane.creationCommand). This is
 // NOT the form typed into a pane that already exists; see pane0TypedCommand for
 // that one and Pane's doc comment for why the two are different strings for the
-// same pane.
+// same pane. Every `layout.Panes[0]` index in worktree.go goes through this
+// accessor or pane0TypedCommand instead of indexing directly.
+//
+// Returns "" for an empty layout (len(l.Panes) == 0) rather than an error or a
+// (string, bool) result. No caller can reach an empty layout today: every
+// validateLayout call site gates on len(Panes) > 0 before this could run, and
+// LaunchReviewInRepo always builds a one-pane layout - so a new error path here
+// would be unreachable code. If that ever changed, "" is still the right
+// fallback: it's already the shell pane's legitimate value - creationCommand
+// returns "" for a pane with no launch and no Command, and tmux then starts the
+// pane's own shell and nothing else. That beats a panic. The cost of that
+// choice: an empty layout becomes indistinguishable from a shell pane, since
+// both yield "" here, and validateLayout is the only thing keeping them apart.
+// Concretely, if a future caller reached createWindowWithLayout with an empty
+// layout, this returns "", buildWindowPanes' len(layout.Panes) > 1 guard skips
+// the loop, and the user gets an empty tmux window with no error anywhere -
+// where today an empty layout would panic in the first test that tried it.
 func (l Layout) pane0CreatedCommand(shell string) string {
 	if len(l.Panes) == 0 {
 		return ""
@@ -140,7 +134,20 @@ func (l Layout) pane0CreatedCommand(shell string) string {
 // pane0TypedCommand returns pane 0's TYPED command (Pane.Command) - the form
 // send-keys writes into a pane that already exists. This is NOT the form tmux
 // execs when creating a pane; see pane0CreatedCommand for that one and Pane's
-// doc comment for why the two are different strings for the same pane.
+// doc comment for why the two are different strings for the same pane. Every
+// `layout.Panes[0]` index in worktree.go goes through this accessor or
+// pane0CreatedCommand instead of indexing directly.
+//
+// Returns "" for an empty layout (len(l.Panes) == 0) rather than an error or a
+// (string, bool) result. No caller can reach an empty layout today: every
+// validateLayout call site gates on len(Panes) > 0 before this could run, and
+// LaunchReviewInRepo always builds a one-pane layout - so a new error path here
+// would be unreachable code. If that ever changed, "" is still the right
+// fallback: it makes ensureWindow's repair branch a no-op, which is exactly
+// what it already does for the shell layout (see ensureWindow). The cost of
+// that choice is the same one pane0CreatedCommand's doc comment spells out: an
+// empty layout becomes indistinguishable from a shell pane, and validateLayout
+// is the only thing keeping them apart.
 func (l Layout) pane0TypedCommand() string {
 	if len(l.Panes) == 0 {
 		return ""

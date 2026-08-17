@@ -508,31 +508,40 @@ separate findings landed there before it was made exhaustive).
 
 ## Deferred Follow-ups
 
-Raised by this cycle's reviews, triaged as non-blocking, and deliberately not done.
-None affects behavior today. Each carries the coupling that makes it safe to pick up —
-those warnings are the reason this list is written down rather than rediscovered.
+Raised by this cycle's reviews and triaged as non-blocking. None affects behavior
+today. Each carries the coupling that makes it safe to pick up — those warnings are
+the reason this list is written down rather than rediscovered. Items 1 and 2 are now
+done, on the `pane-command-followups` branch; item 3 is still open.
 
-1. **A `Layout` accessor for pane 0's created command.** `buildWindowFromLayout`,
-   `createWindowWithLayout`, and `ensureWindow` each index `layout.Panes[0]` unguarded.
-   The count went from one site to three during this cycle, all relying on
-   `validateLayout`'s caller-side emptiness check, so the invariant is now spread rather
-   than held in one place. No reachable panic today: all four `validateLayout` call sites
-   gate on `len(Panes) > 0`, and `LaunchReviewInRepo` builds a one-pane layout.
+1. **DONE (commit `07f7535`).** A `Layout` accessor for pane 0's created command.
+   `buildWindowFromLayout`, `createWindowWithLayout`, and `ensureWindow` each indexed
+   `layout.Panes[0]` unguarded. The count went from one site to three during this
+   cycle, all relying on `validateLayout`'s caller-side emptiness check, so the
+   invariant was spread rather than held in one place. No reachable panic today: all
+   four `validateLayout` call sites gate on `len(Panes) > 0`, and `LaunchReviewInRepo`
+   builds a one-pane layout.
    **Coupling:** the accessor must return pane 0's _created_ command and must **not**
    absorb `ensureWindow`'s `Panes[0].Command == ""` test — that one reads the **typed**
    form, which is a different string (see ADR-0021's 2026-08-07 amendment).
 
-2. **Split `window_build_test.go`.** It is ~66 KB after this cycle. Its helpers are
-   shared rather than copy-pasted, so it is coherent as it stands; the next addition of
-   comparable size should move the review-launch tests into their own file.
+2. **DONE (commit `e32ade4`).** Split `window_build_test.go`. It was ~66 KB after
+   this cycle. Its helpers are shared rather than copy-pasted, so it was coherent as
+   it stood; the next addition of comparable size moved the review-launch tests into
+   their own file. Landed as a pure move: `window_build_test.go` went from 72 KB to
+   46.9 KB, with the review-launch tests now in
+   `internal/tooling/worktree/review_launch_test.go` at 25.7 KB.
 
-3. **Make `paneShell`'s tmux query conditional.** It issues `show-options -gv
-default-shell` unconditionally, so a shell-layout create pays a tmux round trip plus a
-   stat whose result is interpolated nowhere, and the query is wasted whenever `$SHELL`
-   is already usable (`resolveShell` short-circuits on the first usable candidate).
-   Deliberate today: querying unconditionally keeps the ordered `ExecCommandResult`
-   sequences in `window_build_test.go` independent of the machine's `$SHELL`.
+3. **Still open.** Make `paneShell`'s tmux query conditional. It issues `show-options
+-gv default-shell` unconditionally, so a shell-layout create pays a tmux round trip
+   plus a stat whose result is interpolated nowhere, and the query is wasted whenever
+   `$SHELL` is already usable (`resolveShell` short-circuits on the first usable
+   candidate). Deliberate today: querying unconditionally keeps the ordered
+   `ExecCommandResult` sequences in `window_build_test.go` independent of the
+   machine's `$SHELL`.
    **Coupling:** `TestPaneShellCandidateLadder` asserts the query **is** issued, so
    making it conditional must update that test — and that test is the only thing pinning
    which candidates `paneShell` supplies, so weakening it silently un-pins the shell
    ladder that every created pane's command interpolates.
+   **Why still open:** the concurrent `ws-panes-refresh` branch owns the ordered
+   `ExecCommandResult` sequences this item would have to change, so it's picked up
+   only after that branch merges.
