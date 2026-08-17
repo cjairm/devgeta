@@ -159,18 +159,13 @@ are not verdicts and carry no findings — do not read anything into them.
 Run this yourself, in the main session — not in a subagent. The verdict lines are the one
 thing this loop must never take second-hand, and stdout is two or three lines.
 
-Then run `devgeta task review-notes` to see what this round left open. `review-run` does
-not print ids, so this is how the loop learns them: every id under the journal's `open:`
-section is an unanswered finding, and "nothing under `open:`" (or the
-`No review notes for branch <b>.` sentinel) means nothing is open.
-
 **On the opening round, those same verdict lines are the record of what to restore.**
 Narrowing rewrites `review.reviewers`, and the config-restore invariant in `## Phases`
 allows that only while the loop can put back exactly the list it found. What it puts back
 is the **record**. Derive it, prove it, screen it and print it the moment the opening
 round's verdict lines are read — before that round's journal read, and always before the
-first narrowing write. Everything from here to the end of this step is that protocol; it
-is stated once and applies to every round.
+first narrowing write. Everything from here to this step's closing journal read is that
+protocol; it is stated once and applies to every round.
 
 **Nothing about the key is read off disk, and here is why**, so nobody "simplifies" it
 back into a step that cannot run. The file behind `devgeta config` sits outside the
@@ -575,6 +570,122 @@ the `get` output is still one line, and still byte-identical to the joined recor
 means the config holds the record. A mismatch means the restore did not land, which is
 worth catching for the same reason the pre-write check exists — it is a state only a human
 can fix, and the restore command already printed above is what fixes it.
+
+**The order a narrowing round runs in.** When this round narrows — the conditions are
+below, and they are not met on every round — run these six steps in this order, and do not
+reorder them:
+
+1. **Check.** The key still holds the recorded list: the two checks above, run against the
+   record. If either fails, this round does not narrow at all — go straight to step 3 and
+   run on the config as it stands, with narrowing off for the rest of the run.
+2. **Narrow.** `devgeta config set review.reviewers` with one single-quoted argument per
+   still-blocking entry, captured and compared as above.
+3. **Run.** `devgeta task review-run`, with whatever step 0 resolved.
+4. **Check again.** The key still holds the narrowed list: the same two checks, run against
+   the narrowed list this time. If either fails, do not restore — leave the value exactly
+   as found, go to step 6, and narrowing is off for the rest of the run.
+5. **Restore, immediately.** `devgeta config set review.reviewers` with one single-quoted
+   argument per recorded entry, captured and compared the same way, then verified.
+6. **Then read the journal.**
+
+Both writes pass one quoted argument per entry. Nothing in this sequence interpolates an
+entry bare.
+
+**Why the restore comes before the journal read, and the check before the write.** They are
+the same fact from opposite ends. The journal read is where this loop starts spending time
+— the triage after it, and the fix subagent after that, are most of a round's wall clock —
+so a config left narrowed across it stays narrowed far longer than the round it was
+narrowed for, and an interruption anywhere in that stretch leaves the user narrowed. The
+pre-write check is the mirror image: the gap between rounds is the widest window the key can
+change in, wider than a round itself, which is why that check runs immediately before the
+write rather than once after the opening round.
+
+**Both checks are conditions on the write beside them, not formalities recorded
+afterwards.** Neither failure branch is "carry on anyway". If the key no longer holds the
+**recorded** list before the write, the loop does not narrow this round at all. If it no
+longer holds the **narrowed** list after the round, the loop does not restore. Either way
+the value is left exactly as found, and narrowing stops for the rest of the run. These are
+the only two points in a round that can end with `review.reviewers` holding something the
+loop did not write, which is why the report names both.
+
+**The loop writes the key only when narrowing actually drops a reviewer.** The narrowing
+set has to be a **strict subset** of the recorded list, **and** every check above has to
+have passed:
+
+- the record proved — the `get` output one line, and byte-identical to the labels joined
+  with `", "`;
+- every recorded entry one `devgeta config set` can write back;
+- every recorded entry free of control bytes;
+- no earlier round having ended with the key holding something other than the narrowed list
+  it was given;
+- no earlier narrowing write having reported replacing a value the loop never recorded;
+- and the key still holding the recorded list when checked immediately before this write.
+
+Otherwise the round runs on the config exactly as the user left it: no write, no restore.
+Eight cases land there, each for its own reason.
+
+- **A one-reviewer set, configured or the unset default.** A single reviewer that withheld
+  approval is already the whole set, so there is nothing to drop. This is what makes an
+  unset key harmless rather than a hole: the loop never reaches for a `provider/model`
+  string that does not exist.
+- **A round in which every reviewer withheld approval.** The narrowing set is the full list
+  again, so the write would set the config to what it already holds.
+- **A recorded list holding an entry `devgeta config set` cannot write back.** Narrowing is
+  off for the entire run, so every round is a full-list round.
+- **A record the checks could not prove.** Same destination and the same reason: the loop
+  will not write a list it cannot show is the one the user had.
+- **A recorded list holding an entry with a control byte.** Also off for the entire run: the
+  restore command for such a list cannot be both pasteable and safe to print, so the loop
+  never creates the need for one.
+- **A round whose pre-write check found the key no longer holding the record.** Narrowing is
+  off from that round onward. Nothing was overwritten, because the check runs before the
+  write.
+- **A round that returned with the key no longer holding the narrowed list.** Narrowing is
+  off from that round onward, so every later round is a full-list round.
+- **A round whose own write reported replacing a value the loop never recorded.** The
+  one-command race no check can close: the previous value `devgeta config set` reported was
+  not what the check immediately before it had just confirmed, so the write landed on a
+  change made in between. Narrowing is off from that round onward. Unlike the two above,
+  this one ends with the key holding the **record** — the round's restore still runs, or has
+  already run — because leaving it narrowed would be strictly worse; but the value that was
+  replaced is gone and cannot be reconstructed, which is why the report names it.
+
+Those last three are the only ones of the eight that stop narrowing part-way through a run
+rather than before it starts; the other five refuse before the first write. The first two of
+the three are also the only cases in the whole protocol that leave the key holding a value
+the loop did not write, and what separates them is only when the change was noticed: before
+the loop overwrote anything, or after the round it ran alongside. The report names all
+three.
+
+A round that does not narrow also has no interruption window at all, because it never
+touches the key. That window opens only on the rounds that drop someone.
+
+**A write that exits non-zero did not happen, and it is not the end of the run.**
+`devgeta config set` validates before it stores anything and leaves the key untouched when
+it refuses, so a failed write changes nothing. That is what the `|| exit 1` in the
+captured-write snippet above ends: the one shell command, so the comparison never runs
+against output the command never produced. It does not end the loop — never read it as an
+instruction to abandon the run. Treat it as a refusal: the loop does not narrow this round,
+narrowing is off for the rest of the run, and the report names the write that failed along
+with whatever `devgeta config set` put on stderr. That is the same branch as the refusals
+above — full configured list every round from here, `review.reviewers` never written again.
+A rejected value should be unreachable by this point, since every recorded entry was
+screened for writability before the first narrowing write; this is the branch for a write
+that fails anyway. One thing to state rather than leave to be worked out: if it was the
+**restore** that failed, the key is still holding the narrowed list, so say that outright in
+the report — the restore command printed before the first write is then the only way back.
+
+**Never narrow to an empty set by clearing the key.** `devgeta config set review.reviewers`
+with no values after it is rejected outright, and `devgeta config unset review.reviewers` —
+the command that error points at — means "one reviewer on OpenCode's own default model", not
+"run nobody". The loop needs neither: with the strict-subset condition above it never writes
+a state that a `config unset` would be the way back from, so there is no `config unset` step
+anywhere in this protocol.
+
+**Then read the journal.** Run `devgeta task review-notes` to see what this round left
+open. `review-run` does not print ids, so this is how the loop learns them: every id under
+the journal's `open:` section is an unanswered finding, and "nothing under `open:`" (or the
+`No review notes for branch <b>.` sentinel) means nothing is open.
 
 ### 2. A reviewer failure stops the loop here
 
