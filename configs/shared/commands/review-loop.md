@@ -1054,26 +1054,53 @@ only place either human-only journal transition is written out.
 ```
 ## Review loop — clean approval
 
-Round <n> of <cap>. Every reviewer approved, the journal lists nothing under `open:`, and
-no settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
+Confirming round. Rounds run: 1 opening, <m> narrowing (cap <cap> per phase), 1
+confirming. Every reviewer approved, the journal lists nothing under `open:`, and no
+settled entry's `answer:` line carries an `agent:` rejection awaiting ratification.
+
+### Reviewer configuration
+<the block below: the current value of `review.reviewers`, then exactly one of the
+recorded restore command or the reason there is none, plus which check turned
+narrowing off if one did. Required here too — a run can reach a clean approval having
+narrowed the key along the way, and this template is the only thing that says so.>
 ```
+
+Do not write `Round <n> of <cap>` here. The cap counts rounds **within one phase**
+(step 5), so the round number of a whole run routinely exceeds it, and a run of 5
+rounds against a cap of 3 is a normal run rather than a violated limit.
 
 **Report to the human** — everything else, including a reviewer failure (step 2), a round
 that withheld approval without recording a finding (step 3), a finding that needs a human
-(step 4), and hitting the round cap (step 5):
+(step 4), and the confirming round ending in anything other than a clean approval (step
+5). Hitting the round cap is **not** a report trigger on its own: the cap is per phase, so
+a narrowing phase that reaches it ends that phase and routes to the confirming round (step
+5). Only the confirming phase's ending ends the run. The one run that reports without a
+confirming round at all is the run in which every reviewer failed and none ever approved
+(step 5).
 
 ```
 ## Review loop — report
 
 ### Rounds
-| Round | Reviewer | Verdict |
-|-------|----------|---------|
-| 1     | <label>  | <verdict> |
-| ...   | ...      | ... |
+| Round | Phase      | Reviewer | Verdict   |
+|-------|------------|----------|-----------|
+| 1     | opening    | <label>  | <verdict> |
+| 2     | narrowing  | <label>  | <verdict> |
+| 3     | confirming | <label>  | <verdict> |
+
+(One row per reviewer that actually ran that round — a narrowing round lists only the
+reviewers still in its set, so who dropped out and when reads straight off the table.
+Number the rounds across the whole run; the phase column is what says which phase's
+cap a round counted against. The table shows what each verdict was, never why the loop
+stopped.)
 
 (If the loop stopped because a round withheld approval but left nothing under `open:`, say
-so in one line under this table, naming the reviewer and its verdict. The table shows what
-the verdict was, never why the loop stopped.)
+so in one line under this table, naming the reviewer and its verdict.)
+
+### Reviewer configuration
+<the block below: the current value of `review.reviewers`, then exactly one of the
+recorded restore command or the reason there is none, plus which check turned
+narrowing off if one did.>
 
 ### Findings that need you
 | id  | Finding | Why the loop did not settle it | What it is waiting on |
@@ -1107,6 +1134,136 @@ yourself. Ratification is the human's decision to make, not this loop's: the per
 model has no way to tell who typed the command, so the only thing standing between "the
 loop reports a rejection" and "the loop quietly approves its own rejection" is this
 instruction. Follow it exactly.
+
+### The reviewer-configuration block
+
+Both templates carry this block, and **no exit path may be silent about
+`review.reviewers`** — a human always has to learn whether the loop touched their config.
+This is the second of the two places the loop reports on the key: step 1 puts the restore
+command on screen before the first mutation, precisely because a run that never reaches a
+terminal report would otherwise say it nowhere. Repeating it here is not redundancy. The
+report is where a human reading only the outcome sees it, and it is the only place the
+**current** value appears, which step 0 could not know yet.
+
+**First, the current value.** Read it with `devgeta config get review.reviewers`, the same
+way the loop learns everything else about the key. Because this is a `get` the report
+**displays**, display it through
+`devgeta config get review.reviewers | LC_ALL=C sed -n l` rather than by running that `get`
+bare (step 1). The restore command beside it is not filtered, and that difference is
+deliberate rather than an oversight: the value is there to be **read**, the command is
+there to be **pasted**. This is the one line in the report where an entry's own bytes could
+otherwise erase the rest of it. Print the value whether or not the loop changed the key.
+
+**Then exactly one of two things — never both, and never neither.** Which one turns on a
+question the loop answered before its first round: does it hold a record it proved and
+accepted?
+
+- **It does** — the single-line and join checks passed, every recorded entry is one
+  `devgeta config set` can write back, and none holds a control byte (step 1). Print the
+  recorded `devgeta config set review.reviewers <entry> <entry> …`, its entries
+  single-quoted and **literal**. This is the one place in the report where entries are not
+  escaped, because escaping them would make the paste write the wrong list; it is the same
+  string step 1 printed before the first mutation, quoted the same way. Print it whether or
+  not any narrowing write actually happened — a one-reviewer set never writes the key and
+  the command is still the right thing to have on screen — and say which of the two it was.
+- **It does not.** Four exit paths land here: a record the checks could not prove, a
+  recorded entry `devgeta config set` cannot write back, a recorded entry holding a control
+  byte, and an unset `review.reviewers` (step 1). Print **no command**. In its place, state
+  that `review.reviewers` was never written this run, so the value printed above is the
+  user's own, untouched — together with the reason narrowing was off (below) or, for the
+  unset key, that one reviewer ran on OpenCode's default model and the key is still unset.
+
+**Why that second branch prints no command rather than a best-effort one.** State this in
+the report, or a later reader restores the unconditional version and the contradiction
+comes back. Each of the four has its own concrete failure:
+
+- A command built from an **unproved record** writes a list the user may never have had:
+  where the record collapsed a duplicate, it would tell them to paste away one of their own
+  two entries.
+- A command built from an entry `devgeta config set` **cannot write back** fails the moment
+  it is pasted.
+- A command for an **unset key** has no arguments at all, and
+  `devgeta config set review.reviewers` with nothing after it is rejected outright (step 1).
+- A command built from an entry holding a **control byte** cannot be both safe to print and
+  correct to paste: literal bytes let the entry rewrite the very line meant to recover the
+  config, and escaped bytes make the paste write the wrong list — which is exactly why a
+  control byte refuses narrowing instead of being rendered (step 1).
+
+In all four the key was never written, so a restore command would be answering a question
+nobody has. This is the same branch step 1 already takes for the pre-mutation print, which
+prints no restore command when any refusal fires: one rule, stated in both the places it
+applies.
+
+**The invariant that keeps the first branch safe**, so nobody adds an exception it does not
+need: the record is proved and accepted **once, strictly before the first write** (step 1),
+so every exit path that follows a write holds a record already screened for control bytes.
+A control-byte entry that something else writes into the key mid-run is caught by the
+pre-write or post-round check and displayed as the found value through the filter; it never
+enters the recorded command, which still prints literally and is still correct.
+
+### When narrowing stopped early, name the check that stopped it
+
+Say which one it was and what tripped it, so the extra cost of full-list rounds is
+explained rather than looking like narrowing silently failing:
+
+- **A recorded entry `devgeta config set` cannot write back** — name the entry.
+  No-command branch.
+- **A recorded entry holding a control byte** — name the entry. No-command branch.
+- **The record could not be proved** — name the `get` line and the joined labels that did
+  not match it. No-command branch.
+- **A round before which the key no longer held the record** — the pre-write check.
+  Recorded-command branch.
+- **A round after which the key no longer held the narrowed list** — the post-round check.
+  Recorded-command branch.
+- **A round whose write reported replacing a value the loop never recorded** — the
+  captured-output comparison. Recorded-command branch.
+- **A `devgeta config set` that exited non-zero** — say which write it was, the narrowing
+  one or the restore, and show whatever it put on stderr, captured and shown through the
+  filter (step 1). If it was the **restore** that failed, say outright that the key is
+  still holding the narrowed list, so the restore command is the only way back.
+  Recorded-command branch.
+
+The first three are refusals on the record itself, which is why they take the no-command
+branch; the rest refuse part-way through a run on a record that was already accepted, so
+they take the first branch and repeat the recorded command.
+
+Print **both** strings in any mismatch case — the expected one and the found one. They are
+two short lines, and they are the whole diagnosis. Every string named here is made visible
+on the way out: the ones the loop composed in the escaped rendering, the ones read back out
+of `devgeta config get` through the filter (step 1). The control-byte case is the plainest
+reason why, since the value being named is a value that would otherwise rewrite the line
+naming it.
+
+That covers the **report**, not the whole run. `devgeta task review-run` already printed
+those same entries raw in the opening round, and the report cannot reach back and fix that.
+
+### The three cases where the key changed under the loop
+
+Three of the checks above — the pre-write mismatch, the post-round mismatch, and the
+captured-write mismatch — need one more sentence than the other refusals, because they are
+the only ones about the **user's value** rather than about the record's shape. For each,
+name the round it happened in, say which side of the round the loop noticed on, say what it
+wrote and what it left as found, and print the recorded restore command beside it — the
+same string the block above carries — so the human can put the original list back if the
+change was not theirs.
+
+Two of the three need their own sentence rather than that generic one:
+
+- **A post-round mismatch that found the record itself.** The narrowing write never landed,
+  so the config already holds the recorded list and there is nothing to put back (step 1).
+  Say that, rather than reporting a change the user did not make.
+- **A write whose captured `<key>: <previous> -> <new>` output did not match the line the
+  loop composed for it.** The write landed on a value the loop never recorded — the
+  one-command race the pre-write check cannot close (step 1). Say that the value is gone,
+  print the captured line through the filter, and say plainly that the loop cannot
+  reconstruct it, because that string is joined the same ambiguous way `devgeta config get`
+  is. Say also that the round's normal restore still put the record back, so the key is not
+  left narrowed.
+
+  State the limit in the same breath, since a report implying this check is airtight is
+  worse than one that never mentions it: a replacement whose printed form is byte-identical
+  to the expected line is **not** detected at all, so a run that reports nothing here is not
+  proof that nobody wrote the key (step 1).
 
 ## Notes
 
