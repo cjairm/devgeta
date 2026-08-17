@@ -179,9 +179,6 @@ for the rest of the tick.
   when no note was given.
 - Anything still left over once the above have been taken — an unknown flag, a word that is
   neither a number nor a type — stops the tick before any state is read, naming the value.
-  That rule is what makes the list above exhaustive, so it must never be what swallows a flag
-  the Usage line advertises: a flag documented up there and missing from here silently does
-  nothing at all.
 
 Nothing is handed off for repetition here. That is step 11, after the tick's outcome is known.
 Everything from step 1 on is one tick, whether a driver fired it or a human did; only which
@@ -392,16 +389,18 @@ step 2's split applied a second time, to the fresh read — and the second is th
 modes:
 
 - **The PR must still be somewhere a review belongs**, which is the row this tick's mode takes:
-  - **Explicit tick:** `pr:` must still be neither `merged` nor `closed`. Nothing else here can
-    cancel the post. In particular `requested: no` cannot: on most explicit ticks it was never
-    `yes`, and requiring it would run the whole cross-model review and then post nothing.
+  - **Explicit tick:** `pr:` must still be neither `merged` nor `closed`. Nothing else in the
+    state read can cancel the post. In particular `requested: no` cannot: on most explicit
+    ticks it was never `yes`, and requiring it would run the whole cross-model review and then
+    post nothing.
   - **Watch tick (`--on-request`):** the state must still land on the Review row (`open` and
     `requested: yes`). Anything else means the PR merged, closed, or went draft, or that
     someone else already answered the request — so posting now would be a duplicate or an
     unsolicited review.
 
   When the condition fails, take the row the fresh state selects for this tick's mode
-  (terminal or wait) instead, then go to step 10.
+  instead, then go to step 10 — terminal only, for an explicit tick (only `merged`/`closed`
+  fail it); terminal or wait, for a watch tick.
 
 - **`head` must still equal the sha the reviewers read.** If it moved, the author pushed
   mid-review: the reviews describe code the PR no longer is, and an approval would cover
@@ -577,11 +576,11 @@ happens next. A tick is a line in a log a human skims, not a document.
 
 On a non-terminal exit, that last line must also say **what will run the next tick** — the
 driver, when one is repeating this command, which is the one step 11 just started or the one
-that fired this tick, or **nothing**, when step 11 started none. The "nothing"
+that fired this tick, or **nothing**, when no driver is repeating this command. The "nothing"
 case is the one that matters: a lone tick leaves the PR unwatched, and a line that only says
-what the next tick expects reads as a watch this invocation never started. So whenever step 11
-started none — on `--once`, or on a harness with no repeat driver — say plainly that **nothing
-will run another tick**, and name what would start one
+what the next tick expects reads as a watch this invocation never started. So whenever no
+driver is repeating this command — on `--once`, or on a harness with no repeat driver — say
+plainly that **nothing will run another tick**, and name what would start one
 (`/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request` on Claude Code,
 carrying this tick's own arguments so the watch reviews what this tick reviewed, or a tick per
 invocation by hand where the harness has no driver), so the human is one step from a real
@@ -611,8 +610,9 @@ file's.
 - Never invent a verdict, and never present an escalation, a head-moved exit, or a wait as
   an approval.
 - If any `devgeta task` command refuses to run — a PR number that is not a PR number, a
-  branch with no PR, a fetch that failed, a blank `--note` — surface that error as-is in the
-  tick report and end the tick. Do not work around it. **Ending the tick still goes through
+  branch with no PR, a fetch that failed (including step 3's `pr-review-target` failure), a
+  blank `--note` — surface that error as-is in the tick report as **escalated** and end the
+  tick. Do not work around it. **Ending the tick still goes through
   step 10:** when step 4 has already allocated the scratch directory, clean it on the way out,
   the same as any other exit does. Only a refusal that happens before step 4 has nothing to
   clean, and the reviewer runs, both step 7 reads, and step 8's journal read all happen after

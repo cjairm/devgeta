@@ -2201,6 +2201,16 @@ func TestReviewLoopRunsUnattendedWithoutAsking(t *testing.T) {
 // documented but never parsed or forwarded, and an authorization that goes
 // missing so an unattended watch starts asking permission every tick.
 //
+// Step 0's closing bullet — "anything still left over … stops the tick before
+// any state is read" — is what makes its flag list exhaustive, and it is also
+// exactly what swallowed one on 2026-08-12: before that rule recognized --once
+// and --on-request as flags at all, they fell through to this same catch-all and
+// were rejected as unknown words, so a bare invocation with --reviewer=document
+// reached no reviewer. Anything the Usage line advertises has to be recognized
+// by name before this bullet runs, or it silently does nothing — the failure
+// TestPRReviewLoopForwardsReviewerTypes and TestPRReviewLoopStartsTheWatchItPromises
+// exist to keep from happening again to --reviewer, --once, and --on-request.
+//
 // The derived authorization tests above do not reach this file: it posts only
 // through /review-pr and /approve-pr, so it contains no literal outward
 // `devgeta task` verb for TestPostingCommandsDeclareStandingAuthorization's
@@ -2753,18 +2763,32 @@ const (
 //     "after the outcome is known" from anywhere in the file.
 //   - Step 0 must NOT start one. Two places that both hand off start two drivers
 //     on one invocation, and the second is invisible until the PR gets reviewed
-//     twice per interval.
+//     twice per interval. This is checked two ways, and both are required: a
+//     negative (the driver form `/loop <interval> /pr-review-loop` is absent from
+//     step 0) and a positive (step 0 still carries its own "nothing is handed off
+//     here" clause). The negative alone pins nothing against the bug that
+//     motivated it: the handoff step 1 of this cycle deleted was prose ("hand it
+//     this command with every argument just resolved … then exit") that contained
+//     no `/loop` literal, so a regression back to that wording would pass the
+//     negative untouched. The positive clause fails against both that old prose
+//     and a re-added literal form.
 //
 // The report step then has to name the result either way: the driver that will
-// run the next tick, or — on --once and on a harness with no driver — that
+// run the next tick, or — when no driver is repeating this command — that
 // nothing will. (A terminal exit starts nothing too and says so as "the watch is
 // over", which the report template already carries.) A lone tick must never read
-// as a watch.
+// as a watch. That "nothing repeats" branch has to be conditioned on no driver
+// repeating the command, not on step 11 having started none: on a watch tick
+// step 11 always starts none, but a driver IS repeating the command — the one
+// that fired the tick — so the weaker condition is true on every watch tick and
+// would have the report claim nothing repeats while the watch keeps going.
 //
 // What this catches: the handoff being reduced back to a passing mention (by
 // dropping the driver form from Usage or from the handoff step), the handoff
-// drifting back above the posting step, step 0 growing a second handoff, and the
-// report losing either branch of what happens next.
+// drifting back above the posting step, step 0 growing a second handoff (in
+// either its literal or its old prose form), the report losing either branch of
+// what happens next, and the "nothing repeats" branch drifting back onto "step
+// 11 started none" so it fires on a watch tick too.
 // What this does NOT catch: whether the harness's driver actually starts, or an
 // agent reading a correct instruction and skipping it — this is a substring
 // check over prose, not an execution of it.
@@ -2829,6 +2853,23 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 			path, prReviewLoopHandoffHeading,
 		)
 	}
+	// The check above is a negative and pins nothing on its own: the step 0
+	// handoff this cycle deleted was prose with no `/loop` literal in it at all
+	// ("hand it this command with every argument just resolved … then exit"), so
+	// a regression back to that wording would pass the negative untouched. Pin
+	// the positive too: step 0 must still say plainly that nothing is handed off
+	// there. This fails against both the old prose form and a re-added literal
+	// one.
+	if !strings.Contains(parseSection, "Nothing is handed off for repetition here") {
+		t.Errorf(
+			"%s step 0 no longer says that nothing is handed off for repetition "+
+				"there. Without that clause, a step 0 rewritten to hand the command to "+
+				"a repeat driver in prose — with no `/loop` literal for the negative "+
+				"check above to catch — would pass this test while starting a second "+
+				"driver alongside %q",
+			path, prReviewLoopHandoffHeading,
+		)
+	}
 
 	// The report section cannot go through markdownSection: its template is a
 	// fenced block whose first line starts with `## PR #<n>`, which reads as the
@@ -2858,6 +2899,18 @@ func TestPRReviewLoopStartsTheWatchItPromises(t *testing.T) {
 				"non-terminal case, which the next-tick line above would otherwise leave "+
 				"reading as a watch that was never started — the original failure in a new "+
 				"place)",
+			path,
+		)
+	}
+	if !strings.Contains(report, "no driver is repeating this command") {
+		t.Errorf(
+			"%s's report step no longer conditions the \"nothing repeats\" branch on no "+
+				"driver repeating this command. Conditioning it on step 11 having started "+
+				"none instead makes the branch true on a watch tick too — step 11 starts no "+
+				"driver on a watch tick, but a driver IS repeating the command (the one that "+
+				"fired this tick), so the report would say nothing will run another tick "+
+				"while the driver keeps firing, and point the human at the very form that "+
+				"starts a second one",
 			path,
 		)
 	}
