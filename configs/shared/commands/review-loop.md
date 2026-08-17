@@ -749,8 +749,19 @@ change. The two edits ship together, or neither one works.
 
 ### 3. Check for clean approval
 
-If every reviewer's outcome this round is `APPROVE` **and** the journal you read in step 1
-lists nothing under `open:`, look at its settled entries.
+A clean approval takes four conditions, not three: every reviewer's outcome this round is
+`APPROVE`, the journal you read in step 1 lists nothing under `open:`, and this round is
+the **confirming round**. Only the confirming round can produce one — an approval given
+during the opening round or a narrowing round is provisional, because the branch keeps
+changing after it is given. A reviewer can approve during narrowing and, on its very next
+look, request changes having found a real defect once the branch moved further; treating
+its earlier approval as clean would have shipped that defect. So check the phase before
+anything else: if every outcome is `APPROVE` and nothing is under `open:` but this is not
+the confirming round, this is not a clean approval — see the last bullet below for where it
+goes.
+
+If every reviewer's outcome this round is `APPROVE`, nothing is under `open:`, and this
+round is the confirming round, look at its settled entries.
 
 Read the right line. Each settled entry in that output is a head line (id, resolution,
 cite, freshness), then the reviewer's finding on an indented line with no label, then — when
@@ -782,23 +793,35 @@ begins with `agent:`.
   still waiting on a human decision. All-APPROVE with nothing open does **not** make this
   clean; go to the terminal report instead, carrying that entry into it.
 
-Otherwise — any reviewer's outcome is not `APPROVE`, or the journal's `open:` section names
-any ids even though every outcome was `APPROVE` — this round is not a clean approval. An id
-under `open:` is an unanswered finding regardless of what the verdicts say, and step 4 has
-not run yet at this point in the flow, so it must never be waved through because every
-outcome happened to say `APPROVE`.
+Otherwise — any reviewer's outcome is not `APPROVE`, this is not the confirming round even
+though every outcome was `APPROVE`, or the journal's `open:` section names any ids even
+though every outcome was `APPROVE` — this round is not a clean approval. An id under
+`open:` is an unanswered finding regardless of what the verdicts say, and step 4 has not
+run yet at this point in the flow, so it must never be waved through because every outcome
+happened to say `APPROVE`.
 
-Where a round that is not a clean approval goes next depends on whether it left the loop
-anything to work on:
+Where a round that is not a clean approval goes next depends on why it fell short:
 
 - **The journal's `open:` section names at least one id:** continue to step 4.
-- **Nothing under `open:`, and some outcome was not `APPROVE`:** stop here and go to the
-  terminal report, naming that reviewer and its verdict and stating that the round recorded
-  no finding. A reviewer can withhold approval without opening one — `NEEDS DISCUSSION` asks
-  for a conversation, and only a reviewer's blocking findings ever reach the journal — so
-  there is nothing for step 4 to triage and nothing for a subagent to fix.
-  Do not run another round: the loop would change nothing in between, so the next round
-  re-runs the same reviewers against the same tree and buys the same verdict.
+- **Nothing under `open:`, and some outcome was `REQUEST CHANGES` or `NEEDS DISCUSSION`:**
+  stop here and go to the terminal report, naming that reviewer and its verdict and stating
+  that the round recorded no finding. A reviewer can withhold approval without opening one —
+  `NEEDS DISCUSSION` asks for a conversation, and only a reviewer's blocking findings ever
+  reach the journal — so there is nothing for step 4 to triage and nothing for a subagent to
+  fix. Do not run another round: the loop would change nothing in between, so the next round
+  re-runs the same reviewers against the same tree and buys the same verdict. That reasoning
+  holds for a reviewer that stated a position; it does not carry over to the next case,
+  where the reviewer never got the chance to state one.
+- **Nothing under `open:`, and every non-approving outcome was `ERROR` or `NO VERDICT`:**
+  nothing is open because the reviewer never finished, not because it had nothing to
+  record. Do not stop — fall through to step 5, which applies the consecutive-failure count
+  and the phase routing, and runs the next round. A retry here is not a bet that the tree
+  will change; it is a bet that the reviewer completes this time.
+- **Every outcome was `APPROVE`, nothing is under `open:`, and this is not the confirming
+  round:** covered above — this is not a clean approval, and it has no finding for step 4
+  to triage either. Fall through to step 5, the same destination as a retried failure,
+  which applies the phase routing that carries the loop on toward the confirming round the
+  approvals it already has still need.
 
 ### 4. Otherwise, triage each open finding, then settle it
 
