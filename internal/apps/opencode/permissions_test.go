@@ -1974,7 +1974,11 @@ func TestReviewLoopRestoresReviewerConfig(t *testing.T) {
 //
 // What this catches: the enumeration narrowing back to the three writes,
 // including the literal revert to "in **all three** places entries appear", and
-// the `'\''` escape no longer being required inside a comparison string.
+// the POSIX escape for a single quote inside single quotes no longer being
+// required inside a comparison string. (That escape sequence is spelled out in
+// the asserted string below rather than here: a formatter in this environment
+// rewrites two adjacent ASCII apostrophes in a comment into a curly quote, so a
+// comment is not a safe place to write it.)
 // What this does NOT catch: an executing agent that reads the rule and still
 // interpolates a join bare — a substring check over prose cannot run the
 // instructions (see TestCommittingCommandsDeclareStandingAuthorization). Nor
