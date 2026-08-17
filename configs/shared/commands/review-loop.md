@@ -68,8 +68,9 @@ This loop runs three phases, always in this order:
 2. **Narrowing rounds.** Only the reviewers that did not approve in the previous round
    run. A reviewer whose outcome was `APPROVE` drops out of this phase's set; any other
    outcome (`REQUEST CHANGES`, `NEEDS DISCUSSION`, an error, or no verdict at all) keeps
-   it in. Findings are triaged and settled exactly as in any other round — only which
-   reviewers run changes.
+   it in — unless it has just failed twice in a row, which drops it instead (see `### 2`).
+   Findings are triaged and settled exactly as in any other round — only which reviewers
+   run changes.
 3. **Confirming round.** Every configured reviewer runs again, including any dropped
    during narrowing. **Only this round can produce a clean approval.** An approval from
    the opening round or a narrowing round is provisional: the branch kept changing after
