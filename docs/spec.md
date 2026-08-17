@@ -1215,9 +1215,10 @@ the pre-post re-check its step 7.)
    `LGWC; <who/what remains>`, naming the leftover non-blocking comments — not a
    re-review, and not a comment. Approved on the re-ask → terminal: approved; still not approved → **terminal:
    escalated**, since it is standing on a blocker every run missed. **Never a third
-   ask:** a decline leaves `requested:` at `yes`, so asking forever would post forever.
+   ask** bounds the asking in either mode: nothing in the PR's state stops it, and on a
+   watch tick a decline leaves `requested:` at `yes`, so asking forever would post forever.
    The review path has nothing to parse — posting any review removes the user from the
-   request list, so the next tick waits and the author's re-request is the next trigger.
+   request list, so the next **watch** tick waits and the author's re-request is the next trigger.
 
 **Cleanup is two things with two different scopes,** and the first runs far more often
 than the second. The **scratch directory** goes on every completed exit of the review

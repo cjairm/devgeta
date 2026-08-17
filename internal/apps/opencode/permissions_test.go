@@ -3163,19 +3163,23 @@ func TestPRReviewLoopMarksTheDriversTicksAsWatchTicks(t *testing.T) {
 // whole-file check green while the two halves of the file contradicted each
 // other.
 //
-// The step's two other preconditions — `--once` was not passed, and the exit is
-// not terminal — are pinned here too, each together with the rule it is restated
-// as further down the step. They belong with the explicit-only precondition
-// because they are the rest of the same list and nothing else in this file reads
-// them: deleting either left every PR-loop guard green while `--once` became a
-// flag that is documented, parsed, and then ignored, and a driver got started on
-// a tick that had just approved the pull request — the driver-outlives-the-
-// approval cost ADR-0025 §4 claims to have retired, and the one
+// The step's three other preconditions — `--once` was not passed, the exit is
+// not terminal, and the harness has a repeat driver at all — are pinned here
+// too, each together with the rule it is restated as further down the step.
+// They belong with the explicit-only precondition because they are the rest of
+// the same list and nothing else in this file reads them: deleting any one of
+// them left every PR-loop guard green while `--once` became a flag that is
+// documented, parsed, and then ignored, a driver got started on a tick that had
+// just approved the pull request — the driver-outlives-the-approval cost
+// ADR-0025 §4 claims to have retired, and the one
 // TestPRReviewLoopStartsTheWatchItPromises' own failure message cites ("a
-// first-look approval must start nothing") without asserting.
+// first-look approval must start nothing") without asserting — or the file
+// promised a watch on a harness that cannot run one (ADR-0025's one accepted
+// asymmetry between the two AI coders: OpenCode has no repeat driver, so its
+// tick reviews and the report says plainly that nothing will run another).
 //
-// What this catches: the handoff step losing any of its three stated
-// preconditions or the restatement of any of the three rules, and a fourth
+// What this catches: the handoff step losing any of its four stated
+// preconditions or the restatement of any of the four rules, and a fourth
 // occurrence of the driver form `/loop <interval> /pr-review-loop` appearing
 // anywhere in the file. That count is the one structural signal available for
 // "no other site hands this command to a driver" (ADR-0025 §4): the three
@@ -3258,6 +3262,20 @@ func TestPRReviewLoopWatchTickStartsNoDriverOfItsOwn(t *testing.T) {
 				"TestPRReviewLoopStartsTheWatchItPromises' own failure message already " +
 				"cites (\"a first-look approval must start nothing\") without asserting " +
 				"anywhere",
+		},
+		{
+			substr: "The harness has a repeat driver at all",
+			why: "this is the precondition that keeps the handoff from promising a watch " +
+				"a harness cannot run: it is ADR-0025's one accepted asymmetry between the " +
+				"two AI coders (OpenCode has no repeat driver, so its tick reviews and the " +
+				"report has to say plainly that nothing will run another) — without this " +
+				"precondition the step would try to start a driver that does not exist",
+		},
+		{
+			substr: "A harness with no repeat driver starts nothing",
+			why: "this is the restated form of the same rule, stating outright that a " +
+				"harness with no repeat driver — OpenCode today — starts nothing, because " +
+				"there is nothing to start",
 		},
 	} {
 		if !strings.Contains(handoff, req.substr) {
