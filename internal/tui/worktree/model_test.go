@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -1543,7 +1542,7 @@ func TestEmptyDashboardShowsGuidance(t *testing.T) {
 	// Once List() returns zero worktrees, the pane must switch to create
 	// guidance rather than showing "(loading...)" forever (nothing will ever
 	// select a worktree to clear it on an empty dashboard).
-	m2, _ := m.Update(statusesMsg(nil))
+	m2, _ := m.Update(statusesMsg{statuses: nil})
 	got := ansi.Strip(m2.(Model).renderRight(100))
 	if strings.Contains(got, "(loading...)") {
 		t.Errorf("empty loaded dashboard must not show loading, got %q", got)
@@ -1858,28 +1857,9 @@ func TestInitBatchesWorktreeAndSessionLoads(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected Init() to return a tea.BatchMsg, got %T", msg)
 	}
-	if len(batch) != 3 {
+	if len(batch) != 4 {
 		t.Fatalf(
-			"expected Init() to batch 3 commands (worktree load, session load, tick), got %d",
-			len(batch),
-		)
-	}
-}
-
-func TestTickMsgBatchesWorktreeAndSessionLoads(t *testing.T) {
-	m := makeTestModel(nil)
-	_, cmd := m.Update(tickMsg(time.Now()))
-	if cmd == nil {
-		t.Fatal("tickMsg should return a batched command")
-	}
-	msg := cmd()
-	batch, ok := msg.(tea.BatchMsg)
-	if !ok {
-		t.Fatalf("expected tickMsg handling to return a tea.BatchMsg, got %T", msg)
-	}
-	if len(batch) != 3 {
-		t.Fatalf(
-			"expected tickMsg to re-batch 3 commands (worktree load, session load, tick), got %d",
+			"expected Init() to batch 4 commands (slow load, session load, fast tick, slow tick), got %d",
 			len(batch),
 		)
 	}
@@ -1911,7 +1891,7 @@ func TestSessionsLoadSuccessPopulatesSessionsAndRows(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.mgr = mgrWithMockedTmux(mockTmuxBase)
 
-	msg := m.sessionsLoadCmd()()
+	msg := m.sessionsLoadCmd(m.sessionGen)()
 	sm, ok := msg.(sessionsMsg)
 	if !ok {
 		t.Fatalf("expected sessionsMsg on a successful ListSessions, got %T: %+v", msg, msg)
@@ -1953,7 +1933,7 @@ func TestSessionsLoadEmptyResultClearsSessionsWithoutWarning(t *testing.T) {
 	m.rebuildRows()
 	m.mgr = mgrWithMockedTmux(mockTmuxBase)
 
-	msg := m.sessionsLoadCmd()()
+	msg := m.sessionsLoadCmd(m.sessionGen)()
 	sm, ok := msg.(sessionsMsg)
 	if !ok {
 		t.Fatalf("expected sessionsMsg for the no-server case, got %T: %+v", msg, msg)
@@ -1987,7 +1967,7 @@ func TestSessionsLoadErrorPreservesLastGoodSessionsAndWarnsStatus(t *testing.T) 
 	)
 	m.mgr = mgrWithMockedTmux(mockTmuxBase)
 
-	msg := m.sessionsLoadCmd()()
+	msg := m.sessionsLoadCmd(m.sessionGen)()
 	sm, ok := msg.(statusMsg)
 	if !ok {
 		t.Fatalf("expected a statusMsg on a real ListSessions error, got %T: %+v", msg, msg)

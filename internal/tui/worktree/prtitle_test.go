@@ -59,7 +59,7 @@ func TestSelectionDispatchesPRTitleLookupWhenUncached(t *testing.T) {
 		return "PR for " + branch
 	}
 
-	updated, cmd := m.Update(statusesMsg(testStatuses()))
+	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
 
 	msgs := flattenCmd(cmd)
@@ -120,7 +120,7 @@ func TestSelectionUsesBranchFieldWhenPresent(t *testing.T) {
 		return ""
 	}
 
-	_, cmd := m.Update(statusesMsg(statuses))
+	_, cmd := m.Update(statusesMsg{statuses: statuses})
 	flattenCmd(cmd) // runs the cmd, populating gotBranch via the stub
 
 	if gotBranch != "feat/real-branch" {
@@ -154,7 +154,7 @@ func TestPRTitleCacheKeyedByPathNotBranch(t *testing.T) {
 	}
 
 	// Select the first worktree and process its prTitleMsg.
-	updated, cmd := m.Update(statusesMsg(statuses))
+	updated, cmd := m.Update(statusesMsg{statuses: statuses})
 	m = updated.(Model)
 	for _, msg := range flattenCmd(cmd) {
 		if tm, ok := msg.(prTitleMsg); ok {
@@ -231,7 +231,7 @@ func TestCachedPathNotReLookedUp(t *testing.T) {
 	m.prTitles["/tmp/a"] = "" // cached: no PR
 	m.prTitles["/tmp/b"] = "Some cached title"
 
-	updated, cmd := m.Update(statusesMsg(testStatuses()))
+	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
 
 	for _, msg := range flattenCmd(cmd) {
@@ -271,7 +271,7 @@ func TestPendingPathNotReLookedUp(t *testing.T) {
 	}
 	m.prTitlePending["/tmp/a"] = true
 
-	_, cmd := m.Update(statusesMsg(testStatuses()))
+	_, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	for _, msg := range flattenCmd(cmd) {
 		if _, ok := msg.(prTitleMsg); ok {
 			t.Fatal("did not expect a prTitleMsg for a path already pending")
@@ -293,7 +293,7 @@ func TestEmptyTitleCachedAndNotRetried(t *testing.T) {
 		return "" // no PR for this worktree
 	}
 
-	updated, cmd := m.Update(statusesMsg(testStatuses()))
+	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
 	msgs := flattenCmd(cmd)
 
@@ -321,7 +321,7 @@ func TestEmptyTitleCachedAndNotRetried(t *testing.T) {
 
 	// Re-selecting (e.g. simulating a tick reload with the same statuses)
 	// must not call prTitleFn again.
-	_, cmd2 := m.Update(statusesMsg(testStatuses()))
+	_, cmd2 := m.Update(statusesMsg{statuses: testStatuses()})
 	for _, msg := range flattenCmd(cmd2) {
 		if _, ok := msg.(prTitleMsg); ok {
 			t.Fatal("did not expect a prTitleMsg for a path already cached with an empty title")

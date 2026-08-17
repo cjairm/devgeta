@@ -25,8 +25,16 @@ const (
 	defaultLeftPaneWidth = 35
 	maxLeftPaneWidthPct  = 0.60
 	dividerWidth         = 1
-	refreshInterval      = 3 * time.Second
-	maxDiffBytes         = 64 * 1024
+	// fastRefreshInterval and slowRefreshInterval are ADR-0024's cadence split:
+	// tmux-derived state (agent dots, window presence, pane rows, the
+	// standalone-session list) is cheap and fast-moving, so it refreshes every
+	// 3 seconds; the git enumeration behind the worktree rows costs one process
+	// per known repo and changes rarely, so it refreshes every 30 seconds —
+	// plus immediately after any create, remove, or repair the dashboard itself
+	// performs, so your own actions never wait on the timer.
+	fastRefreshInterval = 3 * time.Second
+	slowRefreshInterval = 30 * time.Second
+	maxDiffBytes        = 64 * 1024
 	// prTitleTimeout bounds the best-effort gh PR-title lookup so a hung or slow
 	// gh can't outlive one refresh interval and stall the diff pane.
 	prTitleTimeout = 2 * time.Second
@@ -39,11 +47,36 @@ const (
 // --- Messages ---
 
 type (
-	statusesMsg []worktree.WorktreeStatus
-	// sessionsMsg carries a successful WorktreeManager.ListSessions() result;
-	// see sessionsLoadCmd for the success/failure split.
-	sessionsMsg []worktree.SessionStatus
-	diffMsg     struct {
+	// statusesMsg carries one slow (git-backed) load's whole worktree list,
+	// stamped with the stateGen the load was dispatched with. The stamp is what
+	// lets Update drop a snapshot that a newer load or a mutation has already
+	// superseded; see the stateGen field for the races it closes.
+	statusesMsg struct {
+		statuses []worktree.WorktreeStatus
+		gen      int
+	}
+	// sessionsMsg carries a successful whole-session-list result, stamped with
+	// the sessionGen it was dispatched with. Its producers are the fast tick's
+	// message (below) and sessionsLoadCmd; see sessionsLoadCmd for the
+	// success/failure split.
+	sessionsMsg struct {
+		sessions []worktree.SessionStatus
+		gen      int
+	}
+	// tmuxStateMsg is the fast tick's result: one tmux scan's worth of state,
+	// carried as a layer rather than as a finished list.
+	//
+	// The two halves are applied differently on purpose. The pane half is a
+	// layer, so Update applies it to whatever m.statuses holds when the message
+	// lands and needs no stamp — no model-owned memory ever crossed into the
+	// command goroutine, so there is nothing to race. The session half IS a
+	// wholesale replacement of m.sessions, so it is gated on gen the same way
+	// statusesMsg is gated on its own.
+	tmuxStateMsg struct {
+		layer worktree.StateLayer
+		gen   int
+	}
+	diffMsg struct {
 		content               string
 		files, added, removed int
 		fileLines             []int  // line indexes of per-file headers, for [ / ] jumps
@@ -58,18 +91,43 @@ type (
 )
 
 type (
-	tickMsg   time.Time
-	statusMsg string
+	// fastTickMsg drives the 3-second tmux refresh, slowTickMsg the 30-second
+	// git one. Two timers rather than one with a counter: each re-arms itself
+	// from its own handler, so neither can drift into the other's cadence.
+	fastTickMsg time.Time
+	slowTickMsg time.Time
+	statusMsg   string
 )
 
-// deletedMsg reports a successful removal so Update can both refresh the list
-// (drop the removed row) and replace the transient "deleting…" status with a
-// "removed:" confirmation. A plain statusesMsg would refresh the list but leave
-// the "deleting…" status lingering, since its handler never touches m.status
-// (it's also the periodic-refresh message, which must not clobber statuses).
+// deletedMsg reports a successful removal so Update can both drop the removed
+// row and replace the transient "deleting…" status with a "removed:"
+// confirmation. A plain statusesMsg would refresh the list but leave the
+// "deleting…" status lingering, since its handler never touches m.status.
+//
+// It carries only the identity it removed, never a list. Two removals can be in
+// flight at once — nothing marks one as in progress, so `d` `d` `j` `d` `d`
+// dispatches a second `git worktree remove` while the first still runs — and if
+// each command returned its own row-dropped copy of m.statuses, the one that
+// landed second would win with a list that still held the other's row. Removing
+// by identity from whatever m.statuses holds when the message lands makes the
+// order between them irrelevant, and keeps model-owned memory out of the
+// command goroutine. It is the same shape sessionKilledMsg already uses for
+// m.sessions.
 type deletedMsg struct {
-	name     string
-	statuses []worktree.WorktreeStatus
+	repo string
+	name string
+}
+
+// repairDoneMsg reports a finished repair — succeeded or failed — so its
+// handler can set the status AND dispatch the slow git load. A plain statusMsg
+// only sets the status, which is why repair used to depend entirely on the
+// periodic tick to show its effect. That is fine for a success (everything a
+// successful repair changes is tmux-side, so the fast tick covers it) but not
+// for a failure: repairing a worktree whose directory is gone prunes the stale
+// git entry and then returns an error, so the row it just removed would sit on
+// screen until the next slow tick. Both outcomes therefore carry this message.
+type repairDoneMsg struct {
+	status string
 }
 
 // --- Model ---
@@ -92,6 +150,44 @@ type Model struct {
 	cursor         int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
 	collapsed      map[string]bool
 	allCollapsed   bool
+
+	// stateGen orders the wholesale replacements of m.statuses against each
+	// other. Update bumps it whenever it dispatches a slow load, the load
+	// carries that number on its statusesMsg, and the handler drops any message
+	// whose number is no longer current. Without it the older of two overlapping
+	// loads wins: the 30s timer's load starts, you press n, the create's own
+	// load lands with the new worktree, then the timer's older git snapshot
+	// lands and replaces the list without it — and the worktree you just made
+	// disappears for another 30 seconds.
+	//
+	// Mutation results (deletedMsg, createdMsg, repairDoneMsg) bump it when they
+	// apply rather than carrying a captured number, so they always win and
+	// invalidate every load in flight. A captured number would not be enough:
+	// a load dispatched after a delete began can still finish before the removal
+	// does, see the worktree, and hold a higher number than the deletedMsg that
+	// follows — which would put the deleted row back.
+	//
+	// It orders mutations against loads only. Two mutations against each other
+	// are handled at the payload instead — see deletedMsg.
+	stateGen int
+	// sessionGen is stateGen's counterpart for m.sessions, and deliberately not
+	// symmetric with it. Update bumps it whenever it dispatches something that
+	// returns a WHOLE session list; two producers do (the fast tick's
+	// tmuxStateMsg and sessionsLoadCmd), and the slow load is deliberately not a
+	// third — it discards RefreshState's session half, since the fast tick
+	// already replaces m.sessions every 3 seconds.
+	//
+	// A separate counter, not a shared one: the two lists have independent
+	// producers, so one counter would let a fast tmux scan's dispatch invalidate
+	// an in-flight slow git load. A fast dispatch bumps sessionGen and leaves
+	// stateGen untouched, which is the whole reason there are two.
+	//
+	// Worth being honest about the size of what it buys: unlike the m.statuses
+	// races, a resurrected session row is cleared by the next fast tick either
+	// way, so this stops a flicker rather than a 30-second stall. It is still
+	// worth having, because m.sessions is otherwise the one wholesale-replaced
+	// list in the model with no ordering rule at all.
+	sessionGen int
 
 	diffContent   string
 	diffFiles     int
@@ -335,29 +431,83 @@ func newModel(
 }
 
 // Init implements tea.Model.
+//
+// Both loads run once up front — the slow one for the worktree rows, the
+// session one so the dashboard has sessions before the first fast tick fires
+// three seconds later — and both timers start. Neither load needs a special
+// generation: they capture the zero value, which stays current until the first
+// dispatch bumps a counter.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
-		m.loadCmd(),
-		m.sessionsLoadCmd(),
-		m.tickCmd(),
+		m.loadCmd(m.stateGen),
+		m.sessionsLoadCmd(m.sessionGen),
+		m.fastTickCmd(),
+		m.slowTickCmd(),
 	)
 }
 
-func (m Model) loadCmd() tea.Cmd {
+// loadCmd is the slow, git-backed half of ADR-0024's split: it enumerates
+// worktrees (one git process per known repo) and layers one tmux scan onto that
+// fresh slice so the rows arrive complete rather than briefly tmux-blank.
+//
+// gen is the stateGen the caller bumped to before dispatching; the resulting
+// statusesMsg carries it back so Update can drop a snapshot that a newer load
+// or a mutation has already superseded.
+//
+// It enumerates into its OWN slice and never reads m.statuses, so no
+// model-owned memory crosses into this goroutine. RefreshState's session half
+// is discarded on purpose: the fast tick is m.sessions' producer, and a second
+// one would only add an ordering case (see the sessionGen field).
+func (m Model) loadCmd(gen int) tea.Cmd {
+	mgr := m.mgr
 	return func() tea.Msg {
-		statuses, err := m.mgr.List()
+		statuses, err := mgr.ListWorktreesOnly()
 		if err != nil {
 			return statusMsg("failed to list worktrees: " + err.Error())
 		}
-		return statusesMsg(statuses)
+		applied, _, err := mgr.RefreshState(statuses)
+		if err != nil {
+			// Debug, not the status line: RefreshState still returns the rows
+			// with every tmux field left at its zero value, so the git-backed
+			// list is intact and worth showing. The fast tick is already
+			// reporting the same tmux failure to the user every 3 seconds, so
+			// repeating it here would only duplicate that warning.
+			logger.L().Debugw(
+				"worktree: tmux scan failed during the slow refresh, showing git state only",
+				"err", err,
+			)
+		}
+		return statusesMsg{statuses: applied, gen: gen}
 	}
 }
 
-// sessionsLoadCmd fetches standalone tmux sessions, dispatched alongside
-// loadCmd (Init and every tickMsg) so the two stay in sync on the same 3s
-// refresh. It's a separate tea.Cmd/message pair rather than folded into
-// loadCmd's result: worktrees load from the filesystem/git and sessions from
-// tmux, so a failure in either source must never affect the other's rows.
+// scanTmuxCmd is the fast, tmux-only half of ADR-0024's split: one
+// `tmux list-sessions` plus one `tmux list-panes -a`, no git at all.
+//
+// It returns the raw layer rather than a finished list, which is the ownership
+// rule this whole step turns on: a fast command that captured m.statuses and
+// returned a whole list would both race the renderer and overwrite a newer list
+// from the slow path, so a worktree you just created could vanish for 30
+// seconds. Update applies the layer to whatever m.statuses holds when the
+// message lands, on the single goroutine Bubble Tea runs Update on.
+//
+// gen is the sessionGen the caller bumped to; only the message's session half
+// is gated on it (see tmuxStateMsg).
+func (m Model) scanTmuxCmd(gen int) tea.Cmd {
+	mgr := m.mgr
+	return func() tea.Msg {
+		layer, err := mgr.ScanTmuxState()
+		if err != nil {
+			return statusMsg("failed to refresh tmux state: " + err.Error())
+		}
+		return tmuxStateMsg{layer: layer, gen: gen}
+	}
+}
+
+// sessionsLoadCmd fetches standalone tmux sessions on their own. The fast tick
+// is the routine producer of m.sessions; this is the immediate refresh a
+// session mutation needs so it doesn't wait up to 3 seconds for that tick, and
+// the one that fills the list at startup.
 //
 // On a real error, this returns a statusMsg (not a sessionsMsg) exactly like
 // loadCmd does above - the statusMsg case only sets m.status, so m.sessions
@@ -365,19 +515,26 @@ func (m Model) loadCmd() tea.Cmd {
 // empty result (WorktreeManager.ListSessions' no-server case is (nil, nil))
 // is not an error: it produces a sessionsMsg, which the Update case below
 // applies with no status warning.
-func (m Model) sessionsLoadCmd() tea.Cmd {
+func (m Model) sessionsLoadCmd(gen int) tea.Cmd {
+	mgr := m.mgr
 	return func() tea.Msg {
-		sessions, err := m.mgr.ListSessions()
+		sessions, err := mgr.ListSessions()
 		if err != nil {
 			return statusMsg("failed to list sessions: " + err.Error())
 		}
-		return sessionsMsg(sessions)
+		return sessionsMsg{sessions: sessions, gen: gen}
 	}
 }
 
-func (m Model) tickCmd() tea.Cmd {
-	return tea.Tick(refreshInterval, func(t time.Time) tea.Msg {
-		return tickMsg(t)
+func (m Model) fastTickCmd() tea.Cmd {
+	return tea.Tick(fastRefreshInterval, func(t time.Time) tea.Msg {
+		return fastTickMsg(t)
+	})
+}
+
+func (m Model) slowTickCmd() tea.Cmd {
+	return tea.Tick(slowRefreshInterval, func(t time.Time) tea.Msg {
+		return slowTickMsg(t)
 	})
 }
 
@@ -520,20 +677,75 @@ func (m *Model) rebuildRows() {
 	m.cursor = tuicomponents.ClampCursor(leafIndices(m.rows), m.cursor)
 }
 
+// refreshView rebuilds the row list from the current m.statuses/m.sessions and
+// re-runs the once-per-launch cursor placement. Every handler that replaces or
+// layers onto either list ends with it, so the two refresh paths share this
+// tail instead of each repeating it.
+func (m *Model) refreshView() {
+	m.rebuildRows()
+	m.placeCursorOnActive()
+}
+
 // applyStatuses installs a refreshed worktree list, rebuilds the rows, and
-// re-derives the selected worktree's diff. Shared by the statusesMsg (periodic
-// refresh, delete-result) and deletedMsg handlers so they can't drift; it does
-// not touch m.status, leaving that to the caller (statusesMsg keeps whatever
-// status is up; deletedMsg sets a "removed:" confirmation first).
+// re-derives the selected worktree's diff. Shared by the statusesMsg (slow
+// refresh) and deletedMsg handlers so they can't drift; it does not touch
+// m.status, leaving that to the caller (statusesMsg keeps whatever status is
+// up; deletedMsg sets a "removed:" confirmation first).
 func (m Model) applyStatuses(statuses []worktree.WorktreeStatus) (tea.Model, tea.Cmd) {
 	m.statuses = statuses
 	m.loaded = true
-	m.rebuildRows()
-	m.placeCursorOnActive()
+	m.refreshView()
 	if sel, ok := m.selectedStatus(); ok {
 		return m, m.selectionChangedCmd(sel)
 	}
 	return m, nil
+}
+
+// applySessions installs a refreshed session list, the m.sessions counterpart
+// to applyStatuses. Shared by the two producers of a whole session list — the
+// fast tick's tmuxStateMsg and sessionsMsg — so neither grows its own copy of
+// the install-and-rebuild step. Both call it only after their gen stamp has
+// been checked.
+func (m *Model) applySessions(sessions []worktree.SessionStatus) {
+	m.sessions = sessions
+	m.sessionsLoaded = true
+	m.refreshView()
+}
+
+// dropWorktree returns statuses without the repo/name row, leaving the input
+// untouched. Removal by identity is what makes two overlapping deletes safe
+// (see deletedMsg).
+func dropWorktree(
+	statuses []worktree.WorktreeStatus,
+	repo, name string,
+) []worktree.WorktreeStatus {
+	var remaining []worktree.WorktreeStatus
+	for _, s := range statuses {
+		if s.Repo != repo || s.Name != name {
+			remaining = append(remaining, s)
+		}
+	}
+	return remaining
+}
+
+// dispatchSlowLoad is the only way a slow load leaves Update after startup:
+// bump stateGen so every load already in flight is invalidated, then stamp the
+// new load with the number that bump just produced — so this load is never the
+// one being invalidated. The 30-second tick uses it, and so does every
+// dashboard mutation that changes what git would enumerate (create, delete,
+// repair), which is what "your own actions never wait on the timer"
+// (ADR-0024 §2) means in code.
+func (m *Model) dispatchSlowLoad() tea.Cmd {
+	m.stateGen++
+	return m.loadCmd(m.stateGen)
+}
+
+// dispatchSessionsLoad is dispatchSlowLoad's m.sessions counterpart, for the
+// session mutations that need an immediate whole-list refresh rather than
+// waiting up to 3 seconds for the fast tick.
+func (m *Model) dispatchSessionsLoad() tea.Cmd {
+	m.sessionGen++
+	return m.sessionsLoadCmd(m.sessionGen)
 }
 
 // placeCursorOnActive points the cursor at the row for the tmux session
@@ -676,23 +888,63 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case statusesMsg:
-		return m.applyStatuses([]worktree.WorktreeStatus(msg))
+		if msg.gen != m.stateGen {
+			// A newer load or a mutation has already replaced this list.
+			// Dropping the older snapshot is the correct outcome even when the
+			// newer load then fails and only produces a statusMsg: the previous
+			// list stays on screen until the next tick retries, and an older
+			// snapshot is never the better answer.
+			return m, nil
+		}
+		return m.applyStatuses(msg.statuses)
+
+	case tmuxStateMsg:
+		// Pane half: a layer, not a replacement, so it applies unconditionally
+		// to whatever m.statuses holds right now. ApplyTo returns a new slice
+		// and treats its input as read-only, so this cannot disturb a list a
+		// slow load produced.
+		m.statuses = msg.layer.ApplyTo(m.statuses)
+		if msg.gen != m.sessionGen {
+			// Session half is stale — a newer scan, a session load, or a
+			// session mutation has superseded it. The pane half above still
+			// stands, so the rows still need rebuilding.
+			m.refreshView()
+			return m, nil
+		}
+		m.applySessions(msg.layer.SessionStatuses())
+		return m, nil
 
 	case sessionsMsg:
 		// Only reached on a successful ListSessions() (see sessionsLoadCmd);
 		// a failure produces a statusMsg instead, which never reaches this
 		// case and so never touches m.sessions - see that comment for why.
-		m.sessions = []worktree.SessionStatus(msg)
-		m.sessionsLoaded = true
-		m.rebuildRows()
-		m.placeCursorOnActive()
+		if msg.gen != m.sessionGen {
+			return m, nil
+		}
+		m.applySessions(msg.sessions)
 		return m, nil
 
 	case deletedMsg:
-		// Replace the transient "deleting…" status with a confirmation, then
-		// apply the refreshed (row-dropped) list the same way statusesMsg does.
+		// Replace the transient "deleting…" status with a confirmation, drop
+		// the row by identity, and re-read git.
+		//
+		// The local drop and the load are not redundant. The drop is what makes
+		// the row leave instantly and survive a second delete landing around it.
+		// The load is what catches everything else the removal changed:
+		// RemoveInRepo finishes with a repo-wide `git worktree prune`, which
+		// also clears every OTHER stale registration in that repo, and nothing
+		// but a fresh `git worktree list` notices those rows are gone. The load
+		// cannot resurrect the row it just removed — this message is only
+		// produced once the removal returned, so the enumeration starts after
+		// the worktree is already gone from git.
 		m.status = "removed: " + msg.name
-		return m.applyStatuses(msg.statuses)
+		load := m.dispatchSlowLoad()
+		updated, cmd := m.applyStatuses(dropWorktree(m.statuses, msg.repo, msg.name))
+		return updated, tea.Batch(cmd, load)
+
+	case repairDoneMsg:
+		m.status = msg.status
+		return m, m.dispatchSlowLoad()
 
 	case diffMsg:
 		m.diffContent = msg.content
@@ -710,11 +962,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		delete(m.prTitlePending, msg.path)
 		return m, nil
 
-	case tickMsg:
-		// Periodic refresh: reload statuses (re-deriving the selected
-		// worktree's diff via the statusesMsg handler) and sessions, kept in
-		// sync on the same 3s cadence.
-		return m, tea.Batch(m.loadCmd(), m.sessionsLoadCmd(), m.tickCmd())
+	case fastTickMsg:
+		// Fast refresh: one tmux scan, no git. It bumps sessionGen (its session
+		// half replaces m.sessions wholesale) and deliberately leaves stateGen
+		// alone — the pane half is a layer, and touching stateGen here would let
+		// a 3-second scan invalidate a slow git load already in flight.
+		m.sessionGen++
+		return m, tea.Batch(m.scanTmuxCmd(m.sessionGen), m.fastTickCmd())
+
+	case slowTickMsg:
+		// Slow refresh: the git enumeration. This is the safety net for
+		// worktrees created outside devgeta; anything the dashboard does itself
+		// dispatches its own load immediately (see dispatchSlowLoad).
+		return m, tea.Batch(m.dispatchSlowLoad(), m.slowTickCmd())
 
 	case statusMsg:
 		m.status = string(msg)
@@ -739,9 +999,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// switches-and-quits directly from that tea.Cmd without ever
 		// producing this message.
 		m.status = "session created: " + msg.name
-		return m, m.sessionsLoadCmd()
+		return m, m.dispatchSessionsLoad()
 
 	case sessionKilledMsg:
+		// Removal by identity plus a sessionGen bump, the same division of
+		// labor deletedMsg uses: the identity removal handles a second kill
+		// landing around this one, and the bump stops a scan that started
+		// before `tmux kill-session` finished from re-adding the row it saw.
+		m.sessionGen++
 		var updated []worktree.SessionStatus
 		for _, s := range m.sessions {
 			if s.Name != msg.name {
@@ -1202,19 +1467,26 @@ func (m Model) attachToWindowCmd(repo, name string) tea.Cmd {
 		// set, else derive from gc.Worktree.DefaultAI, else opencode - see
 		// ResolveLayout's doc comment for why the folded ResolveAIAlias
 		// output must NOT be passed here instead.
+		//
+		// Every outcome from here on reports a repairDoneMsg rather than a
+		// plain statusMsg: each one has either rebuilt a window or, on the
+		// failure path, pruned a stale git entry, and both need the git
+		// re-read the repairDoneMsg handler dispatches. The plain-attach
+		// failure above is not one of them — nothing was repaired there, so
+		// nothing changed for git to notice.
 		layout, err := worktree.ResolveLayout("", "", gc)
 		if err != nil {
-			return statusMsg("repair failed: " + err.Error())
+			return repairDoneMsg{status: "repair failed: " + err.Error()}
 		}
 		if err := repairFn(repo, name, layout); err != nil {
-			return statusMsg("repair failed: " + err.Error())
+			return repairDoneMsg{status: "repair failed: " + err.Error()}
 		}
 		session, ok = windowSessionFn(window)
 		if !ok {
-			return statusMsg("repair succeeded but window not found")
+			return repairDoneMsg{status: "repair succeeded but window not found"}
 		}
 		if err := attachFn(session, window); err != nil {
-			return statusMsg("attach after repair failed: " + err.Error())
+			return repairDoneMsg{status: "attach after repair failed: " + err.Error()}
 		}
 		return tea.QuitMsg{}
 	}
@@ -1240,24 +1512,18 @@ func (m Model) confirmThenRemove(
 		return key, nil
 	}
 
-	// Second press: execute
+	// Second press: execute. Only the identity crosses into the goroutine —
+	// m.statuses deliberately does not, so two overlapping removals can't each
+	// return a whole list and undo one another (see deletedMsg).
 	repo := sel.Repo
 	name := sel.Name
-	statuses := m.statuses
 	return "", func() tea.Msg {
 		if err := remove(repo, name); err != nil {
 			return statusMsg("delete failed: " + err.Error())
 		}
-		// Drop from statuses
-		var updated []worktree.WorktreeStatus
-		for _, s := range statuses {
-			if s.Repo != repo || s.Name != name {
-				updated = append(updated, s)
-			}
-		}
 		// deletedMsg (not statusesMsg) so the "deleting…" status is replaced
 		// with a "removed:" confirmation, not left lingering on the refreshed list.
-		return deletedMsg{name: name, statuses: updated}
+		return deletedMsg{repo: repo, name: name}
 	}
 }
 
@@ -1310,12 +1576,12 @@ func (m Model) handleRepair() (tea.Model, tea.Cmd) {
 		// gc.Worktree.DefaultLayout, then gc.Worktree.DefaultAI, then opencode.
 		layout, err := worktree.ResolveLayout("", "", gc)
 		if err != nil {
-			return statusMsg("repair failed: " + err.Error())
+			return repairDoneMsg{status: "repair failed: " + err.Error()}
 		}
 		if err := repairFn(repo, name, layout); err != nil {
-			return statusMsg("repair failed: " + err.Error())
+			return repairDoneMsg{status: "repair failed: " + err.Error()}
 		}
-		return statusMsg("repaired: " + name)
+		return repairDoneMsg{status: "repaired: " + name}
 	}
 }
 

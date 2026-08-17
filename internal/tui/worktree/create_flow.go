@@ -463,11 +463,17 @@ func (m Model) handleCreateSuccess(repoPath, name, warning string) (tea.Model, t
 	} else if !attach {
 		m.status = "worktree created: " + name
 	}
+	// The load is dispatched through dispatchSlowLoad so it both invalidates
+	// every slow load already in flight and carries the number that bump
+	// produced — otherwise the 30-second timer's older git snapshot, taken
+	// before this worktree existed, could land afterwards and hide the worktree
+	// you just created for another 30 seconds (ADR-0024 §2).
+	load := m.dispatchSlowLoad()
 	if !attach {
-		return m, m.loadCmd()
+		return m, load
 	}
 	repoSlug := filepath.Base(repoPath)
-	return m, tea.Batch(m.attachToWindowCmd(repoSlug, name), m.loadCmd())
+	return m, tea.Batch(m.attachToWindowCmd(repoSlug, name), load)
 }
 
 // renderRepoPickPopup builds the raw (uncentered) repo-picker popup content;

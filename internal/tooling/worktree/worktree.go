@@ -1094,7 +1094,11 @@ func (l StateLayer) ApplyTo(statuses []WorktreeStatus) []WorktreeStatus {
 		applied[i].TmuxWindow = windowName
 		applied[i].WindowActive = windowActive
 		applied[i].AgentState = aggregatePaneStates(panes)
-		applied[i].Panes = panes
+		// Cloned, not aliased: the dashboard keeps a layer alive across a
+		// command goroutine and applies it to a list it already holds, so a row
+		// that pointed at the layer's own slice would let two owners share one
+		// backing array. Structural rather than a documented convention.
+		applied[i].Panes = slices.Clone(panes)
 	}
 	return applied
 }
@@ -1117,7 +1121,9 @@ func (l StateLayer) SessionStatuses() []SessionStatus {
 			Name:       s.Name,
 			Attached:   s.Attached,
 			AgentState: aggregatePaneStates(panes),
-			Panes:      panes,
+			// Cloned for the same reason ApplyTo clones: a session row must not
+			// share a backing array with the layer it came from.
+			Panes: slices.Clone(panes),
 		})
 	}
 	return statuses

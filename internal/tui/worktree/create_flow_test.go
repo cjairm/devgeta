@@ -692,17 +692,23 @@ func TestCreateSuccessAttachFailureTriggersRefresh(t *testing.T) {
 	_, cmd := m.Update(created)
 	msgs := flattenCmd(cmd)
 
-	var gotStatus, gotStatuses bool
+	var gotFailure, gotStatuses bool
 	for _, mm := range msgs {
-		switch mm.(type) {
-		case statusMsg:
-			gotStatus = true
+		switch v := mm.(type) {
+		// The auto-repair's failure now reports a repairDoneMsg rather than a
+		// plain statusMsg, so its own handler can dispatch the git re-read the
+		// failed repair needs (it may have pruned a stale entry).
+		case repairDoneMsg:
+			gotFailure = strings.Contains(v.status, "repair failed")
 		case statusesMsg:
 			gotStatuses = true
 		}
 	}
-	if !gotStatus {
-		t.Error("expected a failure statusMsg when attach and repair both fail")
+	if !gotFailure {
+		t.Errorf(
+			"expected a repair-failure repairDoneMsg when attach and repair both fail, got %+v",
+			msgs,
+		)
 	}
 	if !gotStatuses {
 		t.Error("expected a statusesMsg refresh even when attach fails, per the cycle plan")

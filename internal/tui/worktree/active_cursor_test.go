@@ -157,13 +157,13 @@ func TestPlacementSurvivesSessionsMsgArrivingFirst(t *testing.T) {
 		{Name: "feature-c", Repo: "repo-b"},
 	}
 
-	mi, _ := m.Update(sessionsMsg(sessions))
+	mi, _ := m.Update(sessionsMsg{sessions: sessions})
 	m = mi.(Model)
 	if m.cursorPlaced {
 		t.Error("expected placement to wait for the worktree load before committing")
 	}
 
-	mi, _ = m.Update(statusesMsg(statuses))
+	mi, _ = m.Update(statusesMsg{statuses: statuses})
 	m = mi.(Model)
 
 	got := m.rows[m.cursor]
@@ -181,13 +181,13 @@ func TestPlacementSurvivesStatusesMsgArrivingFirst(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{{Name: "feature-a", Repo: "repo-a"}}
 	sessions := []worktree.SessionStatus{{Name: "alpha"}, {Name: "misc"}}
 
-	mi, _ := m.Update(statusesMsg(statuses))
+	mi, _ := m.Update(statusesMsg{statuses: statuses})
 	m = mi.(Model)
 	if m.cursorPlaced {
 		t.Error("expected placement to wait for the session load before giving up")
 	}
 
-	mi, _ = m.Update(sessionsMsg(sessions))
+	mi, _ = m.Update(sessionsMsg{sessions: sessions})
 	m = mi.(Model)
 
 	got := m.rows[m.cursor]
@@ -211,9 +211,9 @@ func TestPlacementLandsOnWorktreeWhenMixedWithSessions(t *testing.T) {
 		{Name: "feature-c", Repo: "repo-b"},
 	}
 
-	mi, _ := m.Update(sessionsMsg(sessions))
+	mi, _ := m.Update(sessionsMsg{sessions: sessions})
 	m = mi.(Model)
-	mi, _ = m.Update(statusesMsg(statuses))
+	mi, _ = m.Update(statusesMsg{statuses: statuses})
 	m = mi.(Model)
 
 	got := m.rows[m.cursor]
@@ -231,17 +231,17 @@ func TestPlacementIgnoresPeriodicRefreshAfterPlacing(t *testing.T) {
 	sessions := []worktree.SessionStatus{{Name: "alpha"}, {Name: "misc"}}
 	statuses := []worktree.WorktreeStatus{{Name: "feature-a", Repo: "repo-a"}}
 
-	mi, _ := m.Update(sessionsMsg(sessions))
+	mi, _ := m.Update(sessionsMsg{sessions: sessions})
 	m = mi.(Model)
-	mi, _ = m.Update(statusesMsg(statuses))
+	mi, _ = m.Update(statusesMsg{statuses: statuses})
 	m = mi.(Model)
 
 	m.moveCursor(-1) // user navigates away from the placed row
 	movedTo := m.cursor
 
-	mi, _ = m.Update(sessionsMsg(sessions))
+	mi, _ = m.Update(sessionsMsg{sessions: sessions})
 	m = mi.(Model)
-	mi, _ = m.Update(statusesMsg(statuses))
+	mi, _ = m.Update(statusesMsg{statuses: statuses})
 	m = mi.(Model)
 
 	if m.cursor != movedTo {
