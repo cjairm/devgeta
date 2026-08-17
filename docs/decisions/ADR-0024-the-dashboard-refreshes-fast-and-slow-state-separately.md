@@ -1,7 +1,7 @@
 # ADR-0024 — The dashboard refreshes fast and slow state separately
 
 **Date:** 2026-08-12
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
