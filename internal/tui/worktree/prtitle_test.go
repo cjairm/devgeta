@@ -61,6 +61,7 @@ func TestSelectionDispatchesPRTitleLookupWhenUncached(t *testing.T) {
 
 	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
+	m, cmd = resolveDiffDebounce(t, m, cmd)
 
 	msgs := flattenCmd(cmd)
 	var gotDiff, gotTitle bool
@@ -120,7 +121,9 @@ func TestSelectionUsesBranchFieldWhenPresent(t *testing.T) {
 		return ""
 	}
 
-	_, cmd := m.Update(statusesMsg{statuses: statuses})
+	updated, cmd := m.Update(statusesMsg{statuses: statuses})
+	m = updated.(Model)
+	_, cmd = resolveDiffDebounce(t, m, cmd)
 	flattenCmd(cmd) // runs the cmd, populating gotBranch via the stub
 
 	if gotBranch != "feat/real-branch" {
@@ -156,6 +159,7 @@ func TestPRTitleCacheKeyedByPathNotBranch(t *testing.T) {
 	// Select the first worktree and process its prTitleMsg.
 	updated, cmd := m.Update(statusesMsg{statuses: statuses})
 	m = updated.(Model)
+	m, cmd = resolveDiffDebounce(t, m, cmd)
 	for _, msg := range flattenCmd(cmd) {
 		if tm, ok := msg.(prTitleMsg); ok {
 			updated, _ = m.Update(tm)
@@ -172,6 +176,7 @@ func TestPRTitleCacheKeyedByPathNotBranch(t *testing.T) {
 	// Move to the second worktree (same branch name, different repo/path).
 	updated2, cmd2 := m.Update(tea.KeyPressMsg{Code: 'j'})
 	m = updated2.(Model)
+	m, cmd2 = resolveDiffDebounce(t, m, cmd2)
 	var sawSecondLookup bool
 	for _, msg := range flattenCmd(cmd2) {
 		if tm, ok := msg.(prTitleMsg); ok {
@@ -233,6 +238,7 @@ func TestCachedPathNotReLookedUp(t *testing.T) {
 
 	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
+	m, cmd = resolveDiffDebounce(t, m, cmd)
 
 	for _, msg := range flattenCmd(cmd) {
 		if _, ok := msg.(prTitleMsg); ok {
@@ -247,6 +253,7 @@ func TestCachedPathNotReLookedUp(t *testing.T) {
 	// dispatch a new lookup.
 	updated2, cmd2 := m.Update(tea.KeyPressMsg{Code: 'j'})
 	m = updated2.(Model)
+	m, cmd2 = resolveDiffDebounce(t, m, cmd2)
 	for _, msg := range flattenCmd(cmd2) {
 		if _, ok := msg.(prTitleMsg); ok {
 			t.Fatal("did not expect a prTitleMsg after moving to a still-cached path context")
@@ -271,7 +278,8 @@ func TestPendingPathNotReLookedUp(t *testing.T) {
 	}
 	m.prTitlePending["/tmp/a"] = true
 
-	_, cmd := m.Update(statusesMsg{statuses: testStatuses()})
+	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
+	_, cmd = resolveDiffDebounce(t, updated.(Model), cmd)
 	for _, msg := range flattenCmd(cmd) {
 		if _, ok := msg.(prTitleMsg); ok {
 			t.Fatal("did not expect a prTitleMsg for a path already pending")
@@ -295,6 +303,7 @@ func TestEmptyTitleCachedAndNotRetried(t *testing.T) {
 
 	updated, cmd := m.Update(statusesMsg{statuses: testStatuses()})
 	m = updated.(Model)
+	m, cmd = resolveDiffDebounce(t, m, cmd)
 	msgs := flattenCmd(cmd)
 
 	var titleMsg prTitleMsg
@@ -321,7 +330,8 @@ func TestEmptyTitleCachedAndNotRetried(t *testing.T) {
 
 	// Re-selecting (e.g. simulating a tick reload with the same statuses)
 	// must not call prTitleFn again.
-	_, cmd2 := m.Update(statusesMsg{statuses: testStatuses()})
+	updated3, cmd2 := m.Update(statusesMsg{statuses: testStatuses()})
+	_, cmd2 = resolveDiffDebounce(t, updated3.(Model), cmd2)
 	for _, msg := range flattenCmd(cmd2) {
 		if _, ok := msg.(prTitleMsg); ok {
 			t.Fatal("did not expect a prTitleMsg for a path already cached with an empty title")

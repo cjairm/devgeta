@@ -75,6 +75,39 @@ func flattenCmd(cmd tea.Cmd) []tea.Msg {
 	return []tea.Msg{msg}
 }
 
+// resolveDiffDebounceIn feeds the diffDebounceMsg found among msgs back through
+// Update, returning the model and the commands that landing produced — the diff
+// and PR-title work a handler used to return directly, before ADR-0024 §3 put
+// the 180 ms debounce in front of it. Every test that wants to see a diffMsg or
+// a prTitleMsg goes through here or through its convenience wrapper below.
+//
+// It takes already-flattened messages rather than the command, because a
+// tea.Tick command is single-use: its timer is created when the command is
+// built and drained the first time the command runs, so running the same batch
+// twice blocks forever. A test that needs to inspect one batch for two
+// different things must flatten it once and share the result.
+func resolveDiffDebounceIn(t *testing.T, m Model, msgs []tea.Msg) (Model, tea.Cmd) {
+	t.Helper()
+	for _, msg := range msgs {
+		if db, ok := msg.(diffDebounceMsg); ok {
+			updated, next := m.Update(db)
+			return updated.(Model), next
+		}
+	}
+	t.Fatal("expected a debounced diff to be armed")
+	return m, nil
+}
+
+// resolveDiffDebounce is resolveDiffDebounceIn for the common case where the
+// handler's command is inspected for nothing else. Running the command is what
+// waits out the debounce interval, which is what makes these tests evidence
+// that the debounce was armed rather than assertions against their own
+// assumptions.
+func resolveDiffDebounce(t *testing.T, m Model, cmd tea.Cmd) (Model, tea.Cmd) {
+	t.Helper()
+	return resolveDiffDebounceIn(t, m, flattenCmd(cmd))
+}
+
 func testStatuses() []worktree.WorktreeStatus {
 	return []worktree.WorktreeStatus{
 		{
@@ -2641,6 +2674,32 @@ func TestRenderHelpPopupIncludesWidthToggle(t *testing.T) {
 	}
 }
 
+// ctrl+r is bound in both key handlers (ADR-0024 §3), so both hint bars have to
+// advertise it — an undocumented refresh key is the same as no refresh key.
+func TestRenderHintIncludesDiffRefreshInBothModes(t *testing.T) {
+	m := makeTestModel(testStatuses())
+
+	if out := ansi.Strip(m.renderHint(200)); !strings.Contains(out, "^r refresh") {
+		t.Errorf("expected the list hint bar to include '^r refresh', got %q", out)
+	}
+
+	m.diffFocused = true
+	if out := ansi.Strip(m.renderHint(200)); !strings.Contains(out, "^r refresh") {
+		t.Errorf("expected the diff-focused hint bar to include '^r refresh', got %q", out)
+	}
+}
+
+func TestRenderHelpPopupIncludesDiffRefresh(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHelpPopup())
+	if !strings.Contains(out, "ctrl+r") {
+		t.Errorf("expected help popup to include the ctrl+r key, got:\n%s", out)
+	}
+	if !strings.Contains(out, "recompute the selected worktree's diff") {
+		t.Errorf("expected help popup to include the diff-refresh entry, got:\n%s", out)
+	}
+}
+
 // --- h/l pane-row collapse (ADR-0008 Step 8) ---
 
 // paneRowTestStatuses returns a single repo with one worktree whose window
@@ -2651,6 +2710,7 @@ func paneRowTestStatuses() []worktree.WorktreeStatus {
 		{
 			Name:       "feature-a",
 			Repo:       "repo-a",
+			Path:       "/tmp/a",
 			TmuxWindow: "wt-feature-a",
 			Panes: []tmux.PaneState{
 				{

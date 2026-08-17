@@ -34,7 +34,14 @@ const (
 	// performs, so your own actions never wait on the timer.
 	fastRefreshInterval = 3 * time.Second
 	slowRefreshInterval = 30 * time.Second
-	maxDiffBytes        = 64 * 1024
+	// diffDebounceInterval is ADR-0024 §3's navigation debounce: a selection
+	// change arms a timer instead of computing the diff straight away, and only
+	// the last change to survive the interval actually spends the five git
+	// processes a branch diff costs. Holding j through fifteen rows therefore
+	// costs one diff, not fifteen. 180 ms sits below the threshold at which the
+	// pane reads as lagging a deliberate single keypress.
+	diffDebounceInterval = 180 * time.Millisecond
+	maxDiffBytes         = 64 * 1024
 	// prTitleTimeout bounds the best-effort gh PR-title lookup so a hung or slow
 	// gh can't outlive one refresh interval and stall the diff pane.
 	prTitleTimeout = 2 * time.Second
@@ -87,6 +94,11 @@ type (
 		path  string // worktree path — the cache key (unique; branch names collide across repos)
 		title string
 	}
+	// diffDebounceMsg is the navigation debounce firing. It carries the diffGen
+	// its timer was armed with, so a later selection change (which bumps
+	// diffGen) invalidates every timer already ticking: only the last one still
+	// matching gets to spend a diff.
+	diffDebounceMsg struct{ gen int }
 )
 
 type (
@@ -187,6 +199,21 @@ type Model struct {
 	// worth having, because m.sessions is otherwise the one wholesale-replaced
 	// list in the model with no ordering rule at all.
 	sessionGen int
+	// diffGen orders the navigation debounce's timers against each other, and
+	// is a third counter rather than a reuse of either of the two above: those
+	// order wholesale replacements of a list, this one orders pending diffs, and
+	// folding them together would let a 3-second tmux scan cancel a diff the
+	// user's last keypress asked for. Update bumps it every time it arms a
+	// debounce; the timer carries the number it was armed with, and its handler
+	// only spends a diff while that number is still current.
+	diffGen int
+	// forceDiff asks the Update wrapper to recompute the diff even though the
+	// selection did not change. The wrapper is the single dispatcher of diff
+	// work (see Update), and it fires on a CHANGED selection — so the two paths
+	// ADR-0024 §3 requires to refresh an unchanged one, the slow git load and
+	// the explicit ctrl+r, raise this flag instead of dispatching for
+	// themselves. The wrapper clears it as it consumes it.
+	forceDiff bool
 
 	diffContent   string
 	diffFiles     int
@@ -602,19 +629,46 @@ func (m *Model) maybePRTitleCmd(s worktree.WorktreeStatus) tea.Cmd {
 	return m.prTitleCmd(branchLabel(s), s.Path)
 }
 
-// selectionChangedCmd builds the batch of commands to run whenever the
-// selected worktree changes (statusesMsg reload, or j/k moving the cursor):
-// always recompute the diff, and additionally kick off a PR-title lookup
+// selectionChangedCmd builds the batch of commands that give the diff pane its
+// contents: recompute the diff, and additionally kick off a PR-title lookup
 // when s's path has no cache entry and none is pending. Pointer receiver is
-// required so maybePRTitleCmd's pending-flag mutation lands on the
-// addressable local m in the three call sites (all of which operate on a
-// value-receiver Update/handleKey's local m before returning it).
+// required so maybePRTitleCmd's pending-flag mutation lands on the addressable
+// local m in its call site.
+//
+// Its one caller is the diffDebounceMsg handler. Everything that wants a diff
+// goes through the debounce (see Update), so this is never dispatched straight
+// off a keypress or a load.
 func (m *Model) selectionChangedCmd(sel worktree.WorktreeStatus) tea.Cmd {
 	cmds := []tea.Cmd{m.computeDiffCmd(sel)}
 	if c := m.maybePRTitleCmd(sel); c != nil {
 		cmds = append(cmds, c)
 	}
 	return tea.Batch(cmds...)
+}
+
+// selectedPath is the identity of what the diff pane is currently about: the
+// selected worktree's path, or "" when the cursor sits on anything that has no
+// diff (a repo header, a session, a pane). Update compares it either side of a
+// handler to notice a selection change without enumerating the keys that cause
+// one, and the diffMsg handler compares an arriving diff against it to drop one
+// that belongs to a row the user has already left.
+func (m Model) selectedPath() string {
+	if sel, ok := m.selectedStatus(); ok {
+		return sel.Path
+	}
+	return ""
+}
+
+// armDiffDebounce starts (or restarts) the navigation debounce: bump diffGen so
+// every timer already ticking is invalidated, then stamp the new timer with the
+// number that bump produced, so it is never the one being invalidated. Same
+// shape as dispatchSlowLoad's bump-then-stamp, for the same reason.
+func (m *Model) armDiffDebounce() tea.Cmd {
+	m.diffGen++
+	gen := m.diffGen
+	return tea.Tick(diffDebounceInterval, func(time.Time) tea.Msg {
+		return diffDebounceMsg{gen: gen}
+	})
 }
 
 func (m Model) selectedStatus() (worktree.WorktreeStatus, bool) {
@@ -673,19 +727,22 @@ func (m *Model) refreshView() {
 	m.placeCursorOnActive()
 }
 
-// applyStatuses installs a refreshed worktree list, rebuilds the rows, and
-// re-derives the selected worktree's diff. Shared by the statusesMsg (slow
-// refresh) and deletedMsg handlers so they can't drift; it does not touch
+// applyStatuses installs a refreshed worktree list, rebuilds the rows, and asks
+// for the selected worktree's diff to be re-derived. Shared by the statusesMsg
+// (slow refresh) and deletedMsg handlers so they can't drift; it does not touch
 // m.status, leaving that to the caller (statusesMsg keeps whatever status is
 // up; deletedMsg sets a "removed:" confirmation first).
-func (m Model) applyStatuses(statuses []worktree.WorktreeStatus) (tea.Model, tea.Cmd) {
+//
+// It raises forceDiff rather than dispatching the diff itself: the slow load is
+// one of ADR-0024 §3's refresh triggers even when the selection is unchanged,
+// and Update is the single dispatcher of diff work. Dispatching here as well
+// would produce two diffs for the same path whenever a load also moved the
+// cursor.
+func (m *Model) applyStatuses(statuses []worktree.WorktreeStatus) {
 	m.statuses = statuses
 	m.loaded = true
 	m.refreshView()
-	if sel, ok := m.selectedStatus(); ok {
-		return m, m.selectionChangedCmd(sel)
-	}
-	return m, nil
+	m.forceDiff = true
 }
 
 // applySessions installs a refreshed session list, the m.sessions counterpart
@@ -839,8 +896,41 @@ func (m Model) leftPaneTarget() int {
 	return min(defaultLeftPaneWidth, m.safeMaxLeft())
 }
 
-// Update implements tea.Model.
+// Update implements tea.Model. It is a thin wrapper around update, which holds
+// the actual message handling, and its only job is to notice that the selected
+// worktree changed and arm the diff debounce for it.
+//
+// The check is structural — the selected path read before the handler ran,
+// compared against the same read after — rather than a list of the keys that
+// move the cursor, because that list is unmaintainable and was already wrong:
+// h and l relocate the cursor by identity after a rebuild, z sends it to row 0,
+// every typed filter rune re-clamps it, esc clears the filter and rebuilds every
+// row, a bracketed paste does the same in one shot with no key involved at all,
+// and placeCursorOnActive moves it from a message handler. Any key added later
+// is covered for free. CLAUDE.md §4: make the class of mistake structurally
+// impossible rather than documenting a convention someone has to remember.
+//
+// Being the single dispatcher is the other half of the job: no handler arms its
+// own diff, so a slow load that also moves the cursor cannot produce two diffs
+// for one path. The paths that must refresh an UNCHANGED selection say so with
+// forceDiff, which this consumes and clears.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	before := m.selectedPath()
+
+	updated, cmd := m.update(msg)
+	next, ok := updated.(Model)
+	if !ok {
+		return updated, cmd
+	}
+
+	if next.selectedPath() == before && !next.forceDiff {
+		return next, cmd
+	}
+	next.forceDiff = false
+	return next, tea.Batch(cmd, next.armDiffDebounce())
+}
+
+func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
 	case tea.WindowSizeMsg:
@@ -883,7 +973,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// snapshot is never the better answer.
 			return m, nil
 		}
-		return m.applyStatuses(msg.statuses)
+		m.applyStatuses(msg.statuses)
+		return m, nil
 
 	case tmuxStateMsg:
 		// Pane half: a layer, not a replacement, so it applies unconditionally
@@ -926,15 +1017,37 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the worktree is already gone from git.
 		m.status = "removed: " + msg.name
 		load := m.dispatchSlowLoad()
-		updated, cmd := m.applyStatuses(dropWorktree(m.statuses, msg.repo, msg.name))
-		return updated, tea.Batch(cmd, load)
+		m.applyStatuses(dropWorktree(m.statuses, msg.repo, msg.name))
+		return m, load
 
 	case repairDoneMsg:
 		m.status = msg.status
 		load := m.dispatchSlowLoad()
 		return m, load
 
+	case diffDebounceMsg:
+		// The debounce elapsed. Spend the diff only if no newer selection change
+		// has armed a timer since this one (ADR-0024 §3): holding j through
+		// fifteen rows arms fifteen timers, and fourteen of them land here with a
+		// superseded generation and cost nothing. The PR-title lookup rides along
+		// for the same reason — otherwise the same navigation fires a burst of
+		// `gh` calls.
+		if msg.gen != m.diffGen {
+			return m, nil
+		}
+		if sel, ok := m.selectedStatus(); ok {
+			return m, m.selectionChangedCmd(sel)
+		}
+		return m, nil
+
 	case diffMsg:
+		// Drop a diff for a row the user has already left. A diff takes ~0.16s of
+		// git, so a fast enough j/k outruns one in flight; without this check the
+		// pane would render another worktree's changes under the selected row's
+		// name until something recomputed it.
+		if msg.path != m.selectedPath() {
+			return m, nil
+		}
 		m.diffContent = msg.content
 		m.diffFiles = msg.files
 		m.diffAdded = msg.added
@@ -1125,20 +1238,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// fuzzy picker. Safe here in a way it isn't inside the picker or the filter
 	// field: this handler only runs when no text input has focus, so there's no
 	// query for a bare keystroke to compete with.
+	// Neither of these asks for a diff: they just move the cursor, and Update
+	// notices the selection changed on the way out and arms the debounce. Same
+	// for h, l, z, and the filter below.
 	case "j", "down":
 		m.diffScroll = 0
 		m.moveCursor(1)
-		if sel, ok := m.selectedStatus(); ok {
-			return m, m.selectionChangedCmd(sel)
-		}
 		return m, nil
 
 	case "k", "up":
 		m.diffScroll = 0
 		m.moveCursor(-1)
-		if sel, ok := m.selectedStatus(); ok {
-			return m, m.selectionChangedCmd(sel)
-		}
 		return m, nil
 
 	case "h":
@@ -1286,6 +1396,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "N":
 		return m.handleNewWorktreeWithLayoutPick()
 
+	case "ctrl+r":
+		return m.refreshDiff()
+
 	case "ctrl+d":
 		m.diffScroll = min(m.diffScroll+m.diffPageSize(), m.maxDiffScroll())
 		return m, nil
@@ -1295,6 +1408,21 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	return m, nil
+}
+
+// refreshDiff is ctrl+r: buy back the staleness ADR-0024 §3 accepts when it
+// takes the diff off the fast tick, by recomputing it for the CURRENT selection
+// on demand. It returns no command of its own — the Update wrapper is the single
+// dispatcher and picks forceDiff up on the way out, so the recompute rides the
+// same 180 ms debounce as navigation does.
+//
+// It deliberately does not dispatch the slow git load. That enumerates every
+// known repo (one git process each) and stays the 30-second tick's and the
+// mutations' job; what a reader watching an agent write files wants back from
+// this key is the diff, not the worktree list.
+func (m Model) refreshDiff() (tea.Model, tea.Cmd) {
+	m.forceDiff = true
 	return m, nil
 }
 
@@ -1310,6 +1438,12 @@ func (m Model) handleDiffKey(key string) (tea.Model, tea.Cmd) {
 
 	case "?":
 		m.showHelp = true
+
+	// Every key routes here while the diff pane is focused, and this is where a
+	// reader most wants the refresh — so ctrl+r has to be bound in both handlers,
+	// not just the list's.
+	case "ctrl+r":
+		return m.refreshDiff()
 
 	case "j", "down":
 		m.diffScroll = min(m.diffScroll+1, m.maxDiffScroll())
@@ -2023,6 +2157,7 @@ func (m Model) renderHint(width int) string {
 			{Key: "^d/^u", Desc: "page"},
 			{Key: "[/]", Desc: "file"},
 			{Key: "g/G", Desc: "top/end"},
+			{Key: "^r", Desc: "refresh"},
 			{Key: "?", Desc: "help"},
 			{Key: "q", Desc: "quit"},
 		}
@@ -2042,6 +2177,7 @@ func (m Model) renderHint(width int) string {
 		{Key: "s", Desc: "new session"},
 		{Key: "spc", Desc: "diff"},
 		{Key: "e", Desc: "width"},
+		{Key: "^r", Desc: "refresh"},
 		{Key: "j/k", Desc: "move"},
 		{Key: "h/l", Desc: "fold"},
 		{Key: "z", Desc: "all"},
@@ -2124,6 +2260,7 @@ func (m Model) renderHelpPopup() string {
 		{Key: "/", Desc: "filter  esc:clear  enter:keep"},
 		{Key: "space", Desc: "focus diff pane (esc returns to the list)"},
 		{Key: "e", Desc: "toggle left pane width (default / double)"},
+		{Key: "ctrl+r", Desc: "recompute the selected worktree's diff now"},
 		{Key: "ctrl+d / ctrl+u", Desc: "scroll diff down / up"},
 		{Key: "[ / ]", Desc: "previous / next file (diff focused)"},
 		{Key: "g / G", Desc: "diff top / bottom (diff focused)"},

@@ -364,6 +364,322 @@ func TestTmuxStateMsgNeverProducesDiffMsg(t *testing.T) {
 	}
 }
 
+// --- The diff: debounce, staleness, and the explicit refresh key ---
+
+// assertDebouncedDiff asserts that the messages a handler's command produced
+// include the navigation debounce, that the cursor landed on wantPath, and that
+// letting the debounce elapse computes the diff for that path (or, when
+// wantPath is "", computes nothing — the selected row has no diff).
+func assertDebouncedDiff(t *testing.T, m Model, msgs []tea.Msg, wantPath string) {
+	t.Helper()
+
+	after, next := resolveDiffDebounceIn(t, m, msgs)
+	if got := after.selectedPath(); got != wantPath {
+		t.Fatalf(
+			"cursor landed on %q, want %q — the test's setup no longer moves it",
+			got,
+			wantPath,
+		)
+	}
+
+	var got string
+	var found bool
+	for _, msg := range flattenCmd(next) {
+		if d, ok := msg.(diffMsg); ok {
+			got, found = d.path, true
+		}
+	}
+	switch {
+	case wantPath == "" && found:
+		t.Errorf("nothing diffable is selected, yet the debounce computed a diff for %q", got)
+	case wantPath != "" && !found:
+		t.Errorf("expected the debounce to compute a diff for %q, got none", wantPath)
+	case found && got != wantPath:
+		t.Errorf("debounce computed a diff for %q, want the newly selected %q", got, wantPath)
+	}
+}
+
+// Every one of these paths moves the cursor and returns (m, nil) — none of them
+// asks for a diff. They are covered only because Update compares the selected
+// path either side of the handler, which is the whole point of doing the check
+// structurally: a list of "keys that move the cursor" would have missed the
+// pasted filter entirely, and would go stale the next time a key is added.
+//
+// Without the wrapper each of these would leave the diff pane showing the
+// previous row's changes for up to 30 seconds, since ADR-0024 took the diff off
+// the 3-second tick.
+func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
+	// filterFor activates the filter and types text into it, so a case can start
+	// from a filtered list. FilterField's text is unexported, so it can only be
+	// set by driving the same keys a user would.
+	filterFor := func(t *testing.T, m Model, text string) Model {
+		t.Helper()
+		updated, _ := m.Update(tea.KeyPressMsg{Code: '/'})
+		m = updated.(Model)
+		for _, r := range text {
+			updated, _ = m.Update(tea.KeyPressMsg{Code: r})
+			m = updated.(Model)
+		}
+		return m
+	}
+
+	cases := []struct {
+		name     string
+		setup    func(t *testing.T) Model
+		msg      tea.Msg
+		wantPath string
+	}{
+		{
+			// model.go's h, priority 1: the pane row the cursor sat on disappears,
+			// so the cursor is relocated onto the parent worktree by identity.
+			name: "h folds a worktree's panes and lands on the worktree",
+			setup: func(t *testing.T) Model {
+				// paneRowTestStatuses is the package's existing two-stateful-pane
+				// fixture (testStatuses has no panes, so it can only exercise the
+				// repo-level fold).
+				m := makeTestModel(paneRowTestStatuses())
+				m.cursor = 2 // the first pane row
+				return m
+			},
+			msg:      tea.KeyPressMsg{Code: 'h'},
+			wantPath: "/tmp/a",
+		},
+		{
+			// model.go's h, priority 3: collapsing the repo leaves only its header.
+			name: "h collapses a repo and lands on its header",
+			setup: func(t *testing.T) Model {
+				return makeTestModel(testStatuses()) // cursor on repo-a/feature-a
+			},
+			msg:      tea.KeyPressMsg{Code: 'h'},
+			wantPath: "",
+		},
+		{
+			// model.go's l, priority 2: the cursor moves to a different repo's
+			// first worktree, so the diff pane must follow it.
+			name: "l expands a repo and lands on its first worktree",
+			setup: func(t *testing.T) Model {
+				m := makeTestModel(testStatuses())
+				m.collapsed["repo-b"] = true
+				m.rebuildRows()
+				m.cursor = 3 // the collapsed repo-b header
+				return m
+			},
+			msg:      tea.KeyPressMsg{Code: 'l'},
+			wantPath: "/tmp/x",
+		},
+		{
+			name: "z collapses everything and sends the cursor to row 0",
+			setup: func(t *testing.T) Model {
+				return makeTestModel(testStatuses())
+			},
+			msg:      tea.KeyPressMsg{Code: 'z'},
+			wantPath: "",
+		},
+		{
+			// One typed rune re-runs buildRows over a smaller list, and
+			// ClampCursor slides the cursor onto whatever survived.
+			name: "typing into the filter re-clamps the cursor",
+			setup: func(t *testing.T) Model {
+				m := makeTestModel(testStatuses())
+				m.filter.Active = true
+				return m
+			},
+			msg:      tea.KeyPressMsg{Code: 'x'},
+			wantPath: "/tmp/x",
+		},
+		{
+			// esc clears the text and rebuilds every row, so the cursor's index
+			// now means a completely different row.
+			name: "esc clears the filter and rebuilds every row",
+			setup: func(t *testing.T) Model {
+				return filterFor(t, makeTestModel(testStatuses()), "x")
+			},
+			msg:      tea.KeyPressMsg{Code: tea.KeyEscape},
+			wantPath: "/tmp/a",
+		},
+		{
+			// The path no key list could ever have caught: a bracketed paste
+			// never reaches handleKey at all.
+			name: "pasting into the filter moves the cursor with no key involved",
+			setup: func(t *testing.T) Model {
+				m := makeTestModel(testStatuses())
+				m.filter.Active = true
+				return m
+			},
+			msg:      tea.PasteMsg{Content: "x"},
+			wantPath: "/tmp/x",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := tc.setup(t)
+			m.mgr = newTestWorktreeManager()
+			before := m.selectedPath()
+
+			updated, cmd := m.Update(tc.msg)
+			m = updated.(Model)
+
+			if m.selectedPath() == before {
+				t.Fatalf(
+					"this case is meant to move the cursor off %q but it did not; the setup needs fixing, not the debounce",
+					before,
+				)
+			}
+			assertDebouncedDiff(t, m, flattenCmd(cmd), tc.wantPath)
+		})
+	}
+}
+
+// The debounce only earns its keep if the moves it coalesces cost nothing:
+// holding j through fifteen rows arms fifteen timers, and fourteen of them must
+// land on a superseded generation and compute no diff at all.
+func TestOnlyTheLastOfSeveralRapidMovesComputesADiff(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+
+	updated, firstCmd := m.Update(tea.KeyPressMsg{Code: 'j'}) // → repo-a/feature-b
+	m = updated.(Model)
+	updated, secondCmd := m.Update(tea.KeyPressMsg{Code: 'j'}) // → repo-b/feature-x
+	m = updated.(Model)
+
+	// The first move's timer fires after the second move already re-armed.
+	var first diffDebounceMsg
+	var armed bool
+	for _, msg := range flattenCmd(firstCmd) {
+		if db, ok := msg.(diffDebounceMsg); ok {
+			first, armed = db, true
+		}
+	}
+	if !armed {
+		t.Fatal("the first j must arm a debounce")
+	}
+	updated, stale := m.Update(first)
+	m = updated.(Model)
+	for _, msg := range flattenCmd(stale) {
+		if d, ok := msg.(diffMsg); ok {
+			t.Errorf("a superseded debounce must compute nothing, got a diff for %q", d.path)
+		}
+	}
+
+	assertDebouncedDiff(t, m, flattenCmd(secondCmd), "/tmp/x")
+}
+
+// A diff costs ~0.16s of git, so navigation outruns one in flight. Rendering it
+// anyway would put another worktree's changes under the selected row's name.
+func TestDiffForAnUnselectedRowIsDropped(t *testing.T) {
+	m := makeTestModel(testStatuses()) // cursor on repo-a/feature-a, /tmp/a
+	m.mgr = newTestWorktreeManager()
+
+	updated, _ := m.Update(diffMsg{path: "/tmp/b", content: "feature-b's changes", files: 3})
+	m = updated.(Model)
+	if m.diffContent != "" || m.diffPath != "" {
+		t.Errorf(
+			"a diff for a row the cursor already left must not be rendered, got path=%q content=%q",
+			m.diffPath,
+			m.diffContent,
+		)
+	}
+
+	updated, _ = m.Update(diffMsg{path: "/tmp/a", content: "feature-a's changes", files: 1})
+	m = updated.(Model)
+	if m.diffContent != "feature-a's changes" || m.diffPath != "/tmp/a" {
+		t.Errorf(
+			"the selected row's own diff must still be applied, got path=%q content=%q",
+			m.diffPath,
+			m.diffContent,
+		)
+	}
+}
+
+// The slow load is one of ADR-0024 §3's three refresh triggers, and it has to
+// work when nothing moved — that is the ordinary case, since a 30-second
+// enumeration usually finds the same list. Update only fires on a CHANGED
+// selection, so applyStatuses raises forceDiff to ask for one anyway.
+func TestSlowLoadRefreshesTheDiffForAnUnchangedSelection(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.mgr = newTestWorktreeManager()
+	before := m.selectedPath()
+
+	mi, _ := m.Update(slowTickMsg(time.Now()))
+	m = mi.(Model)
+
+	mi, cmd := m.Update(statusesMsg{statuses: testStatuses(), gen: m.stateGen})
+	m = mi.(Model)
+
+	if m.selectedPath() != before {
+		t.Fatalf(
+			"this test needs the selection to stay put, got %q (was %q)",
+			m.selectedPath(),
+			before,
+		)
+	}
+	if m.forceDiff {
+		t.Error(
+			"Update must clear forceDiff as it consumes it, or every later message would re-diff",
+		)
+	}
+	assertDebouncedDiff(t, m, flattenCmd(cmd), before)
+}
+
+// ctrl+r is what buys back the staleness ADR-0024 accepts when it takes the
+// diff off the 3-second tick, so it has to work on an unchanged selection —
+// and it has to be bound in both key handlers, because while the diff pane is
+// focused every key routes through handleDiffKey instead.
+//
+// What it must NOT do is dispatch the slow git load: that enumerates every
+// known repo, which is exactly the per-tick cost the ADR removed.
+func TestCtrlRRefreshesTheDiffWithoutASlowGitLoad(t *testing.T) {
+	cases := []struct {
+		name        string
+		diffFocused bool
+	}{
+		{name: "list", diffFocused: false},
+		{name: "diff focused", diffFocused: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := makeTestModel(testStatuses())
+			m.mgr = newTestWorktreeManager()
+			m.diffFocused = tc.diffFocused
+			before := m.selectedPath()
+			stateGen := m.stateGen
+
+			mi, cmd := m.Update(tea.KeyPressMsg{Code: 'r', Mod: tea.ModCtrl})
+			m = mi.(Model)
+
+			if m.selectedPath() != before {
+				t.Fatalf(
+					"ctrl+r must not move the cursor, got %q (was %q)",
+					m.selectedPath(),
+					before,
+				)
+			}
+			if m.forceDiff {
+				t.Error("Update must clear forceDiff as it consumes it")
+			}
+			if m.stateGen != stateGen {
+				t.Errorf(
+					"ctrl+r must not dispatch the slow git load (it bumped stateGen to %d); that stays the 30s tick's job",
+					m.stateGen,
+				)
+			}
+			// Flattened once and shared: a tea.Tick command cannot be run twice
+			// (see resolveDiffDebounceIn).
+			msgs := flattenCmd(cmd)
+			for _, msg := range msgs {
+				if _, ok := msg.(statusesMsg); ok {
+					t.Error(
+						"ctrl+r is a diff-only refresh and must not re-enumerate every known repo",
+					)
+				}
+			}
+
+			assertDebouncedDiff(t, m, msgs, before)
+		})
+	}
+}
+
 // --- Repair ---
 
 // Both repair outcomes need the git re-read, for different reasons: a success
