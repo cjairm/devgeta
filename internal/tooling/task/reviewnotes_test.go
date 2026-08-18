@@ -500,6 +500,76 @@ func TestReviewNotesMarksStaleAfterDirtyEdit(t *testing.T) {
 	}
 }
 
+// A rejection renders its own marker, and keeps it after the cited file changes.
+// This is what a reviewer actually reads, so it is asserted at this layer too:
+// the manager can exempt a rejection all it likes, but if the rendered line still
+// said "re-check before trusting it" the next round would re-litigate a settled
+// decision anyway. The instruction the marker carries has to match the reviewer
+// prompts' own rule about a rejected entry.
+func TestReviewNotesMarksRejectionStandingThroughAnEdit(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	path := filepath.Join(root, "client.go")
+	if err := os.WriteFile(path, []byte("batched\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := tm.ReviewNoteOpen("", "", "client.go:42", "N+1 query"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "", "n1", "rejected", "", "intentional, capped by config.MaxBatch",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("batched\nunrelated fix\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	notes, err := tm.ReviewNotes("", "", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(notes, "STANDING") {
+		t.Fatalf("a rejection should render its own marker:\n%s", notes)
+	}
+	if strings.Contains(notes, "STALE") {
+		t.Errorf("an edit to the cited file must not stale a rejection:\n%s", notes)
+	}
+	if !strings.Contains(notes, "re-read the reason") {
+		t.Errorf("the marker should say what to do instead of re-checking:\n%s", notes)
+	}
+}
+
+// A multi-paragraph settle note reaches the reader whole, and the entry keeps the
+// freshness marker that tells the next round it is settled. Both were lost to the
+// same parse bug: the blank line between paragraphs ended the entry, dropping the
+// rest of the note and the stamp behind it.
+func TestReviewNotesKeepsMultiParagraphNoteAndFreshness(t *testing.T) {
+	tm, root := newJournalSetup(t)
+	if err := os.WriteFile(filepath.Join(root, "store.go"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if _, err := tm.ReviewNoteOpen("", "", "store.go:12", "write is not atomic"); err != nil {
+		t.Fatalf("ReviewNoteOpen: %v", err)
+	}
+	if _, err := tm.ReviewNoteSettle(
+		"", "", "n1", "fixed", "",
+		"switched to a temp file plus rename.\n\nran: go test ./pkg/files — all green.",
+	); err != nil {
+		t.Fatalf("ReviewNoteSettle: %v", err)
+	}
+
+	notes, err := tm.ReviewNotes("", "", false, false)
+	if err != nil {
+		t.Fatalf("ReviewNotes: %v", err)
+	}
+	if !strings.Contains(notes, "all green") {
+		t.Errorf("the second paragraph of the settle note was dropped:\n%s", notes)
+	}
+	if !strings.Contains(notes, "[fresh]") {
+		t.Errorf("the entry lost the stamp that makes it judgeable:\n%s", notes)
+	}
+}
+
 func TestReviewNoteSettleByIDMovesEntryAndEchoesID(t *testing.T) {
 	tm, _ := newJournalSetup(t)
 	if _, err := tm.ReviewNoteOpen("", "", "", "Does retry reuse the outer context?"); err != nil {

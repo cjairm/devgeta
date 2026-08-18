@@ -740,29 +740,75 @@ func TestSettleByIDSucceedsWhenTheCitedFileWasDeleted(t *testing.T) {
 	}
 }
 
-// A rejected finding is settled without the code changing, so it reads fresh —
-// and the reason travels with it, which is what a later reviewer re-reads
-// before overriding the decision.
-func TestSettleByIDRejectedKeepsReasonAndReadsFresh(t *testing.T) {
+// A rejected finding carries its reason, and reads STANDING rather than fresh or
+// stale — ADR-0012 §2 exempts a rejection from mechanical staleness, because the
+// decision is about the reason it states and not about the bytes it cites.
+//
+// The edit in the middle is the case the exemption exists for, and the one that
+// was broken: findings cluster in a few files, so the first fix of any round
+// changes a file that other findings cite. Reading the rejection as stale there
+// told the next reviewer to "re-check before trusting it" while the prompt on the
+// same screen said a rejection does not expire that way — and re-litigating
+// settled decisions is what the journal exists to stop.
+func TestVerdictRejectedStandsThroughAnEditToTheCitedFile(t *testing.T) {
 	fr := newFakeRepo(t)
 	fr.write("client.go", "batched\n")
-	id, err := fr.mgr.Open(fr.repoDir, "feat", "client.go:42", "N+1 query")
+	rejected, err := fr.mgr.Open(fr.repoDir, "feat", "client.go:42", "N+1 query")
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	if err := fr.mgr.SettleByID(
-		fr.repoDir, "feat", id, ResolutionRejected, "intentional, capped by config.MaxBatch",
+		fr.repoDir, "feat", rejected, ResolutionRejected, "intentional, capped by config.MaxBatch",
 	); err != nil {
-		t.Fatalf("SettleByID: %v", err)
+		t.Fatalf("SettleByID rejected: %v", err)
+	}
+	// A second finding in the SAME file, settled fixed: it is the control, and it
+	// must still go stale below. The exemption is for rejections only, not a
+	// weakening of staleness itself.
+	fixed, err := fr.mgr.Open(fr.repoDir, "feat", "client.go:80", "unchecked error")
+	if err != nil {
+		t.Fatalf("Open fixed: %v", err)
+	}
+	if err := fr.mgr.SettleByID(
+		fr.repoDir, "feat", fixed, ResolutionFixed, "error is returned now",
+	); err != nil {
+		t.Fatalf("SettleByID fixed: %v", err)
 	}
 
-	after, _ := fr.mgr.Load(fr.repoDir, "feat")
-	e := after.find(id)
+	before, _ := fr.mgr.Load(fr.repoDir, "feat")
+	e := before.find(rejected)
 	if e.Answer != "intentional, capped by config.MaxBatch" {
 		t.Errorf("the reason must survive: %q", e.Answer)
 	}
-	if got := fr.mgr.Verdict(fr.repoDir, *e); got != FreshnessFresh {
-		t.Errorf("unchanged code should read fresh, got %q", got)
+	if got := fr.mgr.Verdict(fr.repoDir, *e); got != FreshnessStanding {
+		t.Errorf("a rejection should read standing, got %q", got)
+	}
+
+	fr.write("client.go", "batched\nan unrelated line added while fixing something else\n")
+
+	after, _ := fr.mgr.Load(fr.repoDir, "feat")
+	if got := fr.mgr.Verdict(fr.repoDir, *after.find(rejected)); got != FreshnessStanding {
+		t.Errorf("an edit to the cited file must not expire a rejection, got %q", got)
+	}
+	if got := fr.mgr.Verdict(fr.repoDir, *after.find(fixed)); got != FreshnessStale {
+		t.Errorf("a fixed entry in the same file must still go stale, got %q", got)
+	}
+}
+
+// The exemption is the resolution's, not the stamp's: a rejection reads standing
+// whether or not it cites a path, so a pathless one does not fall back to the
+// unmarked, ruleless state a dateless entry renders as.
+func TestVerdictPathlessRejectionStillStands(t *testing.T) {
+	fr := newFakeRepo(t)
+	id, err := fr.mgr.SettleDirect(
+		fr.repoDir, "feat", ResolutionRejected, "", "not worth an ADR: it is one call site",
+	)
+	if err != nil {
+		t.Fatalf("SettleDirect: %v", err)
+	}
+	j, _ := fr.mgr.Load(fr.repoDir, "feat")
+	if got := fr.mgr.Verdict(fr.repoDir, *j.find(id)); got != FreshnessStanding {
+		t.Errorf("a pathless rejection should read standing, got %q", got)
 	}
 }
 

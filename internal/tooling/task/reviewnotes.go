@@ -217,6 +217,9 @@ func renderNotes(jm *reviewjournal.Manager, j *reviewjournal.Journal) string {
 					" — re-check before trusting it]")
 			case reviewjournal.FreshnessFresh:
 				sb.WriteString(" [fresh]")
+			case reviewjournal.FreshnessStanding:
+				sb.WriteString(" [STANDING: expires when the reason below stops holding," +
+					" not when the file changes — re-read the reason before overriding it]")
 			}
 			fmt.Fprintf(&sb, "\n  %s\n", indentBlock(e.Note))
 			if e.Answer != "" {

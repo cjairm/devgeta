@@ -237,6 +237,24 @@ var entryHead = regexp.MustCompile(
 // stampLine matches the trailing stamp: "(blob X, head Y)" or "(head Y)".
 var stampLine = regexp.MustCompile(`^\((?:blob ([0-9a-f]+), )?head ([0-9a-f]+)\)$`)
 
+// isEntrySeparator reports whether a line ends the entry being parsed.
+//
+// Only a line with NO characters separates. A line that is empty merely after
+// trimming does not, and the distinction is load-bearing rather than pedantic:
+// Render indents every continuation line by two spaces, so a paragraph break
+// inside a note or an answer is written as a line containing exactly those two
+// spaces. Treating whitespace-only as a separator ended the entry in the middle
+// of its own text, which silently discarded the rest of the note AND the
+// "(blob …, head …)" stamp that follows it — leaving an entry that can never be
+// judged fresh or stale, so no reviewer was ever told to leave it alone. Two of
+// this repo's own journal entries were found in that state.
+//
+// A stray carriage return counts as nothing, so a journal hand-edited with CRLF
+// endings still parses. Render never emits one.
+func isEntrySeparator(line string) bool {
+	return strings.Trim(line, "\r") == ""
+}
+
 // Parse reads a journal from its on-disk markdown form. A missing or empty
 // input yields an empty journal (callers pass the branch, which is the
 // identity — the frontmatter's copy is informational).
@@ -276,7 +294,12 @@ func Parse(branch string, data []byte) *Journal {
 	for ; i < len(lines); i++ {
 		line := lines[i]
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") || trimmed == "" && cur == nil {
+		// Matched against the raw line, not the trimmed one: Render writes
+		// section headers at column 0 and every line of an entry's own text
+		// indented, so an indented "## …" is a heading quoted inside a finding
+		// — common in a docs review — and must stay part of the note instead of
+		// being read as structure and dropped.
+		if strings.HasPrefix(line, "## ") || isEntrySeparator(line) && cur == nil {
 			// Section headers carry no state the entries don't already have
 			// (Open() is derived from Resolution), so they only delimit.
 			continue
@@ -297,11 +320,13 @@ func Parse(branch string, data []byte) *Journal {
 			cur.Answer = rest
 			continue
 		}
-		if trimmed == "" {
+		if isEntrySeparator(line) {
 			flush()
 			continue
 		}
-		// Continuation of whichever text block is being built.
+		// Continuation of whichever text block is being built. A whitespace-only
+		// line reaches here and appends nothing but the newline, which is exactly
+		// what rebuilds the paragraph break Render wrote.
 		if cur.Answer != "" {
 			cur.Answer += "\n" + trimmed
 		} else {

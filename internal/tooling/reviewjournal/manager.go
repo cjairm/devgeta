@@ -598,10 +598,16 @@ const (
 	FreshnessFresh    = "fresh"
 	FreshnessStale    = "stale"
 	FreshnessDateless = "" // pathless entry: no mechanical staleness
+	// FreshnessStanding is a rejected entry: ADR-0012 §2 exempts a rejection
+	// from mechanical staleness entirely, so it gets its own value rather than
+	// borrowing fresh or stale. Borrowing either was the bug — see Verdict.
+	FreshnessStanding = "standing"
 )
 
 // Verdict computes an entry's freshness against the current working tree, or
-// against Rev when one is pinned. A cited file that no longer exists is stale,
+// against Rev when one is pinned. A REJECTED entry is exempt and answers
+// FreshnessStanding without any comparison at all — see the first branch below.
+// A cited file that no longer exists is stale,
 // not an error: there is nothing to compare against, and "the code this was
 // judged on is gone" is exactly what stale means (ADR-0012 acceptance gate).
 //
@@ -620,6 +626,25 @@ const (
 // error; a bad --rev is caught once, up front, by the task layer, so it never
 // degrades into "every entry is stale" here.
 func (m *Manager) Verdict(repoDir string, e Entry) string {
+	// ADR-0012 §2's rejection exception, which until now lived only in the
+	// reviewer prompts' prose while this function said the opposite out loud. A
+	// rejection is a decision about the REASON it records, not about the bytes it
+	// cites, so it "expires when its stated reason stops holding, not because a
+	// neighbouring line moved".
+	//
+	// Reading stale here was the whole failure. Findings cluster in one file —
+	// 19 of 22 entries in one of this repo's own journals — so the first fix of
+	// any round changes that file and flips every rejection in it to "re-check
+	// before trusting it", while the prompt on the same screen says a rejection
+	// does not expire that way. Two instructions, opposite directions, and the
+	// machine-generated one is the louder.
+	//
+	// Checked before the cite and blob tests, so a pathless or stampless
+	// rejection answers the same way: the entry needs its reason re-read either
+	// way, and the blob comparison cannot say anything that changes that.
+	if e.Resolution == ResolutionRejected {
+		return FreshnessStanding
+	}
 	file := e.CitedFile()
 	if file == "" || e.Blob == "" {
 		return FreshnessDateless

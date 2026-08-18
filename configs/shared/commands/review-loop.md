@@ -818,7 +818,7 @@ settled:
 - n2 fixed internal/tooling/task/reviewrun.go:73 [fresh]
   the (?m) flag makes statusLinePattern scan the whole report
   answer: dropped the flag; the scanner already feeds it one line at a time
-- n3 rejected docs/spec.md:120 [fresh]
+- n3 rejected docs/spec.md:120 [STANDING: expires when the reason below stops holding, not when the file changes — re-read the reason before overriding it]
   the spec should name the flag too
   answer: agent: the spec documents behavior, not regex flags — nothing to change
 ```

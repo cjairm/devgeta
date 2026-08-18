@@ -29,7 +29,8 @@ This is the branch's review journal — questions already answered, findings alr
 
 - An entry marked `[fresh]` is settled. **Do not raise it again, and do not re-ask an answered question.**
 - An entry marked `[STALE]` was settled against a file that has since changed. Re-check it; if the problem is back, raise it as new and say what changed.
-- A **rejected** entry records a human decision. It expires when its stated reason stops holding, not because a nearby line moved — so re-read the reason before overriding it, and say why it no longer applies.
+- An entry marked `[STANDING]` is a **rejected** entry — a recorded decision, never a staleness reading. It expires when its stated reason stops holding, not because the cited file changed, so re-read the reason before overriding it and say why it no longer applies. A changed file is not that reason.
+- An entry with **no marker at all** has nothing to date it — it cites no file, or its stamp is missing. Treat it exactly like `[fresh]`.
 - An entry under `open:` is still unanswered. It keeps its id: re-raise it in the report citing that id, or — if the file has since fixed it — settle it `--as fixed`. Never open a second entry for a point already listed there.
 - `No review notes for branch <b>.` means this is the first review. Nothing to reconcile.
 
