@@ -60,6 +60,53 @@ func TestFormatBranchDiff(t *testing.T) {
 	})
 }
 
+func TestChangedFiles(t *testing.T) {
+	t.Run("returns parsed numstat output", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("120\t30\tx\n40\t12\tgo.sum\n", "", nil),
+		)
+
+		got, err := changedFiles(tm.Git, "", "abc123")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(got) != 2 || got[0].Path != "x" || got[0].Added != 120 || got[0].Removed != 30 {
+			t.Fatalf("unexpected entry 0: %+v", got)
+		}
+		if got[1].Path != "go.sum" || got[1].Added != 40 || got[1].Removed != 12 {
+			t.Fatalf("unexpected entry 1: %+v", got)
+		}
+
+		call := gitBase.ExecCommandCalls[0]
+		joined := strings.Join(call.Args, " ")
+		if !strings.Contains(joined, "diff --numstat --no-renames abc123") {
+			t.Fatalf("expected the numstat diff call, got: %v", call.Args)
+		}
+	})
+
+	t.Run("RunCapture failure is returned unwrapped", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "fatal: numstat exploded", fmt.Errorf("exit 1")),
+		)
+
+		_, err := changedFiles(tm.Git, "", "abc123")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		// changedFiles must hand back whatever RunCapture returned, with no
+		// extra wrapping of its own — wrapping (the "branch-diff:" prefix)
+		// happens in the caller, collectWorktreeDiff.
+		if err.Error() != "git: fatal: numstat exploded" {
+			t.Fatalf("expected the RunCapture error returned as-is, got: %v", err)
+		}
+		if strings.Contains(err.Error(), "branch-diff") {
+			t.Fatalf("expected no caller-level wrapping in changedFiles, got: %v", err)
+		}
+	})
+}
+
 // soleCall returns the one recorded git call whose arguments match, failing the
 // test if there isn't exactly one — an assertion about "the diff call" only
 // means something if the call it names is unambiguous. Calls are found by what

@@ -82,7 +82,6 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 	}
 	args = append(args, base, "--", ".")
 	diffArgs := append(args, exclusionPathspecs()...)
-	numstatArgs := atDir(dir, "diff", "--numstat", "--no-renames", base)
 
 	// The rendered diff and the numstat are two reads of the same commit range;
 	// neither mutates the repository and neither needs the other's output, so
@@ -94,8 +93,8 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 		wg         sync.WaitGroup
 		diff       string
 		diffErr    error
-		numstatOut string
-		numstatErr error
+		changes    []fileChange
+		changesErr error
 	)
 	wg.Add(2)
 	go func() {
@@ -104,7 +103,7 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 	}()
 	go func() {
 		defer wg.Done()
-		numstatOut, numstatErr = g.RunCapture(numstatArgs...)
+		changes, changesErr = changedFiles(g, dir, base)
 	}()
 	wg.Wait()
 
@@ -114,14 +113,10 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 	if diffErr != nil {
 		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", diffErr)
 	}
-	if numstatErr != nil {
-		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", numstatErr)
+	if changesErr != nil {
+		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", changesErr)
 	}
 
-	changes, err := parseNumstat(numstatOut)
-	if err != nil {
-		return worktreeDiff{}, fmt.Errorf("branch-diff: %w", err)
-	}
 	included, excluded := partitionExcluded(changes)
 
 	return worktreeDiff{
@@ -133,6 +128,21 @@ func collectWorktreeDiff(g *git_app.Git, dir string, color bool) (worktreeDiff, 
 		excluded:      excluded,
 		untracked:     untrackedFiles(g, dir),
 	}, nil
+}
+
+// changedFiles gathers the file-level changes between base and the working
+// tree at dir (dir "" = current directory) via `git diff --numstat
+// --no-renames <base>`, parsed into fileChange. It is the one place this
+// two-dot numstat-plus-parse gather is implemented, so collectWorktreeDiff's
+// origin/-anchored base and a later local-default-branch-anchored base (a
+// document-status sweep) read the same shape of result without duplicating
+// the gather.
+func changedFiles(g *git_app.Git, dir, base string) ([]fileChange, error) {
+	out, err := g.RunCapture(atDir(dir, "diff", "--numstat", "--no-renames", base)...)
+	if err != nil {
+		return nil, err
+	}
+	return parseNumstat(out)
 }
 
 // BranchDiffAt returns the diff of the worktree at dir against its
