@@ -204,11 +204,11 @@ func (tm *TaskManager) forceDiscardFallback(
 func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error) {
 	dirty, err := tm.Git.IsWorktreeDirty(wtPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to check worktree status: %w", err)
 	}
 	if dirty {
 		return "", fmt.Errorf(
-			"%s has uncommitted changes; commit or stash your changes first", wtPath,
+			"refusing to merge a dirty worktree; commit or stash your changes first",
 		)
 	}
 
@@ -232,7 +232,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 
 	mainDirty, err := tm.Git.IsWorktreeDirty(mainWorktree)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to check main checkout status: %w", err)
 	}
 	if mainDirty {
 		return "", fmt.Errorf(
