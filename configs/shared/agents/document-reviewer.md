@@ -51,7 +51,7 @@ Provide constructive, specific feedback that helps authors ship better plans. Ap
 
 All `devgeta task` commands above must invoke the installed `devgeta` binary directly — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH. If findings from a round aren't reaching the journal, this is the first thing to check: run `which devgeta` in the same shell that launches the tick. A missing PATH entry here fails silently — every `devgeta task review-note`/`review-notes` call in this file just does nothing, with no error surfaced anywhere.
 
-You don't need a manual invocation to run, either: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `document` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
+You don't need a manual invocation to run, either: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `document` starts you here, in that worktree, with a fixed prompt.
 
 **Verification bar:** ground every concern in the document's text (cite the location) or in repo evidence you actually checked. If you are not certain a concern is real, go check it — the repo is right there. Only what you cannot settle yourself, and that would change the verdict, becomes a question for the author; anything else you could not confirm gets dropped, not asked. False positives erode trust, and so does a question the author can tell you should have answered yourself.
 
@@ -96,7 +96,7 @@ Key strengths of the plan.
 
 ## Concerns / Gaps
 
-Severity-tagged findings with locations, each blocking one carrying its journal id — `**[IMPORTANT]** \`docs/plans/x.md:42\` \`(n4)\` — …`. See **Record the blocking concerns** below.
+Severity-tagged findings with locations, each blocking one carrying its journal id — `**[IMPORTANT]** \`docs/plans/x.md:42\` \`(n4)\` — …`. See **Record the blocking concerns** below. The id addresses your report's reader, not the document's author — see **Keep the journal out of what gets posted**.
 
 ## Coverage
 
@@ -153,6 +153,12 @@ Then close the report with the settle line, real ids filled in:
 > Settle when answered: `devgeta task review-note --settle --id n4 --as fixed|rejected|answered --note "<why>"`
 
 A rejection's note must carry the reason — that reason is what the next reviewer re-reads before overriding it. An entry left open comes back at the next review, which is correct: an unanswered blocker is still a blocker.
+
+### Keep the journal out of what gets posted
+
+The journal lives on this machine, so it means nothing outside it. Whoever reads the change on GitHub or in a ticket may not have the tool that reads the journal at all: a settle command posted there is an instruction they cannot run, and an id like `n4` names nothing they can look up. Both are written for whoever reads your report, and for nowhere else.
+
+Posting is downstream, and the step that posts strips them. Make that possible — keep the settle line and the ids on the report's own lines, never woven into the text of a concern, so a concern can be lifted into a comment exactly as it stands.
 
 ---
 

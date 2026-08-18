@@ -66,7 +66,7 @@ Never pull or merge — either would mutate the branch under review and change w
 
 **Never move HEAD or touch the working tree.** No `git switch`, `git checkout <branch>`, `git stash`, `git reset`, or `git restore` — not even to "check what the default branch looks like", and not even if you intend to switch back. The review journal is keyed by branch name, so moving HEAD sends your findings to a different branch's journal, and a headless round aborts the moment it notices (it has to: nothing after that point is a review of the branch you were asked about). If you need to know how something behaves on another ref, read it with `git show <ref>:<path>` or `git diff <ref>` — both answer without moving anything. Verify anything else in a throwaway repo under your own scratch directory, and write every scratch file there too: a file you leave in the repo becomes part of the very branch state the next round reviews.
 
-You can also be launched with no manual invocation at all: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `code` starts you here, in that worktree, with a fixed prompt — always case 3 above (feature branch). See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
+You can also be launched with no manual invocation at all: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `code` starts you here, in that worktree, with a fixed prompt — always case 3 above (feature branch).
 
 State in every review: branch name, the diff command you ran, files reviewed, total lines reviewed, and the change type you classified (below).
 
@@ -138,7 +138,7 @@ Per finding:
   // corrected code
   ```
 
-`(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`.
+`(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`. The id addresses your report's reader, not the change's author — see **Keep the journal out of what gets posted**.
 
 ### Coverage
 
@@ -183,6 +183,12 @@ Then close the report with the settle line, real ids filled in:
 > Settle when answered: `devgeta task review-note --settle --id n4 --as fixed|rejected|answered --note "<why>"`
 
 A rejection's note must carry the reason — that reason is what the next reviewer re-reads before overriding it. An entry left open comes back at the next review, which is correct: an unanswered blocker is still a blocker.
+
+### Keep the journal out of what gets posted
+
+The journal lives on this machine, so it means nothing outside it. Whoever reads the change on GitHub or in a ticket may not have the tool that reads the journal at all: a settle command posted there is an instruction they cannot run, and an id like `n4` names nothing they can look up. Both are written for whoever reads your report, and for nowhere else.
+
+Posting is downstream, and the step that posts strips them. Make that possible — keep the settle line and the ids on the report's own lines, never woven into the text of a finding, so a finding can be lifted into a comment exactly as it stands.
 
 ## Principles
 

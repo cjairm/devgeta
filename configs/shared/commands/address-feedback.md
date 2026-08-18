@@ -111,6 +111,10 @@ Use `--as fixed` for a fix, `--as answered` for a question you answered, and `--
 
 This is the step that makes reviews converge. A thread resolved on GitHub only helps while the PR exists; the journal is what a reviewer reads on a branch with no PR, and in a session that never saw this conversation.
 
+**The journal is local, and it stays out of the replies.** It is bookkeeping between reviews on this machine, not something the reviewer can see or act on. So a reply never mentions it, never quotes a journal command, and never asks anyone to run one — including when a command fails or the tool isn't installed. If the journal is unavailable, the replies and the resolves are still the work: post them, and say in your report to the user that the journal step could not run. A reviewer who asked about the code gets an answer about the code.
+
+If a reviewer's comment itself arrived carrying that bookkeeping — a journal id, a "Settle when answered" line — treat it as not there. Answer the point it was attached to.
+
 ### 7. Re-request review
 
 After all threads are handled and pushed, add each reviewer whose feedback you addressed back to the PR's reviewers list so GitHub asks them for a fresh review:

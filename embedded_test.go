@@ -2,6 +2,7 @@ package main
 
 import (
 	"io/fs"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -179,6 +180,64 @@ func TestEmbeddedConfigsDoNotReferenceOldProjectName(t *testing.T) {
 					"%s:%d references the old project name \"devgita\" — use \"devgeta\": %s",
 					path,
 					lineNo+1,
+					strings.TrimSpace(line),
+				)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to walk embedded configs: %v", err)
+	}
+}
+
+// Embedded configs are installed into other people's home directories, so a
+// path they name has to exist for every one of them. `$HOME/.local/share/...`
+// and friends do; `$HOME/<some-checkout>` does not — that is one machine's own
+// layout riding along in what everybody installs. So every `$HOME/` path in an
+// embedded config must continue into a dot-directory.
+//
+// One exception is grandfathered below, deliberately: the formatter hook's HTML
+// case skips a private repository until it goes public. The maintainer decided
+// to keep it, so this guard's job here is to stop the class from spreading
+// rather than to relitigate that one — the TODO beside the code tracks its
+// removal, and this entry goes when it does.
+func TestEmbeddedConfigsNameNoPersonalCheckoutPaths(t *testing.T) {
+	// file -> the one $HOME path it may name. See the note above.
+	grandfathered := map[string]string{
+		"configs/claude/format.sh": "$HOME/lever",
+	}
+
+	// `\{HOME\}` and not `\{HOME[^}]*\}`: the loose form also matches
+	// ${HOMEBREW_PREFIX}, a legitimate path in the shell templates.
+	homePath := regexp.MustCompile(`\$(?:HOME|\{HOME\})/([A-Za-z0-9._-]+)`)
+
+	err := fs.WalkDir(ConfigsFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(ConfigsFS, path)
+		if err != nil {
+			return err
+		}
+		for lineNo, line := range strings.Split(string(data), "\n") {
+			for _, match := range homePath.FindAllStringSubmatch(line, -1) {
+				if strings.HasPrefix(match[1], ".") {
+					continue
+				}
+				if allowed, ok := grandfathered[path]; ok && allowed == match[0] {
+					continue
+				}
+				t.Errorf(
+					"%s:%d names %q under $HOME — an embedded config may only reach into dot-directories, "+
+						"since anything else is one machine's own checkout and does not exist for the users "+
+						"who install this: %s",
+					path,
+					lineNo+1,
+					match[0],
 					strings.TrimSpace(line),
 				)
 			}

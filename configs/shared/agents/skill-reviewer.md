@@ -47,7 +47,7 @@ Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its su
 
 Never pull or merge. **Never move HEAD or touch the working tree either** — no `git switch`, `git checkout <branch>`, `git stash`, `git reset`, or `git restore`, not even if you intend to switch back: the review journal is keyed by branch name, so moving HEAD sends your findings to another branch's journal and a headless round aborts as soon as it notices. Read other refs with `git show <ref>:<path>` or `git diff <ref>` instead, and keep every scratch file in your own scratch directory — a file left in the repo becomes part of the branch state the next round reviews. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH. If findings from a round aren't reaching the journal, this is the first thing to check: run `which devgeta` in the same shell that launches the tick. A missing PATH entry here fails silently — every `devgeta task review-note`/`review-notes` call in this file just does nothing, with no error surfaced anywhere.
 
-You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt. See docs/spec.md's "Kicking a review from the dashboard (R)" section for the picker and launch details.
+You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt.
 
 State in every review: the files reviewed and the diff command you ran.
 
@@ -92,7 +92,7 @@ Per finding:
 
 Severity tags: `[CRITICAL]` (the prompt will do the wrong thing — untruthful state, unsafe permission, broken trigger), `[IMPORTANT]` (should fix before merge), `[MINOR]`/`[Nit]` (author's discretion).
 
-`(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`.
+`(n4)` is the finding's journal id, from **Record the blocking findings** below. Blocking findings only — omit it on `[MINOR]`/`[Nit]`. The id addresses your report's reader, not the change's author — see **Keep the journal out of what gets posted**.
 
 ### Coverage
 
@@ -133,6 +133,12 @@ Then close the report with the settle line, real ids filled in:
 > Settle when answered: `devgeta task review-note --settle --id n4 --as fixed|rejected|answered --note "<why>"`
 
 A rejection's note must carry the reason — that reason is what the next reviewer re-reads before overriding it. An entry left open comes back at the next review, which is correct: an unanswered blocker is still a blocker.
+
+### Keep the journal out of what gets posted
+
+The journal lives on this machine, so it means nothing outside it. Whoever reads the change on GitHub or in a ticket may not have the tool that reads the journal at all: a settle command posted there is an instruction they cannot run, and an id like `n4` names nothing they can look up. Both are written for whoever reads your report, and for nowhere else.
+
+Posting is downstream, and the step that posts strips them. Make that possible — keep the settle line and the ids on the report's own lines, never woven into the text of a finding, so a finding can be lifted into a comment exactly as it stands.
 
 #### References
 

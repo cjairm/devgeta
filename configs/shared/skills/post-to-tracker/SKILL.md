@@ -113,6 +113,10 @@ actually send, not a formal document. The reader may be non-technical, so:
 - **First person, no greetings or sign-offs** unless the user asks for them.
 - **Don't drop caveats or bad news** to make it shorter or nicer. Brevity comes
   from cutting fluff, never substance.
+- **Nothing that only works on your machine.** No local tool commands, no local
+  file paths, no ids from your own bookkeeping. The reader can't run or look any
+  of it up, so it reads as an instruction they can't follow. Say the outcome
+  instead: what you found, what changed, what you need from them.
 
 On markdown: trackers render it, so light structure is allowed where it genuinely
 helps a reader scan — short bullet lists, one small table for numbers, a fenced

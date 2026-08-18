@@ -137,6 +137,8 @@ Findings that point at a specific line become **inline comments** anchored to th
 
 **Write plainly.** Everything posted must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler. Each comment says what's wrong, why it matters, and the fix — nothing more.
 
+**Strip everything that only works on your machine.** A finding arrives with local bookkeeping attached — the journal id `(n4)`, the "Settle when answered: …" line, whatever tool the reviewer named. None of that goes on the PR. The people reading it don't have the journal or the tools that read it, so a command posted there is an instruction they cannot run, and an id names nothing they can look up; they answer in the thread, and the journal is settled from here (step 3 above, and `/address-feedback` after them). What reaches the PR is the finding itself: what's wrong, why it matters, the fix. The same goes for anything else that assumes our setup — a local path, a scratch file, a run of this command. If you cannot say it to someone who has never seen our tooling, it does not go in the comment.
+
 Allocate a scratch directory for this review's files — one call, reused for both:
 
 ```bash

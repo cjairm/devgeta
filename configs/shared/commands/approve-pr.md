@@ -112,7 +112,7 @@ A failing or errored check is often flaky, an unrelated job, or otherwise still 
 
 ### 4. Decide
 
-**Write plainly.** Anything posted to the PR — the approval body or a comment — must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler.
+**Write plainly.** Anything posted to the PR — the approval body or a comment — must be understandable by any engineer, including a junior one: everyday words, short sentences, no fancy vocabulary or filler. And nothing that only works here: no local tool commands, no review-journal ids, no local paths. The reader has none of that, so it reads as an instruction they cannot follow.
 
 **Approve when both gates hold:** the PR is open, and nothing live is a blocker — a thread's concern is either handled (whether or not it's marked resolved) or non-blocking. Failing checks are noted, not blocking.
 
