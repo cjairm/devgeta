@@ -46,3 +46,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0024](ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md) — The dashboard refreshes fast and slow state separately
 - [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) — An invocation reviews now; the request field gates only the watch
 - [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) — The review loop narrows to the reviewers still blocking, then confirms with all of them
+- [ADR-0027](ADR-0027-a-merge-refuses-on-dirty-checkouts-and-unsettled-findings.md) — A merge refuses on any dirty checkout and any non-stale open finding
