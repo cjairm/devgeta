@@ -1,7 +1,10 @@
 package testutil
 
 import (
+	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -99,7 +102,7 @@ func SetupTestDirs(t *testing.T) (appDir, configDir, templatesDir, devgetaConfig
 
 	dirs := []string{appDir, configDir, templatesDir, devgetaConfigDir}
 	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
 			t.Fatalf("Failed to create directory %s: %v", dir, err)
 		}
 	}
@@ -116,7 +119,9 @@ func SetupTestDirs(t *testing.T) (appDir, configDir, templatesDir, devgetaConfig
 //
 //	appDir, configDir, templatesDir, cleanup := testutil.SetupTestEnvironment(t)
 //	defer cleanup()
-func SetupTestEnvironment(t *testing.T) (appDir, configDir, templatesDir string, cleanup PathsCleanup) {
+func SetupTestEnvironment(
+	t *testing.T,
+) (appDir, configDir, templatesDir string, cleanup PathsCleanup) {
 	t.Helper()
 
 	cleanup = SetupIsolatedPaths(t)
@@ -172,7 +177,7 @@ shell:
   bat: false
 `
 
-	if err := os.WriteFile(templatePath, []byte(templateContent), 0644); err != nil {
+	if err := os.WriteFile(templatePath, []byte(templateContent), 0o644); err != nil {
 		t.Fatalf("Failed to create global config template: %v", err)
 	}
 }
@@ -201,7 +206,7 @@ func CreateShellConfigTemplate(t *testing.T, templatesDir string, content string
 `
 	}
 
-	if err := os.WriteFile(templatePath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(templatePath, []byte(content), 0o644); err != nil {
 		t.Fatalf("Failed to create shell config template: %v", err)
 	}
 }
@@ -211,7 +216,7 @@ func CreateGlobalConfigFile(t *testing.T, configDir string, content string) stri
 	t.Helper()
 
 	devgetaConfigDir := filepath.Join(configDir, constants.App.Name)
-	if err := os.MkdirAll(devgetaConfigDir, 0755); err != nil {
+	if err := os.MkdirAll(devgetaConfigDir, 0o755); err != nil {
 		t.Fatalf("Failed to create devgeta config dir: %v", err)
 	}
 
@@ -237,7 +242,7 @@ shell:
 `
 	}
 
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("Failed to create global config file: %v", err)
 	}
 
@@ -328,6 +333,31 @@ func VerifyNoRealCommands(t *testing.T, mockBase *commands.MockBaseCommand) {
 			t.Errorf("Last command: %s %v", lastCall.Command, lastCall.Args)
 		}
 	}
+}
+
+// ExitError builds a real *exec.ExitError with the given exit code by
+// actually running a trivial subprocess (sh -c "exit N") — the standard way
+// to construct one in Go, since exec.ExitError's fields are unexported and
+// there is no public constructor. This is not "executing a real command"
+// under this repo's test-safety rule (which forbids exercising real
+// git/tmux/etc business logic in tests): it never touches git, only
+// synthesizes a realistic error value to inject into a MockBaseCommand result,
+// so code that distinguishes an expected non-zero exit (e.g. Git.IsAncestor's
+// exit-1 "not an ancestor", Git.IsPathIgnored's exit-1 "not ignored") from a
+// genuine failure via errors.As against *exec.ExitError is exercised against
+// the same error shape ExecCommand really returns — a plain fmt.Errorf would
+// always fall through to the "real error" branch instead.
+func ExitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	if err == nil {
+		t.Fatalf("expected a non-nil error for exit code %d", code)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	return exitErr
 }
 
 // VerifyNoRealConfigChanges verifies that no real configuration files were modified

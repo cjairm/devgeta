@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1383,28 +1382,6 @@ func TestMoveWorktree(t *testing.T) {
 	})
 }
 
-// exitError builds a real *exec.ExitError with the given exit code by
-// actually running a trivial subprocess (sh -c "exit N") - the standard way
-// to construct one in Go, since exec.ExitError's fields are unexported and
-// there is no public constructor. This is not "executing a real command"
-// under this repo's test-safety rule (which forbids exercising real
-// git/tmux/etc business logic in tests): it never touches git, only
-// synthesizes a realistic error value to inject into MockBaseCommand, so
-// IsPathIgnored's exit-code branch is exercised against the same error shape
-// ExecCommand really returns, not a hand-rolled stand-in.
-func exitError(t *testing.T, code int) error {
-	t.Helper()
-	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
-	if err == nil {
-		t.Fatalf("expected a non-nil error for exit code %d", code)
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
-	}
-	return exitErr
-}
-
 func TestIsPathIgnored(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -1447,7 +1424,7 @@ func TestIsPathIgnored(t *testing.T) {
 	// 1 as an error.
 	t.Run("exit 1 means not ignored, and is not an error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "", exitError(t, 1))
+		mockApp.Base.SetExecCommandResult("", "", testutil.ExitError(t, 1))
 
 		ignored, err := app.IsPathIgnored("/repo", ".claude/worktrees")
 		if err != nil {
@@ -1460,7 +1437,7 @@ func TestIsPathIgnored(t *testing.T) {
 
 	t.Run("any other non-zero exit is a real error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", exitError(t, 128))
+		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", testutil.ExitError(t, 128))
 
 		_, err := app.IsPathIgnored("/repo", ".claude/worktrees")
 		if err == nil {
@@ -1514,7 +1491,7 @@ func TestIsAncestor(t *testing.T) {
 	// exit 1 as an error.
 	t.Run("exit 1 means not an ancestor, and is not an error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "", exitError(t, 1))
+		mockApp.Base.SetExecCommandResult("", "", testutil.ExitError(t, 1))
 
 		isAncestor, err := app.IsAncestor("/repo", "main", "HEAD")
 		if err != nil {
@@ -1530,7 +1507,7 @@ func TestIsAncestor(t *testing.T) {
 		mockApp.Base.SetExecCommandResult(
 			"",
 			"fatal: Not a valid object name main",
-			exitError(t, 128),
+			testutil.ExitError(t, 128),
 		)
 
 		isAncestor, err := app.IsAncestor("/repo", "main", "HEAD")
@@ -1598,7 +1575,7 @@ func TestMergeTreeConflicts(t *testing.T) {
 			"\n" +
 			"CONFLICT (content): Merge conflict in conflicted-file.go\n" +
 			"CONFLICT (content): Merge conflict in another-file.go\n"
-		mockApp.Base.SetExecCommandResult(stdout, "", exitError(t, 1))
+		mockApp.Base.SetExecCommandResult(stdout, "", testutil.ExitError(t, 1))
 
 		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
 		if err != nil {
@@ -1624,7 +1601,7 @@ func TestMergeTreeConflicts(t *testing.T) {
 	t.Run("exit 1 with empty stdout is a real error, not a conflict", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
 		mockApp.Base.SetExecCommandResult(
-			"", "merge-tree: feature - not something we can merge", exitError(t, 1),
+			"", "merge-tree: feature - not something we can merge", testutil.ExitError(t, 1),
 		)
 
 		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
@@ -1641,7 +1618,7 @@ func TestMergeTreeConflicts(t *testing.T) {
 
 	t.Run("exit 128 is a real error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", exitError(t, 128))
+		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", testutil.ExitError(t, 128))
 
 		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
 		if err == nil {

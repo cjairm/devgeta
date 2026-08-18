@@ -582,7 +582,22 @@ func (tm *TaskManager) worktreeFinishCheck(
 func worktreeDocStatusLines(g *git.Git, wtPath, defaultBranch string) ([]string, error) {
 	baseOut, err := g.RunCapture(atDir(wtPath, "merge-base", defaultBranch, "HEAD")...)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve merge base with %s: %w", defaultBranch, err)
+		// Degrades to a single sentinel line rather than aborting the whole
+		// report: this probes the EXACT SAME ref (defaultBranch) that the
+		// ahead/behind gather and Git.IsAncestor probe above it in
+		// worktreeFinishCheck, so a repo with no LOCAL branch by that name
+		// (see that function's ahead/behind comment for the full rationale)
+		// fails here too — just three calls later. Before this, aborting here
+		// meant that same "unanswerable divergence" scenario's report still
+		// died, just at a later call site than the one finding 1 fixed.
+		// Informational only: doc-status: never affects ready: either way, so
+		// there is nothing to skip by not blocking on it.
+		return []string{
+			fmt.Sprintf(
+				"doc-status: unknown (failed to resolve merge base with %s: %s)",
+				defaultBranch, err.Error(),
+			),
+		}, nil
 	}
 	base := strings.TrimSpace(baseOut)
 

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,26 +13,6 @@ import (
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
-
-// exitError builds a real *exec.ExitError with the given exit code, mirroring
-// internal/apps/git/git_test.go's helper of the same name: Git.IsAncestor and
-// Git.MergeTreeConflicts distinguish their expected non-zero exits (1, or 1
-// with empty stdout) from a genuine failure by errors.As-ing for
-// *exec.ExitError, so a mocked error has to be a real one for those branches
-// to exercise correctly — a plain fmt.Errorf would always fall through to the
-// "real error" branch instead.
-func exitError(t *testing.T, code int) error {
-	t.Helper()
-	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
-	if err == nil {
-		t.Fatalf("expected a non-nil error for exit code %d", code)
-	}
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
-	}
-	return exitErr
-}
 
 // uniqueRepoSlug returns a repo slug that is unique to this test, so tests
 // that create real directories under worktree.GetWorktreeBasePath() (which
@@ -739,7 +718,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"",
 				"not an ancestor",
-				exitError(t, 1),
+				testutil.ExitError(t, 1),
 			), // merge-base --is-ancestor -> diverged
 			commands.ExecCommandResult("", "", nil), // rebase main
 			commands.ExecCommandResult(
@@ -898,7 +877,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"/main/.git\n", "", nil,
 			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
-			commands.ExecCommandResult("", "not an ancestor", exitError(t, 1)),
+			commands.ExecCommandResult("", "not an ancestor", testutil.ExitError(t, 1)),
 			commands.ExecCommandResult("", "CONFLICT", fmt.Errorf("exit 1")), // rebase fails
 		)
 
@@ -1418,7 +1397,7 @@ func TestWorktreeFinish_MergeIsAncestorUnanswerable(t *testing.T) {
 			"/main/.git\n", "", nil,
 		), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 		commands.ExecCommandResult(
-			"", "fatal: Not a valid object name main", exitError(t, 128),
+			"", "fatal: Not a valid object name main", testutil.ExitError(t, 128),
 		), // merge-base --is-ancestor -> genuine failure, not "not an ancestor"
 	)
 
@@ -1838,7 +1817,7 @@ func TestWorktreeFinishCheck(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),
 			commands.ExecCommandResult("0\t3\n", "", nil),
 			commands.ExecCommandResult(
-				"", "fatal: Not a valid object name main", exitError(t, 128),
+				"", "fatal: Not a valid object name main", testutil.ExitError(t, 128),
 			), // IsAncestor -> genuine failure
 			commands.ExecCommandResult("deadbeef\n", "", nil),
 			commands.ExecCommandResult(commonDir+"\n", "", nil),
@@ -1868,15 +1847,17 @@ func TestWorktreeFinishCheck(t *testing.T) {
 	// The realistic combination the plan calls out as reachable, not
 	// hypothetical: a repo with no LOCAL branch named defaultBranch (only
 	// feature branches ever checked out, or DefaultBranchIn's "main" fallback
-	// in a repo whose default is actually "trunk"). rev-list and IsAncestor
-	// both probe that exact ref, so both fail together — unlike the previous
-	// subtest's mock (rev-list succeeds, only IsAncestor fails), which can't
-	// really happen since the two commands resolve the same ref. The
-	// ahead/behind gather must degrade to "unknown" instead of aborting the
-	// whole report, so the designed rebase:/ready: handling (from IsAncestor's
-	// own failure) can still render.
+	// in a repo whose default is actually "trunk"). rev-list, IsAncestor, AND
+	// worktreeDocStatusLines' own merge-base call all probe that exact ref,
+	// so all three fail together — unlike the earlier subtest's mock
+	// (rev-list succeeds, only IsAncestor fails), which can't really happen
+	// since all three commands resolve the same ref. Every one of them must
+	// degrade to an "unknown" sentinel instead of aborting the whole report,
+	// so the designed rebase:/ready: handling (from IsAncestor's own failure)
+	// can still render end-to-end, not just up to the second-to-last call
+	// site.
 	t.Run(
-		"rev-list and IsAncestor both fail on the same unresolvable ref -> report still renders",
+		"rev-list, IsAncestor, and doc-status's merge-base all fail on the same unresolvable ref -> report still renders",
 		func(t *testing.T) {
 			tm, gitBase, wtPath := newFixture(t)
 			commonDir := t.TempDir()
@@ -1900,10 +1881,10 @@ func TestWorktreeFinishCheck(t *testing.T) {
 				commands.ExecCommandResult(
 					"",
 					"fatal: ambiguous argument 'main...HEAD': unknown revision or path not in the working tree.",
-					exitError(t, 128),
+					testutil.ExitError(t, 128),
 				), // rev-list --left-right --count -> genuine failure, no local "main"
 				commands.ExecCommandResult(
-					"", "fatal: Not a valid object name main", exitError(t, 128),
+					"", "fatal: Not a valid object name main", testutil.ExitError(t, 128),
 				), // IsAncestor -> the SAME underlying condition
 				commands.ExecCommandResult(
 					"deadbeef\n",
@@ -1915,9 +1896,12 @@ func TestWorktreeFinishCheck(t *testing.T) {
 					"",
 					nil,
 				), // journalOpenFindings -> CommonDirIn
-				commands.ExecCommandResult("basecommit\n", "", nil), // doc-status sweep: merge-base
-				commands.ExecCommandResult("", "", nil),             // changedFiles: diff --numstat
-				commands.ExecCommandResult("", "", nil),             // untrackedFiles: ls-files
+				commands.ExecCommandResult(
+					"", "fatal: Not a valid object name main", testutil.ExitError(t, 128),
+				), // doc-status sweep's own merge-base -> the SAME underlying condition;
+				// worktreeDocStatusLines returns its "doc-status: unknown (...)"
+				// sentinel here and skips changedFiles/untrackedFiles entirely, so no
+				// further mocked calls are consumed for this gather.
 			)
 
 			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
@@ -1936,11 +1920,22 @@ func TestWorktreeFinishCheck(t *testing.T) {
 			if !strings.Contains(report, "rebase: unknown (") {
 				t.Errorf("expected rebase: unknown(...), got:\n%s", report)
 			}
+			if !strings.Contains(report, "doc-status: unknown (") {
+				t.Errorf("expected the degraded doc-status sentinel line, got:\n%s", report)
+			}
 			if !strings.Contains(
 				report,
 				"ready: no — cannot determine whether add-retry needs a rebase against main",
 			) {
 				t.Errorf("expected the unanswerable-divergence reason, got:\n%s", report)
+			}
+
+			if len(gitBase.ExecCommandCalls) != 10 {
+				t.Fatalf(
+					"expected 10 git calls (doc-status skips changedFiles/untrackedFiles after"+
+						" its own merge-base fails), got %d: %+v",
+					len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls,
+				)
 			}
 		},
 	)
@@ -1962,7 +1957,7 @@ func TestWorktreeFinishCheck(t *testing.T) {
 				commands.ExecCommandResult("0\t3\n", "", nil),
 				commands.ExecCommandResult("", "", nil),
 				commands.ExecCommandResult(
-					"", "fatal: not a valid object", exitError(t, 128),
+					"", "fatal: not a valid object", testutil.ExitError(t, 128),
 				), // MergeTreeConflicts -> genuine failure
 				commands.ExecCommandResult(commonDir+"\n", "", nil),
 				commands.ExecCommandResult("basecommit\n", "", nil),
@@ -2006,7 +2001,7 @@ func TestWorktreeFinishCheck(t *testing.T) {
 				commands.ExecCommandResult(
 					"treeoid1234\nconflict/path.go\n\nCONFLICT (content): Merge conflict in conflict/path.go\n",
 					"",
-					exitError(t, 1),
+					testutil.ExitError(t, 1),
 				), // MergeTreeConflicts -> predicted conflict
 				commands.ExecCommandResult(commonDir+"\n", "", nil),
 				commands.ExecCommandResult("basecommit\n", "", nil),
