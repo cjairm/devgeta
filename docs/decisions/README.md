@@ -47,3 +47,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) — An invocation reviews now; the request field gates only the watch
 - [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) — The review loop narrows to the reviewers still blocking, then confirms with all of them
 - [ADR-0027](ADR-0027-a-merge-refuses-on-dirty-checkouts-and-unsettled-findings.md) — A merge refuses on any dirty checkout and any non-stale open finding
+- [ADR-0028](ADR-0028-status-recognition-is-a-shape-not-a-vocabulary.md) — Status recognition is a shape, not a vocabulary
