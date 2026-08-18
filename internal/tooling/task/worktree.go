@@ -94,10 +94,12 @@ func (tm *TaskManager) WorktreeStart(name, base string) (string, error) {
 // and lists the worktrees it found rather than guessing from the main
 // checkout.
 //
-// merge: rebases the worktree's branch onto the default branch if diverged,
-// fast-forward-merges it into the default branch from the main checkout, then
-// removes the worktree and deletes the branch (safe only because the
-// fast-forward already made it fully merged).
+// merge: refuses if either the worktree or the main checkout has uncommitted
+// changes (no --force escape — see worktreeFinishMerge), rebases the
+// worktree's branch onto the default branch if diverged, fast-forward-merges
+// it into the default branch from the main checkout, then removes the
+// worktree and deletes the branch (safe only because the fast-forward already
+// made it fully merged).
 //
 // discard: refuses on a dirty worktree unless force is set, then removes the
 // worktree and deletes the branch unconditionally.
@@ -200,6 +202,16 @@ func (tm *TaskManager) forceDiscardFallback(
 // actionable message: nothing is removed until the fast-forward merge has
 // actually landed the branch's commits on the default branch.
 func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error) {
+	dirty, err := tm.Git.IsWorktreeDirty(wtPath)
+	if err != nil {
+		return "", err
+	}
+	if dirty {
+		return "", fmt.Errorf(
+			"%s has uncommitted changes; commit or stash your changes first", wtPath,
+		)
+	}
+
 	defaultBranch := tm.Git.DefaultBranchIn(wtPath)
 
 	mainWorktree, err := tm.Git.GetMainWorktree(wtPath)
@@ -215,6 +227,17 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf(
 			"main checkout %s is on %q, not %q; check out %q there first",
 			mainWorktree, mainBranch, defaultBranch, defaultBranch,
+		)
+	}
+
+	mainDirty, err := tm.Git.IsWorktreeDirty(mainWorktree)
+	if err != nil {
+		return "", err
+	}
+	if mainDirty {
+		return "", fmt.Errorf(
+			"main checkout %s has uncommitted changes; commit or stash them there first",
+			mainWorktree,
 		)
 	}
 

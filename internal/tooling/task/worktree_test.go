@@ -632,11 +632,17 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			), // ListWorktreesAt(wtPath) for branchForWorktree
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn(wtPath)
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 			), // GetMainWorktree(wtPath)
 			commands.ExecCommandResult("main\n", "", nil), // branch --show-current at /main
+			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -661,11 +667,11 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("unexpected confirmation: %q", out)
 		}
 
-		// The rebase must NOT have been called: 10 calls total, no extra rebase
-		// call. The 10th is the review journal's location lookup — the branch
+		// The rebase must NOT have been called: 12 calls total, no extra rebase
+		// call. The 12th is the review journal's location lookup — the branch
 		// was just deleted, so its remembered review exchanges go with it.
-		if len(gitBase.ExecCommandCalls) != 10 {
-			t.Fatalf("expected 10 git calls (no rebase), got %d: %+v",
+		if len(gitBase.ExecCommandCalls) != 12 {
+			t.Fatalf("expected 12 git calls (no rebase), got %d: %+v",
 				len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls)
 		}
 	})
@@ -677,6 +683,11 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
@@ -686,6 +697,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 				"",
 				nil,
 			), // branch --show-current
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
 			commands.ExecCommandResult(
 				"",
 				"not an ancestor",
@@ -716,11 +728,87 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 		}
 
 		calls := gitBase.ExecCommandCalls
-		// 11 = the 10 merge-path calls plus the review journal's location lookup.
-		if len(calls) != 11 {
-			t.Fatalf("expected 11 git calls (with rebase), got %d: %+v", len(calls), calls)
+		// 13 = the 12 merge-path calls plus the review journal's location lookup.
+		if len(calls) != 13 {
+			t.Fatalf("expected 13 git calls (with rebase), got %d: %+v", len(calls), calls)
 		}
-		assertCmd(t, calls[5], "git", "-C", wtPath, "rebase", "main")
+		assertCmd(t, calls[7], "git", "-C", wtPath, "rebase", "main")
+	})
+
+	t.Run("refuses to merge a dirty worktree", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"?? scratch.go\n",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> dirty
+		)
+
+		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "commit or stash") {
+			t.Errorf("expected error to name the fix, got: %v", err)
+		}
+
+		// Refused before anything else ran: the default branch was never even
+		// resolved, let alone the main checkout touched.
+		if len(gitBase.ExecCommandCalls) != 2 {
+			t.Fatalf(
+				"expected exactly 2 git calls (nothing beyond the dirty check), got %d",
+				len(gitBase.ExecCommandCalls),
+			)
+		}
+	})
+
+	t.Run("refuses to merge into a dirty main checkout", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree
+			commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+			commands.ExecCommandResult(
+				" M file.go\n",
+				"",
+				nil,
+			), // IsWorktreeDirty(mainWorktree) -> dirty
+		)
+
+		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "/main") {
+			t.Errorf("expected error to name the main checkout's path, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "commit or stash") {
+			t.Errorf("expected error to name the fix, got: %v", err)
+		}
+
+		// Refused right after the branch guard: merge-base was never reached.
+		if len(gitBase.ExecCommandCalls) != 6 {
+			t.Fatalf(
+				"expected exactly 6 git calls (refused right after the branch guard), got %d",
+				len(gitBase.ExecCommandCalls),
+			)
+		}
 	})
 
 	t.Run("main checkout on the wrong branch refuses before touching anything", func(t *testing.T) {
@@ -730,6 +818,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil),
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
@@ -745,9 +834,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("expected error to name the main checkout's actual branch, got: %v", err)
 		}
 
-		if len(gitBase.ExecCommandCalls) != 4 {
+		if len(gitBase.ExecCommandCalls) != 5 {
 			t.Fatalf(
-				"expected exactly 4 git calls (nothing touched), got %d",
+				"expected exactly 5 git calls (nothing touched), got %d",
 				len(gitBase.ExecCommandCalls),
 			)
 		}
@@ -760,11 +849,13 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil),
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 			),
 			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
 			commands.ExecCommandResult("", "not an ancestor", fmt.Errorf("exit 1")),
 			commands.ExecCommandResult("", "CONFLICT", fmt.Errorf("exit 1")), // rebase fails
 		)
@@ -777,8 +868,8 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("expected guidance mentioning rebase --abort, got: %v", err)
 		}
 		// Nothing beyond the rebase attempt should have run.
-		if len(gitBase.ExecCommandCalls) != 6 {
-			t.Fatalf("expected exactly 6 git calls, got %d", len(gitBase.ExecCommandCalls))
+		if len(gitBase.ExecCommandCalls) != 8 {
+			t.Fatalf("expected exactly 8 git calls, got %d", len(gitBase.ExecCommandCalls))
 		}
 	})
 
@@ -789,11 +880,13 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil),
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 			),
 			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -813,9 +906,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 		if !strings.Contains(err.Error(), "worktree left in place") {
 			t.Errorf("expected error to say the worktree was left in place, got: %v", err)
 		}
-		if len(gitBase.ExecCommandCalls) != 6 {
+		if len(gitBase.ExecCommandCalls) != 8 {
 			t.Fatalf(
-				"expected exactly 6 git calls (no removal attempted), got %d",
+				"expected exactly 8 git calls (no removal attempted), got %d",
 				len(gitBase.ExecCommandCalls),
 			)
 		}
@@ -828,11 +921,13 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 			),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 			commands.ExecCommandResult("origin/main\n", "", nil),
 			commands.ExecCommandResult(
 				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 			),
 			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
 			commands.ExecCommandResult("", "", nil), // ancestor
 			commands.ExecCommandResult("", "", nil), // merge --ff-only succeeds
 			commands.ExecCommandResult(
@@ -872,11 +967,13 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 				commands.ExecCommandResult(
 					"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
 				),
+				commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(wtPath) -> clean
 				commands.ExecCommandResult("origin/main\n", "", nil),
 				commands.ExecCommandResult(
 					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
 				),
 				commands.ExecCommandResult("main\n", "", nil),
+				commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
 				commands.ExecCommandResult("", "", nil), // ancestor
 				commands.ExecCommandResult("", "", nil), // merge --ff-only succeeds
 				commands.ExecCommandResult(
