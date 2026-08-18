@@ -1469,6 +1469,190 @@ func TestIsPathIgnored(t *testing.T) {
 	})
 }
 
+func TestIsAncestor(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	assertArgs := func(t *testing.T) {
+		t.Helper()
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("No ExecCommand call recorded")
+		}
+		expectedArgs := []string{"-C", "/repo", "merge-base", "--is-ancestor", "main", "HEAD"}
+		if len(lastCall.Args) != len(expectedArgs) {
+			t.Fatalf(
+				"Expected %d args, got %d: %v",
+				len(expectedArgs),
+				len(lastCall.Args),
+				lastCall.Args,
+			)
+		}
+		for i, arg := range expectedArgs {
+			if lastCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, lastCall.Args[i])
+			}
+		}
+	}
+
+	t.Run("exit 0 means ancestor is an ancestor", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", nil)
+
+		isAncestor, err := app.IsAncestor("/repo", "main", "HEAD")
+		if err != nil {
+			t.Fatalf("IsAncestor failed: %v", err)
+		}
+		if !isAncestor {
+			t.Error("expected isAncestor=true on exit 0")
+		}
+		assertArgs(t)
+	})
+
+	// Exit 1 is the normal "not an ancestor" answer (a rebase is needed) -
+	// not a failure. IsAncestor must return (false, nil), never propagate
+	// exit 1 as an error.
+	t.Run("exit 1 means not an ancestor, and is not an error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "", exitError(t, 1))
+
+		isAncestor, err := app.IsAncestor("/repo", "main", "HEAD")
+		if err != nil {
+			t.Fatalf("expected no error for exit code 1, got: %v", err)
+		}
+		if isAncestor {
+			t.Error("expected isAncestor=false on exit 1")
+		}
+	})
+
+	t.Run("exit 128 with a stderr reason is a real error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"",
+			"fatal: Not a valid object name main",
+			exitError(t, 128),
+		)
+
+		isAncestor, err := app.IsAncestor("/repo", "main", "HEAD")
+		if err == nil {
+			t.Fatal("expected an error for exit code 128")
+		}
+		if isAncestor {
+			t.Error("expected isAncestor=false on error")
+		}
+		if !strings.Contains(err.Error(), "fatal: Not a valid object name main") {
+			t.Fatalf("expected error to carry git's stderr reason, got: %v", err)
+		}
+	})
+}
+
+func TestMergeTreeConflicts(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	assertArgs := func(t *testing.T) {
+		t.Helper()
+		lastCall := mockApp.Base.GetLastExecCommandCall()
+		if lastCall == nil {
+			t.Fatal("No ExecCommand call recorded")
+		}
+		expectedArgs := []string{
+			"-C", "/repo", "merge-tree", "--write-tree", "--name-only", "main", "feature",
+		}
+		if len(lastCall.Args) != len(expectedArgs) {
+			t.Fatalf(
+				"Expected %d args, got %d: %v",
+				len(expectedArgs),
+				len(lastCall.Args),
+				lastCall.Args,
+			)
+		}
+		for i, arg := range expectedArgs {
+			if lastCall.Args[i] != arg {
+				t.Fatalf("Expected arg[%d] to be %q, got %q", i, arg, lastCall.Args[i])
+			}
+		}
+	}
+
+	t.Run("exit 0 with a lone tree OID means a clean merge", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"e5d6a2c3f4b1a0d9e8c7b6a5d4e3f2c1b0a9d8e7\n", "", nil,
+		)
+
+		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
+		if err != nil {
+			t.Fatalf("MergeTreeConflicts failed: %v", err)
+		}
+		if len(conflicts) != 0 {
+			t.Errorf("expected no conflicts on exit 0, got: %v", conflicts)
+		}
+		assertArgs(t)
+	})
+
+	t.Run("exit 1 with non-empty stdout means conflicts", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		stdout := "e5d6a2c3f4b1a0d9e8c7b6a5d4e3f2c1b0a9d8e7\n" +
+			"conflicted-file.go\n" +
+			"another-file.go\n" +
+			"\n" +
+			"CONFLICT (content): Merge conflict in conflicted-file.go\n" +
+			"CONFLICT (content): Merge conflict in another-file.go\n"
+		mockApp.Base.SetExecCommandResult(stdout, "", exitError(t, 1))
+
+		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
+		if err != nil {
+			t.Fatalf("expected no error for a predicted conflict, got: %v", err)
+		}
+		expected := []string{"conflicted-file.go", "another-file.go"}
+		if len(conflicts) != len(expected) {
+			t.Fatalf("expected conflicts %v, got %v", expected, conflicts)
+		}
+		for i, path := range expected {
+			if conflicts[i] != path {
+				t.Fatalf("expected conflicts[%d] to be %q, got %q", i, path, conflicts[i])
+			}
+		}
+	})
+
+	// This is the case that pins the whole mechanism: exit 1 with EMPTY
+	// stdout is an unmergeable input (a ref that doesn't resolve), not a
+	// predicted conflict, even though the exit code is the same 1 as the
+	// conflict case above. A test suite without this case would pass
+	// against a broken implementation that treats every exit 1 as
+	// "conflicts detected".
+	t.Run("exit 1 with empty stdout is a real error, not a conflict", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult(
+			"", "merge-tree: feature - not something we can merge", exitError(t, 1),
+		)
+
+		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
+		if err == nil {
+			t.Fatal("expected an error for exit 1 with empty stdout")
+		}
+		if conflicts != nil {
+			t.Errorf("expected no conflicts on error, got: %v", conflicts)
+		}
+		if !strings.Contains(err.Error(), "merge-tree: feature - not something we can merge") {
+			t.Fatalf("expected error to carry git's stderr reason, got: %v", err)
+		}
+	})
+
+	t.Run("exit 128 is a real error", func(t *testing.T) {
+		mockApp.Base.ResetExecCommand()
+		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", exitError(t, 128))
+
+		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
+		if err == nil {
+			t.Fatal("expected an error for exit code 128")
+		}
+		if conflicts != nil {
+			t.Errorf("expected no conflicts on error, got: %v", conflicts)
+		}
+	})
+}
+
 func TestGetRepoRoot(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}

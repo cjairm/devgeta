@@ -1028,6 +1028,110 @@ func (g *Git) IsPathIgnored(repoRoot, relPath string) (bool, error) {
 	)
 }
 
+// IsAncestor reports whether ancestor is an ancestor of (or equal to)
+// descendant, via `git merge-base --is-ancestor`. Exit 0 means ancestor IS
+// an ancestor - return (true, nil). Exit 1 is the normal "not an ancestor"
+// answer (a rebase is needed) - not a failure - so return (false, nil), same
+// as IsPathIgnored treats its own expected non-zero exit. Any other exit
+// (e.g. 128 when ancestor or descendant doesn't resolve to a valid object,
+// or dir isn't a git repository) is a real error: return (false, err) with
+// git's own stderr reason folded in, since that is the only thing that says
+// WHY the probe itself failed, as opposed to the ambiguous exit-1 answer.
+func (g *Git) IsAncestor(dir, ancestor, descendant string) (bool, error) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "merge-base", "--is-ancestor", ancestor, descendant),
+	}
+	_, stderr, err := g.Base.ExecCommand(execCommand)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return false, fmt.Errorf(
+			"failed to check whether %s is an ancestor of %s in %s: git: %s",
+			ancestor, descendant, dir, msg,
+		)
+	}
+	return false, fmt.Errorf(
+		"failed to check whether %s is an ancestor of %s in %s: %w",
+		ancestor, descendant, dir, err,
+	)
+}
+
+// MergeTreeConflicts predicts whether merging b into a would conflict,
+// without mutating any ref, the index, or the working tree, via
+// `git merge-tree --write-tree --name-only`. --write-tree is required, not
+// optional: for the two-argument form of merge-tree it IS the mode (the
+// only other one is the deprecated --trivial-merge), and omitting it still
+// writes the same objects, so dropping it would not avoid anything.
+// --quiet is deliberately not passed: combined with --name-only git rejects
+// the combination outright (exit 128), and on its own it would suppress the
+// stdout this method depends on.
+//
+// Exit status alone does not resolve the result - it must be read together
+// with stdout (measured on git 2.51.1):
+//   - exit 0: clean merge; stdout is just the merged tree's OID.
+//   - exit 1 with non-empty stdout: conflicts. stdout is the tree OID, then
+//     one conflicted path per line, a blank line, then `CONFLICT (...)`
+//     messages.
+//   - exit 1 with EMPTY stdout: an unmergeable input (a ref that doesn't
+//     resolve) - NOT the same as the conflict case above, even though the
+//     exit code is the same 1. stderr carries the reason.
+//   - 128/129, or any other failure: not a repo, git too old, or the object
+//     database isn't writable. stderr carries the reason.
+//
+// Returns (nil, nil) for a clean merge, (paths, nil) for a predicted
+// conflict, or (nil, err) when the prediction itself could not be made - it
+// is the caller's job (a later task, not this one) to treat that as an
+// advisory "unknown" that never blocks anything.
+func (g *Git) MergeTreeConflicts(dir, a, b string) ([]string, error) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "merge-tree", "--write-tree", "--name-only", a, b),
+	}
+	stdout, stderr, err := g.Base.ExecCommand(execCommand)
+	if err == nil {
+		return nil, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && strings.TrimSpace(stdout) != "" {
+		return parseMergeTreeConflictPaths(stdout), nil
+	}
+	if msg := strings.TrimSpace(stderr); msg != "" {
+		return nil, fmt.Errorf(
+			"failed to predict merge conflicts between %s and %s in %s: git: %s",
+			a, b, dir, msg,
+		)
+	}
+	return nil, fmt.Errorf(
+		"failed to predict merge conflicts between %s and %s in %s: %w",
+		a, b, dir, err,
+	)
+}
+
+// parseMergeTreeConflictPaths extracts the conflicted paths from
+// `merge-tree --write-tree --name-only`'s stdout on a conflicting merge: the
+// first line is the merged tree's OID, followed by one conflicted path per
+// line, then a blank line that precedes the `CONFLICT (...)` messages.
+func parseMergeTreeConflictPaths(stdout string) []string {
+	lines := strings.Split(stdout, "\n")
+	if len(lines) <= 1 {
+		return nil
+	}
+	var paths []string
+	for _, line := range lines[1:] {
+		if line == "" {
+			break
+		}
+		paths = append(paths, line)
+	}
+	return paths
+}
+
 // GetMainWorktree resolves the main worktree (repo root) path from any
 // worktree in the repo, via `git worktree list --porcelain`'s first
 // "worktree <path>" line (always the main worktree). Exported so callers
