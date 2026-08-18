@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
@@ -103,14 +104,42 @@ func (tm *TaskManager) WorktreeStart(name, base string) (string, error) {
 //
 // discard: refuses on a dirty worktree unless force is set, then removes the
 // worktree and deletes the branch unconditionally.
-func (tm *TaskManager) WorktreeFinish(name string, merge, discard, force bool) (string, error) {
-	if merge == discard {
-		return "", fmt.Errorf("worktree-finish: exactly one of --merge or --discard is required")
+//
+// check: computes worktreeFinishCheck's read-only readiness report and
+// returns it — never rebases, never moves a ref, never fetches. A report
+// whose own "ready:" line says no is not a Go error in the usual sense (the
+// report was computed successfully); it comes back as a *CheckNotReadyError so
+// the cmd layer can print the full report before surfacing the non-zero exit.
+func (tm *TaskManager) WorktreeFinish(
+	name string,
+	merge, discard, check, force bool,
+) (string, error) {
+	count := 0
+	for _, b := range []bool{merge, discard, check} {
+		if b {
+			count++
+		}
+	}
+	if count != 1 {
+		return "", fmt.Errorf(
+			"worktree-finish: exactly one of --merge, --discard, or --check is required",
+		)
 	}
 
 	wtPath, branch, err := tm.resolveWorktreeTarget(name)
 	if err != nil {
 		return "", fmt.Errorf("worktree-finish: %w", err)
+	}
+
+	if check {
+		report, ready, checkErr := tm.worktreeFinishCheck(wtPath, branch)
+		if checkErr != nil {
+			return "", fmt.Errorf("worktree-finish: %w", checkErr)
+		}
+		if !ready {
+			return "", &CheckNotReadyError{Report: report}
+		}
+		return report, nil
 	}
 
 	var out string
@@ -124,6 +153,15 @@ func (tm *TaskManager) WorktreeFinish(name string, merge, discard, force bool) (
 	}
 	return out, nil
 }
+
+// CheckNotReadyError signals that worktree-finish --check computed a full
+// report successfully, but the report's own ready: line says no. It carries
+// the report text so the cmd layer can print it BEFORE surfacing the
+// non-zero exit — emitPRResult's usual "err != nil means nothing to print"
+// contract does not apply to this one, deliberate exception.
+type CheckNotReadyError struct{ Report string }
+
+func (e *CheckNotReadyError) Error() string { return "worktree is not ready to merge" }
 
 // worktreeFinishDiscard removes the worktree and its branch unconditionally,
 // refusing first when the worktree has uncommitted changes and force wasn't
@@ -246,24 +284,27 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf("failed to check the review journal: %w", err)
 	}
 	if len(blocking) > 0 {
-		ids := make([]string, len(blocking))
-		for i, e := range blocking {
-			ids[i] = e.ID
-		}
 		return "", fmt.Errorf(
 			"refusing to merge %s: open review-journal finding(s) %s;"+
 				" settle them with `devgeta task review-note --settle <id>`",
-			branch, strings.Join(ids, ", "),
+			branch, strings.Join(entryIDs(blocking), ", "),
 		)
 	}
 
-	// merge-base --is-ancestor exits non-zero when defaultBranch is NOT an
-	// ancestor of the branch's HEAD, i.e. the branch has diverged (default
-	// gained commits since the branch point) and needs a rebase before it can
-	// fast-forward-merge.
-	if ancestorErr := tm.Git.ExecuteCommandAt(
-		wtPath, "merge-base", "--is-ancestor", defaultBranch, "HEAD",
-	); ancestorErr != nil {
+	// IsAncestor reports whether defaultBranch is an ancestor of the branch's
+	// HEAD, i.e. whether the branch has diverged (default gained commits
+	// since the branch point) and needs a rebase before it can
+	// fast-forward-merge. Shared with worktreeFinishCheck's advisory
+	// "rebase:" line so the two paths can never disagree about this
+	// precondition (plan §7's top risk).
+	isAncestor, ancestorErr := tm.Git.IsAncestor(wtPath, defaultBranch, "HEAD")
+	if ancestorErr != nil {
+		return "", fmt.Errorf(
+			"cannot determine whether %s needs a rebase against %s: %w",
+			branch, defaultBranch, ancestorErr,
+		)
+	}
+	if !isAncestor {
 		if err := tm.Git.ExecuteCommandAt(wtPath, "rebase", defaultBranch); err != nil {
 			return "", fmt.Errorf(
 				"%s diverged from %s and rebase failed: %w"+
@@ -309,9 +350,266 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 	return fmt.Sprintf("Merged %s into %s; removed worktree %s", branch, defaultBranch, wtPath), nil
 }
 
-// openBlockingFindings returns every open review-journal entry for branch that
-// must block a merge — the shared probe behind both worktreeFinishMerge's
-// refusal and the (later) worktree-finish --check readiness report (ADR-0027).
+// worktreeFinishCheck computes worktree-finish --check's read-only readiness
+// report. It never rebases, never moves HEAD or any ref, and never fetches —
+// the only git write its calls may cause is MergeTreeConflicts writing
+// unreferenced loose objects, which that method's own design already accounts
+// for.
+//
+// Every field is gathered unconditionally, even once a blocking condition is
+// known: the report's whole value is showing the complete picture, so nothing
+// here short-circuits the way worktreeFinishMerge does. Only the "ready:"
+// line reflects a first-blocking-reason order, and that order deliberately
+// mirrors worktreeFinishMerge's own refusal order (dirty worktree, main
+// checkout branch mismatch, main checkout dirty, blocking journal findings,
+// unanswerable divergence probe) so the two commands can never disagree about
+// which reason surfaces first, worded identically to worktreeFinishMerge's
+// own refusal messages for the same conditions.
+//
+// A genuine failure (any gather step returning an unexpected error) returns
+// ("", false, err) — the report could not be computed at all. "ready: no" is
+// a SUCCESSFULLY computed report whose payload says not ready; that returns
+// (report, false, nil).
+func (tm *TaskManager) worktreeFinishCheck(
+	wtPath, branch string,
+) (report string, ready bool, err error) {
+	defaultBranch := tm.Git.DefaultBranchIn(wtPath)
+
+	dirty, err := tm.Git.IsWorktreeDirty(wtPath)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to check worktree status: %w", err)
+	}
+
+	mainWorktree, err := tm.Git.GetMainWorktree(wtPath)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to resolve main worktree: %w", err)
+	}
+
+	mainBranch, err := tm.Git.CurrentBranchIn(mainWorktree)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to check main checkout's branch: %w", err)
+	}
+
+	mainDirty, err := tm.Git.IsWorktreeDirty(mainWorktree)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to check main checkout status: %w", err)
+	}
+
+	// Ahead/behind against the LOCAL default branch, never origin/ — this
+	// reuses parseAheadBehind (scope.go) rather than tm.aheadBehind, which
+	// hardcodes origin/ and takes no directory (wrong for this command twice
+	// over).
+	aheadBehindOut, err := tm.Git.RunCapture(
+		atDir(wtPath, "rev-list", "--left-right", "--count", defaultBranch+"...HEAD")...,
+	)
+	if err != nil {
+		return "", false, fmt.Errorf(
+			"failed to compute ahead/behind against %s: %w", defaultBranch, err,
+		)
+	}
+	behind, ahead, err := parseAheadBehind(aheadBehindOut)
+	if err != nil {
+		return "", false, fmt.Errorf(
+			"failed to parse ahead/behind against %s: %w",
+			defaultBranch,
+			err,
+		)
+	}
+
+	// The SAME probe Part 0 wired into worktreeFinishMerge — never a second
+	// implementation.
+	isAncestor, ancestorErr := tm.Git.IsAncestor(wtPath, defaultBranch, "HEAD")
+
+	// Advisory information, always reported regardless of whether a rebase is
+	// needed.
+	conflicts, conflictsErr := tm.Git.MergeTreeConflicts(wtPath, defaultBranch, "HEAD")
+
+	blocking, stale, err := tm.journalOpenFindings(mainWorktree, wtPath, branch)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to check the review journal: %w", err)
+	}
+
+	docStatusLines, err := worktreeDocStatusLines(tm.Git, wtPath, defaultBranch)
+	if err != nil {
+		return "", false, err
+	}
+
+	// First-blocking-reason ordering, pinned to worktreeFinishMerge's own
+	// refusal order and worded identically to its refusal messages for the
+	// same conditions.
+	var reason string
+	switch {
+	case dirty:
+		reason = "refusing to merge a dirty worktree; commit or stash your changes first"
+	case mainBranch != defaultBranch:
+		reason = fmt.Sprintf(
+			"main checkout %s is on %q, not %q; check out %q there first",
+			mainWorktree, mainBranch, defaultBranch, defaultBranch,
+		)
+	case mainDirty:
+		reason = fmt.Sprintf(
+			"main checkout %s has uncommitted changes; commit or stash them there first",
+			mainWorktree,
+		)
+	case len(blocking) > 0:
+		reason = fmt.Sprintf(
+			"refusing to merge %s: open review-journal finding(s) %s;"+
+				" settle them with `devgeta task review-note --settle <id>`",
+			branch, strings.Join(entryIDs(blocking), ", "),
+		)
+	case ancestorErr != nil:
+		reason = fmt.Sprintf(
+			"cannot determine whether %s needs a rebase against %s: %v",
+			branch, defaultBranch, ancestorErr,
+		)
+	}
+	ready = reason == ""
+
+	dirtyLabel := "no"
+	if dirty {
+		dirtyLabel = "yes"
+	}
+	mainState := "clean"
+	if mainDirty {
+		mainState = "dirty"
+	}
+
+	var rebaseLine string
+	switch {
+	case ancestorErr != nil:
+		rebaseLine = fmt.Sprintf("unknown (%s)", ancestorErr.Error())
+	case isAncestor:
+		rebaseLine = "not needed"
+	default:
+		rebaseLine = "needed"
+	}
+
+	var conflictsLine string
+	switch {
+	case conflictsErr != nil:
+		conflictsLine = fmt.Sprintf(
+			"unknown (git merge-tree failed: %s — advisory, does not block)", conflictsErr.Error(),
+		)
+	case len(conflicts) == 0:
+		conflictsLine = "none (advisory, does not block)"
+	default:
+		conflictsLine = fmt.Sprintf(
+			"%d (%s — advisory, does not block)", len(conflicts), strings.Join(conflicts, ", "),
+		)
+	}
+
+	journalOpenLine := "0"
+	if len(blocking) > 0 {
+		journalOpenLine = fmt.Sprintf(
+			"%d (%s)",
+			len(blocking),
+			strings.Join(entryIDs(blocking), ", "),
+		)
+	}
+	journalStaleLine := "0"
+	if len(stale) > 0 {
+		journalStaleLine = fmt.Sprintf(
+			"%d (%s — advisory, does not block)", len(stale), strings.Join(entryIDs(stale), ", "),
+		)
+	}
+
+	lines := []string{
+		fmt.Sprintf("worktree: %s", wtPath),
+		fmt.Sprintf("branch: %s", branch),
+		fmt.Sprintf("default: %s", defaultBranch),
+		fmt.Sprintf("dirty: %s", dirtyLabel),
+		fmt.Sprintf("ahead: %d  behind: %d", ahead, behind),
+		fmt.Sprintf("main-checkout: %s (%s)", mainBranch, mainState),
+		fmt.Sprintf("rebase: %s", rebaseLine),
+		fmt.Sprintf("conflicts: %s", conflictsLine),
+		fmt.Sprintf("journal-open: %s", journalOpenLine),
+		fmt.Sprintf("journal-stale-open: %s", journalStaleLine),
+	}
+	lines = append(lines, docStatusLines...)
+	if ready {
+		lines = append(lines, "ready: yes")
+	} else {
+		lines = append(lines, "ready: no — "+reason)
+	}
+
+	return strings.Join(lines, "\n"), ready, nil
+}
+
+// worktreeDocStatusLines sweeps every changed-or-untracked markdown file
+// between wtPath and its local merge-base with defaultBranch (never origin/),
+// and renders one "doc-status: <path>: <value>" line per file that still
+// exists in the working tree, sorted by path for deterministic output.
+//
+// changedFiles and untrackedFiles are reused verbatim rather than
+// re-implemented: changedFiles reads committed+working-tree diffs against a
+// committed base, and untrackedFiles lists files git doesn't track at all, so
+// their union is every markdown path the branch touches. A path is skipped
+// (no line at all) when the branch or an uncommitted edit deleted it — there
+// is nothing to read a status marker out of.
+func worktreeDocStatusLines(g *git.Git, wtPath, defaultBranch string) ([]string, error) {
+	baseOut, err := g.RunCapture(atDir(wtPath, "merge-base", defaultBranch, "HEAD")...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve merge base with %s: %w", defaultBranch, err)
+	}
+	base := strings.TrimSpace(baseOut)
+
+	changes, err := changedFiles(g, wtPath, base)
+	if err != nil {
+		return nil, fmt.Errorf("failed to gather changed files: %w", err)
+	}
+	untracked := untrackedFiles(g, wtPath)
+
+	paths := make(map[string]struct{})
+	for _, c := range changes {
+		if strings.HasSuffix(c.Path, ".md") {
+			paths[c.Path] = struct{}{}
+		}
+	}
+	for _, u := range untracked {
+		if strings.HasSuffix(u, ".md") {
+			paths[u] = struct{}{}
+		}
+	}
+
+	sorted := make([]string, 0, len(paths))
+	for p := range paths {
+		sorted = append(sorted, p)
+	}
+	sort.Strings(sorted)
+
+	var lines []string
+	for _, p := range sorted {
+		full := filepath.Join(wtPath, p)
+		if _, statErr := os.Stat(full); statErr != nil {
+			if os.IsNotExist(statErr) {
+				// Deleted by the branch or by an uncommitted edit — nothing to
+				// read a status marker out of, and not an error.
+				continue
+			}
+			return nil, fmt.Errorf("failed to check %s: %w", p, statErr)
+		}
+		content, readErr := os.ReadFile(full)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", p, readErr)
+		}
+		marker := statusMarker(string(content))
+		if marker == "" {
+			marker = "no status marker"
+		}
+		lines = append(lines, fmt.Sprintf("doc-status: %s: %s", p, marker))
+	}
+	return lines, nil
+}
+
+// journalOpenFindings loads branch's journal once (via mainWorktree, per the
+// original openBlockingFindings' doc comment below) and classifies every open
+// entry by freshness judged against wtPath (see that same comment for why
+// wtPath and not mainWorktree). blocking is Fresh+Dateless; stale is
+// FreshnessStale. It is the shared probe behind worktreeFinishMerge's refusal
+// (openBlockingFindings, kept below as a thin wrapper so that call site and
+// its tests are untouched) and worktreeFinishCheck's readiness report
+// (ADR-0027) — both need the same classification of the same load, so it
+// happens in exactly one place.
 //
 // The journal's LOCATION resolves through mainWorktree, matching
 // dropReviewJournal: Manager.PathFor resolves the common git directory, which
@@ -325,29 +623,50 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 // fixed would almost always compare against the old, pre-fix blob and read
 // stale — silently letting a real, unresolved finding through (ADR-0027).
 //
-// Settled entries are never considered — only Open() ones can block. A
-// FreshnessStale open entry does not block (its cited file has already
-// changed since the finding was raised); FreshnessFresh and FreshnessDateless
-// (a pathless, design-level question with nothing mechanical to invalidate
-// it) both do.
-func (tm *TaskManager) openBlockingFindings(
+// Settled entries are never considered — only Open() ones can block or go
+// stale. A FreshnessStale open entry does not block (its cited file has
+// already changed since the finding was raised); FreshnessFresh and
+// FreshnessDateless (a pathless, design-level question with nothing
+// mechanical to invalidate it) both do.
+func (tm *TaskManager) journalOpenFindings(
 	mainWorktree, wtPath, branch string,
-) ([]reviewjournal.Entry, error) {
+) (blocking, stale []reviewjournal.Entry, err error) {
 	jm := reviewjournal.New(tm.Git)
 	j, err := jm.Load(mainWorktree, branch)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	var blocking []reviewjournal.Entry
 	for _, e := range j.Entries {
 		if !e.Open() {
 			continue
 		}
-		if jm.Verdict(wtPath, e) != reviewjournal.FreshnessStale {
+		if jm.Verdict(wtPath, e) == reviewjournal.FreshnessStale {
+			stale = append(stale, e)
+		} else {
 			blocking = append(blocking, e)
 		}
 	}
-	return blocking, nil
+	return blocking, stale, nil
+}
+
+// openBlockingFindings returns every open review-journal entry for branch that
+// must block a merge. Kept as a thin wrapper over journalOpenFindings so
+// worktreeFinishMerge's existing call site and tests are untouched.
+func (tm *TaskManager) openBlockingFindings(
+	mainWorktree, wtPath, branch string,
+) ([]reviewjournal.Entry, error) {
+	blocking, _, err := tm.journalOpenFindings(mainWorktree, wtPath, branch)
+	return blocking, err
+}
+
+// entryIDs returns each entry's ID, in order, for a report line or error
+// message that must name which findings are involved.
+func entryIDs(entries []reviewjournal.Entry) []string {
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.ID
+	}
+	return ids
 }
 
 // dropReviewJournal deletes branch's review journal once the branch itself is

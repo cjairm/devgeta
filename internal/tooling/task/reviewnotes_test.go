@@ -746,7 +746,7 @@ func TestWorktreeFinishDeletesTheBranchsJournal(t *testing.T) {
 		Base: commands.NewMockBaseCommand(),
 	}
 
-	if _, err := tm.WorktreeFinish("spike", false, true, false); err != nil {
+	if _, err := tm.WorktreeFinish("spike", false, true, false, false); err != nil {
 		t.Fatalf("WorktreeFinish: %v", err)
 	}
 

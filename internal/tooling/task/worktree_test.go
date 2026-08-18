@@ -1,8 +1,10 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +14,26 @@ import (
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
+
+// exitError builds a real *exec.ExitError with the given exit code, mirroring
+// internal/apps/git/git_test.go's helper of the same name: Git.IsAncestor and
+// Git.MergeTreeConflicts distinguish their expected non-zero exits (1, or 1
+// with empty stdout) from a genuine failure by errors.As-ing for
+// *exec.ExitError, so a mocked error has to be a real one for those branches
+// to exercise correctly — a plain fmt.Errorf would always fall through to the
+// "real error" branch instead.
+func exitError(t *testing.T, code int) error {
+	t.Helper()
+	err := exec.Command("sh", "-c", fmt.Sprintf("exit %d", code)).Run()
+	if err == nil {
+		t.Fatalf("expected a non-nil error for exit code %d", code)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	return exitErr
+}
 
 // uniqueRepoSlug returns a repo slug that is unique to this test, so tests
 // that create real directories under worktree.GetWorktreeBasePath() (which
@@ -255,14 +277,14 @@ func TestWorktreeFinish_FlagInterplay(t *testing.T) {
 	tm, gitBase, _ := newTaskSetup()
 
 	t.Run("neither merge nor discard", func(t *testing.T) {
-		_, err := tm.WorktreeFinish("x", false, false, false)
+		_, err := tm.WorktreeFinish("x", false, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
 	})
 
 	t.Run("both merge and discard", func(t *testing.T) {
-		_, err := tm.WorktreeFinish("x", true, true, false)
+		_, err := tm.WorktreeFinish("x", true, true, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -283,7 +305,7 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			_ = os.RemoveAll(filepath.Join(worktree.GetWorktreeBasePath(), otherSlug))
 		})
 
-		_, err := tm.WorktreeFinish("does-not-exist", true, false, false)
+		_, err := tm.WorktreeFinish("does-not-exist", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -327,7 +349,7 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
-		out, err := tm.WorktreeFinish("add-retry", false, true, false)
+		out, err := tm.WorktreeFinish("add-retry", false, true, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -343,7 +365,7 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 
 		gitBase.SetExecCommandResult("", "fatal: not a git repository", fmt.Errorf("exit 128"))
 
-		_, err := tm.WorktreeFinish("", true, false, false)
+		_, err := tm.WorktreeFinish("", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -364,7 +386,7 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			), // GetMainWorktree -> same path as repoRoot
 		)
 
-		_, err := tm.WorktreeFinish("", true, false, false)
+		_, err := tm.WorktreeFinish("", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -408,7 +430,7 @@ func TestWorktreeFinish_TargetResolution(t *testing.T) {
 			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
-		out, err := tm.WorktreeFinish("", false, true, false)
+		out, err := tm.WorktreeFinish("", false, true, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -437,7 +459,7 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 			commands.ExecCommandResult("?? scratch.go\n", "", nil), // IsWorktreeDirty -> dirty
 		)
 
-		_, err := tm.WorktreeFinish("spike", false, true, false)
+		_, err := tm.WorktreeFinish("spike", false, true, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -474,7 +496,7 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
-		out, err := tm.WorktreeFinish("spike", false, true, true)
+		out, err := tm.WorktreeFinish("spike", false, true, false, true)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -526,7 +548,7 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 				), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 			)
 
-			out, err := tm.WorktreeFinish("spike", false, true, true)
+			out, err := tm.WorktreeFinish("spike", false, true, false, true)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -592,7 +614,7 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 				), // forceDiscardFallback -> GetMainWorktree
 			)
 
-			_, err := tm.WorktreeFinish("spike", false, true, true)
+			_, err := tm.WorktreeFinish("spike", false, true, false, true)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -671,7 +693,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
-		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		out, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -717,7 +739,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"",
 				"not an ancestor",
-				fmt.Errorf("exit 1"),
+				exitError(t, 1),
 			), // merge-base --is-ancestor -> diverged
 			commands.ExecCommandResult("", "", nil), // rebase main
 			commands.ExecCommandResult(
@@ -735,7 +757,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // dropReviewJournal -> rev-parse --git-common-dir (ADR-0012)
 		)
 
-		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		out, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -766,7 +788,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // IsWorktreeDirty(wtPath) -> dirty
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -808,7 +830,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // IsWorktreeDirty(mainWorktree) -> dirty
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -843,7 +865,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult("some-other-branch\n", "", nil), // branch --show-current
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -876,11 +898,11 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			commands.ExecCommandResult(
 				"/main/.git\n", "", nil,
 			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
-			commands.ExecCommandResult("", "not an ancestor", fmt.Errorf("exit 1")),
+			commands.ExecCommandResult("", "not an ancestor", exitError(t, 1)),
 			commands.ExecCommandResult("", "CONFLICT", fmt.Errorf("exit 1")), // rebase fails
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -922,7 +944,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // merge --ff-only fails
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -966,7 +988,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // worktree remove fails
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -1016,7 +1038,7 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 				), // branch -D fails
 			)
 
-			_, err := tm.WorktreeFinish("add-retry", true, false, false)
+			_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -1103,7 +1125,7 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 			), // HashObjectIn(wtPath, somefile.go) -> matches: fresh
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -1178,7 +1200,7 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 			), // dropReviewJournal -> CommonDirIn
 		)
 
-		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		out, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1234,7 +1256,7 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 			), // dropReviewJournal -> CommonDirIn
 		)
 
-		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		out, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -1278,7 +1300,7 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 			), // openBlockingFindings -> CommonDirIn(mainWorktree)
 		)
 
-		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -1353,7 +1375,7 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 				), // HashObjectIn(wtPath, fix.go) -> matches: still fresh
 			)
 
-			_, err := tm.WorktreeFinish("add-retry", true, false, false)
+			_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
 			if err == nil {
 				t.Fatal("expected error")
 			}
@@ -1371,4 +1393,676 @@ func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
 			assertCmd(t, calls[7], "git", "-C", wtPath, "hash-object", "--", "fix.go")
 		},
 	)
+}
+
+// TestWorktreeFinish_MergeIsAncestorUnanswerable covers Part 0's new refusal:
+// Git.IsAncestor failing outright (not just answering "not an ancestor", exit
+// 1) must refuse the merge before any rebase or merge call — treating "can't
+// tell" as "assume diverged" would risk rebasing when the real answer might
+// have been "already an ancestor, nothing to do".
+func TestWorktreeFinish_MergeIsAncestorUnanswerable(t *testing.T) {
+	tm, gitBase, wtPath := newMergeFixture(t)
+
+	gitBase.SetExecCommandResults(
+		commands.ExecCommandResult(
+			"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+		), // ListWorktreesAt
+		commands.ExecCommandResult("", "", nil),              // IsWorktreeDirty(wtPath) -> clean
+		commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+		commands.ExecCommandResult(
+			"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+		), // GetMainWorktree
+		commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+		commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+		commands.ExecCommandResult(
+			"/main/.git\n", "", nil,
+		), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
+		commands.ExecCommandResult(
+			"", "fatal: Not a valid object name main", exitError(t, 128),
+		), // merge-base --is-ancestor -> genuine failure, not "not an ancestor"
+	)
+
+	_, err := tm.WorktreeFinish("add-retry", true, false, false, false)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "cannot determine whether") {
+		t.Errorf("expected the new unanswerable-divergence refusal, got: %v", err)
+	}
+
+	// Refused right after the probe: no rebase, no merge --ff-only attempted.
+	if len(gitBase.ExecCommandCalls) != 8 {
+		t.Fatalf(
+			"expected exactly 8 git calls (no rebase or merge attempted), got %d: %+v",
+			len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls,
+		)
+	}
+}
+
+// TestWorktreeFinishCheck covers worktree-finish --check's read-only
+// readiness report (Part 1-2). Every subtest reaches the same gather order
+// worktreeFinishCheck uses: DefaultBranchIn, IsWorktreeDirty(wtPath),
+// GetMainWorktree, CurrentBranchIn(mainWorktree), IsWorktreeDirty(mainWorktree),
+// the ahead/behind rev-list, IsAncestor, MergeTreeConflicts,
+// journalOpenFindings (CommonDirIn + one HashObjectIn per cited open entry),
+// then the doc-status sweep (merge-base, changedFiles' diff --numstat,
+// untrackedFiles' ls-files). Nothing here short-circuits — every field is
+// gathered even once a blocking condition is known, since the report's whole
+// value is showing the complete picture; only "ready:" reflects the
+// first-blocking-reason order.
+func TestWorktreeFinishCheck(t *testing.T) {
+	newFixture := newMergeFixture
+
+	t.Run("clean, non-diverged, no findings, no changed markdown -> ready", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn(wtPath)
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree(wtPath)
+			commands.ExecCommandResult("main\n", "", nil), // CurrentBranchIn(mainWorktree)
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"0\t3\n",
+				"",
+				nil,
+			), // rev-list --left-right --count -> behind 0, ahead 3
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsAncestor -> ancestor (rebase not needed)
+			commands.ExecCommandResult("deadbeef\n", "", nil), // MergeTreeConflicts -> clean merge
+			commands.ExecCommandResult(
+				commonDir+"\n", "", nil,
+			), // journalOpenFindings -> CommonDirIn(mainWorktree) (empty journal)
+			commands.ExecCommandResult("basecommit\n", "", nil), // doc-status sweep: merge-base
+			commands.ExecCommandResult("", "", nil),             // changedFiles: diff --numstat
+			commands.ExecCommandResult("", "", nil),             // untrackedFiles: ls-files
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ready {
+			t.Errorf("expected ready, got report:\n%s", report)
+		}
+		for _, want := range []string{
+			"worktree: " + wtPath,
+			"branch: add-retry",
+			"default: main",
+			"dirty: no",
+			"ahead: 3  behind: 0",
+			"main-checkout: main (clean)",
+			"rebase: not needed",
+			"conflicts: none (advisory, does not block)",
+			"journal-open: 0",
+			"journal-stale-open: 0",
+			"ready: yes",
+		} {
+			if !strings.Contains(report, want) {
+				t.Errorf("expected report to contain %q, got:\n%s", want, report)
+			}
+		}
+		if strings.Contains(report, "doc-status:") {
+			t.Errorf("expected no doc-status lines, got:\n%s", report)
+		}
+
+		if len(gitBase.ExecCommandCalls) != 12 {
+			t.Fatalf(
+				"expected 12 git calls, got %d: %+v",
+				len(gitBase.ExecCommandCalls),
+				gitBase.ExecCommandCalls,
+			)
+		}
+	})
+
+	t.Run(
+		"dirty wtPath -> not ready, but every field is still gathered and reported",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult("origin/main\n", "", nil),
+				commands.ExecCommandResult(
+					"?? scratch.go\n",
+					"",
+					nil,
+				), // IsWorktreeDirty(wtPath) -> dirty
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("main\n", "", nil),
+				commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult("0\t3\n", "", nil),
+				commands.ExecCommandResult("", "", nil), // IsAncestor -> ancestor
+				commands.ExecCommandResult("deadbeef\n", "", nil),
+				commands.ExecCommandResult(commonDir+"\n", "", nil),
+				commands.ExecCommandResult("basecommit\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("", "", nil),
+			)
+
+			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ready {
+				t.Fatalf("expected not ready, got:\n%s", report)
+			}
+			if !strings.Contains(report, "dirty: yes") {
+				t.Errorf("expected dirty: yes, got:\n%s", report)
+			}
+			if !strings.Contains(report, "ready: no — refusing to merge a dirty worktree") {
+				t.Errorf("expected the dirty-worktree reason, got:\n%s", report)
+			}
+			// Every other field is still fully computed and reported — this is a
+			// report, not an early exit.
+			for _, want := range []string{
+				"main-checkout: main (clean)",
+				"rebase: not needed",
+				"conflicts: none (advisory, does not block)",
+				"journal-open: 0",
+			} {
+				if !strings.Contains(report, want) {
+					t.Errorf("expected report to still contain %q, got:\n%s", want, report)
+				}
+			}
+			if len(gitBase.ExecCommandCalls) != 12 {
+				t.Fatalf(
+					"expected 12 git calls (no short-circuit), got %d: %+v",
+					len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls,
+				)
+			}
+		},
+	)
+
+	t.Run("main checkout on a non-default branch -> not ready", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult(
+				"some-other-branch\n",
+				"",
+				nil,
+			), // CurrentBranchIn -> mismatch
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(commonDir+"\n", "", nil),
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ready {
+			t.Fatalf("expected not ready, got:\n%s", report)
+		}
+		if !strings.Contains(report, `is on "some-other-branch", not "main"`) {
+			t.Errorf("expected the branch-mismatch reason, got:\n%s", report)
+		}
+		if len(gitBase.ExecCommandCalls) != 12 {
+			t.Fatalf("expected 12 git calls, got %d", len(gitBase.ExecCommandCalls))
+		}
+	})
+
+	t.Run("main checkout dirty (on the default branch) -> not ready", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult(
+				" M file.go\n",
+				"",
+				nil,
+			), // IsWorktreeDirty(mainWorktree) -> dirty
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(commonDir+"\n", "", nil),
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ready {
+			t.Fatalf("expected not ready, got:\n%s", report)
+		}
+		if !strings.Contains(report, "main-checkout: main (dirty)") {
+			t.Errorf("expected main-checkout: main (dirty), got:\n%s", report)
+		}
+		if !strings.Contains(report, "has uncommitted changes; commit or stash them there first") {
+			t.Errorf("expected the main-dirty reason, got:\n%s", report)
+		}
+	})
+
+	t.Run(
+		"both branch mismatch and main dirty -> the branch mismatch surfaces first",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult("origin/main\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("some-other-branch\n", "", nil), // mismatch
+				commands.ExecCommandResult(" M file.go\n", "", nil),        // AND dirty
+				commands.ExecCommandResult("0\t3\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("deadbeef\n", "", nil),
+				commands.ExecCommandResult(commonDir+"\n", "", nil),
+				commands.ExecCommandResult("basecommit\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("", "", nil),
+			)
+
+			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ready {
+				t.Fatalf("expected not ready, got:\n%s", report)
+			}
+			if !strings.Contains(report, `is on "some-other-branch", not "main"`) {
+				t.Errorf(
+					"expected the branch-mismatch reason to win over the dirty one, got:\n%s",
+					report,
+				)
+			}
+			if strings.Contains(report, "ready: no — main checkout") &&
+				strings.Contains(report, "has uncommitted changes") {
+				t.Errorf("the dirty reason must not surface first, got:\n%s", report)
+			}
+		},
+	)
+
+	t.Run("a blocking (dateless) open journal finding -> not ready, naming it", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:   "n1",
+			Note: "should this feature fetch, or stay local-only?",
+		})
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(
+				commonDir+"\n",
+				"",
+				nil,
+			), // journalOpenFindings -> CommonDirIn
+			// A dateless entry needs no HashObjectIn call (Verdict short-circuits).
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ready {
+			t.Fatalf("expected not ready, got:\n%s", report)
+		}
+		if !strings.Contains(report, "journal-open: 1 (n1)") {
+			t.Errorf("expected journal-open: 1 (n1), got:\n%s", report)
+		}
+		if !strings.Contains(
+			report,
+			"ready: no — refusing to merge add-retry: open review-journal finding(s) n1",
+		) {
+			t.Errorf("expected the reason to name n1, got:\n%s", report)
+		}
+	})
+
+	t.Run("a stale open finding only -> ready, reported as advisory", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:   "n1",
+			Cite: "somefile.go:10",
+			Note: "write is not atomic",
+			Blob: "aaa1111",
+			Head: "abc123",
+		})
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "somefile.go"),
+			[]byte("v2\n"),
+			0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(
+				commonDir+"\n",
+				"",
+				nil,
+			), // journalOpenFindings -> CommonDirIn
+			commands.ExecCommandResult(
+				"zzz9999\n",
+				"",
+				nil,
+			), // HashObjectIn(wtPath, somefile.go) -> mismatch: stale
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ready {
+			t.Fatalf("expected ready (a stale finding must not block), got:\n%s", report)
+		}
+		if !strings.Contains(report, "journal-open: 0") {
+			t.Errorf("expected journal-open: 0, got:\n%s", report)
+		}
+		if !strings.Contains(report, "journal-stale-open: 1 (n1 — advisory, does not block)") {
+			t.Errorf("expected the stale-open advisory line, got:\n%s", report)
+		}
+	})
+
+	t.Run("Git.IsAncestor erroring -> rebase: unknown(...), not ready", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult(
+				"", "fatal: Not a valid object name main", exitError(t, 128),
+			), // IsAncestor -> genuine failure
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(commonDir+"\n", "", nil),
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if ready {
+			t.Fatalf("expected not ready, got:\n%s", report)
+		}
+		if !strings.Contains(report, "rebase: unknown (") {
+			t.Errorf("expected rebase: unknown(...), got:\n%s", report)
+		}
+		if !strings.Contains(
+			report,
+			"ready: no — cannot determine whether add-retry needs a rebase against main",
+		) {
+			t.Errorf("expected the unanswerable-divergence reason, got:\n%s", report)
+		}
+	})
+
+	t.Run(
+		"Git.MergeTreeConflicts erroring -> conflicts: unknown(...), ready unaffected",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult("origin/main\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("main\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("0\t3\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult(
+					"", "fatal: not a valid object", exitError(t, 128),
+				), // MergeTreeConflicts -> genuine failure
+				commands.ExecCommandResult(commonDir+"\n", "", nil),
+				commands.ExecCommandResult("basecommit\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("", "", nil),
+			)
+
+			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !ready {
+				t.Fatalf(
+					"expected ready (an unknown conflict prediction must not block), got:\n%s",
+					report,
+				)
+			}
+			if !strings.Contains(report, "conflicts: unknown (git merge-tree failed:") ||
+				!strings.Contains(report, "— advisory, does not block)") {
+				t.Errorf("expected the unknown-conflicts advisory line, got:\n%s", report)
+			}
+		},
+	)
+
+	t.Run(
+		"Git.MergeTreeConflicts predicting conflicts -> listed, ready unaffected",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult("origin/main\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("main\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("0\t3\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult(
+					"treeoid1234\nconflict/path.go\n\nCONFLICT (content): Merge conflict in conflict/path.go\n",
+					"",
+					exitError(t, 1),
+				), // MergeTreeConflicts -> predicted conflict
+				commands.ExecCommandResult(commonDir+"\n", "", nil),
+				commands.ExecCommandResult("basecommit\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("", "", nil),
+			)
+
+			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !ready {
+				t.Fatalf("expected ready (predicted conflicts are advisory only), got:\n%s", report)
+			}
+			if !strings.Contains(
+				report,
+				"conflicts: 1 (conflict/path.go — advisory, does not block)",
+			) {
+				t.Errorf("expected the conflicts listing line, got:\n%s", report)
+			}
+		},
+	)
+
+	t.Run("changed markdown fixtures", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		if err := os.MkdirAll(filepath.Join(wtPath, "docs"), 0o755); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "docs", "marked.md"), []byte("**Status:** Draft\n"), 0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "docs", "nomarker.md"),
+			[]byte("# Title\n\nJust prose, no marker here.\n"),
+			0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "code.go"), []byte("package x\n"), 0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "docs", "untracked.md"), []byte("**Status:** PROPOSED\n"), 0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+		// docs/deleted.md is intentionally NOT written: it appears in the
+		// numstat output (the branch's history touched it) but no longer
+		// exists in the working tree, as if the branch (or an uncommitted
+		// edit) deleted it.
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(commonDir+"\n", "", nil),
+			commands.ExecCommandResult("basecommit\n", "", nil), // doc-status sweep: merge-base
+			commands.ExecCommandResult(
+				"5\t0\tdocs/marked.md\n0\t3\tdocs/nomarker.md\n2\t1\tcode.go\n0\t4\tdocs/deleted.md\n",
+				"",
+				nil,
+			), // changedFiles: diff --numstat
+			commands.ExecCommandResult(
+				"docs/untracked.md\x00",
+				"",
+				nil,
+			), // untrackedFiles: ls-files -z
+		)
+
+		report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !ready {
+			t.Fatalf("expected ready, got:\n%s", report)
+		}
+		for _, want := range []string{
+			"doc-status: docs/marked.md: Draft",
+			"doc-status: docs/nomarker.md: no status marker",
+			"doc-status: docs/untracked.md: PROPOSED",
+		} {
+			if !strings.Contains(report, want) {
+				t.Errorf("expected report to contain %q, got:\n%s", want, report)
+			}
+		}
+		for _, notWant := range []string{"code.go", "docs/deleted.md"} {
+			if strings.Contains(report, "doc-status: "+notWant) {
+				t.Errorf("expected no doc-status line for %q, got:\n%s", notWant, report)
+			}
+		}
+	})
+
+	t.Run("--check makes no fetch call", func(t *testing.T) {
+		tm, gitBase, wtPath := newFixture(t)
+		commonDir := t.TempDir()
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("origin/main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			),
+			commands.ExecCommandResult("main\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("0\t3\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("deadbeef\n", "", nil),
+			commands.ExecCommandResult(commonDir+"\n", "", nil),
+			commands.ExecCommandResult("basecommit\n", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+
+		if _, _, err := tm.worktreeFinishCheck(wtPath, "add-retry"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		for _, call := range gitBase.ExecCommandCalls {
+			for _, arg := range call.Args {
+				if arg == "fetch" {
+					t.Fatalf("--check must never fetch, got a fetch call: %+v", call)
+				}
+			}
+		}
+	})
 }
