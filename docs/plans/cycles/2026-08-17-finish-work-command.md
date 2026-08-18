@@ -4,11 +4,16 @@
 **Estimated Duration:** ~5 hours (was ~4; the §8 Q3 resolution adds an ADR and a
 merge-path journal gate, and the §8 Q5 resolution a second merge-path refusal
 recorded in that same ADR)
-**Status:** Draft — **approved to implement (2026-08-17, maintainer)**;
-implementation not started. `Draft` rather than a new `Approved` value because
-`docs/plans/TEMPLATE.md`'s vocabulary is `Draft | In Progress | Complete |
-Blocked` and nothing has been built yet; it moves to `In Progress` when step 1
-starts.
+**Status:** Complete — all six steps implemented, reviewed (task-scoped review
+per task, plus a final whole-branch review), and merged (2026-08-18). Two
+Important findings from the final review (an invalid `review-note --settle`
+invocation copied into a refusal message, `docs/spec.md`, and ADR-0027; and
+missing argv assertions pinning the local-vs-`origin/` anchoring) were fixed
+before merge. Step 6's "decide whether `finish-work` belongs in CLAUDE.md's
+command table" was answered: no such table exists in CLAUDE.md (the "Quick
+Reference: Common Commands" table is `make`/`go` commands for contributors,
+not slash commands; the "Documentation Index" maps docs, not commands) — no
+CLAUDE.md edit was needed.
 
 ---
 
@@ -188,36 +193,36 @@ is dirty.
 
 ### In Scope
 
-- [ ] `worktreeFinishMerge` refuses a dirty worktree up front (gap 1)
-- [ ] `worktreeFinishMerge` refuses when the **main checkout** is dirty — any
+- [x] `worktreeFinishMerge` refuses a dirty worktree up front (gap 1)
+- [x] `worktreeFinishMerge` refuses when the **main checkout** is dirty — any
       dirtiness, not only paths the fast-forward would touch (gap 1 — added by
       the §8 Q5 resolution; the original scope checked dirtiness at `wtPath`
       alone, which left the checkout `merge --ff-only` actually runs in
       unguarded)
-- [ ] `worktreeFinishMerge` refuses when the branch's review journal holds a
+- [x] `worktreeFinishMerge` refuses when the branch's review journal holds a
       **non-stale** open finding (gap 4 — added by the §8 Q3 resolution; the
       original scope closed gap 4 through `--check` alone)
-- [ ] `devgeta task worktree-finish --check` — a read-only readiness report,
+- [x] `devgeta task worktree-finish --check` — a read-only readiness report,
       non-zero exit when blocked (gaps 4 and 5)
-- [ ] `--check`'s status-marker recognizer knows more than devgeta's own
+- [x] `--check`'s status-marker recognizer knows more than devgeta's own
       `**Status:**` rendering — a front-matter `status` key, a header-block label
       line in any of its common spellings, and a `Status` section — while the
       _vocabulary_ stays out of the binary (added by the review of this document;
       the original scope's literal rule would have made the sweep fire in this
       repo and nowhere else, which §12 forbids for a shipped command)
-- [ ] `configs/shared/commands/finish-work.md` — the single entry point (gaps 2
+- [x] `configs/shared/commands/finish-work.md` — the single entry point (gaps 2
       and 3)
-- [ ] Tests for all six, mocked
-- [ ] Docs: `docs/spec.md` for the new flag, `CLAUDE.md`'s command table if the
+- [x] Tests for all six, mocked
+- [x] Docs: `docs/spec.md` for the new flag, `CLAUDE.md`'s command table if the
       new command belongs there
-- [ ] One ADR covering **both** merge-refusal forks — the journal gate (§8 Q3)
+- [x] One ADR covering **both** merge-refusal forks — the journal gate (§8 Q3)
       and the dirty main checkout (§8 Q5). §10 requires an ADR for each fork
       with lasting impact; they share one question ("what may block a
       `--merge`, and how does `--check` mirror it"), the same rejected
       warn-only shape, and the same no-`--force` consequence, so they are
       recorded together rather than split across two records that would each
       have to remember the other. See §8 Q5 for the reasoning.
-- [ ] A second ADR for the status-marker recognizer fork — shapes in the binary,
+- [x] A second ADR for the status-marker recognizer fork — shapes in the binary,
       vocabulary in the command — with the two rejected alternatives step 4
       names. A separate record because it answers a different question from the
       merge-refusal one, and §10 wants it before the code it governs.
