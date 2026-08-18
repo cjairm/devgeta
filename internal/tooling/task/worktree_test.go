@@ -9,6 +9,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
@@ -610,20 +611,28 @@ func TestWorktreeFinish_Discard(t *testing.T) {
 	)
 }
 
-func TestWorktreeFinish_Merge(t *testing.T) {
-	newFixture := func(t *testing.T) (tm *TaskManager, gitBase *commands.MockBaseCommand, wtPath string) {
-		t.Helper()
-		tm, gitBase, _ = newTaskSetup()
-		repoSlug := uniqueRepoSlug(t)
-		wtPath = filepath.Join(worktree.GetWorktreeBasePath(), repoSlug, "add-retry")
-		if err := os.MkdirAll(wtPath, 0o755); err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = os.RemoveAll(filepath.Join(worktree.GetWorktreeBasePath(), repoSlug))
-		})
-		return tm, gitBase, wtPath
+// newMergeFixture builds a TaskManager and a real wtPath directory named
+// "add-retry" for the merge-path tests below (TestWorktreeFinish_Merge and
+// TestWorktreeFinish_MergeJournalGate), which both script the merge path's git
+// calls against the same fictional main checkout at "/main".
+func newMergeFixture(
+	t *testing.T,
+) (tm *TaskManager, gitBase *commands.MockBaseCommand, wtPath string) {
+	t.Helper()
+	tm, gitBase, _ = newTaskSetup()
+	repoSlug := uniqueRepoSlug(t)
+	wtPath = filepath.Join(worktree.GetWorktreeBasePath(), repoSlug, "add-retry")
+	if err := os.MkdirAll(wtPath, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
 	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join(worktree.GetWorktreeBasePath(), repoSlug))
+	})
+	return tm, gitBase, wtPath
+}
+
+func TestWorktreeFinish_Merge(t *testing.T) {
+	newFixture := newMergeFixture
 
 	t.Run("not diverged: straight fast-forward merge and removal", func(t *testing.T) {
 		tm, gitBase, wtPath := newFixture(t)
@@ -643,6 +652,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			), // GetMainWorktree(wtPath)
 			commands.ExecCommandResult("main\n", "", nil), // branch --show-current at /main
 			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -667,11 +679,12 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("unexpected confirmation: %q", out)
 		}
 
-		// The rebase must NOT have been called: 12 calls total, no extra rebase
-		// call. The 12th is the review journal's location lookup — the branch
+		// The rebase must NOT have been called: 13 calls total, no extra rebase
+		// call. The 7th is the journal-gate probe's location lookup
+		// (openBlockingFindings), the 13th is dropReviewJournal's — the branch
 		// was just deleted, so its remembered review exchanges go with it.
-		if len(gitBase.ExecCommandCalls) != 12 {
-			t.Fatalf("expected 12 git calls (no rebase), got %d: %+v",
+		if len(gitBase.ExecCommandCalls) != 13 {
+			t.Fatalf("expected 13 git calls (no rebase), got %d: %+v",
 				len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls)
 		}
 	})
@@ -698,6 +711,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 				nil,
 			), // branch --show-current
 			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 			commands.ExecCommandResult(
 				"",
 				"not an ancestor",
@@ -728,11 +744,12 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 		}
 
 		calls := gitBase.ExecCommandCalls
-		// 13 = the 12 merge-path calls plus the review journal's location lookup.
-		if len(calls) != 13 {
-			t.Fatalf("expected 13 git calls (with rebase), got %d: %+v", len(calls), calls)
+		// 14 = the 12 merge-path calls, plus the journal-gate probe's location
+		// lookup (openBlockingFindings), plus dropReviewJournal's own lookup.
+		if len(calls) != 14 {
+			t.Fatalf("expected 14 git calls (with rebase), got %d: %+v", len(calls), calls)
 		}
-		assertCmd(t, calls[7], "git", "-C", wtPath, "rebase", "main")
+		assertCmd(t, calls[8], "git", "-C", wtPath, "rebase", "main")
 	})
 
 	t.Run("refuses to merge a dirty worktree", func(t *testing.T) {
@@ -856,6 +873,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			),
 			commands.ExecCommandResult("main\n", "", nil),
 			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 			commands.ExecCommandResult("", "not an ancestor", fmt.Errorf("exit 1")),
 			commands.ExecCommandResult("", "CONFLICT", fmt.Errorf("exit 1")), // rebase fails
 		)
@@ -868,8 +888,8 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			t.Errorf("expected guidance mentioning rebase --abort, got: %v", err)
 		}
 		// Nothing beyond the rebase attempt should have run.
-		if len(gitBase.ExecCommandCalls) != 8 {
-			t.Fatalf("expected exactly 8 git calls, got %d", len(gitBase.ExecCommandCalls))
+		if len(gitBase.ExecCommandCalls) != 9 {
+			t.Fatalf("expected exactly 9 git calls, got %d", len(gitBase.ExecCommandCalls))
 		}
 	})
 
@@ -887,6 +907,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			),
 			commands.ExecCommandResult("main\n", "", nil),
 			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 			commands.ExecCommandResult(
 				"",
 				"",
@@ -906,9 +929,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 		if !strings.Contains(err.Error(), "worktree left in place") {
 			t.Errorf("expected error to say the worktree was left in place, got: %v", err)
 		}
-		if len(gitBase.ExecCommandCalls) != 8 {
+		if len(gitBase.ExecCommandCalls) != 9 {
 			t.Fatalf(
-				"expected exactly 8 git calls (no removal attempted), got %d",
+				"expected exactly 9 git calls (no removal attempted), got %d",
 				len(gitBase.ExecCommandCalls),
 			)
 		}
@@ -928,6 +951,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			),
 			commands.ExecCommandResult("main\n", "", nil),
 			commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 			commands.ExecCommandResult("", "", nil), // ancestor
 			commands.ExecCommandResult("", "", nil), // merge --ff-only succeeds
 			commands.ExecCommandResult(
@@ -974,6 +1000,9 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 				),
 				commands.ExecCommandResult("main\n", "", nil),
 				commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult(
+					"/main/.git\n", "", nil,
+				), // openBlockingFindings -> CommonDirIn(mainWorktree) (empty journal)
 				commands.ExecCommandResult("", "", nil), // ancestor
 				commands.ExecCommandResult("", "", nil), // merge --ff-only succeeds
 				commands.ExecCommandResult(
@@ -1004,6 +1033,342 @@ func TestWorktreeFinish_Merge(t *testing.T) {
 			if !strings.Contains(err.Error(), "failed to delete branch") {
 				t.Errorf("expected error to say branch deletion failed, got: %v", err)
 			}
+		},
+	)
+}
+
+// writeJournalAt writes a journal file for branch straight to disk at the
+// location reviewjournal.Manager.PathFor would resolve from commonDir —
+// commonDir/devgeta/review/<encoded-branch>.md — so a test can seed a
+// journal's exact entries without going through the Manager's own git calls,
+// which would consume from these tests' ordered mock results.
+func writeJournalAt(t *testing.T, commonDir, branch string, entries ...reviewjournal.Entry) {
+	t.Helper()
+	dir := filepath.Join(commonDir, "devgeta", "review")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	j := &reviewjournal.Journal{Branch: branch, Entries: entries}
+	path := filepath.Join(dir, reviewjournal.EncodeBranch(branch)+".md")
+	if err := os.WriteFile(path, []byte(j.Render()), 0o644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+}
+
+// TestWorktreeFinish_MergeJournalGate covers openBlockingFindings and its
+// wiring into worktreeFinishMerge (ADR-0027, §8 Q3 of
+// docs/plans/cycles/2026-08-17-finish-work-command.md). Every subtest reaches
+// the merge path with a clean worktree, a clean main checkout on the default
+// branch — so the journal probe is the only thing left to decide whether the
+// merge proceeds.
+func TestWorktreeFinish_MergeJournalGate(t *testing.T) {
+	t.Run("a non-stale open finding refuses before any rebase or merge call", func(t *testing.T) {
+		tm, gitBase, wtPath := newMergeFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:   "n1",
+			Cite: "somefile.go:10",
+			Note: "write is not atomic",
+			Blob: "aaa1111",
+			Head: "abc123",
+		})
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "somefile.go"),
+			[]byte("v1\n"),
+			0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree
+			commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				commonDir+"\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree)
+			commands.ExecCommandResult(
+				"aaa1111\n", "", nil,
+			), // HashObjectIn(wtPath, somefile.go) -> matches: fresh
+		)
+
+		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "n1") {
+			t.Errorf("expected error to name the finding id, got: %v", err)
+		}
+		if !strings.Contains(err.Error(), "review-note --settle") {
+			t.Errorf("expected error to name the fix, got: %v", err)
+		}
+
+		// Refused right after the journal probe: merge-base was never reached.
+		if len(gitBase.ExecCommandCalls) != 8 {
+			t.Fatalf(
+				"expected exactly 8 git calls (refused before merge-base), got %d: %+v",
+				len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls,
+			)
+		}
+	})
+
+	t.Run("a stale open finding does not block", func(t *testing.T) {
+		tm, gitBase, wtPath := newMergeFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:   "n1",
+			Cite: "somefile.go:10",
+			Note: "write is not atomic",
+			Blob: "aaa1111",
+			Head: "abc123",
+		})
+		if err := os.WriteFile(
+			filepath.Join(wtPath, "somefile.go"),
+			[]byte("v2\n"),
+			0o644,
+		); err != nil {
+			t.Fatalf("setup: %v", err)
+		}
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree
+			commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				commonDir+"\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree)
+			commands.ExecCommandResult(
+				"zzz9999\n", "", nil,
+			), // HashObjectIn(wtPath, somefile.go) -> mismatch: stale
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // merge-base --is-ancestor -> ancestor (no rebase)
+			commands.ExecCommandResult("", "", nil), // merge --ff-only
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // RemoveWorktree -> GetMainWorktree
+			commands.ExecCommandResult("", "", nil), // worktree remove
+			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> CommonDirIn
+		)
+
+		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "Merged add-retry into main") {
+			t.Errorf("unexpected confirmation: %q", out)
+		}
+	})
+
+	t.Run("a settled finding does not block", func(t *testing.T) {
+		tm, gitBase, wtPath := newMergeFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:         "n1",
+			Resolution: reviewjournal.ResolutionFixed,
+			Cite:       "somefile.go:10",
+			Note:       "write is not atomic",
+			Answer:     "made the write atomic",
+			Blob:       "aaa1111",
+			Head:       "abc123",
+		})
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree
+			commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				commonDir+"\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree)
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // merge-base --is-ancestor -> ancestor (no rebase)
+			commands.ExecCommandResult("", "", nil), // merge --ff-only
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // RemoveWorktree -> GetMainWorktree
+			commands.ExecCommandResult("", "", nil), // worktree remove
+			commands.ExecCommandResult("", "", nil), // branch -D
+			commands.ExecCommandResult(
+				"/main/.git\n", "", nil,
+			), // dropReviewJournal -> CommonDirIn
+		)
+
+		out, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !strings.Contains(out, "Merged add-retry into main") {
+			t.Errorf("unexpected confirmation: %q", out)
+		}
+
+		// A settled entry is never handed to Verdict at all, so the only
+		// extra call over the empty-journal case is the journal's own load.
+		if len(gitBase.ExecCommandCalls) != 13 {
+			t.Fatalf("expected 13 git calls, got %d: %+v",
+				len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls)
+		}
+	})
+
+	t.Run("a pathless open finding blocks", func(t *testing.T) {
+		tm, gitBase, wtPath := newMergeFixture(t)
+		commonDir := t.TempDir()
+		writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+			ID:   "n1",
+			Note: "should this feature fetch, or stay local-only?",
+		})
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+			), // ListWorktreesAt
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // IsWorktreeDirty(wtPath) -> clean
+			commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+			commands.ExecCommandResult(
+				"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+			), // GetMainWorktree
+			commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+			commands.ExecCommandResult("", "", nil),       // IsWorktreeDirty(mainWorktree) -> clean
+			commands.ExecCommandResult(
+				commonDir+"\n", "", nil,
+			), // openBlockingFindings -> CommonDirIn(mainWorktree)
+		)
+
+		_, err := tm.WorktreeFinish("add-retry", true, false, false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "n1") {
+			t.Errorf("expected error to name the finding id, got: %v", err)
+		}
+
+		// A pathless (dateless) entry is never handed to citeBlob, so there is
+		// no hash-object call — the probe blocks off the journal load alone.
+		if len(gitBase.ExecCommandCalls) != 7 {
+			t.Fatalf(
+				"expected exactly 7 git calls (no hash-object call for a pathless entry), got %d: %+v",
+				len(gitBase.ExecCommandCalls),
+				gitBase.ExecCommandCalls,
+			)
+		}
+	})
+
+	// Regression test: this is the exact bug shape the brief calls out.
+	// Verdict must be judged against wtPath — the checkout that actually
+	// holds the branch's own fix — never against mainWorktree. An entry
+	// citing a file the feature branch itself changed has its stamped blob
+	// match what's NOW at wtPath (the fix), so it must still block. If the
+	// implementation ever judged Verdict against mainWorktree instead, the
+	// main checkout's unrelated (pre-fix) copy of the file would almost
+	// always compare unequal to the stamped blob and read [STALE], silently
+	// letting the finding through.
+	t.Run(
+		"regression: a finding citing a file the branch changed is judged against wtPath, not the main checkout",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newMergeFixture(t)
+			commonDir := t.TempDir()
+			writeJournalAt(t, commonDir, "add-retry", reviewjournal.Entry{
+				ID:   "n2",
+				Cite: "fix.go:5",
+				Note: "off-by-one in the loop bound",
+				Blob: "cafe1234",
+				Head: "abc123",
+			})
+			if err := os.WriteFile(
+				filepath.Join(wtPath, "fix.go"),
+				[]byte("fixed content\n"),
+				0o644,
+			); err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+				), // ListWorktreesAt
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(wtPath) -> clean
+				commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				), // GetMainWorktree
+				commands.ExecCommandResult("main\n", "", nil), // branch --show-current
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult(
+					commonDir+"\n", "", nil,
+				), // openBlockingFindings -> CommonDirIn(mainWorktree)
+				commands.ExecCommandResult(
+					"cafe1234\n", "", nil,
+				), // HashObjectIn(wtPath, fix.go) -> matches: still fresh
+			)
+
+			_, err := tm.WorktreeFinish("add-retry", true, false, false)
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if !strings.Contains(err.Error(), "n2") {
+				t.Errorf("expected error to name the finding id, got: %v", err)
+			}
+
+			calls := gitBase.ExecCommandCalls
+			if len(calls) != 8 {
+				t.Fatalf("expected exactly 8 git calls, got %d: %+v", len(calls), calls)
+			}
+			// The load-bearing assertion: the hash-object call's directory must
+			// be wtPath, never mainWorktree ("/main") or the journal's own
+			// commonDir.
+			assertCmd(t, calls[7], "git", "-C", wtPath, "hash-object", "--", "fix.go")
 		},
 	)
 }

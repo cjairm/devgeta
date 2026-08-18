@@ -241,6 +241,22 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		)
 	}
 
+	blocking, err := tm.openBlockingFindings(mainWorktree, wtPath, branch)
+	if err != nil {
+		return "", fmt.Errorf("failed to check the review journal: %w", err)
+	}
+	if len(blocking) > 0 {
+		ids := make([]string, len(blocking))
+		for i, e := range blocking {
+			ids[i] = e.ID
+		}
+		return "", fmt.Errorf(
+			"refusing to merge %s: open review-journal finding(s) %s;"+
+				" settle them with `devgeta task review-note --settle <id>`",
+			branch, strings.Join(ids, ", "),
+		)
+	}
+
 	// merge-base --is-ancestor exits non-zero when defaultBranch is NOT an
 	// ancestor of the branch's HEAD, i.e. the branch has diverged (default
 	// gained commits since the branch point) and needs a rebase before it can
@@ -291,6 +307,47 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 
 	tm.dropReviewJournal(mainWorktree, branch)
 	return fmt.Sprintf("Merged %s into %s; removed worktree %s", branch, defaultBranch, wtPath), nil
+}
+
+// openBlockingFindings returns every open review-journal entry for branch that
+// must block a merge — the shared probe behind both worktreeFinishMerge's
+// refusal and the (later) worktree-finish --check readiness report (ADR-0027).
+//
+// The journal's LOCATION resolves through mainWorktree, matching
+// dropReviewJournal: Manager.PathFor resolves the common git directory, which
+// the main checkout and any linked worktree of the same repo share, so
+// mainWorktree finds the right file. Freshness is judged separately, and
+// deliberately NOT against that same directory: Manager.Verdict hashes the
+// cited file's CURRENT on-disk content in whatever directory it's given, so it
+// has to run against wtPath — the checkout that actually holds the branch's
+// commits. Judging it against mainWorktree would hash the file as it sits on
+// the (unrelated) default branch, so a finding citing a file the branch just
+// fixed would almost always compare against the old, pre-fix blob and read
+// stale — silently letting a real, unresolved finding through (ADR-0027).
+//
+// Settled entries are never considered — only Open() ones can block. A
+// FreshnessStale open entry does not block (its cited file has already
+// changed since the finding was raised); FreshnessFresh and FreshnessDateless
+// (a pathless, design-level question with nothing mechanical to invalidate
+// it) both do.
+func (tm *TaskManager) openBlockingFindings(
+	mainWorktree, wtPath, branch string,
+) ([]reviewjournal.Entry, error) {
+	jm := reviewjournal.New(tm.Git)
+	j, err := jm.Load(mainWorktree, branch)
+	if err != nil {
+		return nil, err
+	}
+	var blocking []reviewjournal.Entry
+	for _, e := range j.Entries {
+		if !e.Open() {
+			continue
+		}
+		if jm.Verdict(wtPath, e) != reviewjournal.FreshnessStale {
+			blocking = append(blocking, e)
+		}
+	}
+	return blocking, nil
 }
 
 // dropReviewJournal deletes branch's review journal once the branch itself is
