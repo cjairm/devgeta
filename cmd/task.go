@@ -4,6 +4,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/cjairm/devgeta/internal/tooling/task"
@@ -45,7 +46,7 @@ type taskRunner interface {
 	ReviewNoteReopen(branch, id string) (string, error)
 	ReviewRun(reviewer, note string, rng task.ReviewRange) (string, error)
 	WorktreeStart(name, base string) (string, error)
-	WorktreeFinish(name string, merge, discard, force bool) (string, error)
+	WorktreeFinish(name string, merge, discard, check, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
 	Scratch() (string, error)
 	ScratchClean(target string) error
@@ -527,10 +528,12 @@ exactly the contract above either way.`,
 // taskWorktreeStartBaseFlag is worktree-start's --base flag.
 var taskWorktreeStartBaseFlag string
 
-// taskWorktreeFinishMergeFlag/DiscardFlag/ForceFlag are worktree-finish's flags.
+// taskWorktreeFinishMergeFlag/DiscardFlag/CheckFlag/ForceFlag are
+// worktree-finish's flags.
 var (
 	taskWorktreeFinishMergeFlag   bool
 	taskWorktreeFinishDiscardFlag bool
+	taskWorktreeFinishCheckFlag   bool
 	taskWorktreeFinishForceFlag   bool
 )
 
@@ -556,10 +559,10 @@ already exists).`,
 }
 
 var taskWorktreeFinishCmd = &cobra.Command{
-	Use:   "worktree-finish [name] --merge|--discard",
+	Use:   "worktree-finish [name] --merge|--discard|--check",
 	Short: "Tear down a git worktree via merge or discard (for agents)",
 	Long: `Tear down a worktree created by "worktree-start" (or "dg wt"). Exactly one of
---merge or --discard is required.
+--merge, --discard, or --check is required.
 
 Target resolution is deterministic: an explicit name wins; otherwise the
 current directory resolves to the linked worktree it's inside; otherwise the
@@ -573,10 +576,17 @@ the fast-forward has landed the branch's commits on the default branch).
 
 --discard refuses on a dirty worktree unless --force is passed, then removes
 the worktree and deletes the branch unconditionally. This does not run a
-build or test suite — verification is the caller's responsibility.`,
+build or test suite — verification is the caller's responsibility.
+
+--check reports readiness without acting: it never mutates anything, never
+moves a ref, and never fetches. It prints the same shape of information
+--merge would use to decide (dirty state, rebase need, predicted merge
+conflicts, open review-journal findings, changed docs' status markers) and
+exits non-zero when the report's own "ready:" line says no.`,
 	Example: `  dg task worktree-finish add-retry-logic --merge
   dg task worktree-finish --discard          # resolves from the current directory
-  dg task worktree-finish stale-spike --discard --force`,
+  dg task worktree-finish stale-spike --discard --force
+  dg task worktree-finish add-retry-logic --check`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := ""
@@ -584,8 +594,14 @@ build or test suite — verification is the caller's responsibility.`,
 			name = args[0]
 		}
 		out, err := newTaskManager().WorktreeFinish(
-			name, taskWorktreeFinishMergeFlag, taskWorktreeFinishDiscardFlag, taskWorktreeFinishForceFlag,
+			name, taskWorktreeFinishMergeFlag, taskWorktreeFinishDiscardFlag,
+			taskWorktreeFinishCheckFlag, taskWorktreeFinishForceFlag,
 		)
+		var notReady *task.CheckNotReadyError
+		if errors.As(err, &notReady) {
+			fmt.Fprintln(cmd.OutOrStdout(), notReady.Report)
+			return notReady
+		}
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -752,8 +768,10 @@ func init() {
 		BoolVar(&taskWorktreeFinishDiscardFlag, "discard", false, "Remove the worktree and branch without merging")
 	taskWorktreeFinishCmd.Flags().
 		BoolVar(&taskWorktreeFinishForceFlag, "force", false, "With --discard, remove even if the worktree has uncommitted changes")
-	taskWorktreeFinishCmd.MarkFlagsMutuallyExclusive("merge", "discard")
-	taskWorktreeFinishCmd.MarkFlagsOneRequired("merge", "discard")
+	taskWorktreeFinishCmd.Flags().
+		BoolVar(&taskWorktreeFinishCheckFlag, "check", false, "Read-only readiness report; non-zero exit when not ready")
+	taskWorktreeFinishCmd.MarkFlagsMutuallyExclusive("merge", "discard", "check")
+	taskWorktreeFinishCmd.MarkFlagsOneRequired("merge", "discard", "check")
 
 	taskReleaseCmd.Flags().StringVar(
 		&taskReleaseMessageFileFlag,

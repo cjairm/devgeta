@@ -101,6 +101,7 @@ type mockTaskRunner struct {
 	worktreeFinishNameArg    string
 	worktreeFinishMergeArg   bool
 	worktreeFinishDiscardArg bool
+	worktreeFinishCheckArg   bool
 	worktreeFinishForceArg   bool
 	worktreeFinishCalled     bool
 	worktreeFinishRet        string
@@ -236,11 +237,15 @@ func (m *mockTaskRunner) WorktreeStart(name, base string) (string, error) {
 	return m.worktreeStartRet, m.worktreeStartErr
 }
 
-func (m *mockTaskRunner) WorktreeFinish(name string, merge, discard, force bool) (string, error) {
+func (m *mockTaskRunner) WorktreeFinish(
+	name string,
+	merge, discard, check, force bool,
+) (string, error) {
 	m.worktreeFinishCalled = true
 	m.worktreeFinishNameArg = name
 	m.worktreeFinishMergeArg = merge
 	m.worktreeFinishDiscardArg = discard
+	m.worktreeFinishCheckArg = check
 	m.worktreeFinishForceArg = force
 	return m.worktreeFinishRet, m.worktreeFinishErr
 }
@@ -1299,6 +1304,125 @@ func TestTask_WorktreeFinish(t *testing.T) {
 			t.Fatal("expected error")
 		}
 	})
+
+	t.Run("name + --check", func(t *testing.T) {
+		mock := &mockTaskRunner{worktreeFinishRet: "worktree: /path\n...\nready: yes"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskWorktreeFinishMergeFlag = false
+		taskWorktreeFinishDiscardFlag = false
+		taskWorktreeFinishCheckFlag = true
+		defer func() { taskWorktreeFinishCheckFlag = false }()
+
+		err := taskWorktreeFinishCmd.RunE(taskWorktreeFinishCmd, []string{"add-retry-logic"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.worktreeFinishNameArg != "add-retry-logic" {
+			t.Errorf("expected name arg 'add-retry-logic', got %q", mock.worktreeFinishNameArg)
+		}
+		if !mock.worktreeFinishCheckArg || mock.worktreeFinishMergeArg ||
+			mock.worktreeFinishDiscardArg {
+			t.Errorf(
+				"expected check=true merge=false discard=false, got check=%v merge=%v discard=%v",
+				mock.worktreeFinishCheckArg,
+				mock.worktreeFinishMergeArg,
+				mock.worktreeFinishDiscardArg,
+			)
+		}
+	})
+
+	// The CheckNotReadyError -> stdout-then-error path: the full report must
+	// reach stdout even though the command also returns a non-nil error
+	// (emitPRResult's usual "err != nil means nothing to print" contract does
+	// not apply to this one, deliberate exception — see WorktreeFinish's doc
+	// comment in internal/tooling/task/worktree.go).
+	t.Run("--check not ready prints the full report then returns an error", func(t *testing.T) {
+		report := "worktree: /path\nbranch: add-retry\nready: no — refusing to merge a dirty worktree; commit or stash your changes first"
+		mock := &mockTaskRunner{
+			worktreeFinishErr: &task.CheckNotReadyError{Report: report},
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskWorktreeFinishMergeFlag = false
+		taskWorktreeFinishDiscardFlag = false
+		taskWorktreeFinishCheckFlag = true
+		defer func() { taskWorktreeFinishCheckFlag = false }()
+
+		var out bytes.Buffer
+		taskWorktreeFinishCmd.SetOut(&out)
+		defer taskWorktreeFinishCmd.SetOut(nil)
+
+		err := taskWorktreeFinishCmd.RunE(taskWorktreeFinishCmd, []string{})
+		if err == nil {
+			t.Fatal("expected a non-nil error so the process exits non-zero")
+		}
+		if !strings.Contains(out.String(), report) {
+			t.Errorf("expected stdout to contain the full report, got %q", out.String())
+		}
+	})
+
+	t.Run("--check is mutually exclusive with --merge and --discard", func(t *testing.T) {
+		resetWorktreeFinishFlags(t)
+		ann := taskWorktreeFinishCmd.Flags().Lookup("check").Annotations
+		if _, ok := ann["cobra_annotation_mutually_exclusive"]; !ok {
+			t.Error("--check must be declared mutually exclusive with --merge and --discard")
+		}
+
+		flags := taskWorktreeFinishCmd.Flags()
+		setFlag := func(t *testing.T, name string) {
+			t.Helper()
+			if err := flags.Set(name, "true"); err != nil {
+				t.Fatalf("setting --%s: %v", name, err)
+			}
+			t.Cleanup(func() { flags.Lookup(name).Changed = false })
+		}
+
+		for _, other := range []string{"merge", "discard"} {
+			t.Run("with --"+other, func(t *testing.T) {
+				resetWorktreeFinishFlags(t)
+				setFlag(t, "check")
+				setFlag(t, other)
+				if err := taskWorktreeFinishCmd.ValidateFlagGroups(); err == nil {
+					t.Errorf(
+						"--check and --%s must be refused together, not silently accepted",
+						other,
+					)
+				}
+			})
+		}
+
+		resetWorktreeFinishFlags(t)
+		setFlag(t, "check")
+		if err := taskWorktreeFinishCmd.ValidateFlagGroups(); err != nil {
+			t.Errorf("--check on its own must be accepted: %v", err)
+		}
+	})
+
+	t.Run("none of --merge, --discard, --check is rejected", func(t *testing.T) {
+		resetWorktreeFinishFlags(t)
+		if err := taskWorktreeFinishCmd.ValidateFlagGroups(); err == nil {
+			t.Error("expected an error when none of --merge, --discard, --check is set")
+		}
+	})
+}
+
+// resetWorktreeFinishFlags clears worktree-finish's flags (both the package
+// vars RunE reads and pflag's own Changed bookkeeping, which
+// ValidateFlagGroups consults) so each subtest starts from a clean slate.
+func resetWorktreeFinishFlags(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		taskWorktreeFinishMergeFlag = false
+		taskWorktreeFinishDiscardFlag = false
+		taskWorktreeFinishCheckFlag = false
+		taskWorktreeFinishForceFlag = false
+		for _, name := range []string{"merge", "discard", "check", "force"} {
+			taskWorktreeFinishCmd.Flags().Lookup(name).Changed = false
+		}
+	}
+	reset()
+	t.Cleanup(reset)
 }
 
 func TestTask_Release(t *testing.T) {
