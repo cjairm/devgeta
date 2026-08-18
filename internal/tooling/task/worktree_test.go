@@ -1865,6 +1865,86 @@ func TestWorktreeFinishCheck(t *testing.T) {
 		}
 	})
 
+	// The realistic combination the plan calls out as reachable, not
+	// hypothetical: a repo with no LOCAL branch named defaultBranch (only
+	// feature branches ever checked out, or DefaultBranchIn's "main" fallback
+	// in a repo whose default is actually "trunk"). rev-list and IsAncestor
+	// both probe that exact ref, so both fail together — unlike the previous
+	// subtest's mock (rev-list succeeds, only IsAncestor fails), which can't
+	// really happen since the two commands resolve the same ref. The
+	// ahead/behind gather must degrade to "unknown" instead of aborting the
+	// whole report, so the designed rebase:/ready: handling (from IsAncestor's
+	// own failure) can still render.
+	t.Run(
+		"rev-list and IsAncestor both fail on the same unresolvable ref -> report still renders",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn(wtPath)
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(wtPath) -> clean
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("main\n", "", nil), // CurrentBranchIn(mainWorktree)
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult(
+					"",
+					"fatal: ambiguous argument 'main...HEAD': unknown revision or path not in the working tree.",
+					exitError(t, 128),
+				), // rev-list --left-right --count -> genuine failure, no local "main"
+				commands.ExecCommandResult(
+					"", "fatal: Not a valid object name main", exitError(t, 128),
+				), // IsAncestor -> the SAME underlying condition
+				commands.ExecCommandResult(
+					"deadbeef\n",
+					"",
+					nil,
+				), // MergeTreeConflicts -> clean merge
+				commands.ExecCommandResult(
+					commonDir+"\n",
+					"",
+					nil,
+				), // journalOpenFindings -> CommonDirIn
+				commands.ExecCommandResult("basecommit\n", "", nil), // doc-status sweep: merge-base
+				commands.ExecCommandResult("", "", nil),             // changedFiles: diff --numstat
+				commands.ExecCommandResult("", "", nil),             // untrackedFiles: ls-files
+			)
+
+			report, ready, err := tm.worktreeFinishCheck(wtPath, "add-retry")
+			if err != nil {
+				t.Fatalf(
+					"expected the report to still render despite the unanswerable probe, got error: %v",
+					err,
+				)
+			}
+			if ready {
+				t.Fatalf("expected not ready, got:\n%s", report)
+			}
+			if !strings.Contains(report, "ahead: unknown  behind: unknown (") {
+				t.Errorf("expected the degraded ahead/behind line, got:\n%s", report)
+			}
+			if !strings.Contains(report, "rebase: unknown (") {
+				t.Errorf("expected rebase: unknown(...), got:\n%s", report)
+			}
+			if !strings.Contains(
+				report,
+				"ready: no — cannot determine whether add-retry needs a rebase against main",
+			) {
+				t.Errorf("expected the unanswerable-divergence reason, got:\n%s", report)
+			}
+		},
+	)
+
 	t.Run(
 		"Git.MergeTreeConflicts erroring -> conflicts: unknown(...), ready unaffected",
 		func(t *testing.T) {
@@ -2065,4 +2145,139 @@ func TestWorktreeFinishCheck(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestWorktreeFinish_Check covers WorktreeFinish's own check=true branch —
+// every other test in this file calls tm.worktreeFinishCheck directly, so
+// nothing previously exercised the mapping WorktreeFinish itself performs:
+// not ready -> ("", &CheckNotReadyError{Report: report}), ready ->
+// (report, nil). Reuses the same mocked-sequence shape as
+// TestWorktreeFinishCheck's "clean, ready" and "dirty" subtests, with one
+// extra leading call: resolveWorktreeTarget's branchForWorktree resolution
+// (ListWorktreesAt(wtPath)), which worktreeFinishCheck's own tests skip by
+// calling it directly with wtPath/branch already resolved.
+func TestWorktreeFinish_Check(t *testing.T) {
+	newFixture := newMergeFixture
+
+	t.Run(
+		"clean and ready -> returns the report as the string result, nil error",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+				), // resolveWorktreeTarget -> branchForWorktree -> ListWorktreesAt(wtPath)
+				commands.ExecCommandResult("origin/main\n", "", nil), // DefaultBranchIn(wtPath)
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(wtPath) -> clean
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				), // GetMainWorktree(wtPath)
+				commands.ExecCommandResult("main\n", "", nil), // CurrentBranchIn(mainWorktree)
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult("0\t3\n", "", nil), // rev-list --left-right --count
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // IsAncestor -> ancestor (rebase not needed)
+				commands.ExecCommandResult(
+					"deadbeef\n",
+					"",
+					nil,
+				), // MergeTreeConflicts -> clean merge
+				commands.ExecCommandResult(
+					commonDir+"\n", "", nil,
+				), // journalOpenFindings -> CommonDirIn(mainWorktree) (empty journal)
+				commands.ExecCommandResult("basecommit\n", "", nil), // doc-status sweep: merge-base
+				commands.ExecCommandResult("", "", nil),             // changedFiles: diff --numstat
+				commands.ExecCommandResult("", "", nil),             // untrackedFiles: ls-files
+			)
+
+			out, err := tm.WorktreeFinish("add-retry", false, false, true, false)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !strings.Contains(out, "ready: yes") {
+				t.Errorf("expected the report to be returned as the string result, got: %q", out)
+			}
+			if !strings.Contains(out, "worktree: "+wtPath) {
+				t.Errorf("expected the full report, got: %q", out)
+			}
+
+			if len(gitBase.ExecCommandCalls) != 13 {
+				t.Fatalf(
+					"expected 13 git calls, got %d: %+v",
+					len(gitBase.ExecCommandCalls),
+					gitBase.ExecCommandCalls,
+				)
+			}
+		},
+	)
+
+	t.Run(
+		"dirty wtPath and not ready -> empty string result, *CheckNotReadyError carrying the full report",
+		func(t *testing.T) {
+			tm, gitBase, wtPath := newFixture(t)
+			commonDir := t.TempDir()
+
+			gitBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"worktree "+wtPath+"\nHEAD abc123\nbranch refs/heads/add-retry\n\n", "", nil,
+				), // resolveWorktreeTarget -> branchForWorktree -> ListWorktreesAt(wtPath)
+				commands.ExecCommandResult("origin/main\n", "", nil),
+				commands.ExecCommandResult(
+					"?? scratch.go\n",
+					"",
+					nil,
+				), // IsWorktreeDirty(wtPath) -> dirty
+				commands.ExecCommandResult(
+					"worktree /main\nHEAD def456\nbranch refs/heads/main\n\n", "", nil,
+				),
+				commands.ExecCommandResult("main\n", "", nil),
+				commands.ExecCommandResult("", "", nil), // IsWorktreeDirty(mainWorktree) -> clean
+				commands.ExecCommandResult("0\t3\n", "", nil),
+				commands.ExecCommandResult("", "", nil), // IsAncestor -> ancestor
+				commands.ExecCommandResult("deadbeef\n", "", nil),
+				commands.ExecCommandResult(commonDir+"\n", "", nil),
+				commands.ExecCommandResult("basecommit\n", "", nil),
+				commands.ExecCommandResult("", "", nil),
+				commands.ExecCommandResult("", "", nil),
+			)
+
+			out, err := tm.WorktreeFinish("add-retry", false, false, true, false)
+			if out != "" {
+				t.Errorf("expected an empty string result on a not-ready check, got: %q", out)
+			}
+			if err == nil {
+				t.Fatal("expected a non-nil error so the process exits non-zero")
+			}
+			var notReady *CheckNotReadyError
+			if !errors.As(err, &notReady) {
+				t.Fatalf("expected a *CheckNotReadyError, got %T: %v", err, err)
+			}
+			if !strings.Contains(notReady.Report, "ready: no —") {
+				t.Errorf("expected the report to say not ready, got:\n%s", notReady.Report)
+			}
+			if !strings.Contains(notReady.Report, "dirty: yes") {
+				t.Errorf("expected the full report, got:\n%s", notReady.Report)
+			}
+
+			if len(gitBase.ExecCommandCalls) != 13 {
+				t.Fatalf(
+					"expected 13 git calls, got %d: %+v",
+					len(gitBase.ExecCommandCalls), gitBase.ExecCommandCalls,
+				)
+			}
+		},
+	)
 }

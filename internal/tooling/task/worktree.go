@@ -234,6 +234,54 @@ func (tm *TaskManager) forceDiscardFallback(
 	return fmt.Sprintf("Discarded worktree %s (branch %s deleted)", wtPath, branch), nil
 }
 
+// The five refusal-reason messages shared between worktreeFinishMerge (which
+// returns each of these as this function's own blocking error) and
+// worktreeFinishCheck (which surfaces the identical text as the first
+// blocking reason in a "ready: no —" line). Defined once, each as a function
+// building a real error, rather than as a literal duplicated at both call
+// sites: worktreeFinishCheck reads back .Error() to get the EXACT text
+// worktreeFinishMerge would have returned, so the two paths are structurally
+// unable to diverge on wording when only one side is edited later (CLAUDE.md
+// §6) — nothing has to remember to keep them in sync.
+func refusalDirtyWorktree() error {
+	return fmt.Errorf("refusing to merge a dirty worktree; commit or stash your changes first")
+}
+
+func refusalMainCheckoutWrongBranch(mainWorktree, mainBranch, defaultBranch string) error {
+	return fmt.Errorf(
+		"main checkout %s is on %q, not %q; check out %q there first",
+		mainWorktree, mainBranch, defaultBranch, defaultBranch,
+	)
+}
+
+func refusalMainCheckoutDirty(mainWorktree string) error {
+	return fmt.Errorf(
+		"main checkout %s has uncommitted changes; commit or stash them there first",
+		mainWorktree,
+	)
+}
+
+func refusalBlockingJournalFindings(branch string, blocking []reviewjournal.Entry) error {
+	return fmt.Errorf(
+		"refusing to merge %s: open review-journal finding(s) %s;"+
+			" settle them with `devgeta task review-note --settle <id>`",
+		branch, strings.Join(entryIDs(blocking), ", "),
+	)
+}
+
+// refusalDivergenceProbeUnanswerable wraps ancestorErr with %w (rather than
+// %v) so worktreeFinishMerge's returned error keeps the chain to the
+// underlying git failure for any future errors.Is/As caller; worktreeFinishCheck
+// only reads back .Error(), which renders identically either way — %w and %v
+// produce the same formatted text, %w only additionally makes the argument
+// unwrappable.
+func refusalDivergenceProbeUnanswerable(branch, defaultBranch string, ancestorErr error) error {
+	return fmt.Errorf(
+		"cannot determine whether %s needs a rebase against %s: %w",
+		branch, defaultBranch, ancestorErr,
+	)
+}
+
 // worktreeFinishMerge rebases (if needed), fast-forward-merges from the main
 // checkout, then removes the worktree and deletes its branch. Every step is
 // sequenced so a failure partway through leaves inspectable state and an
@@ -245,9 +293,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf("failed to check worktree status: %w", err)
 	}
 	if dirty {
-		return "", fmt.Errorf(
-			"refusing to merge a dirty worktree; commit or stash your changes first",
-		)
+		return "", refusalDirtyWorktree()
 	}
 
 	defaultBranch := tm.Git.DefaultBranchIn(wtPath)
@@ -262,10 +308,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf("failed to check main checkout's branch: %w", err)
 	}
 	if mainBranch != defaultBranch {
-		return "", fmt.Errorf(
-			"main checkout %s is on %q, not %q; check out %q there first",
-			mainWorktree, mainBranch, defaultBranch, defaultBranch,
-		)
+		return "", refusalMainCheckoutWrongBranch(mainWorktree, mainBranch, defaultBranch)
 	}
 
 	mainDirty, err := tm.Git.IsWorktreeDirty(mainWorktree)
@@ -273,10 +316,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf("failed to check main checkout status: %w", err)
 	}
 	if mainDirty {
-		return "", fmt.Errorf(
-			"main checkout %s has uncommitted changes; commit or stash them there first",
-			mainWorktree,
-		)
+		return "", refusalMainCheckoutDirty(mainWorktree)
 	}
 
 	blocking, err := tm.openBlockingFindings(mainWorktree, wtPath, branch)
@@ -284,11 +324,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 		return "", fmt.Errorf("failed to check the review journal: %w", err)
 	}
 	if len(blocking) > 0 {
-		return "", fmt.Errorf(
-			"refusing to merge %s: open review-journal finding(s) %s;"+
-				" settle them with `devgeta task review-note --settle <id>`",
-			branch, strings.Join(entryIDs(blocking), ", "),
-		)
+		return "", refusalBlockingJournalFindings(branch, blocking)
 	}
 
 	// IsAncestor reports whether defaultBranch is an ancestor of the branch's
@@ -299,10 +335,7 @@ func (tm *TaskManager) worktreeFinishMerge(wtPath, branch string) (string, error
 	// precondition (plan §7's top risk).
 	isAncestor, ancestorErr := tm.Git.IsAncestor(wtPath, defaultBranch, "HEAD")
 	if ancestorErr != nil {
-		return "", fmt.Errorf(
-			"cannot determine whether %s needs a rebase against %s: %w",
-			branch, defaultBranch, ancestorErr,
-		)
+		return "", refusalDivergenceProbeUnanswerable(branch, defaultBranch, ancestorErr)
 	}
 	if !isAncestor {
 		if err := tm.Git.ExecuteCommandAt(wtPath, "rebase", defaultBranch); err != nil {
@@ -399,21 +432,23 @@ func (tm *TaskManager) worktreeFinishCheck(
 	// reuses parseAheadBehind (scope.go) rather than tm.aheadBehind, which
 	// hardcodes origin/ and takes no directory (wrong for this command twice
 	// over).
-	aheadBehindOut, err := tm.Git.RunCapture(
+	//
+	// Degrades to "unknown" rather than aborting the whole report: this probes
+	// the EXACT SAME ref (defaultBranch) that Git.IsAncestor probes just below,
+	// so a repo with no LOCAL branch by that name (only feature branches ever
+	// checked out, or DefaultBranchIn's "main" fallback in a repo whose real
+	// default is "trunk") fails HERE first. That is the "unanswerable
+	// divergence probe" scenario the plan calls out as reachable, not
+	// hypothetical — aborting here (returning ("", false, err)) would mean
+	// IsAncestor's own designed rebase:/ready: handling of that exact scenario
+	// could never actually render. Never affects ready: — IsAncestor's own
+	// failure below is what blocks, exactly as designed; this is display-only.
+	var ahead, behind int
+	aheadBehindOut, aheadBehindErr := tm.Git.RunCapture(
 		atDir(wtPath, "rev-list", "--left-right", "--count", defaultBranch+"...HEAD")...,
 	)
-	if err != nil {
-		return "", false, fmt.Errorf(
-			"failed to compute ahead/behind against %s: %w", defaultBranch, err,
-		)
-	}
-	behind, ahead, err := parseAheadBehind(aheadBehindOut)
-	if err != nil {
-		return "", false, fmt.Errorf(
-			"failed to parse ahead/behind against %s: %w",
-			defaultBranch,
-			err,
-		)
+	if aheadBehindErr == nil {
+		behind, ahead, aheadBehindErr = parseAheadBehind(aheadBehindOut)
 	}
 
 	// The SAME probe Part 0 wired into worktreeFinishMerge — never a second
@@ -440,28 +475,15 @@ func (tm *TaskManager) worktreeFinishCheck(
 	var reason string
 	switch {
 	case dirty:
-		reason = "refusing to merge a dirty worktree; commit or stash your changes first"
+		reason = refusalDirtyWorktree().Error()
 	case mainBranch != defaultBranch:
-		reason = fmt.Sprintf(
-			"main checkout %s is on %q, not %q; check out %q there first",
-			mainWorktree, mainBranch, defaultBranch, defaultBranch,
-		)
+		reason = refusalMainCheckoutWrongBranch(mainWorktree, mainBranch, defaultBranch).Error()
 	case mainDirty:
-		reason = fmt.Sprintf(
-			"main checkout %s has uncommitted changes; commit or stash them there first",
-			mainWorktree,
-		)
+		reason = refusalMainCheckoutDirty(mainWorktree).Error()
 	case len(blocking) > 0:
-		reason = fmt.Sprintf(
-			"refusing to merge %s: open review-journal finding(s) %s;"+
-				" settle them with `devgeta task review-note --settle <id>`",
-			branch, strings.Join(entryIDs(blocking), ", "),
-		)
+		reason = refusalBlockingJournalFindings(branch, blocking).Error()
 	case ancestorErr != nil:
-		reason = fmt.Sprintf(
-			"cannot determine whether %s needs a rebase against %s: %v",
-			branch, defaultBranch, ancestorErr,
-		)
+		reason = refusalDivergenceProbeUnanswerable(branch, defaultBranch, ancestorErr).Error()
 	}
 	ready = reason == ""
 
@@ -472,6 +494,17 @@ func (tm *TaskManager) worktreeFinishCheck(
 	mainState := "clean"
 	if mainDirty {
 		mainState = "dirty"
+	}
+
+	var aheadBehindLine string
+	switch {
+	case aheadBehindErr != nil:
+		aheadBehindLine = fmt.Sprintf(
+			"ahead: unknown  behind: unknown (%s)",
+			aheadBehindErr.Error(),
+		)
+	default:
+		aheadBehindLine = fmt.Sprintf("ahead: %d  behind: %d", ahead, behind)
 	}
 
 	var rebaseLine string
@@ -518,7 +551,7 @@ func (tm *TaskManager) worktreeFinishCheck(
 		fmt.Sprintf("branch: %s", branch),
 		fmt.Sprintf("default: %s", defaultBranch),
 		fmt.Sprintf("dirty: %s", dirtyLabel),
-		fmt.Sprintf("ahead: %d  behind: %d", ahead, behind),
+		aheadBehindLine,
 		fmt.Sprintf("main-checkout: %s (%s)", mainBranch, mainState),
 		fmt.Sprintf("rebase: %s", rebaseLine),
 		fmt.Sprintf("conflicts: %s", conflictsLine),
