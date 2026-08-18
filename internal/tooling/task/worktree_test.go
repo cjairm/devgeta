@@ -1499,13 +1499,35 @@ func TestWorktreeFinishCheck(t *testing.T) {
 			t.Errorf("expected no doc-status lines, got:\n%s", report)
 		}
 
-		if len(gitBase.ExecCommandCalls) != 12 {
+		calls := gitBase.ExecCommandCalls
+		if len(calls) != 12 {
 			t.Fatalf(
 				"expected 12 git calls, got %d: %+v",
-				len(gitBase.ExecCommandCalls),
-				gitBase.ExecCommandCalls,
+				len(calls),
+				calls,
 			)
 		}
+
+		// Both the ahead/behind probe and the doc-status base must anchor on
+		// the LOCAL default branch ("main"), never "origin/main" — a local
+		// default branch that is itself ahead of its remote (this repo's own
+		// normal state) would otherwise misattribute already-merged commits
+		// and docs to the worktree being checked. Pinning the exact argv here
+		// guards against a regression that reintroduces "origin/" or reaches
+		// for tm.aheadBehind/tm.mergeBase, which hardcode "origin/" and take
+		// no directory.
+		assertCmd(
+			t,
+			calls[5],
+			"git",
+			"-C",
+			wtPath,
+			"rev-list",
+			"--left-right",
+			"--count",
+			"main...HEAD",
+		)
+		assertCmd(t, calls[9], "git", "-C", wtPath, "merge-base", "main", "HEAD")
 	})
 
 	t.Run(

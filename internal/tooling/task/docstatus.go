@@ -33,15 +33,28 @@ func statusMarker(content string) string {
 	lines := strings.Split(content, "\n")
 
 	if v, ok := frontMatterStatus(lines); ok {
-		return v
+		return oneLine(v)
 	}
 	if v, ok := headerBlockStatus(lines); ok {
-		return v
+		return oneLine(v)
 	}
 	if v, ok := statusSectionValue(lines); ok {
-		return v
+		return oneLine(v)
 	}
 	return ""
+}
+
+// oneLine is the single guard that every shape's return path goes through,
+// so all three share the same one-line guarantee `--check`'s report (and
+// finish-work.md's parsing of it) depends on. Shapes 2 and 3 already produce
+// a single line on their own, but shape 1 (YAML front-matter) does not: a
+// block scalar (`status: |` or `status: >`) parses to a multi-line
+// val.Value, which would otherwise leak embedded newlines into the report.
+func oneLine(v string) string {
+	if i := strings.IndexByte(v, '\n'); i >= 0 {
+		v = v[:i]
+	}
+	return strings.TrimSpace(v)
 }
 
 // frontMatterStatus recognizes shape 1: a top-level, scalar-only `status` key

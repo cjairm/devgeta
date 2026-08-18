@@ -264,7 +264,7 @@ func refusalMainCheckoutDirty(mainWorktree string) error {
 func refusalBlockingJournalFindings(branch string, blocking []reviewjournal.Entry) error {
 	return fmt.Errorf(
 		"refusing to merge %s: open review-journal finding(s) %s;"+
-			" settle them with `devgeta task review-note --settle <id>`",
+			" settle each with `devgeta task review-note --settle --id <id> --as answered|rejected|fixed --note \"<text>\"`",
 		branch, strings.Join(entryIDs(blocking), ", "),
 	)
 }

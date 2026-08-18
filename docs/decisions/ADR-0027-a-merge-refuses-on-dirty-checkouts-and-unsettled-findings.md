@@ -86,8 +86,9 @@ reported (in `--check`'s later output) as advisory only and does not block.
   that can invalidate it, and an unanswered design question is exactly what must not be
   papered over — the same principle ADR-0017 ("escalate, don't paper over") already
   applies to the review loop.
-- The exit is `devgeta task review-note --settle <id>`. Settling as `rejected` with a
-  reason is a legitimate way through the gate: the gate demands an answer, not agreement.
+- The exit is `devgeta task review-note --settle --id <id> --as answered|rejected|fixed --note "<text>"`.
+  Settling as `rejected` with a reason is a legitimate way through the gate: the gate demands
+  an answer, not agreement.
 
 Both decisions read ADR-0012 (the journal's own acceptance gate) and ADR-0017 (escalate,
 don't paper over) the same way: the journal exists so an open question is never silently

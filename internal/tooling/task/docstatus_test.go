@@ -29,6 +29,13 @@ func TestStatusMarker_FrontMatter(t *testing.T) {
 	}
 }
 
+func TestStatusMarker_FrontMatter_BlockScalarTruncatesToFirstLine(t *testing.T) {
+	content := "---\nstatus: |\n  line one\n  line two\n---\n\n# Title\n\nBody text.\n"
+	if got := statusMarker(content); got != "line one" {
+		t.Errorf("statusMarker(%q) = %q, want %q", content, got, "line one")
+	}
+}
+
 func TestStatusMarker_Precedence_FrontMatterBeatsHeaderBlock(t *testing.T) {
 	content := "---\nstatus: accepted\n---\n\n# Title\n\n**Status:** Draft\n\n## Context\n"
 	if got := statusMarker(content); got != "accepted" {
