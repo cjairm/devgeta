@@ -143,6 +143,7 @@ const (
 	Markdownlint       = "markdownlint-cli" // Brew/npm package; binary is `markdownlint`
 	Flake8             = "flake8"
 	GolangciLint       = "golangci-lint"
+	Handy              = "handy"
 	Ulauncher          = "ulauncher"
 	Unzip              = "unzip"
 	ApacheUtils        = "apache2-utils"

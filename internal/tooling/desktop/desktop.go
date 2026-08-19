@@ -10,6 +10,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/flameshot"
 	"github.com/cjairm/devgeta/internal/apps/fonts"
 	"github.com/cjairm/devgeta/internal/apps/gimp"
+	"github.com/cjairm/devgeta/internal/apps/handy"
 	"github.com/cjairm/devgeta/internal/apps/i3"
 	"github.com/cjairm/devgeta/internal/apps/raycast"
 	"github.com/cjairm/devgeta/internal/apps/ulauncher"
@@ -55,6 +56,7 @@ func (d *Desktop) getCrossPlatformApps() []namedInstaller {
 		{constants.Gimp, gimp.New()},
 		{constants.Brave, brave.New()},
 		{constants.Flameshot, flameshot.New()},
+		{constants.Handy, handy.New()},
 	}
 }
 
