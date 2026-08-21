@@ -123,7 +123,7 @@
       "command": [
         "sh",
         "-c",
-        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/eslint_d\" ] && \"$M/eslint_d\" \"$FILE\" --fix >/dev/null 2>&1; [ -x \"$M/prettier\" ] && \"$M/prettier\" \"$FILE\" --write >/dev/null 2>&1; true"
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; export ESLINT_D_PPID=0 ESLINT_D_IDLE=15; [ -x \"$M/eslint_d\" ] && \"$M/eslint_d\" \"$FILE\" --fix >/dev/null 2>&1; [ -x \"$M/prettier\" ] && \"$M/prettier\" \"$FILE\" --write >/dev/null 2>&1; true"
       ],
       "extensions": [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]
     },

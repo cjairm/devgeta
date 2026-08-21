@@ -230,7 +230,7 @@ func (g *Git) FetchOrigin() error {
 // network call can't block a caller expecting a fast response (e.g.
 // TaskManager.ReviewScope). A zero timeout is unbounded, same as FetchOrigin.
 func (g *Git) FetchOriginTimeout(timeout time.Duration) error {
-	return g.fetchTimeout(timeout, "origin")
+	return g.fetchTimeout("", timeout, "origin")
 }
 
 // FetchOriginRefspecsTimeout fetches ONLY the named refspecs from origin,
@@ -249,17 +249,37 @@ func (g *Git) FetchOriginRefspecsTimeout(timeout time.Duration, refspecs ...stri
 	if len(refspecs) == 0 {
 		return fmt.Errorf("fetch requires at least one refspec")
 	}
-	return g.fetchTimeout(timeout, append([]string{"--no-tags", "origin"}, refspecs...)...)
+	return g.fetchTimeout("", timeout, append([]string{"--no-tags", "origin"}, refspecs...)...)
 }
 
-// fetchTimeout runs `git fetch <args...>` bounded by timeout, with the error
-// wrapping every fetch entry point shares. A zero timeout is unbounded.
-func (g *Git) fetchTimeout(timeout time.Duration, args ...string) error {
+// worktreeFetchTimeout bounds the refresh fetch that precedes creating a
+// worktree. The fetch is a convenience — it only makes recently pushed
+// branches visible — so it must never be what keeps a caller waiting; ten
+// seconds matches the budget the review flow already gives a fetch.
+const worktreeFetchTimeout = 10 * time.Second
+
+// noPromptEnv makes git fail immediately instead of asking for credentials on
+// the terminal. Required for any fetch that must not block: without it a
+// private remote whose credentials have expired parks the process on a
+// username prompt, which no timeout can answer.
+const noPromptEnv = "GIT_TERMINAL_PROMPT=0"
+
+// fetchTimeout runs `git fetch <args...>` in dir (the current directory when
+// dir is empty), bounded by timeout, with the error wrapping every fetch entry
+// point shares. A zero timeout is unbounded.
+//
+// Every fetch goes out over the network, so all of them run non-interactively:
+// stdin is disconnected and terminal prompts are disabled. A prompt here can
+// only ever hang the caller — there is no path that reaches this from a
+// context where a human is waiting to type a password into a fetch.
+func (g *Git) fetchTimeout(dir string, timeout time.Duration, args ...string) error {
 	execCommand := cmd.CommandParams{
 		Command: constants.Git,
-		Args:    append([]string{"fetch"}, args...),
+		Args:    dirArgs(dir, append([]string{"fetch"}, args...)...),
 		Stream:  g.Stream,
 		Timeout: timeout,
+		NoStdin: true,
+		Env:     []string{noPromptEnv},
 	}
 	if _, stderr, err := g.Base.ExecCommand(execCommand); err != nil {
 		if stderr != "" {
@@ -759,7 +779,10 @@ func (g *Git) NormalizeWorktreeGitfile(path string) error {
 func (g *Git) createWorktreeIn(repoDir, path, branch string) error {
 	// Fetch latest remote refs to ensure we see recent branches.
 	// Best-effort: ignore errors (user may be offline or have no remote).
-	_ = g.ExecuteCommand(dirArgs(repoDir, "fetch", "origin")...)
+	// Bounded and non-interactive: this runs from the `dg ws` TUI, where a
+	// stalled remote or a credential prompt would otherwise wedge the caller
+	// with no way to answer it and leave a child process behind.
+	_ = g.fetchTimeout(repoDir, worktreeFetchTimeout, "origin")
 
 	// Check if local branch already exists
 	localExists, err := g.BranchExistsIn(repoDir, branch)

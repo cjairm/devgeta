@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -233,6 +234,15 @@ func GenerateFromTemplate(templatePath, outputPath string, data any) error {
 // complete content or the new complete content is observed, never a partial mix.
 // The target directory is created if it does not already exist.
 func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
+	return WriteFileAtomicFrom(path, bytes.NewReader(data), perm)
+}
+
+// WriteFileAtomicFrom is the streaming form of WriteFileAtomic: it copies every byte
+// read from r into path with the same temp-file-then-rename commit, so a transfer that
+// fails or is interrupted midway never leaves a truncated file at path. Use it when the
+// content is a stream (an HTTP response body, another file) rather than a slice already
+// held in memory; WriteFileAtomic is a thin wrapper over this function.
+func WriteFileAtomicFrom(path string, r io.Reader, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, DirPermission); err != nil {
 		return fmt.Errorf("failed to create directory for %s: %w", path, err)
@@ -263,7 +273,7 @@ func WriteFileAtomic(path string, data []byte, perm os.FileMode) error {
 			}
 		}
 	}()
-	if _, err := tempFile.Write(data); err != nil {
+	if _, err := io.Copy(tempFile, r); err != nil {
 		return fmt.Errorf("failed to write temporary file %s: %w", tempPath, err)
 	}
 	if err := tempFile.Close(); err != nil {

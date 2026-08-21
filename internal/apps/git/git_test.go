@@ -3112,3 +3112,94 @@ func TestNormalizeWorktreeGitfile(t *testing.T) {
 		}
 	})
 }
+
+// TestFetchIsNonInteractive covers the shared guarantee of every bounded fetch
+// entry point: it must never stop and wait for a human. A fetch talks to a
+// remote, and a remote that asks for a username parks the process on a prompt
+// that no timeout can answer — the child is blocked on a read, not on the
+// clock. Two things prevent it: stdin is disconnected (NoStdin), and git is
+// told not to prompt at all (GIT_TERMINAL_PROMPT=0).
+func TestFetchIsNonInteractive(t *testing.T) {
+	cases := []struct {
+		name string
+		call func(g *Git) error
+	}{
+		{
+			name: "FetchOriginTimeout",
+			call: func(g *Git) error { return g.FetchOriginTimeout(10 * time.Second) },
+		},
+		{
+			name: "FetchOriginRefspecsTimeout",
+			call: func(g *Git) error {
+				return g.FetchOriginRefspecsTimeout(
+					10*time.Second,
+					"+refs/pull/1/head:refs/devgeta/pr/1/head",
+				)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			g := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			mockApp.Base.SetExecCommandResult("", "", nil)
+
+			if err := tc.call(g); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			call := mockApp.Base.GetLastExecCommandCall()
+			if call == nil {
+				t.Fatal("expected an ExecCommand call")
+			}
+			if !call.NoStdin {
+				t.Error("expected NoStdin=true so a credential prompt cannot block the fetch")
+			}
+			if !slices.Contains(call.Env, "GIT_TERMINAL_PROMPT=0") {
+				t.Errorf("expected GIT_TERMINAL_PROMPT=0 in Env, got %v", call.Env)
+			}
+		})
+	}
+}
+
+// TestCreateWorktreeFetchIsBoundedAndNonInteractive pins the refresh fetch
+// that opens worktree creation. It used to run through ExecuteCommand with no
+// timeout and devgeta's own stdin, which is reached from the `dg ws` TUI: a
+// stalled remote or an expired credential left the TUI waiting forever on a
+// prompt it could not show, with an orphaned git process behind it. The fetch
+// is best-effort — it only surfaces recently pushed branches — so it must be
+// bounded and unable to prompt.
+func TestCreateWorktreeFetchIsBoundedAndNonInteractive(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	g := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	// One empty result is enough: every branch probe reads as "not found",
+	// which walks the shortest path through CreateWorktreeIn.
+	mockApp.Base.SetExecCommandResult("", "", nil)
+
+	if err := g.CreateWorktreeIn("/repo", "/repo/../wt", "feature"); err != nil {
+		t.Fatalf("CreateWorktreeIn failed: %v", err)
+	}
+
+	if len(mockApp.Base.ExecCommandCalls) == 0 {
+		t.Fatal("expected at least the fetch call")
+	}
+	fetch := mockApp.Base.ExecCommandCalls[0]
+
+	want := []string{"-C", "/repo", "fetch", "origin"}
+	if fetch.Command != constants.Git || !slices.Equal(fetch.Args, want) {
+		t.Fatalf("expected git %v, got %s %v", want, fetch.Command, fetch.Args)
+	}
+	if fetch.Timeout <= 0 {
+		t.Fatal("expected the worktree refresh fetch to be bounded by a timeout")
+	}
+	if fetch.Timeout != worktreeFetchTimeout {
+		t.Errorf("expected Timeout=%v, got %v", worktreeFetchTimeout, fetch.Timeout)
+	}
+	if !fetch.NoStdin {
+		t.Error("expected NoStdin=true: the TUI has no terminal to answer a prompt on")
+	}
+	if !slices.Contains(fetch.Env, "GIT_TERMINAL_PROMPT=0") {
+		t.Errorf("expected GIT_TERMINAL_PROMPT=0 in Env, got %v", fetch.Env)
+	}
+}

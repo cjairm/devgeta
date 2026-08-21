@@ -3,14 +3,13 @@ package downloader
 import (
 	"context"
 	"fmt"
-	"io"
 	"math"
 	"math/rand"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
+	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/logger"
 )
 
@@ -76,7 +75,8 @@ func DownloadFileWithRetry(ctx context.Context, url, destPath string, config Ret
 		// Wait before retry (skip on first attempt)
 		if attempt > 0 {
 			backoff := config.CalculateBackoff(attempt - 1)
-			logger.L().Infow("Retrying download",
+			logger.L().Infow(
+				"Retrying download",
 				"attempt", attempt+1,
 				"max_attempts", config.MaxRetries+1,
 				"backoff", backoff,
@@ -88,7 +88,8 @@ func DownloadFileWithRetry(ctx context.Context, url, destPath string, config Ret
 		// Attempt download
 		err := downloadFile(ctx, url, destPath)
 		if err == nil {
-			logger.L().Infow("Download successful",
+			logger.L().Infow(
+				"Download successful",
 				"url", url,
 				"destination", destPath,
 				"attempts", attempt+1,
@@ -100,7 +101,8 @@ func DownloadFileWithRetry(ctx context.Context, url, destPath string, config Ret
 
 		// Check if error is retryable
 		if !IsRetryableError(err) {
-			logger.L().Errorw("Non-retryable error encountered",
+			logger.L().Errorw(
+				"Non-retryable error encountered",
 				"url", url,
 				"error", err,
 				"attempt", attempt+1,
@@ -108,7 +110,8 @@ func DownloadFileWithRetry(ctx context.Context, url, destPath string, config Ret
 			return fmt.Errorf("download failed (non-retryable): %w", err)
 		}
 
-		logger.L().Warnw("Download attempt failed",
+		logger.L().Warnw(
+			"Download attempt failed",
 			"url", url,
 			"error", err,
 			"attempt", attempt+1,
@@ -135,7 +138,9 @@ func downloadFile(ctx context.Context, url, destPath string) error {
 	if err != nil {
 		return fmt.Errorf("HTTP request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	// The response body is a read-only handle, so its Close error carries no
+	// data-loss signal and there is nothing actionable to do with it.
+	defer func() { _ = resp.Body.Close() }()
 
 	// Check HTTP status
 	if resp.StatusCode != http.StatusOK {
@@ -149,16 +154,14 @@ func downloadFile(ctx context.Context, url, destPath string) error {
 		return fmt.Errorf("HTTP %d (non-retryable): %s", resp.StatusCode, resp.Status)
 	}
 
-	// Create destination file
-	out, err := os.Create(destPath)
-	if err != nil {
-		return fmt.Errorf("failed to create file: %w", err)
-	}
-	defer out.Close()
-
-	// Copy response body to file
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
+	// Stream the body straight into destPath atomically: the bytes land in a
+	// temporary file next to destPath and are renamed over it only after the
+	// whole transfer succeeds. A failed copy, a cancelled context, or an
+	// exhausted retry loop therefore never leaves a truncated file at destPath
+	// for a caller that only checks whether the file exists. Closing the
+	// destination handle is part of that check, so a late write error (ENOSPC,
+	// EIO) surfaced only at Close is returned rather than discarded.
+	if err := files.WriteFileAtomicFrom(destPath, resp.Body, files.FilePermission); err != nil {
 		return fmt.Errorf("failed to write file: %w", err)
 	}
 

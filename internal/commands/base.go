@@ -112,6 +112,17 @@ type CommandParams struct {
 	// returns. It is ignored when Stream is true: that path copies bytes with
 	// no line framing at all, and no caller needs both.
 	OnStdoutLine func(string)
+	// NoStdin, when true, leaves the child's stdin disconnected — exec.Cmd
+	// wires a nil Stdin to os.DevNull — instead of handing it devgeta's own
+	// stdin. Use it for commands that must never stop and wait for a human:
+	// anything run from a TUI or on a timeout, where an interactive prompt
+	// (a git credential prompt, an ssh passphrase) would silently wedge the
+	// caller instead of failing.
+	//
+	// Default false preserves the inherited stdin, which the installers
+	// depend on: `dg install` shells out to sudo, and sudo must be able to
+	// read the password from the terminal.
+	NoStdin bool
 }
 
 func NewBaseCommand() *BaseCommand {
@@ -285,7 +296,13 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	if len(cmd.Env) > 0 {
 		execCommand.Env = append(os.Environ(), cmd.Env...)
 	}
-	execCommand.Stdin = os.Stdin
+	// Inheriting devgeta's stdin is what lets `dg install` hand the terminal
+	// to sudo for a password. Callers that must never block on a human set
+	// NoStdin; a nil Stdin makes exec.Cmd give the child os.DevNull, so an
+	// interactive prompt fails immediately instead of hanging.
+	if !cmd.NoStdin {
+		execCommand.Stdin = os.Stdin
+	}
 
 	stdoutPipe, err := execCommand.StdoutPipe()
 	if err != nil {
@@ -295,6 +312,12 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 
 	stderrPipe, err := execCommand.StderrPipe()
 	if err != nil {
+		// The stdout pipe was already created but the command will never be
+		// started, so nothing else will ever close it: exec.Cmd closes the
+		// child's ends in Start and the parent's ends in Wait, and neither
+		// runs on this path. Close both ends here or the two descriptors leak
+		// for the lifetime of the process.
+		closeUnstartedPipes(execCommand, stdoutPipe)
 		logger.L().Errorf("failed to get stderr pipe: %v", err)
 		return "", "", err
 	}
@@ -320,10 +343,12 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 		live io.Writer,
 		label string,
 		onLine func(string),
+		readErr *error,
 	) {
 		defer wg.Done()
 		if cmd.Stream {
-			_, _ = io.Copy(io.MultiWriter(buf, live), pipe)
+			_, err := io.Copy(io.MultiWriter(buf, live), pipe)
+			*readErr = err
 			return
 		}
 		// Read line-by-line via bufio.Reader (not bufio.Scanner) so a single
@@ -345,19 +370,53 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 				}
 			}
 			if err != nil {
+				// EOF is the normal end of the stream, not a failure. Any
+				// other error means output was lost; hand it back so the
+				// caller isn't given a silently truncated result.
+				if !errors.Is(err, io.EOF) {
+					*readErr = err
+				}
 				return
 			}
 		}
 	}
 
-	go drain(stdoutPipe, &stdoutBuf, os.Stdout, "stdout", cmd.OnStdoutLine)
-	go drain(stderrPipe, &stderrBuf, os.Stderr, "stderr", nil)
+	// A drainer only stops when its pipe reaches EOF, which happens once every
+	// writer is gone — the child and anything it left holding the descriptor.
+	// A grandchild that outlives its parent therefore keeps the drainer (and
+	// so ExecCommand) blocked past the command's own exit, which would defeat
+	// the Timeout callers rely on. Closing the read ends when the deadline
+	// fires unblocks the reads; ctx.Done() is nil when no timeout was asked
+	// for, leaving the unbounded path exactly as it was.
+	if ctx.Done() != nil {
+		stop := context.AfterFunc(ctx, func() {
+			_ = stdoutPipe.Close()
+			_ = stderrPipe.Close()
+		})
+		defer stop()
+	}
 
-	// Wait for command to complete, then for the readers to flush.
-	err = execCommand.Wait()
+	var stdoutErr, stderrErr error
+	go drain(stdoutPipe, &stdoutBuf, os.Stdout, "stdout", cmd.OnStdoutLine, &stdoutErr)
+	go drain(stderrPipe, &stderrBuf, os.Stderr, "stderr", nil, &stderrErr)
+
+	// Join the readers BEFORE Wait. Wait closes the parent's ends of the
+	// pipes as it returns, so calling it first races the drainers and can cut
+	// their reads short — os/exec documents that it is incorrect to call Wait
+	// before all reads from the pipe have completed. The drainers always
+	// finish on their own: the parent's copies of the write ends were closed
+	// by Start, so EOF arrives as soon as the last writer exits.
 	wg.Wait()
+	err = execCommand.Wait()
 	if ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("command timed out after %s: %w", cmd.Timeout, ctx.Err())
+	}
+	// A failed read means the captured output is incomplete. Report it only
+	// when the command itself succeeded — an exit error is the more useful
+	// diagnosis, and a timeout closes the pipes deliberately, so its read
+	// error is expected noise rather than a fault.
+	if readErr := errors.Join(stdoutErr, stderrErr); readErr != nil && err == nil {
+		err = fmt.Errorf("failed to read command output: %w", readErr)
 	}
 	if err != nil {
 		logger.L().Debugw("command finished with error", "error", err, "stderr", stderrBuf.String())
@@ -368,6 +427,25 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	}
 
 	return strings.TrimSpace(stdoutBuf.String()), strings.TrimSpace(stderrBuf.String()), err
+}
+
+// closeUnstartedPipes releases the descriptors of a command that was wired up
+// but will never run. StdoutPipe/StderrPipe each allocate an OS pipe and hand
+// exec.Cmd the write end while returning the read end; exec.Cmd only closes
+// the write ends in Start and the read ends in Wait. When setup fails between
+// those calls neither ever happens, so both ends have to be closed here or the
+// descriptors stay open until the process exits.
+func closeUnstartedPipes(c *exec.Cmd, readers ...io.Closer) {
+	for _, r := range readers {
+		if r != nil {
+			_ = r.Close()
+		}
+	}
+	for _, w := range []any{c.Stdout, c.Stderr} {
+		if closer, ok := w.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}
 }
 
 // commandTimeoutContext builds the context used to bound a command's

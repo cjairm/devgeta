@@ -1,8 +1,11 @@
 package files_test
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cjairm/devgeta/pkg/files"
@@ -797,3 +800,111 @@ func TestWriteFileAtomic(t *testing.T) {
 		}
 	})
 }
+
+func TestWriteFileAtomicFrom(t *testing.T) {
+	tempDir := createTempDir(t)
+	t.Cleanup(func() {
+		if err := os.RemoveAll(tempDir); err != nil {
+			t.Logf("Failed to remove temp dir %s: %v", tempDir, err)
+		}
+	})
+	logger.Init(false)
+
+	leakedTempFiles := func(t *testing.T, path string) []string {
+		t.Helper()
+		pattern := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".tmp.*")
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			t.Fatalf("Failed to glob for leaked temp files: %v", err)
+		}
+		return matches
+	}
+
+	t.Run("streams reader content to the destination", func(t *testing.T) {
+		outputPath := filepath.Join(tempDir, "streamed.txt")
+		content := "streamed content"
+
+		if err := files.WriteFileAtomicFrom(
+			outputPath,
+			strings.NewReader(content),
+			0o640,
+		); err != nil {
+			t.Fatalf("WriteFileAtomicFrom returned an unexpected error: %v", err)
+		}
+
+		gotContent, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatalf("Failed to read output file: %v", err)
+		}
+		if string(gotContent) != content {
+			t.Errorf("Content mismatch.\nExpected: %q\nGot: %q", content, gotContent)
+		}
+
+		info, err := os.Stat(outputPath)
+		if err != nil {
+			t.Fatalf("Failed to stat output file: %v", err)
+		}
+		if info.Mode().Perm() != 0o640 {
+			t.Errorf("Expected file permissions 0640, got %o", info.Mode().Perm())
+		}
+
+		if leaked := leakedTempFiles(t, outputPath); len(leaked) != 0 {
+			t.Errorf("Expected no leaked temp files, found: %v", leaked)
+		}
+	})
+
+	t.Run("a reader that fails midway leaves no file at the destination", func(t *testing.T) {
+		outputPath := filepath.Join(tempDir, "interrupted.txt")
+
+		r := io.MultiReader(
+			strings.NewReader("the first half of the payload"),
+			&failingReader{err: errors.New("connection reset")},
+		)
+		if err := files.WriteFileAtomicFrom(outputPath, r, 0o644); err == nil {
+			t.Fatal("Expected an error when the reader fails midway, got nil")
+		}
+
+		if _, err := os.Stat(outputPath); !os.IsNotExist(err) {
+			t.Errorf(
+				"Expected no file at %s after a failed write, stat error was %v",
+				outputPath,
+				err,
+			)
+		}
+		if leaked := leakedTempFiles(t, outputPath); len(leaked) != 0 {
+			t.Errorf("Expected no leaked temp files, found: %v", leaked)
+		}
+	})
+
+	t.Run("a failed write preserves the previous complete file", func(t *testing.T) {
+		outputPath := filepath.Join(tempDir, "preserved.txt")
+		previous := "previous complete content"
+		if err := os.WriteFile(outputPath, []byte(previous), 0o644); err != nil {
+			t.Fatalf("Failed to seed existing file: %v", err)
+		}
+
+		r := io.MultiReader(
+			strings.NewReader("partial"),
+			&failingReader{err: errors.New("connection reset")},
+		)
+		if err := files.WriteFileAtomicFrom(outputPath, r, 0o644); err == nil {
+			t.Fatal("Expected an error when the reader fails midway, got nil")
+		}
+
+		gotContent, err := os.ReadFile(outputPath)
+		if err != nil {
+			t.Fatalf("Existing file disappeared after a failed write: %v", err)
+		}
+		if string(gotContent) != previous {
+			t.Errorf("Existing file was clobbered.\nExpected: %q\nGot: %q", previous, gotContent)
+		}
+		if leaked := leakedTempFiles(t, outputPath); len(leaked) != 0 {
+			t.Errorf("Expected no leaked temp files, found: %v", leaked)
+		}
+	})
+}
+
+// failingReader always fails, standing in for a transfer that dies partway.
+type failingReader struct{ err error }
+
+func (f *failingReader) Read(_ []byte) (int, error) { return 0, f.err }

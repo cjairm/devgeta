@@ -5,7 +5,6 @@ eval "$(printf '%s' "$input" | jq -r '
   @sh "MODEL=\(.model.display_name // "?")",
   @sh "DIR=\(.workspace.current_dir // "")",
   @sh "AGENT=\(.agent.name // "")",
-  @sh "SESSION_ID=\(.session_id // "default")",
   @sh "DUR_MS=\(.cost.total_duration_ms // 0)",
   @sh "ADDED=\(.cost.total_lines_added // 0)",
   @sh "REMOVED=\(.cost.total_lines_removed // 0)",
@@ -15,7 +14,7 @@ eval "$(printf '%s' "$input" | jq -r '
 
 EFFORT=$(jq -r '.effortLevel // empty' "$HOME/.claude/settings.json" 2>/dev/null)
 
-: "${MODEL:=?}" "${DIR:=}" "${PCT:=0}" "${FIVE_H:=-1}" "${SEVEN_D:=-1}" "${IS_WT:=0}"
+: "${MODEL:=?}" "${DIR:=}" "${PCT:=0}" "${FIVE_H:=-1}" "${SEVEN_D:=-1}" "${IS_WT:=0}" "${WT_NAME:=}"
 : "${ADDED:=0}" "${REMOVED:=0}" "${DUR_MS:=0}"
 
 DIM=$'\033[2m'
@@ -33,10 +32,44 @@ BLUE=$'\033[34m'
 # worktree (devgeta-created dirs may be standalone clones with a real .git dir).
 WT_BASE="${XDG_DATA_HOME:-$HOME/.local/share}/devgeta/worktrees"
 
+# Repo name behind a linked worktree, read off the main repo's git dir. The
+# path cannot be trusted for this: a worktree may sit under a directory named
+# for its repo, or under a generic "worktrees" directory that names nothing, so
+# walking up from $DIR gets the wrong answer for some layouts. The common git
+# dir always points at the main repo, whatever the layout. Pure parameter
+# expansion - no external command, and it only runs on a cache refresh.
+repo_name_from_common_dir() {
+	local common="${1%/}" name parent
+	name="${common##*/}"
+	if [ "$name" = ".git" ]; then
+		parent="${common%/*}"
+		name="${parent##*/}"
+	else
+		# A bare main repo has no ".git" segment: /srv/foo.git -> foo
+		name="${name%.git}"
+	fi
+	printf '%s' "$name"
+}
+
 TMP_DIR="${TMPDIR:-/tmp}"
+TMP_DIR="${TMP_DIR%/}"
+[ -n "$TMP_DIR" ] || TMP_DIR="/tmp"
+# Everything cached below (branch, counts, worktree-ness) is a pure function of
+# $DIR, so the key is the directory only. Keying it per session instead would
+# mint a fresh file for every session in every directory and never reuse one.
+# $UID keeps two users sharing one /tmp from fighting over the same filename.
 DIR_HASH=$(printf '%s' "$DIR" | cksum | awk '{print $1}')
-CACHE_FILE="${TMP_DIR%/}/cc-statusline-${SESSION_ID}-${DIR_HASH}"
+CACHE_FILE="${TMP_DIR}/cc-statusline-${UID:-0}-${DIR_HASH}"
 CACHE_MAX_AGE=5
+# A directory that is never opened again would still leave its cache file
+# behind forever, so reclaim files nothing has touched in this many days. A
+# directory still in use rewrites its own file every CACHE_MAX_AGE seconds, so
+# it can never age out from under an active session.
+CACHE_TTL_DAYS=1
+# Sweeping on every render would mean scanning the whole temp directory
+# hundreds of times a session for nothing. Sweep on ~1 in this many cache
+# refreshes instead; refreshes are already throttled to CACHE_MAX_AGE.
+SWEEP_ODDS=32
 
 cache_stale() {
 	[ ! -f "$CACHE_FILE" ] && return 0
@@ -45,7 +78,31 @@ cache_stale() {
 	[ $(($(date +%s) - mtime)) -gt "$CACHE_MAX_AGE" ]
 }
 
+# Delete only our own regular files, and let find do the removing so that a
+# hostile or malformed name in a shared temp directory is never expanded by the
+# shell. -maxdepth 1 keeps it off subdirectories, -type f keeps it off
+# directories and symlinks, and the fixed prefix keeps it off everything else.
+# Concurrent sweeps are harmless: a file already gone just yields ENOENT.
+sweep_cache() {
+	find "$TMP_DIR" -maxdepth 1 -type f -name 'cc-statusline-*' \
+		-mtime "+${CACHE_TTL_DAYS}" -delete 2>/dev/null
+}
+
+# Write via a private name then rename, so a reader never sees a half-written
+# line. Failure is not fatal - the values are already in memory for this render.
+# WT_NAME goes last: read splits on "|" and hands the tail to the final
+# variable intact, so a repo name containing one cannot shift the other fields.
+write_cache() {
+	local tmp="${CACHE_FILE}.$$"
+	if printf '%s|%s|%s|%s|%s|%s\n' "$GB" "$GS" "$GM" "$GU" "$IS_WT" "$WT_NAME" >"$tmp" 2>/dev/null; then
+		mv -f "$tmp" "$CACHE_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+	else
+		rm -f "$tmp" 2>/dev/null
+	fi
+}
+
 if cache_stale; then
+	GB="" GS="" GM="" GU="" IS_WT=0 WT_NAME=""
 	if [ -n "$DIR" ] && git -C "$DIR" rev-parse --git-dir >/dev/null 2>&1; then
 		GB=$(git -C "$DIR" branch --show-current 2>/dev/null)
 		GS=$(git -C "$DIR" diff --cached --numstat 2>/dev/null | wc -l | tr -d ' ')
@@ -53,19 +110,33 @@ if cache_stale; then
 		GU=$(git -C "$DIR" ls-files --others --exclude-standard 2>/dev/null | wc -l | tr -d ' ')
 		GIT_DIR=$(git -C "$DIR" rev-parse --git-dir 2>/dev/null)
 		GIT_COMMON=$(git -C "$DIR" rev-parse --git-common-dir 2>/dev/null)
-		# A linked worktree (git-dir != common-dir) OR any dir under WT_BASE.
-		if { [ -n "$GIT_DIR" ] && [ "$GIT_DIR" != "$GIT_COMMON" ]; } ||
-			[ "${DIR#"$WT_BASE"/}" != "$DIR" ]; then
+		# rev-parse may answer with a path relative to $DIR (plain ".git" in a
+		# main repo), and a relative answer would silently yield a wrong name
+		# rather than an error. Absolutise both here rather than asking git for
+		# --path-format=absolute, which only exists from git 2.31.
+		case "$GIT_DIR" in /* | "") ;; *) GIT_DIR="$DIR/$GIT_DIR" ;; esac
+		case "$GIT_COMMON" in /* | "") ;; *) GIT_COMMON="$DIR/$GIT_COMMON" ;; esac
+		if [ -n "$GIT_DIR" ] && [ "$GIT_DIR" != "$GIT_COMMON" ]; then
+			# Linked worktree: the main repo names it, in every layout.
 			IS_WT=1
-		else
-			IS_WT=0
+			WT_NAME=$(repo_name_from_common_dir "$GIT_COMMON")
+		elif [ "${DIR#"$WT_BASE"/}" != "$DIR" ]; then
+			# Standalone clone parked under WT_BASE. Its common git dir is its
+			# own .git, which would name the checkout, not the repo - so leave
+			# WT_NAME empty and let the display fall back to the parent dir,
+			# which is the repo slug in this layout.
+			IS_WT=1
 		fi
-		printf '%s|%s|%s|%s|%s\n' "$GB" "$GS" "$GM" "$GU" "$IS_WT" >"$CACHE_FILE"
-	else
-		printf '||||0\n' >"$CACHE_FILE"
 	fi
+	write_cache
+	if [ -d "$TMP_DIR" ] && [ $((RANDOM % SWEEP_ODDS)) -eq 0 ]; then
+		sweep_cache
+	fi
+else
+	# A cache file written before WT_NAME existed has five fields; WT_NAME then
+	# reads as empty and the display falls back, rather than rendering garbage.
+	IFS='|' read -r GB GS GM GU IS_WT WT_NAME <"$CACHE_FILE" 2>/dev/null
 fi
-IFS='|' read -r GB GS GM GU IS_WT <"$CACHE_FILE"
 
 BAR_WIDTH=12
 FILLED=$((PCT * BAR_WIDTH / 100))
@@ -99,14 +170,21 @@ MINS=$((DUR_MS / 60000))
 SECS=$(((DUR_MS % 60000) / 1000))
 SEP=" ${DIM}|${RESET} "
 
-# Compact display for worktrees - show the parent folder (repo slug) instead of
-# the full path, since the branch already conveys the worktree identity.
+# Compact display for worktrees - show the repo name instead of the full path,
+# since the branch already conveys the worktree identity. WT_NAME is the name
+# git gave us; the parent directory is the fallback for the layouts where git
+# cannot answer (standalone clone under WT_BASE, whose parent is the repo slug).
 if [ "${IS_WT:-0}" = "1" ]; then
-	PARENT_DIR=$(basename "$(dirname "$DIR")")
-	if [ ${#PARENT_DIR} -gt 30 ]; then
-		DISPLAY_DIR="${PARENT_DIR:0:27}..."
+	REPO_LABEL="$WT_NAME"
+	if [ -z "$REPO_LABEL" ]; then
+		PARENT_DIR="${DIR%/*}"
+		REPO_LABEL="${PARENT_DIR##*/}"
+		[ -n "$REPO_LABEL" ] || REPO_LABEL="${DIR##*/}"
+	fi
+	if [ ${#REPO_LABEL} -gt 30 ]; then
+		DISPLAY_DIR="${REPO_LABEL:0:27}..."
 	else
-		DISPLAY_DIR="$PARENT_DIR"
+		DISPLAY_DIR="$REPO_LABEL"
 	fi
 	L="${DIM}wt:${RESET}${CYAN}${DISPLAY_DIR}${RESET}"
 elif [ -n "$HOME" ] && [ "$DIR" = "$HOME" ]; then

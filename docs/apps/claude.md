@@ -457,3 +457,32 @@ duration. For directories that are **git worktrees** — either a _linked_ workt
 worktree base (`$XDG_DATA_HOME/devgeta/worktrees`, e.g. standalone clones placed
 there) — it shows a compact `wt:<repo>` label instead of the full path, since the
 branch already conveys the worktree identity.
+
+The repo name in that label comes from git, not from the path. `dg worktree`
+has two layouts — `<worktree-base>/<repo-slug>/<name>`, where the parent
+directory is the repo, and `<repo-root>/.claude/worktrees/<name>`, where the
+parent is the literal directory `worktrees` and names nothing — so no amount of
+walking up from the current directory is right for both. For a linked worktree
+the script instead resolves `--git-common-dir` (absolutising it first, since
+git may answer with a relative path) and takes the repo name from the main
+repo it points at, which is correct for both layouts and for a bare main repo.
+The parent directory is used only as the fallback for a **standalone clone**
+parked under the worktree base, where the common git dir is the checkout's own
+`.git` and would name the branch rather than the repo.
+
+### Statusline cache
+
+The git portion of the line is cached for 5 seconds in `$TMPDIR`, keyed by
+`<uid>` and a hash of the directory. It is deliberately **not** keyed by
+session: everything cached is a pure function of the directory, so sessions in
+the same directory share one file instead of each minting their own. Writes go
+to a private name and are renamed into place, so a concurrent reader never sees
+a partial line.
+
+Files are reclaimed by a TTL sweep — `find … -maxdepth 1 -type f -name
+'cc-statusline-*' -mtime +1 -delete` — run on roughly 1 in 32 cache refreshes
+rather than on every render, so its cost amortises to near zero. A directory
+still in use rewrites its own file every 5 seconds and can never age out from
+under an active session. `find` does the deleting so that a hostile or
+malformed filename in a shared temp directory is never re-expanded by the
+shell, and `-type f` keeps the sweep off directories and symlinks.
