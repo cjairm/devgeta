@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-24
 **Estimated Duration:** ~12 hours
-**Status:** In Progress
+**Status:** Done
 
 ---
 
@@ -215,6 +215,18 @@ written into a future cycle doc and referenced here, not absorbed.
 
 #### Step 1: The shared executor — findings P0-1, P0-2, P0-6 and half of P0-5
 
+**Done** — see commit range `20c7106..dc34c60` (Step 1 plus Step 2's real-subprocess
+tests, implemented together). The executor was reworked as this step describes:
+`WaitDelay` plus a line-framing writer so `ExecCommand` returns when the child
+exits rather than when the last grandchild closes a pipe, the nil-error override
+fixed so a successful command is never reported as timed out, and a gated
+`Setpgid` process group so a timed-out command kills its whole tree. The gate
+that shipped is narrower than this text specifies: `NoStdin && ctx.Done() != nil`,
+not `NoStdin` alone — approved, because without a deadline `Cancel` is never
+invoked, so a process group buys nothing while still costing SIGINT delivery to
+a terminal-inheriting child for no benefit. See Step 1b immediately below for a
+consequence of `Setpgid` this text did not anticipate.
+
 This is the grouped change. All of it is in `internal/commands/base.go`.
 
 **P0-1, the drain-order regression (`:400-410`).** Before e7104b4 the order was
@@ -341,7 +353,30 @@ executor — but the gate is what makes it safe to put there.
   returns `nil`; a timed-out command leaves no live grandchildren. These are
   real-subprocess tests, not mocked ones; Step 2 says why and under what rules.
 
+##### Step 1b: SIGINT handling — mid-cycle scope addition (not in the original plan)
+
+**Done** — commit `263b0ba`, approved as a scope addition after Step 1 shipped
+rather than deferred (this document's §4 says scope is locked; the addition was
+argued and approved on its own merits, not smuggled in). `Setpgid` puts a
+qualifying child outside the terminal's foreground process group, so terminal
+SIGINT stops reaching it — Ctrl-C during a long `dg task review-run` killed
+devgeta itself but left the `opencode` process tree running, up to 30 minutes,
+billed the whole time. This was discovered only after Step 1 shipped; it does
+not appear anywhere in this document's original text. Fix: a process-level
+SIGINT handler in `cmd/` that cancels the executor's contexts, so Ctrl-C takes
+the same group-kill path a timeout already does. Justification is CLAUDE.md §4
+(fix the root cause; do not ship a known, undocumented regression) and this
+document's own §7 instruction to escalate a materializing risk rather than
+absorb it quietly — the §7 risk table's own "`Setpgid` changes signal delivery
+for interactive children" row is exactly this, surfacing exactly the way §7
+said it might.
+
 #### Step 2: Executor tests
+
+**Done** — see commit range `20c7106..dc34c60`, implemented in the same task as
+Step 1. The three real-subprocess tests this step calls for shipped as
+specified: backgrounded-grandchild, success-under-deadline, and cancel-kills-
+the-group.
 
 **These cannot be mocked, and the plan has to say so up front.** All three
 behaviors under test are properties of `exec.Cmd` itself — whether `Wait`
@@ -395,6 +430,12 @@ target the same base the app was built with.
 - Verify: `go test ./internal/commands/`
 
 #### Step 3: `curl … | sh` — P0-5
+
+**Done** — see commit range `263b0ba..b789640`. `curl | sh` is now staged
+through the executor (download → status check → execute) with two separate
+timeouts, at both `debian_strategies.go` and `claude.go` as this step required,
+and the class was swept as instructed — `tar`, `fc-cache`, and `git clone` all
+route through the executor now too.
 
 `internal/commands/debian_strategies.go:274`:
 
@@ -470,6 +511,17 @@ the executor in the same pass.
   shape passes with defect 2 still present.
 
 #### Step 4: Release artifact verification — P0-3
+
+**Done, workflow half only** — see commit range `21ee42f..14df903`. The three
+existing GitHub Actions plus the newly-added `actions/attest-build-provenance`
+are pinned to verified commit SHAs; `checksums.txt` is now a release asset; the
+four binaries are attested. The `install.sh` verification half is deferred per
+the rollout order this step already specifies below — it goes into the
+follow-up cycle doc at
+[docs/plans/cycles/2026-08-25-install-sh-verification.md](2026-08-25-install-sh-verification.md),
+gated on confirming a real tagged release actually carries `checksums.txt`
+before it starts. The verification-policy decision this step asks for is
+recorded in ADR-0031.
 
 `install.sh:158` fetches the release binary, `:166` checks only that it is
 non-empty, `:171` chmods it +x, `:173` **executes it** (`"$TMP_BINARY" --version`),
@@ -555,6 +607,35 @@ attacker can trigger by withholding the file.
   whose attestation does not verify.
 
 #### Step 5: The shipped agent permission model — P0-4, re-scoped
+
+**Done** — see commit range `14df903..50b0aae`, re-scoped per this step's own
+text (ADR-0014 governs; this is not a broader path-deny). What shipped: the 23
+safe dead OpenCode rules re-anchored, the probed `~/.claude/*.{json,sh,md}`
+trio, and `gh api` plus the interpreter denies added to both agents as
+friction.
+
+**The probe this step calls for did not confirm what this document implicitly
+assumed — it inverted it.** This step's re-scoping reasons entirely from
+OpenCode's measured behavior (guide §1-§4) and treats Claude Code as the same
+matcher, differing only in syntax. The live probe (guide §5, run against both
+agents including the control run) found OpenCode and Claude Code are opposites
+on both axes this step's reasoning was built on: `~/`-anchored patterns are
+dead on OpenCode but live on Claude Code, and `*` crosses `/` on OpenCode but
+not on Claude Code. Had the 23 "dead" OpenCode rules been _re-anchored_
+(replaced) on the Claude Code side too — rather than _added to_, which is what
+this step actually instructs and what shipped — it would have been a real
+security regression on Claude Code: rules that currently fire there would have
+been swapped for a glob shape that doesn't cross `/` on that agent and so
+stops matching the paths they were written to catch. The shape that shipped —
+both the original `~/` spelling and the `**/` spelling side by side, on both
+agents, rather than a straight re-anchor — is a deliberate deviation from this
+document's original instruction, made because the instruction's premise (one
+matcher's behavior generalizes to the other) didn't hold. This is exactly the
+kind of surprise CLAUDE.md and this document's own §7 ask to be surfaced, not
+smoothed over. The full probe evidence and the corrected reasoning live in
+[docs/guides/agent-permission-matching.md](../../guides/agent-permission-matching.md)
+(substantially rewritten with the probe results) and in ADR-0014's dated
+correction note — that is the durable record; it is not reproduced here.
 
 `configs/claude/settings.json.tmpl:5` allows `Bash(*)` (with
 `defaultMode: acceptEdits` at `:83`); `configs/opencode/opencode.json.tmpl:51`
@@ -680,6 +761,12 @@ permission-matching guide.
 
 #### Step 6: Cached installed-package listing — P1, ~54 s measured
 
+**Done** — see commit range `b789640..2eb9427`. The installed-package listing
+is now cached process-wide per ADR-0029, and invalidated on attempted (not just
+successful) mutation at all 8 seam methods this step names —
+`InstallPackage`/`InstallDesktopApp`/`UninstallPackage`/`UninstallDesktopApp`
+on both `MacOSCommand` and `DebianCommand`.
+
 Every idempotency probe shells out a full package-manager listing, once per
 package. `internal/commands/macos.go:179` runs `brew list` (the entire Cellar)
 and `:185` runs `brew list --cask` (every cask) each time a single package is
@@ -755,6 +842,13 @@ whoever adds the flag.
   present**, the case this plan previously left out.
 
 #### Step 7: One `global_config.yaml` parse per run — P1
+
+**Done** — see commit range `08805b3..6ec4783` (Step 8's benchmark ran first, as
+a prerequisite, per the ADR-0030 sequencing this document already calls for).
+Shipped exactly as specified: one parse per run per ADR-0030, stat-keyed,
+refresh-on-write (not invalidate-on-write), deep-copy-on-read. The worktree
+manager's own local `{path, modTime, size}` cache — the pattern this step
+generalizes — was retired in favor of this one.
 
 `internal/config/fromFile.go:306-312` — `Load()` is `os.ReadFile` +
 `yaml.Unmarshal` with no cache anywhere in the config package. There are **95
@@ -888,6 +982,11 @@ does not rely on it either way.
 
 #### Step 8: Measure the per-`Load()` cost and amend ADR-0030
 
+**Done** — see commit range `2eb9427..08805b3`. `Load()` benchmarked at ~224
+µs/call; ×95 call sites ≈ 21 ms total across a run. The real number turned out
+negligible, and ADR-0030 states that plainly rather than inflating it — the
+correctness argument stands on its own, as this step anticipated.
+
 [ADR-0030](../../decisions/ADR-0030-global-config-loads-once-per-run.md) rests on
 the correctness argument — one consistent view of config within a run. Its
 performance case is **unmeasured**: the 95 call sites were counted, the cost per
@@ -900,6 +999,15 @@ so in the ADR; the correctness argument stands on its own either way.
 - Verify: `go test -bench . ./internal/config/`; ADR-0030 carries a real figure.
 
 #### Step 9: Atomic, skippable config extract — P1
+
+**Done** — Part 1 (the `pkg/buildinfo` prerequisite) shipped in commit range
+`6ec4783..91cf996`; the atomic extract itself in `91cf996..6395c40`. Config
+extract is now a symlink-pointer swap to a `configs-<stamp>` directory —
+genuinely atomic for the steady-state case, with a recoverable (not atomic,
+but self-repairing) one-time migration for every pre-existing real-directory
+install, exactly as specified below. Two claims in this step's own text below
+needed correcting after live implementation and probing, not just marking
+done — both are called out in place.
 
 `cmd/configure.go:78` calls `refreshEmbeddedConfigs()` (`cmd/configure.go:29-32`
 → `devgeta.New().Install()`) **before** it resolves which app was asked for.
@@ -998,10 +1106,20 @@ rename symlink over a REAL directory:    file exists
 os.RemoveAll(pointer):      err=<nil>;  target directory still present
 ```
 
-There is no window: a reader resolves the pointer to the old tree or the new one,
-never to a missing or partial one. That is what CLAUDE.md §4 asks for, and of the
-two options that deliver it this is the portable one — no platform-specific
-syscall, no recovery pass.
+There is no window in which the tree is absent or partial: a reader resolves the
+pointer to the old tree or the new one, never to a missing or partial one. That
+is what CLAUDE.md §4 asks for, and of the two options that deliver it this is
+the portable one — no platform-specific syscall, no recovery pass.
+
+**Correction (Task 13, cycle close-out): "no window" is not literally true for
+a reader racing the swap itself.** The claim above was measured single-threaded
+— swap, then read. A reader actually racing the pointer's `rename(2)` sees a
+transient `EINVAL` on roughly 1.3% of reads on macOS/APFS — never `ENOENT`,
+never wrong or partial data, and self-healing on the next read. It is reachable
+only across two concurrent `dg configure` processes, an exposure this document
+already accepts as unmitigated elsewhere (see the stale-target discussion
+below). Not mitigated here either: a retry loop in every reader, for a rare,
+self-healing transient at this rate, is disproportionate to the problem.
 
 The measurements also price the costs the audit guessed at. Three of the five are
 real work this step owns:
@@ -1092,8 +1210,16 @@ real work this step owns:
   - `configs` present as a symlink **and** `configs.legacy` present → step 3
     completed; finish by removing `configs.legacy`.
   - `configs` present as a real directory **and** `configs.legacy` present →
-    a previous attempt died between 2 and its own restart; remove the
-    now-redundant `configs.legacy` and re-run the migration.
+    remove the now-redundant `configs.legacy` and re-run the migration.
+    **Correction (Task 13, cycle close-out):** the cause originally stated here
+    — "a previous attempt died between undoing step 2 and restarting" — is
+    impossible: undoing step 2 is a single atomic rename, so there is no
+    instant where both paths coexist from that cause. The state is still
+    reachable, just not that way — via outside interference, such as an older
+    devgeta binary that predates this protocol, or a user hand-restoring
+    `configs` from a backup. The prescribed handling above (treat `configs` as
+    authoritative, discard the leftover) is correct either way and did not
+    need to change.
 
   That is a recovery contract, which the two-rename option below was rejected
   for — the difference is that here it covers a one-time transition that has no
@@ -1182,6 +1308,10 @@ transition to use instead.
 
 #### Step 10: Config deploy permissions — P1 / security
 
+**Done** — see commit range `6395c40..662e8ee`. `pkg/files.CopyFile`/`CopyDir`
+now use `FilePermission`/`DirPermission` (0644/0755) instead of `AllPermissions`
+(0777); the now-dead `AllPermissions` constant was removed.
+
 `pkg/files/files.go:64` — `CopyFile` writes destinations with `AllPermissions`
 (0o777, defined at `:22`). `CopyDir` does the same for directories at `:83` and
 `:96`. This is the deploy path for essentially every app config:
@@ -1212,6 +1342,13 @@ this path.
   deployed file modes after `dg configure claude --force`.
 
 #### Step 11: HTTP hardening — P1
+
+**Done** — see commit range `662e8ee..21ee42f`. `pkg/github` gained a timeout,
+response draining on the non-200 path, and a size cap as specified.
+`pkg/downloader` replaced its whole-request `Timeout` with a shared transport
+plus a body-inactivity bound, and the retry loop was taught a real sentinel so
+a stall is classified retryable instead of failing permanently on the first
+attempt, closing the integration gap this step calls out below.
 
 **`pkg/github/release.go:15`** uses bare `http.Get`, i.e. `http.DefaultClient`,
 which has **no timeout**; `:25` does `io.ReadAll(resp.Body)` with no size cap. A
@@ -1719,8 +1856,11 @@ end of the install run, or debounce on a dirty flag, rather than per tool.
 
 ## Notes for Implementers
 
-- **Status is Proposed.** The maintainer has not approved implementation. Do not
-  start writing code against this doc until the status line says otherwise.
+- **Implementation is complete.** All 12 steps below shipped, were individually
+  reviewed and approved, and are recorded as done in place. The remaining
+  bullets in this section are retained as a record of the constraints
+  implementation actually operated under — they were accurate throughout the
+  cycle and still are.
 - **The source audit lives in a cache directory** that can be wiped at any time
   (`~/.cache/devgeta/scratch/perf-audit-2026-08-24.md`). This file is the durable
   copy — every `file.go:LINE` citation and every measurement above was carried
