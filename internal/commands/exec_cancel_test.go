@@ -9,7 +9,9 @@
 package commands_test
 
 import (
+	"context"
 	"errors"
+	"os"
 	"strconv"
 	"strings"
 	"syscall"
@@ -173,4 +175,180 @@ func TestExecCommandCancelKillsTheProcessGroup(t *testing.T) {
 	}
 
 	t.Fatalf("grandchild %d outlived the deadline: the kill did not reach the process group", pid)
+}
+
+// TestExecCommandRootContextCancelKillsProcessGroup covers task 1b's fix: a
+// Ctrl-C (SIGINT) or SIGTERM must reach a NoStdin command's process group the
+// same way a Timeout already does, by cancelling the process-level context
+// SetRootContext installs (in production, cmd.Execute wires this to
+// signal.NotifyContext). Without that wiring — the regression this task
+// fixes — a killed devgeta left the whole child tree running.
+//
+// Asserting on the grandchild specifically matters: a test that only checked
+// the direct bash child would still pass against the bug, since the direct
+// child's own Cancel-driven kill was never in question — only whether it
+// reaches what that child forked.
+func TestExecCommandRootContextCancelKillsProcessGroup(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	commands.SetRootContext(ctx)
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+
+	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
+
+	pidLine := make(chan string, 1)
+	type result struct {
+		out string
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		out, _, err := b.ExecCommand(commands.CommandParams{
+			Command: "bash",
+			Args:    []string{"-c", "sleep 30 & echo $!; wait"},
+			NoStdin: true,
+			OnStdoutLine: func(line string) {
+				select {
+				case pidLine <- line:
+				default:
+				}
+			},
+		})
+		done <- result{out: out, err: err}
+	}()
+
+	var pid int
+	select {
+	case line := <-pidLine:
+		p, convErr := strconv.Atoi(strings.TrimSpace(line))
+		if convErr != nil {
+			t.Fatalf("expected the grandchild's pid on stdout, got %q: %v", line, convErr)
+		}
+		pid = p
+	case <-time.After(5 * time.Second):
+		t.Fatal("never saw the grandchild's pid")
+	}
+	// Arm the cleanup before cancelling: every assertion below ends in
+	// t.Fatal, and a cleanup placed after one would be skipped, leaving a
+	// `sleep 30` running for the rest of the suite.
+	t.Cleanup(func() {
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			t.Logf("cleaning up the surviving grandchild %d: %v", pid, err)
+		}
+	})
+
+	cancel() // stands in for cmd.Execute's SIGINT/SIGTERM handler firing
+
+	select {
+	case r := <-done:
+		if r.err == nil {
+			t.Fatal("expected an error once the root context is cancelled mid-run")
+		}
+		if !strings.Contains(r.err.Error(), "interrupted") {
+			t.Fatalf("expected an interrupted error, got: %v", r.err)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("ExecCommand did not return after the root context was cancelled")
+	}
+
+	// Signal 0 checks for the process's existence without sending anything.
+	// Poll rather than sample once: the grandchild is reparented on its
+	// parent's death and stays a zombie until whoever adopted it reaps.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	t.Fatalf(
+		"grandchild %d outlived root-context cancellation: the kill did not reach the process group",
+		pid,
+	)
+}
+
+// TestExecCommandDefaultRootContextLeavesProcessGroupUntouched covers the
+// other half of task 1b's requirement: a test binary (or any library caller
+// that never goes through cmd.Execute) must see exactly the behavior that
+// existed before SetRootContext did — an uncancellable root, so a
+// zero-Timeout NoStdin call still gets no process group. The Setpgid gate is
+// `cmd.NoStdin && ctx.Done() != nil`; ctx.Done() is nil here because there is
+// no Timeout and nothing has called commands.SetRootContext in this test
+// binary process (every other test that does restores the default via
+// t.Cleanup, so this one sees it too).
+//
+// isolateProcessGroup is verified indirectly, by comparing the child's own
+// process group to this test process's — the only externally observable
+// effect of Setpgid.
+func TestExecCommandDefaultRootContextLeavesProcessGroupUntouched(t *testing.T) {
+	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
+
+	pidLine := make(chan string, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := b.ExecCommand(commands.CommandParams{
+			Command: "bash",
+			Args:    []string{"-c", "echo $$; sleep 5"},
+			NoStdin: true,
+			OnStdoutLine: func(line string) {
+				select {
+				case pidLine <- line:
+				default:
+				}
+			},
+		})
+		done <- err
+	}()
+
+	var pid int
+	select {
+	case line := <-pidLine:
+		p, convErr := strconv.Atoi(strings.TrimSpace(line))
+		if convErr != nil {
+			t.Fatalf("expected the child's pid on stdout, got %q: %v", line, convErr)
+		}
+		pid = p
+	case <-time.After(5 * time.Second):
+		t.Fatal("never saw the child's pid")
+	}
+	t.Cleanup(func() {
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			t.Logf("cleaning up child %d: %v", pid, err)
+		}
+	})
+
+	childPgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		t.Fatalf("Getpgid(%d): %v", pid, err)
+	}
+	ownPgid, err := syscall.Getpgid(os.Getpid())
+	if err != nil {
+		t.Fatalf("Getpgid(self): %v", err)
+	}
+	if childPgid != ownPgid {
+		t.Fatalf(
+			"child got its own process group (%d, test process group %d) with no "+
+				"Timeout and an uninitialized root context; the Setpgid gate must "+
+				"stay closed when ctx.Done() is nil",
+			childPgid, ownPgid,
+		)
+	}
+
+	// End the child ourselves rather than waiting out its sleep; it is in
+	// this test's own process group, so a plain single-pid kill is safe and
+	// cannot touch anything else.
+	if killErr := syscall.Kill(pid, syscall.SIGKILL); killErr != nil &&
+		!errors.Is(killErr, syscall.ESRCH) {
+		t.Fatalf("failed to end the test child: %v", killErr)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ExecCommand did not return after its child was killed")
+	}
 }

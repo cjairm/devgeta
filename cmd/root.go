@@ -4,8 +4,13 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
@@ -55,7 +60,29 @@ Examples:
 `,
 }
 
+// Execute runs the root command after wiring a process-level context that
+// SIGINT and SIGTERM cancel. That context is what every command the shared
+// executor runs (internal/commands.BaseCommand.ExecCommand) roots its own
+// context in — see commands.SetRootContext — so a Ctrl-C or a SIGTERM takes
+// the same path a per-call Timeout already does: it cancels the context,
+// which fires exec.CommandContext's Cancel hook and, for a NoStdin command,
+// group-kills the whole child tree instead of leaving forks (a brew
+// invoking curl, an opencode invoking a model call) running unattended.
+//
+// The handling is two-stage, and both stages matter:
+//  1. The first SIGINT/SIGTERM cancels the context. Whatever is running gets
+//     the same treatment a timeout gives it.
+//  2. context.AfterFunc runs stop (signal.NotifyContext's own unregister
+//     function) once the context is done, restoring the default signal
+//     disposition. That is what lets a *second* Ctrl-C or SIGTERM terminate
+//     devgeta itself the normal way — without it, the handler would stay
+//     installed and swallow every later signal, leaving a user facing a
+//     wedged command with no way out.
 func Execute() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	context.AfterFunc(ctx, stop)
+	commands.SetRootContext(ctx)
+
 	err := rootCmd.Execute()
 	utils.MaybeExitWithError(err)
 }

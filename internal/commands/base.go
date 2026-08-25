@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -131,15 +132,21 @@ type CommandParams struct {
 	// (a git credential prompt, an ssh passphrase) would silently wedge the
 	// caller instead of failing.
 	//
-	// It does a second thing, and a caller setting it on a timed call has to
-	// know: when a Timeout is also set, the child is put in its own process
-	// group and the deadline kills that whole group instead of just the direct
-	// child. That is what makes a Timeout reach the forks — `sh -c`, brew, apt,
-	// an agent CLI's helpers — rather than leaving them running with nothing to
-	// reap them. The cost is that the child is no longer in the terminal's
-	// foreground process group, so a Ctrl-C typed at devgeta does not reach it;
-	// only the deadline stops it. On an untimed call NoStdin means the stdin
-	// opt-out alone, since there is no deadline to widen.
+	// It does a second thing, and every caller setting it has to know: the
+	// child is put in its own process group whenever this call's context can
+	// actually be cancelled — either by a Timeout, or by the process-level
+	// context cmd.Execute installs and cancels on SIGINT/SIGTERM (see
+	// SetRootContext). Cancellation then kills that whole group instead of
+	// just the direct child. That is what makes a Timeout — or a Ctrl-C —
+	// reach the forks a command spawns (`sh -c`, brew, apt, an agent CLI's
+	// helpers) rather than leaving them running with nothing to reap them.
+	// The cost is that the child is no longer in the terminal's foreground
+	// process group, so the terminal itself no longer delivers a typed
+	// Ctrl-C to it directly; only devgeta's own SIGINT/SIGTERM handler, which
+	// cancels the same context that drives the group kill, does. Outside of
+	// cmd.Execute (tests, other library callers that never call
+	// SetRootContext) the context can never be cancelled, so there an
+	// untimed NoStdin call is the stdin opt-out alone, with no process group.
 	//
 	// Default false preserves the inherited stdin, which the installers
 	// depend on: `dg install` shells out to sudo, and sudo must be able to
@@ -349,8 +356,18 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 
 	// The group kill is only useful where there is a cancellation to widen,
 	// and only safe where the child has no terminal to be stopped by; see
-	// isolateProcessGroup. ctx.Done() is nil exactly when no Timeout was
-	// asked for, so this reads as "there is a deadline that will fire".
+	// isolateProcessGroup. ctx.Done() != nil no longer means only "there is a
+	// deadline that will fire": commandTimeoutContext roots every context at
+	// the process-level context SetRootContext installs, and cmd.Execute
+	// cancels that one on SIGINT/SIGTERM too, so this is true for every call
+	// once that wiring exists — timed or not. That is intended, not a gate
+	// that quietly stopped doing its job: once Ctrl-C reaches a NoStdin child
+	// only through this cancellation (it is no longer in the terminal's
+	// foreground process group — see NoStdin), a process group is what lets
+	// that cancellation reach the child's own forks too, the same way it
+	// already does for a Timeout. It is false only where nothing has wired a
+	// cancellable root in (tests, library callers that bypass cmd.Execute) or
+	// for a call with no Timeout before that wiring runs.
 	if cmd.NoStdin && ctx.Done() != nil {
 		isolateProcessGroup(execCommand)
 	}
@@ -388,6 +405,16 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	// completed work.
 	if err != nil && ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("command timed out after %s: %w", cmd.Timeout, ctx.Err())
+	}
+	// Distinct from the deadline case above: context.Canceled here means the
+	// process-level root SetRootContext installed was cancelled — in
+	// production that is cmd.Execute's SIGINT/SIGTERM handler — not this
+	// call's own Timeout. Surface it as an interruption rather than the raw
+	// exit error a killed child leaves behind (e.g. "signal: killed"), so a
+	// caller that just propagates err up to utils.MaybeExitWithError shows
+	// the user a message about what happened instead of a Go internals string.
+	if err != nil && errors.Is(ctx.Err(), context.Canceled) {
+		err = fmt.Errorf("operation interrupted: %w", ctx.Err())
 	}
 	if err != nil {
 		logger.L().
@@ -474,15 +501,63 @@ func isolateProcessGroup(c *exec.Cmd) {
 	}
 }
 
+// rootCtx is the process-level context every command's own context is
+// rooted at. It defaults to context.Background() — see the init below — so
+// a test or a library caller that never calls SetRootContext gets exactly
+// what this package gave before signal handling existed: a context that can
+// never be cancelled. It is an atomic.Pointer, not a plain context.Context,
+// because ExecCommand reads it on every call, including calls made from
+// tests that run in parallel with each other and, in principle, with a
+// caller storing a new one.
+//
+// atomic.Pointer[context.Context], not atomic.Value: Value panics if two
+// Store calls carry values of different concrete types, and
+// context.Background() and a signal.NotifyContext-derived context are
+// different concrete types under the same interface — exactly the two
+// values this gets Store'd with. Storing a pointer to the interface keeps
+// the concrete type Value would have seen fixed at *context.Context.
+var rootCtx atomic.Pointer[context.Context]
+
+func init() {
+	bg := context.Context(context.Background())
+	rootCtx.Store(&bg)
+}
+
+// SetRootContext installs the context that commandTimeoutContext roots every
+// future command's own context in, replacing whatever was installed before.
+//
+// cmd.Execute is the only production caller. It wires this to
+// signal.NotifyContext(os.Interrupt, syscall.SIGTERM) before rootCmd.Execute
+// runs, so a Ctrl-C or SIGTERM cancels every in-flight command's context the
+// same way a per-call Timeout already does — see commandTimeoutContext,
+// isolateProcessGroup's Cancel hook, and the NoStdin field doc for what that
+// widens once a root this cancellable exists.
+//
+// Nothing else calls this. Tests exercise it directly to cover the
+// cancellation path (see exec_cancel_test.go) and must restore the default
+// afterward — this is shared, process-wide state, not per-test state the
+// sandbox in pkg/paths resets automatically.
+func SetRootContext(ctx context.Context) {
+	rootCtx.Store(&ctx)
+}
+
+func rootContext() context.Context {
+	return *rootCtx.Load()
+}
+
 // commandTimeoutContext builds the context used to bound a command's
-// execution. A zero timeout preserves unbounded execution (today's
-// behavior); a positive timeout returns a context that cancels once it
-// elapses, causing exec.CommandContext to kill the still-running process.
+// execution, rooted at the process-level context SetRootContext installed
+// (context.Background() until something calls it). A zero timeout returns
+// that root directly — so it inherits the root's own cancellation behavior
+// unchanged, including "never", the default — while a positive timeout
+// returns a child of it that also cancels once the timeout elapses, causing
+// exec.CommandContext to kill the still-running process.
 func commandTimeoutContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	root := rootContext()
 	if timeout <= 0 {
-		return context.Background(), func() {}
+		return root, func() {}
 	}
-	return context.WithTimeout(context.Background(), timeout)
+	return context.WithTimeout(root, timeout)
 }
 
 func (b *BaseCommand) MaybeInstall(
