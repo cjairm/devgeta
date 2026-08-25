@@ -58,13 +58,15 @@ func New() *Claude {
 	return &Claude{Cmd: osCmd, Base: baseCmd}
 }
 
+// claudeInstallScriptURL is the official Claude Code installer. Install()
+// stages it through cmd.RunInstallScript rather than a raw `curl | bash`
+// pipeline: the pipeline's exit status was bash's, not curl's, so a 404 or a
+// truncated download piped an empty script into bash — which exits 0 — and a
+// broken download was reported as a successful install.
+const claudeInstallScriptURL = "https://claude.ai/install.sh"
+
 func (c *Claude) Install() error {
-	params := cmd.CommandParams{
-		Command: "sh",
-		Args:    []string{"-c", "curl -fsSL https://claude.ai/install.sh | bash"},
-	}
-	_, _, err := c.Base.ExecCommand(params)
-	if err != nil {
+	if err := cmd.RunInstallScript(c.Base, "claude", claudeInstallScriptURL, "bash"); err != nil {
 		return fmt.Errorf("failed to install claude: %w", err)
 	}
 	return nil

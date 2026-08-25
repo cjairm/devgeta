@@ -11,6 +11,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -45,6 +46,12 @@ func TestNameAndKind(t *testing.T) {
 	}
 }
 
+// TestInstall verifies Install() runs the staged download-then-execute shape
+// (cmd.RunInstallScript) rather than the old raw `curl | bash` pipeline: a
+// download step through curl with a non-zero Timeout, followed by an
+// execute step through bash. Asserting the Timeout is non-zero matters
+// because a test that only checks the staged shape would still pass with a
+// stalled-connection hang left in place.
 func TestInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -53,12 +60,48 @@ func TestInstall(t *testing.T) {
 		t.Fatalf("Install error: %v", err)
 	}
 
-	last := mockApp.Base.GetLastExecCommandCall()
-	if last == nil {
-		t.Fatal("Expected ExecCommand to be called")
+	calls := mockApp.Base.ExecCommandCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
 	}
-	if last.Command != "sh" {
-		t.Errorf("Expected command 'sh', got %q", last.Command)
+	download, execute := calls[0], calls[1]
+	if download.Command != "curl" {
+		t.Errorf("expected download step command 'curl', got %q", download.Command)
+	}
+	if download.Timeout == 0 {
+		t.Error("expected download step to carry a non-zero Timeout")
+	}
+	if execute.Command != "bash" {
+		t.Errorf("expected execute step command 'bash', got %q", execute.Command)
+	}
+	if execute.Timeout == 0 {
+		t.Error("expected execute step to carry a non-zero Timeout")
+	}
+}
+
+// TestInstall_FailedDownloadBlocksInstall asserts a failed (or truncated,
+// simulated here as a curl error) download stops before the script ever
+// runs, rather than being reported as a successful install — the exact
+// defect the staged shape replaces (`bash -c 'false | bash'` exits 0).
+func TestInstall_FailedDownloadBlocksInstall(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResults(
+		commands.ExecCommandResult("", "", fmt.Errorf("404 not found")),
+	)
+	app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	err := app.Install()
+	if err == nil {
+		t.Fatal("expected Install to fail when the download step fails")
+	}
+	if !strings.Contains(err.Error(), "failed to download install script") {
+		t.Errorf("expected download-failure error, got: %v", err)
+	}
+	if got := mockApp.Base.GetExecCommandCallCount(); got != 1 {
+		t.Errorf(
+			"expected the execute step to be skipped after a failed download, got %d calls",
+			got,
+		)
 	}
 }
 
@@ -78,18 +121,18 @@ func TestForceInstall(t *testing.T) {
 		t.Fatalf("ForceInstall error: %v", err)
 	}
 
-	// ForceInstall runs Uninstall (sh rm) then Install (sh curl)
-	// Both use Base.ExecCommand, so we expect 2 calls
+	// ForceInstall runs Uninstall (sh rm) then Install (staged curl, then
+	// bash) — 3 ExecCommand calls in total.
 	calls := tc.MockApp.Base.ExecCommandCalls
-	if len(calls) < 2 {
-		t.Fatalf("expected at least 2 ExecCommand calls, got %d", len(calls))
+	if len(calls) < 3 {
+		t.Fatalf("expected at least 3 ExecCommand calls, got %d", len(calls))
 	}
 	if calls[0].Command != "sh" {
 		t.Errorf("expected first command 'sh' (uninstall), got %q", calls[0].Command)
 	}
 	last := calls[len(calls)-1]
-	if last.Command != "sh" {
-		t.Errorf("Expected install script via 'sh', got %q", last.Command)
+	if last.Command != "bash" {
+		t.Errorf("Expected install script executed via 'bash', got %q", last.Command)
 	}
 }
 

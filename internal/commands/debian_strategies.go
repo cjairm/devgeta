@@ -10,12 +10,42 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cjairm/devgeta/pkg/apt"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/downloader"
 	"github.com/cjairm/devgeta/pkg/logger"
+)
+
+const (
+	// InstallScriptDownloadTimeout bounds downloading an install script's own
+	// contents via curl. A stall bound, not a transfer bound: install scripts
+	// are small (kilobytes), so a whole-request deadline is safe here in a way
+	// it is not for the multi-megabyte archives downloader.DownloadFileWithRetry
+	// handles elsewhere in this cycle. Same shape as pkg/downloader/retry.go's
+	// client timeout.
+	InstallScriptDownloadTimeout = 30 * time.Second
+	// InstallScriptExecTimeout bounds running the downloaded install script
+	// itself. Deliberately separate from, and much larger than,
+	// InstallScriptDownloadTimeout: an install script legitimately runs for
+	// minutes (its own package downloads, binary extraction), so reusing the
+	// download bound would kill working installs.
+	InstallScriptExecTimeout = 10 * time.Minute
+	// fontArchiveExtractTimeout bounds extracting a downloaded Nerd Font
+	// archive. A local disk operation, not a network call, but still bounded
+	// rather than left unbounded: a corrupted archive tar cannot fully read
+	// should not be able to hang dg install forever.
+	fontArchiveExtractTimeout = 2 * time.Minute
+	// fontCacheTimeout bounds rebuilding the system font cache after
+	// installing a Nerd Font. Same rationale as fontArchiveExtractTimeout.
+	fontCacheTimeout = 2 * time.Minute
+	// gitCloneTimeout bounds cloning a Git-based install (e.g. powerlevel10k).
+	// Unlike the two constants above, this is a network operation that can
+	// hang indefinitely on a stalled connection.
+	gitCloneTimeout = 5 * time.Minute
 )
 
 // InstallGitHubBinary downloads binaryName from a GitHub release tar.gz, verifies
@@ -141,6 +171,81 @@ func verifySHA256(filePath, checksumsPath, assetName string) error {
 	return nil
 }
 
+// RunInstallScript downloads scriptURL to a private staging directory via
+// curl, verifies the download actually succeeded, then executes it with
+// interpreter — replacing a `curl … | sh` (or `| bash`) pipeline whose exit
+// status is the interpreter's, not curl's: a 404 or a truncated download
+// pipes an empty or partial script into the interpreter, which exits 0, so a
+// broken download is reported as a successful install.
+//
+// label identifies the caller in error messages (a package or app name).
+// Both stages run through base.ExecCommand — the shared executor's
+// streaming/timeout/error-wrapping behavior, and mockability — rather than a
+// raw exec.Command (CLAUDE.md §6, "Route external tools through their app
+// wrappers"). The download stage carries InstallScriptDownloadTimeout (also
+// passed to curl via --max-time, so the bound holds even if curl is later
+// invoked outside this executor) and the execution stage carries the much
+// larger InstallScriptExecTimeout — an install script legitimately runs for
+// minutes, so reusing the download bound would kill working installs. Both
+// stages set NoStdin: true: the original raw-exec.Command callers this
+// replaces left Cmd.Stdin unset (which exec.Cmd treats as /dev/null), so no
+// caller loses interactive stdin it depended on, and it is what lets a
+// Timeout's cancellation reach an install script's own child processes
+// rather than leaving them running (see CommandParams.NoStdin).
+func RunInstallScript(base BaseCommandExecutor, label, scriptURL, interpreter string) error {
+	return withStagingDir("install-script", func(stagingDir string) error {
+		scriptPath := filepath.Join(stagingDir, "install.sh")
+
+		if _, stderr, err := base.ExecCommand(CommandParams{
+			Command: "curl",
+			Args: []string{
+				"-fsSL",
+				"--max-time", strconv.Itoa(int(InstallScriptDownloadTimeout.Seconds())),
+				"-o", scriptPath,
+				scriptURL,
+			},
+			Timeout: InstallScriptDownloadTimeout,
+			NoStdin: true,
+		}); err != nil {
+			return fmt.Errorf(
+				"failed to download install script for %s: %w\nOutput: %s",
+				label, err, stderr,
+			)
+		}
+
+		if _, stderr, err := base.ExecCommand(CommandParams{
+			Command: interpreter,
+			Args:    []string{scriptPath},
+			Timeout: InstallScriptExecTimeout,
+			NoStdin: true,
+		}); err != nil {
+			return fmt.Errorf(
+				"install script failed for %s: %w\nOutput: %s",
+				label, err, stderr,
+			)
+		}
+
+		return nil
+	})
+}
+
+// withStagingDir runs fn against a private temporary directory and removes
+// that directory afterwards, on the failure path as well as the success
+// path. Same shape as (*apt.PPAManager).withStagingDir (pkg/apt/ppa.go:238).
+func withStagingDir(purpose string, fn func(stagingDir string) error) error {
+	stagingDir, err := os.MkdirTemp("", "devgeta-"+purpose+"-")
+	if err != nil {
+		return fmt.Errorf("failed to create staging directory: %w", err)
+	}
+	defer func() {
+		if err := os.RemoveAll(stagingDir); err != nil {
+			logger.L().Warnw("Failed to remove staging directory", "path", stagingDir, "error", err)
+		}
+	}()
+
+	return fn(stagingDir)
+}
+
 // InstallationStrategy defines the contract for different package installation methods
 type InstallationStrategy interface {
 	// Install installs the package using the strategy's specific method
@@ -258,12 +363,20 @@ func (s *LaunchpadPPAStrategy) IsInstalled(packageName string) (bool, error) {
 }
 
 // InstallScriptStrategy implements installation by downloading and executing an install script
+//
+// cmd is BaseCommandExecutor rather than *DebianCommand — unlike AptStrategy,
+// PPAStrategy, and LaunchpadPPAStrategy, Install only ever needs ExecCommand,
+// so the narrower interface is enough, and it is also what makes this
+// strategy mockable with commands.NewMockBaseCommand() in tests instead of
+// requiring a real DebianCommand backed by real exec.
 type InstallScriptStrategy struct {
-	cmd       *DebianCommand
+	cmd       BaseCommandExecutor
 	scriptURL string
 }
 
-// Install downloads and executes an install script via curl | sh
+// Install downloads and executes an install script, staged through
+// RunInstallScript so a failed or truncated download is reported as a
+// failed install rather than a silent success.
 func (s *InstallScriptStrategy) Install(packageName string) error {
 	logger.L().Infow(
 		"Installing package via install script",
@@ -271,18 +384,7 @@ func (s *InstallScriptStrategy) Install(packageName string) error {
 		"script_url", s.scriptURL,
 	)
 
-	curlCmd := exec.Command("sh", "-c", fmt.Sprintf("curl -fsSL %s | sh", s.scriptURL))
-	output, err := curlCmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf(
-			"install script failed for %s: %w\nOutput: %s",
-			packageName,
-			err,
-			string(output),
-		)
-	}
-
-	return nil
+	return RunInstallScript(s.cmd, packageName, s.scriptURL, "sh")
 }
 
 // IsInstalled checks if the package binary exists in common PATH locations
@@ -295,9 +397,21 @@ func (s *InstallScriptStrategy) IsInstalled(packageName string) (bool, error) {
 }
 
 // NerdFontStrategy implements installation by downloading Nerd Font archives from GitHub releases
+//
+// cmd is BaseCommandExecutor rather than *DebianCommand: Install and
+// IsInstalled only need ExecCommand and IsFontPresent, both part of that
+// interface, so the narrower type is enough and keeps this strategy
+// mockable in tests (see InstallScriptStrategy's field doc for why).
 type NerdFontStrategy struct {
-	cmd        *DebianCommand
+	cmd        BaseCommandExecutor
 	archiveURL string // Full GitHub release URL for the tar.xz archive
+	// downloadFn overrides the archive download for tests, the same pattern
+	// InstallGitHubBinary already uses above; nil means "use the real
+	// downloader.DownloadFileWithRetry". Without this, a test exercising the
+	// tar/fc-cache steps this task routed through the mocked executor would
+	// first have to make a real network request for the archive — exactly
+	// what CLAUDE.md's testing rules forbid.
+	downloadFn func(ctx context.Context, url, dest string, cfg downloader.RetryConfig) error
 }
 
 // Install downloads a Nerd Font tar.xz archive, extracts fonts to ~/.local/share/fonts/,
@@ -323,22 +437,38 @@ func (s *NerdFontStrategy) Install(packageName string) error {
 	tmpArchive := filepath.Join("/tmp", fmt.Sprintf("%s-nerd-font.tar.xz", packageName))
 	defer os.Remove(tmpArchive)
 
+	downloadFn := s.downloadFn
+	if downloadFn == nil {
+		downloadFn = downloader.DownloadFileWithRetry
+	}
 	ctx := context.Background()
 	config := downloader.DefaultRetryConfig()
-	if err := downloader.DownloadFileWithRetry(ctx, s.archiveURL, tmpArchive, config); err != nil {
+	if err := downloadFn(ctx, s.archiveURL, tmpArchive, config); err != nil {
 		return fmt.Errorf("failed to download font archive: %w", err)
 	}
 
-	// Extract .tar.xz to fonts directory
-	extractCmd := exec.Command("tar", "-xf", tmpArchive, "-C", fontsDir)
-	if output, err := extractCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to extract font archive: %w\nOutput: %s", err, string(output))
+	// Extract .tar.xz to fonts directory. Routed through the shared executor
+	// (rather than a raw exec.Command + CombinedOutput) so a corrupted or
+	// truncated archive that leaves tar stuck reading can't hang dg install
+	// forever, and so this call is mockable like every other strategy step.
+	if _, stderr, err := s.cmd.ExecCommand(CommandParams{
+		Command: "tar",
+		Args:    []string{"-xf", tmpArchive, "-C", fontsDir},
+		Timeout: fontArchiveExtractTimeout,
+		NoStdin: true,
+	}); err != nil {
+		return fmt.Errorf("failed to extract font archive: %w\nOutput: %s", err, stderr)
 	}
 
-	// Update font cache
-	cacheCmd := exec.Command("fc-cache", "-fv")
-	if output, err := cacheCmd.CombinedOutput(); err != nil {
-		logger.L().Warnw("fc-cache failed (non-fatal)", "error", err, "output", string(output))
+	// Update font cache. Same rationale as the tar step above; failure stays
+	// non-fatal, matching the pre-existing behavior.
+	if _, stderr, err := s.cmd.ExecCommand(CommandParams{
+		Command: "fc-cache",
+		Args:    []string{"-fv"},
+		Timeout: fontCacheTimeout,
+		NoStdin: true,
+	}); err != nil {
+		logger.L().Warnw("fc-cache failed (non-fatal)", "error", err, "output", stderr)
 	}
 
 	logger.L().Infow("Nerd Font installed successfully", "package", packageName)
@@ -351,8 +481,12 @@ func (s *NerdFontStrategy) IsInstalled(packageName string) (bool, error) {
 }
 
 // GitCloneStrategy implements installation by cloning a Git repository
+//
+// cmd is BaseCommandExecutor rather than *DebianCommand: Install only needs
+// ExecCommand, so the narrower type is enough and keeps this strategy
+// mockable in tests (see InstallScriptStrategy's field doc for why).
 type GitCloneStrategy struct {
-	cmd         *DebianCommand
+	cmd         BaseCommandExecutor
 	repoURL     string
 	installPath string
 }
@@ -372,11 +506,16 @@ func (s *GitCloneStrategy) Install(packageName string) error {
 		return nil
 	}
 
-	// Clone repository
-	cmd := exec.Command("git", "clone", "--depth", "1", s.repoURL, s.installPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("git clone failed: %w\nOutput: %s", err, string(output))
+	// Clone repository. Routed through the shared executor with a Timeout: a
+	// git clone is a network operation that can hang indefinitely on a
+	// stalled connection, exactly the class of hang this cycle is closing.
+	if _, stderr, err := s.cmd.ExecCommand(CommandParams{
+		Command: "git",
+		Args:    []string{"clone", "--depth", "1", s.repoURL, s.installPath},
+		Timeout: gitCloneTimeout,
+		NoStdin: true,
+	}); err != nil {
+		return fmt.Errorf("git clone failed: %w\nOutput: %s", err, stderr)
 	}
 
 	return nil
