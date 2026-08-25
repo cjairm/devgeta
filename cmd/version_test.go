@@ -8,14 +8,16 @@ import (
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"github.com/cjairm/devgeta/pkg/buildinfo"
 )
 
 func withVersionVars(t *testing.T, version, commit, buildDate string) {
 	t.Helper()
-	origV, origC, origB := Version, Commit, BuildDate
-	Version, Commit, BuildDate = version, commit, buildDate
+	origV, origC, origB := buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate
+	buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate = version, commit, buildDate
 	t.Cleanup(func() {
-		Version, Commit, BuildDate = origV, origC, origB
+		buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate = origV, origC, origB
 	})
 }
 

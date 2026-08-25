@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/pkg/buildinfo"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/utils"
 	"github.com/spf13/cobra"
@@ -100,8 +101,8 @@ func init() {
 
 	rootCmd.SetHelpFunc(utils.PrompCustomHelp)
 
-	rootCmd.Version = Version
+	rootCmd.Version = buildinfo.Version
 	rootCmd.SetVersionTemplate(fmt.Sprintf(
-		"devgeta {{.Version}} (commit: %s, built: %s)\n", Commit, BuildDate,
+		"devgeta {{.Version}} (commit: %s, built: %s)\n", buildinfo.Commit, buildinfo.BuildDate,
 	))
 }

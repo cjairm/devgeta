@@ -8,16 +8,8 @@ import (
 	"io"
 	"runtime/debug"
 
+	"github.com/cjairm/devgeta/pkg/buildinfo"
 	"github.com/spf13/cobra"
-)
-
-var (
-	// Version is set during build via ldflags
-	Version = "dev"
-	// Commit is set during build via ldflags
-	Commit = "unknown"
-	// BuildDate is set during build via ldflags
-	BuildDate = "unknown"
 )
 
 // readBuildInfo is overridable for tests.
@@ -27,7 +19,7 @@ var readBuildInfo = debug.ReadBuildInfo
 // back to runtime/debug.BuildInfo when ldflags weren't applied (e.g. plain
 // `go build` or `go install github.com/cjairm/devgeta@latest`).
 func resolveVersionInfo() (version, commit, buildDate string) {
-	version, commit, buildDate = Version, Commit, BuildDate
+	version, commit, buildDate = buildinfo.Version, buildinfo.Commit, buildinfo.BuildDate
 
 	info, ok := readBuildInfo()
 	if !ok {

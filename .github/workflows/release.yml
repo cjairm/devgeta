@@ -65,9 +65,9 @@ jobs:
           BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           SHORT_COMMIT=$(echo "$COMMIT" | cut -c1-7)
           LDFLAGS="-s -w \
-            -X 'github.com/cjairm/devgeta/cmd.Version=${VERSION}' \
-            -X 'github.com/cjairm/devgeta/cmd.Commit=${SHORT_COMMIT}' \
-            -X 'github.com/cjairm/devgeta/cmd.BuildDate=${BUILD_DATE}'"
+            -X 'github.com/cjairm/devgeta/pkg/buildinfo.Version=${VERSION}' \
+            -X 'github.com/cjairm/devgeta/pkg/buildinfo.Commit=${SHORT_COMMIT}' \
+            -X 'github.com/cjairm/devgeta/pkg/buildinfo.BuildDate=${BUILD_DATE}'"
 
           GOOS=darwin  GOARCH=amd64 go build -o devgeta-darwin-amd64  -ldflags="$LDFLAGS" .
           GOOS=darwin  GOARCH=arm64 go build -o devgeta-darwin-arm64  -ldflags="$LDFLAGS" .

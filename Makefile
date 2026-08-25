@@ -6,9 +6,9 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 # Linker flags to inject version info
-LDFLAGS := -X 'github.com/cjairm/devgeta/cmd.Version=$(VERSION)' \
-           -X 'github.com/cjairm/devgeta/cmd.Commit=$(COMMIT)' \
-           -X 'github.com/cjairm/devgeta/cmd.BuildDate=$(BUILD_DATE)'
+LDFLAGS := -X 'github.com/cjairm/devgeta/pkg/buildinfo.Version=$(VERSION)' \
+           -X 'github.com/cjairm/devgeta/pkg/buildinfo.Commit=$(COMMIT)' \
+           -X 'github.com/cjairm/devgeta/pkg/buildinfo.BuildDate=$(BUILD_DATE)'
 
 # Build all platform binaries
 all: build-darwin-arm64 build-darwin-amd64 build-linux-amd64
