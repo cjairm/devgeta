@@ -78,7 +78,16 @@ func Update(fn func(gc *GlobalConfig) error) error {
 // lock held.
 func updateLocked(fn func(gc *GlobalConfig) error) error {
 	gc := &GlobalConfig{}
-	if err := gc.Load(); err != nil {
+	// readGlobalConfigFile, not gc.Load(): Update's whole purpose is to
+	// guarantee this read is fresh under the lock. Going through Load()'s
+	// cache would let two concurrent Update calls both hit an entry
+	// populated before either acquired the lock, both mutate from that same
+	// stale base, and the second Save() below would silently discard the
+	// first Update's change - the lost-update bug this lock exists to
+	// prevent, reintroduced through the cache instead of a race on the file.
+	// Save() at the end of this function still refreshes the cache like any
+	// other write - only the read bypasses it.
+	if err := readGlobalConfigFile(gc); err != nil {
 		if !os.IsNotExist(err) {
 			return fmt.Errorf("config: failed to load: %w", err)
 		}

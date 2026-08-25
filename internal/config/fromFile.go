@@ -303,22 +303,59 @@ func GlobalConfigFilePath() string {
 	)
 }
 
+// Load reads and parses global_config.yaml, once per run (ADR-0030): the
+// file is stat'd first, and if {path, modTime, size} matches the
+// process-wide cache's key, Load returns a deep copy of the cached document
+// without touching the file's bytes at all. On a miss (first call, an
+// out-of-band edit, or a failed stat) it reads and parses the file directly
+// via readGlobalConfigFile and, when the stat succeeded, populates the
+// cache for the next caller.
+//
+// The stat happens before the read, never after, so a cached entry is
+// always at least as new as the stamp it is filed under: a write racing
+// this call leaves a newer file with a newer stamp, and the next Load()
+// call misses and re-reads. A failed stat (missing file, permission error)
+// is not reported here - it falls through to a direct read, which fails
+// (or succeeds) exactly as Load did before this cache existed, and nothing
+// is cached for an error result.
 func (gc *GlobalConfig) Load() error {
-	globalConfigFile, err := os.ReadFile(GlobalConfigFilePath())
-	if err != nil {
+	path := GlobalConfigFilePath()
+	fi, statErr := os.Stat(path)
+	if statErr != nil {
+		return readGlobalConfigFile(gc)
+	}
+
+	modTime, size := fi.ModTime(), fi.Size()
+	if cached := lookupGlobalConfigCache(path, modTime, size); cached != nil {
+		*gc = *cached
+		return nil
+	}
+
+	if err := readGlobalConfigFile(gc); err != nil {
 		return err
 	}
-	return yaml.Unmarshal(globalConfigFile, gc)
+	storeGlobalConfigCache(path, modTime, size, gc)
+	return nil
 }
 
+// Save marshals gc and writes it to global_config.yaml, then refreshes the
+// process-wide cache with a deep copy of gc keyed on the file's post-write
+// stat (see writeGlobalConfigFile) - a Load() anywhere else in this process
+// immediately after a successful Save() sees gc's value without re-reading
+// or re-parsing the file.
 func (gc *GlobalConfig) Save() error {
 	data, err := yaml.Marshal(gc)
 	if err != nil {
 		return err
 	}
-	return files.WriteFileAtomic(GlobalConfigFilePath(), data, files.FilePermission)
+	return writeGlobalConfigFile(GlobalConfigFilePath(), data, gc)
 }
 
+// Reset blanks gc to its zero value and writes that directly to
+// global_config.yaml, bypassing Save() - but it still goes through
+// writeGlobalConfigFile so the cache is refreshed the same way every other
+// write refreshes it; without that, the cache would outlive a reset and
+// serve the pre-reset document to the next Load().
 func (gc *GlobalConfig) Reset() error {
 	logger.L().Debug("Resetting global config")
 	*gc = GlobalConfig{}
@@ -326,7 +363,7 @@ func (gc *GlobalConfig) Reset() error {
 	if err != nil {
 		return err
 	}
-	return files.WriteFileAtomic(GlobalConfigFilePath(), data, files.FilePermission)
+	return writeGlobalConfigFile(GlobalConfigFilePath(), data, gc)
 }
 
 func (gc *GlobalConfig) Create() error {

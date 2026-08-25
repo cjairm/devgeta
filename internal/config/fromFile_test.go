@@ -31,6 +31,16 @@ func setupIsolatedConfigPaths(t *testing.T) {
 		paths.Paths.Config.Root = origConfigRoot
 		paths.Paths.App.Configs.Templates = origTemplatesDir
 	})
+
+	// The process-wide Load()/Save() cache (cache.go) is package-level state
+	// that outlives any one test in this binary. Every test using this
+	// helper goes on to call Load/Save/Update, so resetting here - both
+	// before the test (defensively, in case a prior test in this binary
+	// somehow left an entry under this exact path) and via t.Cleanup after -
+	// keeps one test's cached document from silently answering another's
+	// Load(), the same obligation Task 3's installed-package cache carries.
+	ResetGlobalConfigCacheForTest()
+	t.Cleanup(ResetGlobalConfigCacheForTest)
 }
 
 func TestRemoveFromInstalled(t *testing.T) {

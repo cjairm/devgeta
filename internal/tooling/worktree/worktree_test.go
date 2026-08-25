@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -1298,16 +1297,32 @@ func TestRefreshState(t *testing.T) {
 	})
 }
 
-// TestGlobalConfigCache covers the memoized config.Load() knownRepoAnchorGroups
-// reads the recent-repos store through (ADR-0024): reused while the file is
-// unchanged, dropped when it changes on disk, and dropped by recordRepoUsed -
-// the one place devgeta itself writes that store, whose same-second write of
-// an unchanged size a stat cannot see.
+// TestGlobalConfigCache covers knownRepoAnchorGroups' reads of the
+// recent-repos store through config.Load(), now cached process-wide in
+// internal/config rather than locally in this manager (ADR-0030 promoted
+// the memoization this package used to keep to itself). The manager no
+// longer has any cache state of its own to inspect directly - both
+// subtests below exercise only the externally visible behavior through
+// ListWorktreesOnly() and recordRepoUsed(), which is what ADR-0030's
+// promotion is required to leave unchanged.
+//
+// The old third subtest here ("reuses the parsed config while the file
+// looks unchanged") tested a staleness window specific to the manager's
+// retired local cache: an in-process rewrite with the same size and a
+// forced-back mtime went undetected by a stat-only key. That window is not
+// carried over - internal/config's cache refreshes on every write it makes
+// with the document it just wrote (not a stat re-check), so an in-process
+// write is never invisible to it regardless of timestamp granularity. A
+// test asserting the old staleness would now fail against a correct
+// implementation, so it is removed rather than adapted.
+//
+// The old fourth subtest ("concurrent readers and an invalidation are
+// race-free") exercised this manager's own configMu directly; that field is
+// gone. The new cache's concurrency safety (its own mutex around lookup,
+// store, and the write-refresh sequence) is covered by internal/config's
+// own tests under -race, so it is not re-tested at this layer.
 func TestGlobalConfigCache(t *testing.T) {
-	// writeRecentRepo saves a config whose only recent repo is repoPath, with
-	// a fixed LastUsed so two calls with equal-length paths produce
-	// byte-identical file sizes - which is what lets a subtest hide a change
-	// from the mtime/size check.
+	// writeRecentRepo saves a config whose only recent repo is repoPath.
 	writeRecentRepo := func(t *testing.T, repoPath string) {
 		t.Helper()
 		gc := &config.GlobalConfig{}
@@ -1325,17 +1340,6 @@ func TestGlobalConfigCache(t *testing.T) {
 			t.Fatalf("setup: %v", err)
 		}
 	}
-	stat := func(t *testing.T) os.FileInfo {
-		t.Helper()
-		fi, err := os.Stat(config.GlobalConfigFilePath())
-		if err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-		return fi
-	}
-	// twoRepos returns two existing repo directories whose paths have the same
-	// length, so swapping one for the other in the config leaves its size
-	// unchanged.
 	twoRepos := func(t *testing.T) (string, string) {
 		t.Helper()
 		parent := t.TempDir()
@@ -1348,47 +1352,6 @@ func TestGlobalConfigCache(t *testing.T) {
 		}
 		return a, b
 	}
-
-	t.Run("reuses the parsed config while the file looks unchanged", func(t *testing.T) {
-		wm, mockGitBase, _ := newListTestWM(t)
-		t.Chdir(t.TempDir())
-		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
-		repoA, repoB := twoRepos(t)
-
-		writeRecentRepo(t, repoA)
-		fi := stat(t)
-		if _, err := wm.ListWorktreesOnly(); err != nil {
-			t.Fatalf("ListWorktreesOnly failed: %v", err)
-		}
-
-		// Swap the store's contents behind the cache's back: same size, and
-		// the mtime put back to what it was.
-		writeRecentRepo(t, repoB)
-		if got := stat(t).Size(); got != fi.Size() {
-			t.Fatalf("setup: expected an equal-size rewrite, got %d then %d", fi.Size(), got)
-		}
-		if err := os.Chtimes(
-			config.GlobalConfigFilePath(),
-			fi.ModTime(),
-			fi.ModTime(),
-		); err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-
-		if _, err := wm.ListWorktreesOnly(); err != nil {
-			t.Fatalf("ListWorktreesOnly failed: %v", err)
-		}
-		if got := countExecCommandCallsWithDir(mockGitBase, repoA); got != 2 {
-			t.Errorf("expected the cached anchor %q on both enumerations, got %d calls", repoA, got)
-		}
-		if got := countExecCommandCallsWithDir(mockGitBase, repoB); got != 0 {
-			t.Errorf(
-				"expected the cache to serve the old store, but %q was queried %d times",
-				repoB,
-				got,
-			)
-		}
-	})
 
 	t.Run("reloads when the config file changes out of process", func(t *testing.T) {
 		wm, mockGitBase, _ := newListTestWM(t)
@@ -1415,38 +1378,7 @@ func TestGlobalConfigCache(t *testing.T) {
 		}
 	})
 
-	// The reason the cache is mutex-guarded at all: the dashboard reads it
-	// from Bubble Tea command goroutines, and its fast and slow refreshes can
-	// overlap. Run under -race, this fails without the lock.
-	t.Run("concurrent readers and an invalidation are race-free", func(t *testing.T) {
-		wm, _, _ := newListTestWM(t)
-		repoA, _ := twoRepos(t)
-		writeRecentRepo(t, repoA)
-
-		var wg sync.WaitGroup
-		for range 8 {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				for range 20 {
-					if _, err := wm.globalConfig(); err != nil {
-						t.Errorf("globalConfig failed: %v", err)
-						return
-					}
-				}
-			}()
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range 20 {
-				wm.invalidateGlobalConfig()
-			}
-		}()
-		wg.Wait()
-	})
-
-	t.Run("recordRepoUsed drops the cache", func(t *testing.T) {
+	t.Run("recordRepoUsed's write is visible on the next enumeration", func(t *testing.T) {
 		wm, mockGitBase, _ := newListTestWM(t)
 		t.Chdir(t.TempDir())
 		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
@@ -1456,18 +1388,13 @@ func TestGlobalConfigCache(t *testing.T) {
 		if _, err := wm.ListWorktreesOnly(); err != nil {
 			t.Fatalf("ListWorktreesOnly failed: %v", err)
 		}
-		if wm.configCache == nil {
-			t.Fatal("expected the first enumeration to populate the cache")
-		}
 
 		wm.recordRepoUsed(repoB)
 
-		// The drop is what makes devgeta's own create visible immediately: its
-		// write can land in the same second at the same size, which the
-		// mtime/size check would not see.
-		if wm.configCache != nil {
-			t.Error("expected recordRepoUsed to drop the cache")
-		}
+		// recordRepoUsed writes through config.Update, whose trailing Save()
+		// refreshes internal/config's process-wide cache with the document
+		// it just wrote - so the very next enumeration must see repoB
+		// without needing any invalidation call from this manager.
 		if _, err := wm.ListWorktreesOnly(); err != nil {
 			t.Fatalf("ListWorktreesOnly failed: %v", err)
 		}

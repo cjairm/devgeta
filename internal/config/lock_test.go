@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -374,5 +375,105 @@ func TestUpdate_TimesOutWithActionableErrorWhenLockHeld(t *testing.T) {
 		elapsed,
 		2*time.Second,
 		"Update must return at (or shortly after) the configured timeout, not hang",
+	)
+}
+
+// TestUpdate_ReadBypassesStaleCache is the regression test ADR-0030 calls
+// out by name: if updateLocked's read went through Load()'s cache instead
+// of reading fresh from disk, two concurrent Update calls could both hit an
+// entry populated before either acquired the lock, both mutate from that
+// same stale base, and the second Save() would silently discard the first
+// Update's change - the exact lost-update bug the sidecar lock exists to
+// prevent, reintroduced through the cache instead of a race on the file.
+//
+// This reproduces the hazard deterministically rather than relying on
+// timing: it plants a stale cache entry keyed on the file's ACTUAL current
+// stat (storeGlobalConfigCache, same call lookupGlobalConfigCache would make
+// on a "hit") - exactly what a same-second, same-size external write could
+// also produce, and exactly the entry a Load()-based updateLocked would
+// have served. If updateLocked reads fresh (as it must), fn sees the real
+// on-disk content and Save() preserves it alongside fn's own change; if it
+// went through the cache instead, fn would see the stale content and Save()
+// would overwrite the real data with it.
+func TestUpdate_ReadBypassesStaleCache(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	// Real on-disk state.
+	gc := &GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	gc.Installed.Packages = []string{"git", "real"}
+	if err := gc.Save(); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Plant a stale entry keyed on the file's real, current stat.
+	path := GlobalConfigFilePath()
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("Stat failed: %v", err)
+	}
+	stale := &GlobalConfig{}
+	stale.Installed.Packages = []string{"stale-only"}
+	storeGlobalConfigCache(path, fi.ModTime(), fi.Size(), stale)
+
+	// Sanity: prove the planted entry really is what a plain Load() would
+	// return right now, so the rest of this test exercises the real hazard
+	// rather than a no-op.
+	sanity := &GlobalConfig{}
+	if err := sanity.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if !slices.Contains(sanity.Installed.Packages, "stale-only") {
+		t.Fatalf(
+			"sanity check failed: Load() did not return the planted stale cache entry, got %v",
+			sanity.Installed.Packages,
+		)
+	}
+
+	var seenDuringUpdate []string
+	if err := Update(func(gc *GlobalConfig) error {
+		seenDuringUpdate = append([]string{}, gc.Installed.Packages...)
+		gc.AddToInstalled("added-by-update", "package")
+		return nil
+	}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	assert.False(
+		t,
+		slices.Contains(seenDuringUpdate, "stale-only"),
+		"Update's fn saw the stale cached document instead of a fresh disk read: %v",
+		seenDuringUpdate,
+	)
+	assert.True(
+		t,
+		slices.Contains(seenDuringUpdate, "real"),
+		"Update's fn did not see the real on-disk package: %v",
+		seenDuringUpdate,
+	)
+
+	final := &GlobalConfig{}
+	if err := final.Load(); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	assert.True(
+		t,
+		slices.Contains(final.Installed.Packages, "real"),
+		"Update lost the real on-disk write: %v",
+		final.Installed.Packages,
+	)
+	assert.True(
+		t,
+		slices.Contains(final.Installed.Packages, "added-by-update"),
+		"Update lost its own change: %v",
+		final.Installed.Packages,
+	)
+	assert.False(
+		t,
+		slices.Contains(final.Installed.Packages, "stale-only"),
+		"the stale cached content leaked into the saved file: %v",
+		final.Installed.Packages,
 	)
 }

@@ -18,7 +18,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
@@ -131,27 +130,6 @@ type WorktreeManager struct {
 	// directly to stdout underneath a running Bubble Tea alt-screen program
 	// would corrupt its rendering.
 	WarnFn func(msg string)
-
-	// configMu guards configCache. It is the manager's only mutable receiver
-	// state: the cache is read from Bubble Tea command goroutines, and the
-	// dashboard's fast (tmux) and slow (git) refreshes can overlap, so a
-	// plain field would be a data race.
-	configMu sync.Mutex
-	// configCache holds the last global config knownRepoAnchorGroups loaded,
-	// keyed by the config file's identity at load time (see cachedConfig).
-	// nil means "nothing cached yet, or the last load failed".
-	configCache *cachedConfig
-}
-
-// cachedConfig is one memoized config.Load() result plus the identity of the
-// file it came from. path is part of the key because paths.Paths.Config.Root
-// can be repointed (tests do it per case), so a cached entry from one root
-// must never be served under another.
-type cachedConfig struct {
-	path    string
-	modTime time.Time
-	size    int64
-	gc      *config.GlobalConfig
 }
 
 // New creates a new WorktreeManager instance
@@ -756,67 +734,6 @@ func AggregateAgentState(states []string) string {
 	return tmux.AggregateAgentState(states)
 }
 
-// globalConfig returns the global config, re-reading and re-parsing the YAML
-// only when the file it came from has changed. knownRepoAnchorGroups is on the
-// dashboard's refresh path and used to pay a full read+unmarshal per refresh
-// for a file that changes only when a worktree is created; ADR-0024's slow tick
-// still calls it every 30 seconds, and every mutation calls it again.
-//
-// Staleness is bounded from both ends:
-//
-//   - out of process (a `dg wt new` in another shell) by the file's mtime and
-//     size, stat'd on every call - three orders of magnitude cheaper than the
-//     git exec this same enumeration is about to run per repo.
-//   - in process by recordRepoUsed, the one place devgeta writes recent-repos,
-//     which drops the cache outright. This matters because a same-second write
-//     of the same size is invisible to a stat, and it is exactly what devgeta's
-//     own create does.
-//
-// The stat happens before the load, never after, so cached content is always at
-// least as new as the stamp it is filed under: a write racing the load leaves a
-// newer file with a newer stamp, and the next call reloads. The returned config
-// is shared with every other caller and must be treated as read-only.
-func (w *WorktreeManager) globalConfig() (*config.GlobalConfig, error) {
-	path := config.GlobalConfigFilePath()
-	var modTime time.Time
-	var size int64
-	// A failed stat (missing file, permission error) is not reported here: it
-	// leaves modTime/size at their zero value, so the cache lookup below misses
-	// and falls through to Load(), which either fails and caches nothing or
-	// succeeds and caches under a zero stamp that a later successful stat will
-	// never match - so the zero stamp never causes a stale hit.
-	if fi, err := os.Stat(path); err == nil {
-		modTime = fi.ModTime()
-		size = fi.Size()
-	}
-
-	w.configMu.Lock()
-	defer w.configMu.Unlock()
-
-	if c := w.configCache; c != nil && c.path == path && c.size == size &&
-		c.modTime.Equal(modTime) {
-		return c.gc, nil
-	}
-
-	gc := &config.GlobalConfig{}
-	if err := gc.Load(); err != nil {
-		// Nothing worth caching: a missing or unreadable config is retried on
-		// the next call, exactly as it was before this cache existed.
-		w.configCache = nil
-		return nil, err
-	}
-	w.configCache = &cachedConfig{path: path, modTime: modTime, size: size, gc: gc}
-	return gc, nil
-}
-
-// invalidateGlobalConfig drops the memoized config so the next globalConfig()
-// call re-reads the file. Called by recordRepoUsed - see globalConfig.
-func (w *WorktreeManager) invalidateGlobalConfig() {
-	w.configMu.Lock()
-	defer w.configMu.Unlock()
-	w.configCache = nil
-}
-
 // anchorGroup is a set of candidate anchor paths that are all believed to
 // belong to the same repo. List() tries the anchors in a group in order and
 // stops at the first one that resolves (a husk sibling never hides a good
@@ -843,9 +760,10 @@ type anchorGroup []string
 //     already known to be one specific repo's root.
 //  2. the recent-repos store (gc.Worktree.PrunedRecentRepos(), already
 //     filters paths no longer on disk - reused rather than reimplemented),
-//     read through w.globalConfig() so a dashboard refreshing on a timer
-//     re-parses the YAML only when the file actually changed. A config load
-//     failure is tolerated as "no config yet, skip this source", matching
+//     read through config.Load(), which is itself cached process-wide
+//     (ADR-0030) so a dashboard refreshing on a timer re-parses the YAML
+//     only once per run rather than once per refresh. A config load failure
+//     is tolerated as "no config yet, skip this source", matching
 //     RepoCandidates' own convention. Each recent repo is likewise a
 //     single-anchor group.
 //  3. one group per shared-root repo-slug directory, containing every
@@ -869,7 +787,8 @@ func (w *WorktreeManager) knownRepoAnchorGroups() []anchorGroup {
 		groups = append(groups, anchorGroup{cwdRoot})
 	}
 
-	if gc, err := w.globalConfig(); err == nil {
+	gc := &config.GlobalConfig{}
+	if err := gc.Load(); err == nil {
 		for _, r := range gc.Worktree.PrunedRecentRepos() {
 			groups = append(groups, anchorGroup{r.Path})
 		}
@@ -2751,12 +2670,13 @@ func (w *WorktreeManager) recordRepoUsed(repoRoot string) {
 		gc.Worktree.UpsertRecentRepo(canonical, now)
 		return nil
 	})
-	// Unconditionally, including on failure: a failed Update can still have
-	// written, and this is the one place devgeta writes recent-repos, so
-	// anything memoized from before it is now suspect. A same-second write of
-	// the same size is invisible to globalConfig's stat, which is why the
-	// write site drops the cache itself rather than relying on it.
-	w.invalidateGlobalConfig()
+	// No cache to drop here any more: config.Update's trailing Save() (the
+	// only way this write reaches disk) refreshes internal/config's
+	// process-wide cache (ADR-0030) with the document it just wrote, keyed
+	// on the file's post-write stat - not a stat re-check, so the same-second
+	// write this manager's own local cache used to need invalidating for is
+	// no longer a race at all: the next config.Load() anywhere in this
+	// process is handed that exact document directly.
 	if err != nil {
 		w.warnRepoRecordFailure(canonical, err)
 	}
