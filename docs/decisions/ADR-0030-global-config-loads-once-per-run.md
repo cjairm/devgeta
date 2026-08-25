@@ -173,14 +173,30 @@ makes that question explicit and answers it in one place.
 
 ### Considered and rejected — doing nothing
 
-Be honest about the size of this: the per-call cost is a small file read and a
-YAML parse of a small document, a few milliseconds each. Next to
-[ADR-0029](ADR-0029-installed-state-is-one-cached-listing.md)'s measured ~54 s
-this is not the headline. It is proposed as much for **correctness** as for
-speed: 95 independent reads of a file that is also being written during the same
-run means different parts of one `dg install` can observe different versions of
-the document, and nothing today makes that visible or reasons about it. One
-consistent view per run is a property worth having on its own.
+Be honest about the size of this: `BenchmarkLoad`
+(`internal/config/fromFile_bench_test.go`), run against a representative
+4,120-byte `global_config.yaml` fixture (same shape and neighbourhood as the
+4,313-byte file the read/parse split above was measured against — every
+section `GlobalConfig` has, populated with plausible content), puts `Load()`
+at **~224 µs per call** (best of 5 runs at `go test -bench BenchmarkLoad
+-benchmem -benchtime=3s`; 95,130 B/op, 1,822 allocs/op). That is consistent
+with the ~17 µs read + ~203 µs parse split above — 220 µs combined, within
+measurement noise of the 224 µs measured directly on the combined call — so
+the indicative figures were in the right ballpark. Multiplied by the 95
+non-test call sites this ADR's Context section counts, that is
+**~224 µs × 95 ≈ 21 ms total** across a whole `dg install` or `dg ws` run.
+
+Next to [ADR-0029](ADR-0029-installed-state-is-one-cached-listing.md)'s
+measured ~54 s this is not the headline, and 21 ms genuinely is negligible on
+the scale of a run that takes seconds to minutes — there is no case for
+inflating it to make this ADR's argument look more urgent than the data
+supports. This decision is therefore proposed almost entirely for
+**correctness**, not speed: 95 independent reads of a file that is also being
+written during the same run means different parts of one `dg install` can
+observe different versions of the document, and nothing today makes that
+visible or reasons about it. One consistent view per run is a property worth
+having on its own, independent of the small amount of time it happens to
+save.
 
 ## Consequences
 
