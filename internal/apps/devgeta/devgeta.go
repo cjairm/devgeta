@@ -41,7 +41,7 @@ func getZshConfigPath() string {
 }
 
 func getZshenvScriptPath() string {
-	return filepath.Join(paths.Paths.App.Root, "configs", "zsh", "zshenv.zsh")
+	return filepath.Join(pointerPath(), "zsh", "zshenv.zsh")
 }
 
 // setupZshenv wires devgeta's PATH self-repair script (configs/zsh/zshenv.zsh)
@@ -67,27 +67,88 @@ func New() *Devgeta {
 	}
 }
 
+// Install extracts the embedded configs and publishes them atomically.
+//
+// The tree is never rewritten in place: it is extracted to a stamped sibling
+// directory and then committed by renaming a symlink over the `configs`
+// pointer, so a reader always sees one complete tree or the other. See
+// configs_pointer.go for the layout, the migration from the pre-pointer shape,
+// and the validation that gates every removal.
 func (dg *Devgeta) Install() error {
-	// Create configs directory inside app root
-	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
-
-	// Clean up existing configs directory if it exists
-	if files.DirAlreadyExist(configsDir) {
-		if err := os.RemoveAll(configsDir); err != nil {
-			return fmt.Errorf("failed to remove existing configs directory: %w", err)
-		}
+	root := paths.Paths.App.Root
+	if err := os.MkdirAll(root, files.DirPermission); err != nil {
+		return fmt.Errorf("failed to create app directory: %w", err)
 	}
 
-	// Extract embedded configs to the app directory
-	if err := dg.ExtractEmbedded(configsDir); err != nil {
+	// Resume an interrupted migration first, so everything below sees one of
+	// the three settled shapes rather than a half-migrated tree.
+	if err := reconcileLegacyMigration(); err != nil {
+		return fmt.Errorf("failed to repair an interrupted configs migration: %w", err)
+	}
+
+	pointer := pointerPath()
+	target := stampedDirPath()
+
+	// The tree the pointer serves right now, so it can be collected after the
+	// swap. Resolved before the extract, since the swap overwrites the link.
+	var previous string
+	if resolved, err := resolveManagedTarget(pointer); err == nil {
+		previous = resolved
+	}
+
+	// Extracting over an existing directory of the same stamp is deliberate:
+	// the stamp is version+commit, so the content is identical and a reader
+	// racing the write sees the same bytes either way. It is also what
+	// completes a tree an earlier run was interrupted midway through.
+	if err := dg.ExtractEmbedded(target); err != nil {
 		return fmt.Errorf("failed to extract embedded configs: %w", err)
 	}
 
+	if err := commitPointer(root, pointer, target); err != nil {
+		return fmt.Errorf("failed to publish extracted configs: %w", err)
+	}
+
+	// Keep exactly one generation. Devgeta's readers re-resolve the pointer on
+	// every read and an already-open descriptor outlives the unlink, so there
+	// is nothing to retain the old tree for. A failure here is not fatal — the
+	// sweep below collects it on the next run.
+	//
+	// Compare basenames, not full paths: `previous` came back from
+	// EvalSymlinks and `target` did not, so on an app root reached through a
+	// symlink (a /var/folders TMPDIR, a symlinked $HOME) the two spellings of
+	// the same directory differ as strings — and a full-path comparison would
+	// delete the tree this call just published. Both sit directly under the
+	// app root, which resolveManagedTarget already established, so the
+	// basename is the whole of the difference.
+	if previous != "" && filepath.Base(previous) != filepath.Base(target) {
+		if err := removeManagedTarget(previous); err != nil {
+			logger.L().
+				Warnw("Failed to remove the superseded config extract", "path", previous, "error", err)
+		}
+	}
+
+	sweepStaleExtracts(root, filepath.Base(target))
 	return nil
 }
 
+// InstallIfStale re-extracts only when the published tree does not belong to
+// the running binary. It is what `dg configure` calls, so configuring one app
+// no longer rewrites ~1.4 MB across 152 files first.
+//
+// It is deliberately not used by ForceConfigure: `--force` must stay a repair
+// path for a hand-edited tree, which a stamp check would defeat.
+func (dg *Devgeta) InstallIfStale() error {
+	pointer := pointerPath()
+	if pointerIsCurrent(pointer) {
+		logger.L().
+			Debugw("Embedded configs already match this build", "path", pointer, "stamp", buildStamp())
+		return nil
+	}
+	return dg.Install()
+}
+
 func (dg *Devgeta) SoftInstall() error {
-	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
+	configsDir := pointerPath()
 
 	// Check if configs/ subdirectory exists and is non-empty
 	if files.DirAlreadyExist(configsDir) && !files.IsDirEmpty(configsDir) {
@@ -103,15 +164,19 @@ func (dg *Devgeta) ForceInstall() error {
 }
 
 func (dg *Devgeta) Uninstall() error {
-	// Clean up extracted configs directory
-	configsDir := filepath.Join(paths.Paths.App.Root, "configs")
-	if files.DirAlreadyExist(configsDir) {
-		logger.L().Debugw("Removing extracted configs directory", "path", configsDir)
-		if err := os.RemoveAll(configsDir); err != nil {
-			return fmt.Errorf("failed to remove configs directory: %w", err)
-		}
-	} else {
-		logger.L().Debugw("Configs directory not found", "path", configsDir)
+	// Clean up the extracted configs. Removing the pointer alone would orphan
+	// ~1.4 MB of extract under the app root (os.RemoveAll on a symlink drops
+	// the link and leaves the directory), and the "remove the app root if
+	// empty" branch below would then never fire.
+	configsDir := pointerPath()
+	if err := removeConfigsPointer(configsDir); err != nil {
+		return err
+	}
+	// Any stamped extract still on disk — debris from an interrupted run, or a
+	// generation a failed post-swap removal left behind — goes too.
+	sweepStaleExtracts(paths.Paths.App.Root, "")
+	if err := os.RemoveAll(legacyPath()); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", legacyPath(), err)
 	}
 
 	// Remove app root directory if empty

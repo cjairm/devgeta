@@ -27,9 +27,12 @@ var getAppFn = func(name string) (apps.App, error) {
 }
 
 // refreshEmbeddedConfigs re-extracts embedded configs so templates match the
-// running binary. Overridden in tests to avoid nil ExtractEmbedded.
+// running binary. It is a no-op when the published tree already belongs to this
+// build, so configuring one app no longer rewrites the whole tree first;
+// --force still re-extracts unconditionally via the app's ForceConfigure.
+// Overridden in tests to avoid nil ExtractEmbedded.
 var refreshEmbeddedConfigs = func() error {
-	return devgeta.New().Install()
+	return devgeta.New().InstallIfStale()
 }
 
 var configureCmd = &cobra.Command{
