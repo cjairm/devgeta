@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -264,6 +265,118 @@ func TestIsRetryableError(t *testing.T) {
 type errString string
 
 func (e errString) Error() string { return string(e) }
+
+// withTestIdleWindow lowers the package's body-inactivity bound to a couple
+// of seconds for the duration of one test, so a stall test doesn't cost
+// productionIdleWindow's tens of seconds of real wall-clock time, and
+// restores the production value afterward.
+func withTestIdleWindow(t *testing.T, window time.Duration) {
+	t.Helper()
+	original := idleWindow
+	idleWindow = window
+	t.Cleanup(func() { idleWindow = original })
+}
+
+// slowButProgressingServer writes a handful of chunks with a delay between
+// each that is comfortably inside the idle window, then finishes normally.
+// It proves a slow-but-steady transfer is never mistaken for a stall.
+func slowButProgressingServer(t *testing.T, chunkDelay time.Duration, chunks int) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		flusher, _ := w.(http.Flusher)
+		for i := 0; i < chunks; i++ {
+			if _, err := w.Write([]byte("chunk-data-")); err != nil {
+				return
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			time.Sleep(chunkDelay)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// stalledServer sends a partial body and then never writes another byte,
+// holding the connection open (no abort, no close) — the exact shape of a
+// stalled transfer, as opposed to truncatingServer's abrupt disconnect.
+func stalledServer(t *testing.T, stallFor time.Duration) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := w.Write([]byte("partial-data")); err != nil {
+			return
+		}
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Stop sleeping as soon as the client's cancellation reaches the
+		// server side, so t.Cleanup(srv.Close) doesn't have to wait out the
+		// full stallFor before the test can shut the server down.
+		select {
+		case <-time.After(stallFor):
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestDownloadFileWithRetry_SlowButProgressingTransferIsNotAborted(t *testing.T) {
+	withTestIdleWindow(t, 2*time.Second)
+	// Each chunk arrives well inside the 2s idle window, but the whole
+	// transfer (10 chunks * 500ms) takes 5s — longer than the idle window
+	// itself, proving this bounds inactivity, not total transfer duration.
+	srv := slowButProgressingServer(t, 500*time.Millisecond, 10)
+
+	destPath := filepath.Join(t.TempDir(), "asset.tar.gz")
+	if err := DownloadFileWithRetry(
+		context.Background(),
+		srv.URL,
+		destPath,
+		fastRetryConfig(0),
+	); err != nil {
+		t.Fatalf("expected a slow-but-progressing download to succeed, got: %v", err)
+	}
+
+	got, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("failed to read downloaded file: %v", err)
+	}
+	if len(got) != len("chunk-data-")*10 {
+		t.Errorf("downloaded %d bytes, want %d", len(got), len("chunk-data-")*10)
+	}
+	assertNoTempLeftovers(t, destPath)
+}
+
+func TestDownloadFileWithRetry_StalledBodyFailsWithinIdleWindowAsRetryable(t *testing.T) {
+	withTestIdleWindow(t, 2*time.Second)
+	// Stall well past the idle window so the timer is guaranteed to fire,
+	// but well under the test's own timeout budget.
+	srv := stalledServer(t, 10*time.Second)
+
+	destPath := filepath.Join(t.TempDir(), "asset.tar.gz")
+	start := time.Now()
+	err := downloadFile(context.Background(), srv.URL, destPath)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error for a stalled body, got nil")
+	}
+	if elapsed > 8*time.Second {
+		t.Errorf(
+			"stalled download took %v to fail, want well under the 10s stall duration",
+			elapsed,
+		)
+	}
+	if !errors.Is(err, ErrDownloadStalled) {
+		t.Errorf("error %v does not wrap ErrDownloadStalled", err)
+	}
+	if !IsRetryableError(err) {
+		t.Errorf("IsRetryableError(%v) = false, want true for a stalled download", err)
+	}
+	assertNoFileAt(t, destPath)
+}
 
 func TestCalculateBackoff_CapsAtMaxWait(t *testing.T) {
 	cfg := RetryConfig{
