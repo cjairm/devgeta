@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/pkg/logger"
@@ -1114,6 +1115,46 @@ func TestAuthenticatedLogin(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "not found") {
 			t.Fatalf("expected the underlying reason, got: %v", err)
+		}
+	})
+}
+
+func TestPRTitleAt(t *testing.T) {
+	t.Run("returns the trimmed title and never blocks on a prompt", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("Add cool feature\n", "", nil)
+
+		if title := app.PRTitleAt("/tmp/wt", 3*time.Second); title != "Add cool feature" {
+			t.Fatalf("expected the trimmed title, got %q", title)
+		}
+
+		call := mockBase.GetLastExecCommandCall()
+		if !argSeq(call.Args, "pr", "view", "--json", "title", "-q", ".title") {
+			t.Fatalf("expected 'pr view --json title -q .title', got %v", call.Args)
+		}
+		if call.Dir != "/tmp/wt" {
+			t.Fatalf("expected Dir to land on params, got %q", call.Dir)
+		}
+		if call.Timeout != 3*time.Second {
+			t.Fatalf("expected Timeout to land on params, got %v", call.Timeout)
+		}
+		// The function's contract is that it returns "" rather than stall. An
+		// inherited terminal breaks that: an unauthenticated gh could raise a
+		// credential prompt and sit on it until the timeout. Disconnecting stdin
+		// is also what lets the timeout kill gh's whole process group.
+		if !call.NoStdin {
+			t.Fatal("expected NoStdin=true so a gh prompt cannot stall a best-effort lookup")
+		}
+	})
+
+	t.Run("a gh failure is an empty title, not an error", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("", "no pull requests found", fmt.Errorf("exit 1"))
+
+		if title := app.PRTitleAt("/tmp/wt", 3*time.Second); title != "" {
+			t.Fatalf("expected an empty title, got %q", title)
 		}
 	})
 }

@@ -1,8 +1,15 @@
+//go:build unix
+
+// The process-group assertions below need syscall.Kill and the executor's own
+// SysProcAttr{Setpgid: true}, neither of which exists on Windows — the package
+// does not build there at all, and devgeta targets macOS and Debian/Ubuntu
+// (CLAUDE.md §8). The constraint above states that, rather than a runtime skip
+// that could never run.
+
 package commands_test
 
 import (
 	"errors"
-	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -122,9 +129,6 @@ func TestExecCommandDeadlineErrorOnlyOnFailure(t *testing.T) {
 // The shell prints the pid of a background child that outlives the deadline by
 // far, then waits on it. After the timeout that pid must be gone.
 func TestExecCommandCancelKillsTheProcessGroup(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("process groups and negative-pid signals are Unix-only")
-	}
 	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
 
 	stdout, _, err := b.ExecCommand(commands.CommandParams{
@@ -133,13 +137,25 @@ func TestExecCommandCancelKillsTheProcessGroup(t *testing.T) {
 		Timeout: 400 * time.Millisecond,
 		NoStdin: true,
 	})
-	if err == nil {
-		t.Fatal("expected the deadline to be reported for a command still running at it")
-	}
 
+	// Read the pid and arm the cleanup before asserting anything about the
+	// outcome. Every assertion below ends in t.Fatal, so a cleanup placed after
+	// one is a cleanup the failing path skips — and the process it would have
+	// reaped is a `sleep 30` left running for the rest of the suite.
 	pid, convErr := strconv.Atoi(strings.TrimSpace(stdout))
 	if convErr != nil {
 		t.Fatalf("expected the grandchild's pid on stdout, got %q: %v", stdout, convErr)
+	}
+	t.Cleanup(func() {
+		// ESRCH is the passing case: the group kill already reached it.
+		if err := syscall.Kill(pid, syscall.SIGKILL); err != nil &&
+			!errors.Is(err, syscall.ESRCH) {
+			t.Logf("cleaning up the surviving grandchild %d: %v", pid, err)
+		}
+	})
+
+	if err == nil {
+		t.Fatal("expected the deadline to be reported for a command still running at it")
 	}
 
 	// Signal 0 checks for the process's existence without sending anything.
@@ -156,9 +172,5 @@ func TestExecCommandCancelKillsTheProcessGroup(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	// Don't leave it behind for the next test to trip over.
-	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
-		t.Logf("cleaning up the surviving grandchild: %v", err)
-	}
 	t.Fatalf("grandchild %d outlived the deadline: the kill did not reach the process group", pid)
 }

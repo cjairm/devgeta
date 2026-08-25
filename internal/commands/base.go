@@ -75,9 +75,22 @@ type CommandParams struct {
 	// debug-log-only behavior used by the installers.
 	Stream bool
 	// Timeout, when non-zero, bounds the command's execution: it is killed if
-	// still running once the timeout elapses. Zero preserves today's
-	// unbounded behavior. Used for network calls (e.g. git fetch) where a
-	// hang would otherwise block a caller expecting a fast response.
+	// still running once the timeout elapses. Used for network calls (e.g. git
+	// fetch) where a hang would otherwise block a caller expecting a fast
+	// response.
+	//
+	// "It is killed" means the whole process group when NoStdin is also set,
+	// and the direct child alone otherwise — see NoStdin, which is what a timed
+	// call needs to actually reap the forks its command spawns.
+	//
+	// Zero is no longer unbounded. Every call, timed or not, is additionally
+	// bounded by outputDrainGrace: exec.Cmd.WaitDelay stops a process that
+	// outlived the command — a daemon holding the inherited pipe — from
+	// blocking ExecCommand for that process's lifetime. So the effective
+	// wall-clock bound of a timed call is Timeout + outputDrainGrace, not
+	// Timeout: a Timeout of 300ms whose output is held past the deadline
+	// returns at roughly 2.3s, not 300ms. Size a Timeout with that tail in
+	// mind, and don't read a zero as "this can hang forever" — it can't.
 	Timeout time.Duration
 	// Dir, when non-empty, sets the command's working directory, so a caller
 	// can run a tool that has no directory flag (e.g. gh) against a specific
@@ -117,6 +130,16 @@ type CommandParams struct {
 	// anything run from a TUI or on a timeout, where an interactive prompt
 	// (a git credential prompt, an ssh passphrase) would silently wedge the
 	// caller instead of failing.
+	//
+	// It does a second thing, and a caller setting it on a timed call has to
+	// know: when a Timeout is also set, the child is put in its own process
+	// group and the deadline kills that whole group instead of just the direct
+	// child. That is what makes a Timeout reach the forks — `sh -c`, brew, apt,
+	// an agent CLI's helpers — rather than leaving them running with nothing to
+	// reap them. The cost is that the child is no longer in the terminal's
+	// foreground process group, so a Ctrl-C typed at devgeta does not reach it;
+	// only the deadline stops it. On an untimed call NoStdin means the stdin
+	// opt-out alone, since there is no deadline to widen.
 	//
 	// Default false preserves the inherited stdin, which the installers
 	// depend on: `dg install` shells out to sudo, and sudo must be able to
@@ -375,11 +398,9 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 		utils.Print(cmd.PostExecMsg, "")
 	}
 
-	return strings.TrimSpace(
-			stdout.captured.String(),
-		), strings.TrimSpace(
-			stderr.captured.String(),
-		), err
+	capturedStdout := strings.TrimSpace(stdout.captured.String())
+	capturedStderr := strings.TrimSpace(stderr.captured.String())
+	return capturedStdout, capturedStderr, err
 }
 
 // outputDrainGrace is how long ExecCommand keeps reading a command's output
@@ -394,6 +415,14 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 // that leaves a long-lived daemon holding the descriptor pays this on every
 // invocation. Two seconds is several times the observed flush window and still
 // short enough to read as a pause rather than a hang.
+//
+// Changing it is not a local edit: this package's tests bound their timing
+// assertions against this value rather than restating it, so raising it makes
+// them fail on their elapsed-time checks with messages about pipes and
+// deadlines that say nothing about the constant. The coupled assertions are
+// exec_cancel_test.go's maxWait values for the held-output and still-running
+// cases, and exec_pipes_test.go's "returned after %s" check on the grandchild
+// path. Adjust them in the same change.
 const outputDrainGrace = 2 * time.Second
 
 // isolateProcessGroup puts the child in its own process group and widens the

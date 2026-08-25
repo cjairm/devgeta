@@ -80,9 +80,10 @@ func TestExecCommandOnStdoutLineIsTrimmedAndStdoutOnly(t *testing.T) {
 	}
 }
 
-// A long single line must still reach the callback whole: the reader is a
-// bufio.Reader precisely so a line past bufio's 64KB token limit does not
-// abort the read, and an event stream can carry lines that long.
+// A long single line must still reach the callback whole. The framing buffer
+// grows to hold whatever arrives before a newline, with no token-size ceiling
+// to give up at, so an event stream can carry lines far past the 64KB a
+// fixed-size framer would abort on.
 func TestExecCommandOnStdoutLineHandlesLongLines(t *testing.T) {
 	const n = 200000 // > bufio.MaxScanTokenSize (65536)
 	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
@@ -97,5 +98,51 @@ func TestExecCommandOnStdoutLineHandlesLongLines(t *testing.T) {
 	}
 	if total != n {
 		t.Errorf("expected the whole %d-byte line delivered, got %d bytes", n, total)
+	}
+}
+
+// A process is under no obligation to terminate its last line, and everything
+// the framer delivers is triggered by a newline — so without the post-Wait
+// flush the tail of any tool that does not end in one is silently dropped from
+// both OnStdoutLine and the captured output. `printf` writes exactly that: one
+// unterminated line and nothing else, so a callback that only fires on newlines
+// would receive nothing at all here.
+func TestExecCommandOnStdoutLineDeliversAnUnterminatedFinalLine(t *testing.T) {
+	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
+
+	var lines []string
+	out, _, err := b.ExecCommand(commands.CommandParams{
+		Command:      "bash",
+		Args:         []string{"-c", "printf 'no-newline'"},
+		OnStdoutLine: func(line string) { lines = append(lines, line) },
+	})
+	if err != nil {
+		t.Fatalf("ExecCommand returned error: %v", err)
+	}
+
+	if len(lines) != 1 || lines[0] != "no-newline" {
+		t.Fatalf("expected the unterminated final line delivered, got %v", lines)
+	}
+	if out != "no-newline" {
+		t.Errorf("expected the full captured stdout, got %q", out)
+	}
+}
+
+// The same guarantee for a line that follows terminated ones: the flush must
+// add the trailing fragment, not replace or duplicate what already arrived.
+func TestExecCommandOnStdoutLineFlushesTheTailAfterCompleteLines(t *testing.T) {
+	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
+
+	var lines []string
+	if _, _, err := b.ExecCommand(commands.CommandParams{
+		Command:      "bash",
+		Args:         []string{"-c", "printf 'first\\nsecond\\ntail'"},
+		OnStdoutLine: func(line string) { lines = append(lines, line) },
+	}); err != nil {
+		t.Fatalf("ExecCommand returned error: %v", err)
+	}
+
+	if got := strings.Join(lines, "|"); got != "first|second|tail" {
+		t.Errorf("expected every line including the unterminated tail, got %q", got)
 	}
 }

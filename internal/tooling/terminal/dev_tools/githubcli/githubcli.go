@@ -469,12 +469,19 @@ func (g *GithubCli) PRView(prNumber string, fields ...string) (string, error) {
 // PR — all outcomes the caller treats as "no title". timeout bounds the gh
 // call so a hung gh can't stall the caller; dir runs gh against a specific
 // worktree without depending on the process's current directory.
+//
+// stdin is disconnected because a prompt would break that contract outright:
+// gh asking for credentials on a terminal the caller may not even own would
+// stall until the timeout instead of returning "". It also puts the call in its
+// own process group, so the timeout kills whatever gh forked rather than gh
+// alone. Nothing here is interactive — the output is parsed as JSON.
 func (g *GithubCli) PRTitleAt(dir string, timeout time.Duration) string {
 	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{
 		Command: constants.GithubCli,
 		Args:    []string{"pr", "view", "--json", "title", "-q", ".title"},
 		Dir:     dir,
 		Timeout: timeout,
+		NoStdin: true,
 	})
 	if err != nil {
 		return ""

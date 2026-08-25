@@ -57,7 +57,10 @@ func (w *outputWriter) Write(p []byte) (int, error) {
 
 	if w.tee != nil {
 		if _, err := w.tee.Write(p); err != nil {
-			return 0, err
+			// p is already in captured, so it was consumed as far as this
+			// writer's own contract goes; only the tee to the terminal failed.
+			// Reporting 0 here would tell exec none of it landed.
+			return len(p), err
 		}
 		return len(p), nil
 	}
