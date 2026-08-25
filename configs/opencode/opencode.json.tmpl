@@ -27,24 +27,37 @@
       "*.key": "deny",
 
       "~/.ssh/**": "deny",
+      "**/.ssh/**": "deny",
       "**/id_rsa": "deny",
       "**/id_ed25519": "deny",
       "**/id_ecdsa": "deny",
 
       "~/.aws/**": "deny",
+      "**/.aws/**": "deny",
       "~/.kube/**": "deny",
+      "**/.kube/**": "deny",
       "~/.config/gcloud/**": "deny",
+      "**/.config/gcloud/**": "deny",
       "~/.azure/**": "deny",
+      "**/.azure/**": "deny",
 
       "~/.npmrc": "deny",
+      "**/.npmrc": "deny",
       "~/.pypirc": "deny",
+      "**/.pypirc": "deny",
       "~/.netrc": "deny",
+      "**/.netrc": "deny",
       "~/.git-credentials": "deny",
+      "**/.git-credentials": "deny",
       "~/.docker/config.json": "deny",
+      "**/.docker/config.json": "deny",
       "~/.pgpass": "deny",
+      "**/.pgpass": "deny",
 
       "~/.zsh_history": "deny",
-      "~/.bash_history": "deny"
+      "**/.zsh_history": "deny",
+      "~/.bash_history": "deny",
+      "**/.bash_history": "deny"
     },
 
     "bash": {
@@ -53,6 +66,7 @@
       "ssh *": "ask",
       "scp *": "ask",
       "rsync *": "ask",
+      "gh api *": "ask",
       "git push --force*": "ask",
       "git push -f*": "ask",
       "terraform apply *": "ask",
@@ -85,7 +99,15 @@
       "az *": "deny",
 
       "gh repo delete *": "deny",
-      "gh gist create *": "deny"
+      "gh gist create *": "deny",
+
+      "python3 -c *": "deny",
+      "python -c *": "deny",
+      "node -e *": "deny",
+      "node --eval *": "deny",
+      "ruby -e *": "deny",
+      "perl -e *": "deny",
+      "php -r *": "deny"
     },
 
     "edit": {
@@ -101,17 +123,37 @@
       "~/.claude/*.json": "deny",
       "~/.claude/*.sh": "deny",
       "~/.claude/*.md": "deny",
+
+      "**/.claude/CLAUDE.md": "deny",
+      "**/.claude/RTK.md": "deny",
+      "**/.claude/statusline.sh": "deny",
+      "**/.claude/format.sh": "deny",
+      "**/.claude/task-redirect.sh": "deny",
+      "**/.claude/secret-guard.sh": "deny",
+      "**/.claude/suppression-guard.sh": "deny",
+      "**/.claude/agent-config-guard.sh": "deny",
+      "**/.claude/agent-state.sh": "deny",
+
       "~/.claude/agents/**": "deny",
+      "**/.claude/agents/**": "deny",
       "~/.claude/commands/**": "deny",
+      "**/.claude/commands/**": "deny",
       "~/.claude/skills/**": "deny",
+      "**/.claude/skills/**": "deny",
       "~/.claude/plugins/**": "deny",
+      "**/.claude/plugins/**": "deny",
       "~/.claude/hooks/**": "deny",
       "~/.claude/lib/**": "deny",
+      "**/.claude/lib/**": "deny",
       "~/.config/opencode/**": "deny",
+      "**/.config/opencode/**": "deny",
 
       "~/.zshrc": "deny",
+      "**/.zshrc": "deny",
       "~/.bashrc": "deny",
-      "~/.profile": "deny"
+      "**/.bashrc": "deny",
+      "~/.profile": "deny",
+      "**/.profile": "deny"
     },
 
     "external_directory": {

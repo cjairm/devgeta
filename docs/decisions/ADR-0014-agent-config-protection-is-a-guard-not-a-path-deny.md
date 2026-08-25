@@ -1,7 +1,7 @@
 # ADR-0014 — Agent-config protection is a capability guard, not a path deny
 
 **Date:** 2026-08-05
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
@@ -417,3 +417,22 @@ a feature for coverage that only matters when `jq` is missing.
 in either config, and every enumerated surface still denied — so the blanket
 cannot come back silently, and the enumeration cannot be deleted to "fix"
 memory a second time.
+
+### Correction (2026-08-25) — the enumeration above is one agent's half
+
+This decision is unchanged; one factual claim in it was too broad. "The three
+extension patterns cover every direct child devgeta or Claude Code puts there"
+holds on **Claude Code only**. A `~/`-anchored rule was later probed and never
+fires on OpenCode at all, so on that agent this amendment's floor was inert from
+the day it shipped — the protection there was coming entirely from
+`agent-config-guard.js` and the `external_directory` gate, exactly as §3
+anticipated for the fail-open case, but permanently rather than only when `jq`
+breaks.
+
+The floor now ships each rule in both spellings — `~/…` for Claude Code, `**/…`
+for OpenCode — except the three extension patterns, which cannot be re-spelled
+that way: OpenCode's `*` crosses `/`, so `**/.claude/*.md` would match every
+memory file and re-break exactly what this amendment fixed. Their OpenCode
+counterpart is an exact-filename enumeration of the direct children devgeta and
+Claude Code deploy. The measurements, and the shapes that follow from them, are
+in [docs/guides/agent-permission-matching.md](../guides/agent-permission-matching.md).

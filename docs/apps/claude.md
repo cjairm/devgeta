@@ -61,8 +61,12 @@ that need a working file outside the project directory (`/review-pr`,
 `/create-pr`) instead of writing to `/tmp`, which this agent would otherwise
 prompt on. See [ADR-0015](../decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md).
 
-**Known limits:** Bash deny rules are prefix matchers — interpreter one-liners
-(`python -c`, `node -e`) and shell wrappers (`sh -c "..."`) can evade them, so
+**Known limits:** Bash deny rules are prefix matchers. The deny list names the
+common interpreter one-liners (`python3 -c`, `node -e`, `perl -e`, …), but a
+prefix matcher cannot cover the ways round them: `printf 'code' | python3` runs
+the same code and matches nothing, and so does any `sh -c` wrapper, heredoc, or
+base64 hop. Both were confirmed by live probe against both agents (see
+[agent-permission-matching.md §5](../guides/agent-permission-matching.md)), so
 the deny list is friction and defense-in-depth, not a security boundary. The
 same limit applies to the agent-config guard below: it only intercepts
 Edit/Write, so `echo … > .claude/settings.json` or a `python3 -c` one-liner

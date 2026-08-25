@@ -256,26 +256,58 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 // instead of swept with `**`. The guard hook remains the default-deny layer
 // for surface upstream has not shipped yet (ADR-0014 §3).
 //
-// This asserts the shape rather than the exact list: no `~/`-anchored edit
-// deny may put `**` immediately after `.claude/`, in EITHER config. Re-adding
-// `~/.claude/**` — the one edit that silently re-breaks memory — fails here.
+// This asserts the shape rather than the exact list, in EITHER config, for
+// both spellings of the Claude root:
+//
+//   - `~/.claude/**` — the original blanket. Re-adding it silently re-breaks
+//     memory on Claude Code, where `~/` rules are live.
+//   - `**/.claude/<anything containing *>` — the same bug in the spelling that
+//     OpenCode actually honours. Probed 2026-08-25 against opencode 1.18.23:
+//     an edit deny `**/.dgprobe-claude/*.md` matched
+//     `…/.dgprobe-claude/projects/slug/memory/MEMORY.md`, because OpenCode's
+//     `*` crosses `/`. So a `**/`-anchored rule may only wildcard *below* a
+//     literal first segment (`**/.claude/agents/**`), never in it
+//     (`**/.claude/*.md`, `**/.claude/**`).
+//
+// The `~/`-spelled trio (`~/.claude/*.json`, `*.sh`, `*.md`) is exempt from the
+// second rule and must stay: on Claude Code `*` does NOT cross `/` (probed the
+// same day against 2.1.245), so it denies the direct children while leaving
+// memory writable, and on OpenCode it is inert. See
+// docs/guides/agent-permission-matching.md.
 func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
 	const blanket = "~/.claude/**"
+	const globstarRoot = "**/.claude/"
 
 	check := func(t *testing.T, source string, patterns []string) {
 		t.Helper()
 		for _, pattern := range patterns {
-			if pattern != blanket {
+			if pattern == blanket {
+				t.Errorf(
+					"%s denies %q — that blanket also covers "+
+						"~/.claude/projects/<slug>/memory/, Claude Code's memory "+
+						"directory, and deny beats any allow carve-out. Enumerate the "+
+						"config surfaces under ~/.claude/ instead (see ADR-0014's "+
+						"memory amendment)",
+					source, pattern,
+				)
 				continue
 			}
-			t.Errorf(
-				"%s denies %q — that blanket also covers "+
-					"~/.claude/projects/<slug>/memory/, Claude Code's memory "+
-					"directory, and deny beats any allow carve-out. Enumerate the "+
-					"config surfaces under ~/.claude/ instead (see ADR-0014's "+
-					"memory amendment)",
-				source, pattern,
-			)
+			tail, ok := strings.CutPrefix(pattern, globstarRoot)
+			if !ok {
+				continue
+			}
+			first, _, _ := strings.Cut(tail, "/")
+			if strings.Contains(first, "*") {
+				t.Errorf(
+					"%s denies %q — OpenCode's %q crosses %q, so a wildcard in the "+
+						"segment straight after %q also matches "+
+						"~/.claude/projects/<slug>/memory/*, Claude Code's memory "+
+						"directory. Name the file exactly (%q) or wildcard only below a "+
+						"literal subdirectory (%q)",
+					source, pattern, "*", "/", globstarRoot,
+					globstarRoot+"CLAUDE.md", globstarRoot+"agents/**",
+				)
+			}
 		}
 	}
 
@@ -301,14 +333,39 @@ func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
 	// Parity means checking one config is enough here — the parity test
 	// above fails if the other disagrees.
 	for _, want := range []string{
+		// The `~/` spelling: live on Claude Code, inert on OpenCode.
 		"~/.claude/*.json",
 		"~/.claude/*.sh",
+		"~/.claude/*.md",
 		"~/.claude/agents/**",
 		"~/.claude/commands/**",
 		"~/.claude/skills/**",
 		"~/.claude/plugins/**",
 		"~/.claude/hooks/**",
 		"~/.claude/lib/**",
+
+		// The `**/` spelling: the only one OpenCode honours for the global
+		// Claude root. The trio's `*.json`/`*.sh`/`*.md` cannot be re-spelled
+		// this way without sweeping memory (see the comment above), so its
+		// counterpart is the enumeration of the direct children devgeta and
+		// Claude Code actually deploy there.
+		"**/.claude/settings.json",
+		"**/.claude/settings.local.json",
+		"**/.claude/CLAUDE.md",
+		"**/.claude/RTK.md",
+		"**/.claude/statusline.sh",
+		"**/.claude/format.sh",
+		"**/.claude/task-redirect.sh",
+		"**/.claude/secret-guard.sh",
+		"**/.claude/suppression-guard.sh",
+		"**/.claude/agent-config-guard.sh",
+		"**/.claude/agent-state.sh",
+		"**/.claude/agents/**",
+		"**/.claude/commands/**",
+		"**/.claude/skills/**",
+		"**/.claude/plugins/**",
+		"**/.claude/hooks/**",
+		"**/.claude/lib/**",
 	} {
 		if claudeEdit[want] != "deny" {
 			t.Errorf(
@@ -317,6 +374,95 @@ func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
 					"under it is named explicitly",
 				want,
 			)
+		}
+	}
+}
+
+// TestGlobalClaudeFloorEnumerationStaysCurrent stops the exact-filename half of
+// the floor going stale. The `~/.claude/*.sh` wildcard used to cover every
+// deployed hook script at once, but it is inert on OpenCode, and its live
+// counterpart cannot be a wildcard (that would sweep memory — see
+// TestGlobalClaudeFloorLeavesMemoryWritable). Naming each script is the only
+// expressible shape, and a hand-written list of filenames is exactly the kind of
+// enumeration that silently falls behind the thing it mirrors, so this derives
+// the expected set from the scripts devgeta actually ships instead.
+func TestGlobalClaudeFloorEnumerationStaysCurrent(t *testing.T) {
+	configDir := filepath.Join("..", "..", "..", "configs", "claude")
+	entries, err := os.ReadDir(configDir)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", configDir, err)
+	}
+
+	claudeEdit := claudePermissions(t)["edit"]
+	checked := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".sh") {
+			continue
+		}
+		checked++
+		want := "**/.claude/" + e.Name()
+		if claudeEdit[want] != "deny" {
+			t.Errorf(
+				"configs/claude/%s is deployed to ~/.claude/ but nothing denies %q. "+
+					"~/.claude/*.sh does not cover it on OpenCode (a `~/` rule never "+
+					"matches there), and `**/.claude/*.sh` would also match every "+
+					"memory file, so each script has to be named",
+				e.Name(), want,
+			)
+		}
+	}
+	if checked == 0 {
+		t.Fatalf("found no hook scripts in %s — has the layout changed?", configDir)
+	}
+}
+
+// TestHomeAnchoredDeniesHaveGlobstarTwins is the structural guard for the fact
+// that started this whole page: a `~/`-anchored rule is live on Claude Code and
+// completely dead on OpenCode (probed 2026-08-25, opencode 1.18.23 — the rule
+// falls through to the `*` catch-all). Shipping one without a `**/`-anchored
+// twin therefore ships half a policy, and nothing about the config's appearance
+// says so.
+//
+// The `**/` twin is not a replacement: `**/` does NOT reach outside the project
+// on Claude Code (probed the same day, 2.1.245 — a `**/`-anchored deny left a
+// home-directory read allowed). Both spellings have to ship together.
+//
+// The trio is the one exemption, and it is a real one rather than a loophole:
+// `**/.claude/*.md` would match memory on OpenCode, so the trio's counterpart is
+// the exact-filename enumeration pinned by the two tests above.
+func TestHomeAnchoredDeniesHaveGlobstarTwins(t *testing.T) {
+	exempt := map[string]string{
+		"~/.claude/*.json": "covered by the **/.claude/<name>.json enumeration",
+		"~/.claude/*.sh":   "covered by the **/.claude/<name>.sh enumeration",
+		"~/.claude/*.md":   "covered by the **/.claude/<name>.md enumeration",
+	}
+
+	for _, ns := range []string{"read", "edit"} {
+		rules := claudePermissions(t)[ns]
+		for pattern, action := range rules {
+			tail, ok := strings.CutPrefix(pattern, "~/")
+			if !ok || action != "deny" {
+				continue
+			}
+			if why, skip := exempt[pattern]; skip {
+				if rules["**/"+tail] == "deny" {
+					t.Errorf(
+						"%s deny %q is on the exemption list (%s) but now has a "+
+							"literal twin too — drop the exemption",
+						ns, pattern, why,
+					)
+				}
+				continue
+			}
+			if rules["**/"+tail] != "deny" {
+				t.Errorf(
+					"%s denies %q with no %q alongside it. A `~/` rule never fires on "+
+						"OpenCode, so this protects Claude Code only; a `**/` rule never "+
+						"reaches the home directory on Claude Code, so it cannot replace "+
+						"the `~/` one. Ship both (see docs/guides/agent-permission-matching.md)",
+					ns, pattern, "**/"+tail,
+				)
+			}
 		}
 	}
 }
