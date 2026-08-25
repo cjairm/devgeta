@@ -50,3 +50,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0028](ADR-0028-status-recognition-is-a-shape-not-a-vocabulary.md) — Status recognition is a shape, not a vocabulary
 - [ADR-0029](ADR-0029-installed-state-is-one-cached-listing.md) — Installed state is one cached listing per run, not a probe per package
 - [ADR-0030](ADR-0030-global-config-loads-once-per-run.md) — `global_config.yaml` is loaded once per run and served from a cache
+- [ADR-0031](ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md) — Context is reduced at write time, never at send time
+- [ADR-0032](ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) — Session continuity is a durable note, not a longer session
