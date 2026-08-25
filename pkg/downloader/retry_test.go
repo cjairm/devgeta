@@ -322,14 +322,32 @@ func stalledServer(t *testing.T, stallFor time.Duration) *httptest.Server {
 	return srv
 }
 
+// oldWholeRequestTimeout is the exact value httpClient's Timeout field used
+// to carry before this fix (see retry.go's sharedTransport/httpClient
+// comments): a hard cap on the entire request, body read included,
+// regardless of progress. It is not read by any production code any
+// more — it exists here purely so this test can assert against the
+// literal historical number, not a value invented for test convenience.
+const oldWholeRequestTimeout = 30 * time.Second
+
 func TestDownloadFileWithRetry_SlowButProgressingTransferIsNotAborted(t *testing.T) {
 	withTestIdleWindow(t, 2*time.Second)
-	// Each chunk arrives well inside the 2s idle window, but the whole
-	// transfer (10 chunks * 500ms) takes 5s — longer than the idle window
-	// itself, proving this bounds inactivity, not total transfer duration.
-	srv := slowButProgressingServer(t, 500*time.Millisecond, 10)
+	// 22 chunks * 1.5s = 33s total transfer time: comfortably more than
+	// oldWholeRequestTimeout (30s), while every individual chunk gap (1.5s)
+	// stays comfortably under the 2s idle window. A test whose total
+	// duration never exceeded 30s would also have passed against the old,
+	// buggy http.Client{Timeout: 30 * time.Second} — it wouldn't prove
+	// anything was fixed. This one wouldn't: the old code killed the whole
+	// request at the 30s mark no matter how much progress had been made, so
+	// it would have aborted this transfer around chunk 20; the new
+	// inactivity-based bound lets it run to completion because no single
+	// gap ever approaches 2s.
+	const chunkDelay = 1500 * time.Millisecond
+	const chunks = 22
+	srv := slowButProgressingServer(t, chunkDelay, chunks)
 
 	destPath := filepath.Join(t.TempDir(), "asset.tar.gz")
+	start := time.Now()
 	if err := DownloadFileWithRetry(
 		context.Background(),
 		srv.URL,
@@ -338,13 +356,25 @@ func TestDownloadFileWithRetry_SlowButProgressingTransferIsNotAborted(t *testing
 	); err != nil {
 		t.Fatalf("expected a slow-but-progressing download to succeed, got: %v", err)
 	}
+	elapsed := time.Since(start)
+
+	// This is the assertion that actually exercises the fix's namesake
+	// property: without it, nothing here would distinguish this test from
+	// one that also passes under the reverted, whole-request-timeout code.
+	if elapsed <= oldWholeRequestTimeout {
+		t.Fatalf(
+			"transfer took %v, want more than the old %v whole-request timeout — "+
+				"otherwise this test proves nothing about the fix",
+			elapsed, oldWholeRequestTimeout,
+		)
+	}
 
 	got, err := os.ReadFile(destPath)
 	if err != nil {
 		t.Fatalf("failed to read downloaded file: %v", err)
 	}
-	if len(got) != len("chunk-data-")*10 {
-		t.Errorf("downloaded %d bytes, want %d", len(got), len("chunk-data-")*10)
+	if len(got) != len("chunk-data-")*chunks {
+		t.Errorf("downloaded %d bytes, want %d", len(got), len("chunk-data-")*chunks)
 	}
 	assertNoTempLeftovers(t, destPath)
 }
