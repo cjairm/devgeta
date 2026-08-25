@@ -55,6 +55,11 @@ func (d *DebianCommand) MaybeInstallFont(
 }
 
 func (d *DebianCommand) UninstallPackage(pkg string) error {
+	// Drop the cached listing on the attempted mutation, not only a
+	// successful one — a failed `apt-get remove` can still have changed
+	// package state. See ADR-0029 and InvalidateInstalledPackageCache's doc.
+	// UninstallDesktopApp delegates here, so it gets the drop for free.
+	InvalidateInstalledPackageCache()
 	_, _, err := d.ExecCommand(CommandParams{
 		Command: "apt-get",
 		Args:    []string{"remove", "-y", pkg},
@@ -68,6 +73,7 @@ func (d *DebianCommand) UninstallDesktopApp(pkg string) error {
 }
 
 func (d *DebianCommand) InstallPackage(packageName string) error {
+	InvalidateInstalledPackageCache()
 	// Use strategy pattern to select appropriate installation method
 	strategy := d.getInstallationStrategy(packageName)
 	return strategy.Install(packageName)
@@ -117,6 +123,7 @@ func (d *DebianCommand) getInstallationStrategy(packageName string) Installation
 }
 
 func (d *DebianCommand) InstallDesktopApp(packageName string) error {
+	InvalidateInstalledPackageCache()
 	err := d.installWithApt(packageName)
 	if err == nil {
 		return nil
@@ -192,7 +199,8 @@ func (d *DebianCommand) ValidateOSVersion() error {
 		logger.L().
 			Debugw("supported_debian_version", "supported_version", constants.SupportedVersion.Debian.Number)
 		if major < constants.SupportedVersion.Debian.Number {
-			err := fmt.Errorf("OS requirement not met\nOS required: Debian %s (%d.0) or higher",
+			err := fmt.Errorf(
+				"OS requirement not met\nOS required: Debian %s (%d.0) or higher",
 				constants.SupportedVersion.Debian.Name,
 				constants.SupportedVersion.Debian.Number,
 			)
@@ -202,7 +210,8 @@ func (d *DebianCommand) ValidateOSVersion() error {
 		logger.L().
 			Debugw("supported_ubuntu_version", "supported_version", constants.SupportedVersion.Ubuntu.Number)
 		if major < constants.SupportedVersion.Ubuntu.Number {
-			err := fmt.Errorf("OS requirement not met\nOS required: Ubuntu %s (%d.0) or higher",
+			err := fmt.Errorf(
+				"OS requirement not met\nOS required: Ubuntu %s (%d.0) or higher",
 				constants.SupportedVersion.Ubuntu.Name,
 				constants.SupportedVersion.Ubuntu.Number,
 			)
@@ -214,10 +223,20 @@ func (d *DebianCommand) ValidateOSVersion() error {
 	return nil
 }
 
+// IsPackageInstalled answers from the process-wide cached `dpkg -l` listing
+// (ADR-0029), populating it on first use rather than running `dpkg -l` again
+// for every package probed. Do not add a targeted per-package probe here or
+// as a fallback — see MacOSCommand.IsPackageInstalled's doc for the
+// measurement that rules it out.
 func (d *DebianCommand) IsPackageInstalled(packageName string) (bool, error) {
-	logger.L().Debug("executing: dpkg -l")
-	cmd := exec.Command("dpkg", "-l")
-	return d.IsPackagePresent(cmd, packageName)
+	lines, err := listingFrom(&installedListingCache.debianDpkg, func() *exec.Cmd {
+		logger.L().Debug("executing: dpkg -l")
+		return CommandFn("dpkg", "-l")
+	})
+	if err != nil {
+		return false, err
+	}
+	return findPackageInDpkgOutput(lines, packageName), nil
 }
 
 func (d *DebianCommand) IsDesktopAppInstalled(appName string) (bool, error) {

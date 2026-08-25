@@ -52,16 +52,24 @@ func (m *MacOSCommand) MaybeInstallFont(
 }
 
 func (m *MacOSCommand) UninstallPackage(pkg string) error {
+	// Drop the cached listing on the attempted mutation, not only a
+	// successful one — a failed `brew uninstall` can still have changed
+	// package state. See ADR-0029 and InvalidateInstalledPackageCache's doc.
+	InvalidateInstalledPackageCache()
 	_, _, err := m.ExecCommand(CommandParams{Command: "brew", Args: []string{"uninstall", pkg}})
 	return err
 }
 
 func (m *MacOSCommand) UninstallDesktopApp(pkg string) error {
-	_, _, err := m.ExecCommand(CommandParams{Command: "brew", Args: []string{"uninstall", "--cask", pkg}})
+	InvalidateInstalledPackageCache()
+	_, _, err := m.ExecCommand(
+		CommandParams{Command: "brew", Args: []string{"uninstall", "--cask", pkg}},
+	)
 	return err
 }
 
 func (m *MacOSCommand) InstallPackage(packageName string) error {
+	InvalidateInstalledPackageCache()
 	logger.L().Debug(fmt.Sprintf("executing: brew install %s", packageName))
 	cmd := CommandParams{
 		PreExecMsg:  fmt.Sprintf("Installing %s...", strings.ToLower(packageName)),
@@ -77,6 +85,7 @@ func (m *MacOSCommand) InstallPackage(packageName string) error {
 }
 
 func (m *MacOSCommand) InstallDesktopApp(packageName string) error {
+	InvalidateInstalledPackageCache()
 	logger.L().Debug(fmt.Sprintf("executing: brew install --cask %s", packageName))
 	cmd := CommandParams{
 		PreExecMsg:  fmt.Sprintf("Installing %s...", strings.ToLower(packageName)),
@@ -174,14 +183,32 @@ func (m *MacOSCommand) ValidateOSVersion() error {
 	return nil
 }
 
+// IsPackageInstalled answers from the process-wide cached `brew list`
+// listing (ADR-0029), populating it on first use rather than running `brew
+// list` again for every package probed. Do not add a targeted
+// `brew list <packageName>` path here or as a fallback — the ADR measured
+// it 6x slower than listing everything, because it resolves the formula
+// rather than reading the Cellar directory.
 func (m *MacOSCommand) IsPackageInstalled(packageName string) (bool, error) {
-	logger.L().Debug("executing: brew list")
-	cmd := exec.Command("brew", "list")
-	return m.IsPackagePresent(cmd, packageName)
+	lines, err := listingFrom(&installedListingCache.macFormulae, func() *exec.Cmd {
+		logger.L().Debug("executing: brew list")
+		return CommandFn("brew", "list")
+	})
+	if err != nil {
+		return false, err
+	}
+	return findPackageInBrewOutput(lines, packageName), nil
 }
 
+// IsDesktopAppInstalled answers from the process-wide cached
+// `brew list --cask` listing (ADR-0029) — see IsPackageInstalled's doc.
 func (m *MacOSCommand) IsDesktopAppInstalled(desktopAppName string) (bool, error) {
-	logger.L().Debug("executing: brew list --cask")
-	cmd := exec.Command("brew", "list", "--cask")
-	return m.IsPackagePresent(cmd, desktopAppName)
+	lines, err := listingFrom(&installedListingCache.macCasks, func() *exec.Cmd {
+		logger.L().Debug("executing: brew list --cask")
+		return CommandFn("brew", "list", "--cask")
+	})
+	if err != nil {
+		return false, err
+	}
+	return findPackageInBrewOutput(lines, desktopAppName), nil
 }

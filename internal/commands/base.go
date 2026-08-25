@@ -218,18 +218,32 @@ func (b *BaseCommand) IsDesktopAppPresent(dirPath, appName string) (bool, error)
 }
 
 func (b *BaseCommand) IsPackagePresent(cmd *exec.Cmd, packageName string) (bool, error) {
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return false, fmt.Errorf("failed running command: %w", err)
+	lines, err := runListingCommand(cmd)
+	if err != nil {
+		return false, err
 	}
-	lines := bytes.Split(out.Bytes(), []byte{'\n'})
 	if b.Platform.IsMac() {
 		return findPackageInBrewOutput(lines, packageName), nil
 	} else if b.Platform.IsLinux() {
 		return findPackageInDpkgOutput(lines, packageName), nil
 	}
 	return false, nil
+}
+
+// runListingCommand runs cmd — a full package-manager listing such as
+// `brew list` or `dpkg -l` — and returns its stdout split into lines.
+//
+// It is the one place that buffers and runs a listing command, shared by
+// IsPackagePresent's one-off scan above and the process-wide cache in
+// installed_cache.go (ADR-0029): both need "run this listing and hand me its
+// lines," and duplicating that here would let the two drift.
+func runListingCommand(cmd *exec.Cmd) ([][]byte, error) {
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("failed running command: %w", err)
+	}
+	return bytes.Split(out.Bytes(), []byte{'\n'}), nil
 }
 
 func findPackageInBrewOutput(lines [][]byte, packageName string) bool {
