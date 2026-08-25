@@ -360,11 +360,19 @@ func (o *OpenCode) Run(opts RunOptions) (RunResult, error) {
 	args = append(args, opts.Prompt)
 
 	params := cmd.CommandParams{
-		Command:      constants.OpenCode,
-		Args:         args,
-		Dir:          opts.Dir,
-		Timeout:      opts.Timeout,
-		Env:          opts.Env,
+		Command: constants.OpenCode,
+		Args:    args,
+		Dir:     opts.Dir,
+		Timeout: opts.Timeout,
+		Env:     opts.Env,
+		// Headless means headless: nothing is watching a terminal for this,
+		// so a prompt the agent CLI decides to raise could only wedge the
+		// caller until its timeout instead of failing. Disconnecting stdin is
+		// also what lets the executor put the run in its own process group,
+		// so the timeout kills the whole tree the agent spawns rather than
+		// just the `opencode` process — this is the largest process tree
+		// devgeta creates and it runs on a 30-minute deadline.
+		NoStdin:      true,
 		OnStdoutLine: opts.OnStdoutLine,
 	}
 	stdout, stderr, err := o.Base.ExecCommand(params)

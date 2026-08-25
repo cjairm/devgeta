@@ -2,7 +2,6 @@ package commands_test
 
 import (
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -11,23 +10,20 @@ import (
 
 // These tests exercise the real ExecCommand rather than a mock, for the same
 // reason as env_overlay_test.go and exec_longline_test.go: what is under test
-// is the wiring of exec.Cmd itself — the order of Wait against the pipe
-// readers, and what the child finds on fd 0 — and a mock can only prove a
+// is the wiring of exec.Cmd itself — how long its output capture outlives the
+// command, and what the child finds on fd 0 — and a mock can only prove a
 // caller filled in CommandParams. internal/commands is the boundary that
 // shells out (CLAUDE.md §6). Every command below is a hermetic `bash -c` that
 // touches nothing outside the process: no packages, no user files, no network.
 
 // TestExecCommandCapturesOutputAfterChildExits is a regression test for
-// truncated output. ExecCommand used to call Wait before joining the two
-// goroutines draining stdout and stderr. Wait closes the parent's ends of
-// those pipes as it returns, so it raced the readers — os/exec documents that
-// it is incorrect to call Wait before all reads from the pipe have completed.
+// truncated output. ExecCommand used to stop reading the moment the direct
+// child exited, cutting off anything a process it left behind wrote next.
 //
-// The command makes the race deterministic: the shell forks a background child
-// that writes only after the shell itself has exited. Under the old ordering
-// Wait returned at the shell's exit and closed the pipes out from under the
-// readers, losing the line entirely. The reader must instead be allowed to
-// read to real EOF, which arrives once the last writer is gone.
+// The command makes that deterministic: the shell forks a background child
+// that writes only after the shell itself has exited. The write has to land
+// inside the post-exit drain grace, which is what makes the grace a grace and
+// not just a timeout — 400ms against outputDrainGrace's two seconds.
 func TestExecCommandCapturesOutputAfterChildExits(t *testing.T) {
 	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
 
@@ -57,39 +53,59 @@ func TestExecCommandCapturesOutputAfterChildExits(t *testing.T) {
 	}
 }
 
-// TestExecCommandTimeoutUnblocksHeldPipes guards the other side of that
-// ordering. Joining the readers first means ExecCommand no longer returns
-// while a writer still holds the pipe — correct, but on its own it would let a
-// process that outlives the command block ExecCommand forever and defeat the
-// Timeout callers depend on. The deadline must close the read ends so the
-// readers finish and the call returns.
+// TestExecCommandReturnsWhileAGrandchildHoldsThePipes guards the other side of
+// that ordering, and it needs no Timeout to do it.
 //
-// Here the shell exits immediately but leaves a background sleep holding both
-// pipes far longer than the timeout. Without the deadline-driven close the
-// call blocks for the sleep's full duration instead of the timeout's.
-func TestExecCommandTimeoutUnblocksHeldPipes(t *testing.T) {
+// Not truncating means ExecCommand cannot return while a writer still holds
+// the pipe — right for output, but on its own it lets any process that outlives
+// the command block ExecCommand for that process's whole lifetime. The escape
+// hatch used to be the deadline closing the pipes, and only 5 of ExecCommand's
+// ~107 callers set one, so everything else was unbounded: `curl … | sh` that
+// installs a daemon, `brew services start`, an agent that spawns a helper.
+//
+// exec.Cmd's WaitDelay is that bound now, and it applies to every call. Below,
+// the shell writes a line, forks a child that holds both pipes far longer than
+// the grace, and exits 0. The call must come back about a grace after the
+// shell's exit — not ten seconds later — with the pre-exit line intact and no
+// error: the command succeeded, and what a grandchild does with a descriptor
+// it inherited is not a failure of the command.
+func TestExecCommandReturnsWhileAGrandchildHoldsThePipes(t *testing.T) {
 	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
 
-	done := make(chan error, 1)
+	type result struct {
+		out     string
+		err     error
+		elapsed time.Duration
+	}
+	done := make(chan result, 1)
 	go func() {
-		_, _, err := b.ExecCommand(commands.CommandParams{
+		start := time.Now()
+		out, _, err := b.ExecCommand(commands.CommandParams{
 			Command: "bash",
-			Args:    []string{"-c", "(sleep 5) & exit 0"},
-			Timeout: 300 * time.Millisecond,
+			Args:    []string{"-c", "echo before-exit; (sleep 10) & exit 0"},
 		})
-		done <- err
+		done <- result{out: out, err: err, elapsed: time.Since(start)}
 	}()
 
 	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("expected a timeout error")
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf(
+				"the command exited 0; a grandchild holding its pipes is not its failure: %v",
+				r.err,
+			)
 		}
-		if !strings.Contains(err.Error(), "timed out") {
-			t.Fatalf("expected the timeout to be reported, got: %v", err)
+		if r.out != "before-exit" {
+			t.Fatalf("output written before the child exited was lost: got %q", r.out)
 		}
-	case <-time.After(3 * time.Second):
-		t.Fatal("Timeout did not bound the call: a process holding the pipes blocked the readers")
+		if r.elapsed >= 6*time.Second {
+			t.Fatalf(
+				"ExecCommand waited on the grandchild instead of the drain grace: returned after %s",
+				r.elapsed,
+			)
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("ExecCommand blocked for the grandchild's lifetime instead of the drain grace")
 	}
 }
 

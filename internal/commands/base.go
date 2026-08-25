@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -12,7 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
+	"syscall"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/config"
@@ -304,25 +303,34 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 		execCommand.Stdin = os.Stdin
 	}
 
-	stdoutPipe, err := execCommand.StdoutPipe()
-	if err != nil {
-		logger.L().Errorf("failed to get stdout pipe: %v", err)
-		return "", "", err
+	// Let exec own the pipes and the copying (see outputWriter): that is what
+	// arms WaitDelay below, and it also removes the descriptor leak that came
+	// with owning them here — exec.Cmd.Start closes every pipe it created when
+	// it fails, so a command that never runs can no longer strand one.
+	var teeStdout, teeStderr io.Writer
+	if cmd.Stream {
+		teeStdout, teeStderr = os.Stdout, os.Stderr
 	}
+	stdout := newOutputWriter("stdout", teeStdout, cmd.OnStdoutLine)
+	stderr := newOutputWriter("stderr", teeStderr, nil)
+	execCommand.Stdout = stdout
+	execCommand.Stderr = stderr
 
-	stderrPipe, err := execCommand.StderrPipe()
-	if err != nil {
-		// The stdout pipe was already created but the command will never be
-		// started, so nothing else will ever close it: exec.Cmd closes the
-		// child's ends in Start and the parent's ends in Wait, and neither
-		// runs on this path. Close both ends here or the two descriptors leak
-		// for the lifetime of the process.
-		closeUnstartedPipes(execCommand, stdoutPipe)
-		logger.L().Errorf("failed to get stderr pipe: %v", err)
-		return "", "", err
+	// Bound how long the command's output can outlive the command. Without
+	// this, ExecCommand returns only once every holder of the inherited
+	// stdout/stderr write end has closed it — not when the child exits — so
+	// anything that backgrounds a worker (`curl … | sh` installing a daemon,
+	// `brew services start`, an agent spawning a helper) blocks devgeta for
+	// the grandchild's lifetime.
+	execCommand.WaitDelay = outputDrainGrace
+
+	// The group kill is only useful where there is a cancellation to widen,
+	// and only safe where the child has no terminal to be stopped by; see
+	// isolateProcessGroup. ctx.Done() is nil exactly when no Timeout was
+	// asked for, so this reads as "there is a deadline that will fire".
+	if cmd.NoStdin && ctx.Done() != nil {
+		isolateProcessGroup(execCommand)
 	}
-
-	var stdoutBuf, stderrBuf strings.Builder
 
 	// Start command
 	if err := execCommand.Start(); err != nil {
@@ -330,121 +338,110 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 		return "", "", err
 	}
 
-	// Drain both pipes concurrently. When Stream is set we copy bytes straight
-	// through to the terminal (real-time progress); otherwise we keep the
-	// line-buffered, debug-log-only behavior. Either way output is captured into
-	// the buffers for the returned strings.
-	var wg sync.WaitGroup
-	wg.Add(2)
+	// Wait joins exec's copying goroutines on every path before it returns, so
+	// the writers are ours alone again from here — no truncation, and nothing
+	// still writing to them.
+	err := execCommand.Wait()
+	stdout.flushPending()
+	stderr.flushPending()
 
-	drain := func(
-		pipe io.Reader,
-		buf *strings.Builder,
-		live io.Writer,
-		label string,
-		onLine func(string),
-		readErr *error,
-	) {
-		defer wg.Done()
-		if cmd.Stream {
-			_, err := io.Copy(io.MultiWriter(buf, live), pipe)
-			*readErr = err
-			return
-		}
-		// Read line-by-line via bufio.Reader (not bufio.Scanner) so a single
-		// line longer than bufio's 64KB token limit does not abort the read.
-		// A Scanner returns an error and stops on an over-long line, which
-		// leaves the pipe undrained — the child then blocks writing to a full
-		// pipe and Wait() deadlocks forever. gh's compact JSON is emitted as
-		// one long line and routinely exceeds 64KB on busy PRs, so this path
-		// must handle arbitrarily long lines.
-		reader := bufio.NewReader(pipe)
-		for {
-			line, err := reader.ReadString('\n')
-			if len(line) > 0 {
-				buf.WriteString(line)
-				trimmed := strings.TrimRight(line, "\n")
-				logger.L().Debugw(label, "line", trimmed)
-				if onLine != nil {
-					onLine(trimmed)
-				}
-			}
-			if err != nil {
-				// EOF is the normal end of the stream, not a failure. Any
-				// other error means output was lost; hand it back so the
-				// caller isn't given a silently truncated result.
-				if !errors.Is(err, io.EOF) {
-					*readErr = err
-				}
-				return
-			}
-		}
+	// ErrWaitDelay means the child itself exited and only the grace period for
+	// draining its output ran out: something it left behind still holds the
+	// inherited pipe. That is not a failure of the command the caller asked
+	// for, and reporting it as one would make every daemon-spawning install
+	// look broken.
+	if errors.Is(err, exec.ErrWaitDelay) {
+		logger.L().Debugw(
+			"command exited but left a process holding its output pipes",
+			"command", command,
+			"grace", outputDrainGrace,
+		)
+		err = nil
 	}
-
-	// A drainer only stops when its pipe reaches EOF, which happens once every
-	// writer is gone — the child and anything it left holding the descriptor.
-	// A grandchild that outlives its parent therefore keeps the drainer (and
-	// so ExecCommand) blocked past the command's own exit, which would defeat
-	// the Timeout callers rely on. Closing the read ends when the deadline
-	// fires unblocks the reads; ctx.Done() is nil when no timeout was asked
-	// for, leaving the unbounded path exactly as it was.
-	if ctx.Done() != nil {
-		stop := context.AfterFunc(ctx, func() {
-			_ = stdoutPipe.Close()
-			_ = stderrPipe.Close()
-		})
-		defer stop()
-	}
-
-	var stdoutErr, stderrErr error
-	go drain(stdoutPipe, &stdoutBuf, os.Stdout, "stdout", cmd.OnStdoutLine, &stdoutErr)
-	go drain(stderrPipe, &stderrBuf, os.Stderr, "stderr", nil, &stderrErr)
-
-	// Join the readers BEFORE Wait. Wait closes the parent's ends of the
-	// pipes as it returns, so calling it first races the drainers and can cut
-	// their reads short — os/exec documents that it is incorrect to call Wait
-	// before all reads from the pipe have completed. The drainers always
-	// finish on their own: the parent's copies of the write ends were closed
-	// by Start, so EOF arrives as soon as the last writer exits.
-	wg.Wait()
-	err = execCommand.Wait()
-	if ctx.Err() == context.DeadlineExceeded {
+	// Report the deadline only when the command actually failed under it.
+	// Overriding unconditionally used to tell callers a command timed out even
+	// when Wait returned nil — reachable whenever a grandchild held the pipes
+	// past the deadline — so callers that roll back on error rolled back
+	// completed work.
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
 		err = fmt.Errorf("command timed out after %s: %w", cmd.Timeout, ctx.Err())
 	}
-	// A failed read means the captured output is incomplete. Report it only
-	// when the command itself succeeded — an exit error is the more useful
-	// diagnosis, and a timeout closes the pipes deliberately, so its read
-	// error is expected noise rather than a fault.
-	if readErr := errors.Join(stdoutErr, stderrErr); readErr != nil && err == nil {
-		err = fmt.Errorf("failed to read command output: %w", readErr)
-	}
 	if err != nil {
-		logger.L().Debugw("command finished with error", "error", err, "stderr", stderrBuf.String())
+		logger.L().
+			Debugw("command finished with error", "error", err, "stderr", stderr.captured.String())
 	}
 
 	if cmd.PostExecMsg != "" && err == nil {
 		utils.Print(cmd.PostExecMsg, "")
 	}
 
-	return strings.TrimSpace(stdoutBuf.String()), strings.TrimSpace(stderrBuf.String()), err
+	return strings.TrimSpace(
+			stdout.captured.String(),
+		), strings.TrimSpace(
+			stderr.captured.String(),
+		), err
 }
 
-// closeUnstartedPipes releases the descriptors of a command that was wired up
-// but will never run. StdoutPipe/StderrPipe each allocate an OS pipe and hand
-// exec.Cmd the write end while returning the read end; exec.Cmd only closes
-// the write ends in Start and the read ends in Wait. When setup fails between
-// those calls neither ever happens, so both ends have to be closed here or the
-// descriptors stay open until the process exits.
-func closeUnstartedPipes(c *exec.Cmd, readers ...io.Closer) {
-	for _, r := range readers {
-		if r != nil {
-			_ = r.Close()
+// outputDrainGrace is how long ExecCommand keeps reading a command's output
+// after the command itself has exited, before it gives up and closes the
+// pipes.
+//
+// Two seconds because it has to cover both ends of a narrow trade. Too short
+// and it truncates: a child can exit while a short-lived helper it spawned is
+// still flushing the tail of its output, and this package's own regression
+// test for that (TestExecCommandCapturesOutputAfterChildExits) writes 400ms
+// after the child exits. Too long and it becomes the delay itself: a command
+// that leaves a long-lived daemon holding the descriptor pays this on every
+// invocation. Two seconds is several times the observed flush window and still
+// short enough to read as a pause rather than a hang.
+const outputDrainGrace = 2 * time.Second
+
+// isolateProcessGroup puts the child in its own process group and widens the
+// deadline kill from the child alone to that whole group.
+//
+// Without it a Timeout kills only the direct child, because
+// exec.CommandContext's default Cancel is Process.Kill(). Everything devgeta
+// shells out to forks — `sh -c`, brew, apt, the agent CLIs — so the forks
+// outlive the deadline with nothing left to reap them. The worst case is a
+// 30-minute headless agent run, the largest process tree devgeta spawns.
+//
+// SIGKILL, not SIGTERM followed by SIGKILL. The whole finding is that
+// processes survive the deadline they were given, so the cancel has to be the
+// one signal that cannot be caught or ignored — shells and supervisors
+// routinely trap SIGTERM. A ladder would also need a second grace period and
+// would double the worst-case shutdown, to protect cleanup that nothing here
+// depends on: a timed-out command's output is discarded. This also keeps
+// exec's own default semantics (Process.Kill is SIGKILL), widened from the
+// process to its group and nothing more.
+//
+// Callers that inherit devgeta's stdin must never get this, and the reason is
+// not just Ctrl-C. A child in a new process group is not the terminal's
+// foreground group, so the first time it reads the controlling terminal the
+// kernel stops it with SIGTTIN — no error, no output, a stopped process the
+// user cannot type into. That is exactly sudo's password prompt, which
+// `dg install` depends on. Terminal-inheriting commands therefore stay in
+// devgeta's group and keep the single-process kill; they are also the ones a
+// human is sitting in front of and can interrupt themselves.
+//
+// Unix-only by construction: SysProcAttr.Setpgid and a negative-pid Kill do
+// not exist on Windows, which devgeta does not build for (CLAUDE.md §8).
+func isolateProcessGroup(c *exec.Cmd) {
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	c.Cancel = func() error {
+		if c.Process == nil {
+			return os.ErrProcessDone
 		}
-	}
-	for _, w := range []any{c.Stdout, c.Stderr} {
-		if closer, ok := w.(io.Closer); ok {
-			_ = closer.Close()
+		// Setpgid with no Pgid makes the child's group id its own pid, so the
+		// negative pid addresses the child and every descendant that has not
+		// left the group.
+		err := syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			// The group finished between the deadline firing and the signal.
+			// exec reads ErrProcessDone as "nothing to interrupt" rather than
+			// a failed cancellation, which is what happened.
+			return os.ErrProcessDone
 		}
+		return err
 	}
 }
 

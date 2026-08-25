@@ -704,6 +704,14 @@ func TestRun(t *testing.T) {
 		if !reflect.DeepEqual(lastCall.Env, wantEnv) {
 			t.Fatalf("expected Env %v, got %v", wantEnv, lastCall.Env)
 		}
+		// A headless run must never be handed a terminal: a prompt it decided
+		// to raise could only wedge the caller until the timeout. It is also
+		// what lets the executor put the run in its own process group, so the
+		// timeout kills the whole tree the agent spawns instead of just the
+		// `opencode` process.
+		if !lastCall.NoStdin {
+			t.Fatal("expected a headless run to disconnect stdin")
+		}
 
 		// Exactly one call, and it went through the mock — never a real
 		// binary invocation.
