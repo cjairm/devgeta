@@ -1293,19 +1293,82 @@ message shaped to hit a substring — with a test asserting it.
 
 #### Step 12: `govulncheck` and dependency CVEs — P1
 
-`govulncheck` is **not installed** on the audit machine, so it was skipped rather
-than installed. The consequence, stated plainly: **the "no known CVEs" claim is
-unverified, not clean.** This is the audit's one honest gap.
+**Done.** `govulncheck` was installed
+(`env -u GOROOT go install golang.org/x/vuln/cmd/govulncheck@latest`, v1.7.0)
+and run against the whole tree exactly as this step's Verify line specifies:
+`govulncheck ./...`.
 
-`env -u GOROOT go vet ./...` exits 0 with no findings. `go list -m -u all` shows
-22 outdated modules, none known-vulnerable by inspection; the oldest is
-`github.com/chzyer/readline` at a 2018 pseudo-version, pulled in transitively by
-promptui.
+**First run — not clean.** It found 4 vulnerabilities reachable from this
+module's code, plus 2 more affecting imported packages and 2 more affecting
+required modules that the scan determined our code never calls:
 
-Install `govulncheck`, run it against the tree, and record the result here — a
-clean run or a list of CVEs with a remediation decision for each.
+```
+Vulnerability #1: GO-2026-6218 (net/url resolvePath quadratic complexity)
+    Found in: net/url@go1.26.5 — Fixed in: net/url@go1.26.6
+    Reachable via: pkg/downloader/retry.go:245 -> http.Client.Do -> url.URL.Parse
 
-- Verify: `govulncheck ./...` runs and its output is recorded in this document.
+Vulnerability #2: GO-2026-6090 (crypto/tls post-handshake message limit)
+    Found in: crypto/tls@go1.26.5 — Fixed in: crypto/tls@go1.26.6
+    Reachable via: pkg/downloader/retry.go (Do, stallDetectingReader.Read),
+    internal/tooling/reviewjournal/journal.go:174 (Render -> tls.Conn.Write)
+
+Vulnerability #3: GO-2026-5972 (encoding/asn1 missing recursion depth guard)
+    Found in: encoding/asn1@go1.26.5 — Fixed in: encoding/asn1@go1.26.6
+    Reachable via: pkg/downloader/retry.go:207 -> ... -> asn1.Unmarshal
+
+Vulnerability #4: GO-2026-5026 (golang.org/x/net/idna Punycode label rejection,
+surfaced through net/http)
+    Found in: net/http@go1.26.5 — Fixed in: net/http@go1.26.6
+    Reachable via: pkg/downloader/retry.go:245 and pkg/github/release.go:39
+    (both via http.Client)
+
+Your code is affected by 4 vulnerabilities from the Go standard library.
+This scan also found 2 vulnerabilities in packages you import and 2
+vulnerabilities in modules you require, but your code doesn't appear to call
+these vulnerabilities.
+```
+
+All 4 reachable findings — and both of the non-reachable "package" findings
+(GO-2026-6089, GO-2026-5942) and both non-reachable "module" findings
+(GO-2026-6091, GO-2026-6088) — are Go **standard-library/toolchain** bugs, not
+third-party dependency CVEs. Every one is already fixed in go1.26.6; this
+environment was building with go1.26.5 (`toolchain go1.26.3` in `go.mod`, but a
+newer local Go binary was on `PATH` ahead of it, so the effective build
+toolchain was 1.26.5 — still older than the 1.26.6 fix).
+
+**Remediation decision: upgrade the toolchain, not a dependency.** None of the
+22 outdated modules from `go list -m -u all` are implicated — every finding
+traces to the Go standard library itself, so the correct fix is a toolchain
+bump, not a `go.mod` `require` change. Bumped `go.mod`'s `toolchain` line from
+`go1.26.3` to `go1.26.6` (the exact version all 8 findings are fixed in). This
+is a patch-level toolchain bump: `go build ./...` picked it up immediately
+(Go's `GOTOOLCHAIN=auto` downloaded go1.26.6 on first build), the full
+`go test ./...` suite stayed green, and `make lint` stayed clean — low risk,
+mechanical, no dependency version changed.
+
+**Re-run after the bump — clean:**
+
+```
+$ go version
+go version go1.26.6 darwin/amd64
+$ govulncheck ./...
+No vulnerabilities found.
+```
+
+The 22 outdated modules `go list -m -u all` reports (oldest:
+`github.com/chzyer/readline` at a 2018 pseudo-version, transitive via
+`promptui`) remain outdated but **not** flagged by `govulncheck` — outdated and
+vulnerable are different things, and this step's job was verified CVE status,
+not general dependency freshness. No action taken on them.
+
+Observation for the maintainer (not acted on in this task): nothing currently
+re-runs `govulncheck` automatically, so a newly-disclosed CVE in the toolchain
+or a dependency would go unnoticed until someone runs it by hand again. Whether
+to wire it into CI or a `make` target is a decision for the maintainer, not
+this step.
+
+- Verify: `govulncheck ./...` ran; output above. Clean after the go1.26.6
+  toolchain bump.
 
 ---
 

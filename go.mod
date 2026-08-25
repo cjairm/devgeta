@@ -2,7 +2,7 @@ module github.com/cjairm/devgeta
 
 go 1.25.0
 
-toolchain go1.26.3
+toolchain go1.26.6
 
 require (
 	charm.land/bubbletea/v2 v2.0.7
