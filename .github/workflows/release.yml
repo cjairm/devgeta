@@ -7,6 +7,11 @@ on:
 
 permissions:
   contents: write
+  # Needed by actions/attest-build-provenance: id-token to mint the Sigstore
+  # OIDC identity, attestations to publish the provenance statement to this
+  # repo's attestation store.
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -15,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           # Full history + tag objects: the release body below is read from the
           # annotated tag's own message, and a shallow checkout fetches the tag
@@ -23,7 +28,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: "1.25"
 
@@ -76,14 +81,36 @@ jobs:
 
           chmod +x devgeta-*
 
+      # The integrity floor for install.sh's follow-up verification (see
+      # ADR-0031): a SHA-256 digest of each binary, published as its own
+      # release asset so it can be checked with bash+curl alone before any
+      # of the four binaries are executed.
+      - name: Generate checksums
+        run: sha256sum devgeta-* > checksums.txt
+
+      # Binds each binary's digest to this workflow run and records it in
+      # Sigstore's public transparency log — a trust root outside the
+      # release assets themselves, so it isn't defeated by whatever also
+      # let an attacker rewrite a binary and checksums.txt together. Attests
+      # the files on disk; it doesn't need the release to exist yet.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            devgeta-darwin-amd64
+            devgeta-darwin-arm64
+            devgeta-linux-amd64
+            devgeta-linux-arm64
+
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844 # v0.1.15
         with:
           files: |
             devgeta-darwin-amd64
             devgeta-darwin-arm64
             devgeta-linux-amd64
             devgeta-linux-arm64
+            checksums.txt
           # body is PREPENDED to the auto-generated notes, so the release page
           # leads with the tag's own summary and still ends with GitHub's
           # "Full Changelog" compare link.
