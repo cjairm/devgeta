@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -231,4 +232,62 @@ func TestLoad_OutOfBandWriteIsPickedUp(t *testing.T) {
 		second.CurrentFont,
 		"an out-of-band write with a different size must be picked up on the next Load()",
 	)
+}
+
+// TestConcurrentLoadAndSave_NoDataRace exercises globalConfigCache.mu under
+// real contention from bare Load() and Save() calls - the access pattern
+// ADR-0030 says the ~95 non-Update() call sites use, which bypass lock.go's
+// sidecar file lock entirely. The two existing concurrency tests
+// (TestUpdate_ConcurrentUpdatesBothLand,
+// TestUpdate_ConcurrentFirstRunUpdatesBothLand) both go through Update(),
+// which serializes on that file lock before either goroutine ever touches
+// the cache - so neither one contends globalConfigCache.mu at all, and a
+// mutex bug in lookupGlobalConfigCache, storeGlobalConfigCache, or
+// writeGlobalConfigFile could exist without either test noticing.
+//
+// This test drives Load()/Save() directly with no Update() in the loop, run
+// under `go test -race`. Concurrent unordered Save()s racing for "last
+// write wins" on the file's content is an accepted, expected outcome of
+// this access pattern - ADR-0030 is explicit that only Update() serializes
+// writes - so this test does not assert on which goroutine's value survives,
+// only that every call completes without error and the race detector
+// reports nothing.
+func TestConcurrentLoadAndSave_NoDataRace(t *testing.T) {
+	setupIsolatedConfigPaths(t)
+
+	seed := &GlobalConfig{}
+	if err := seed.Create(); err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	const goroutines = 8
+	const itersPerGoroutine = 50
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, goroutines*itersPerGoroutine*2)
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for i := 0; i < itersPerGoroutine; i++ {
+				loaded := &GlobalConfig{}
+				if err := loaded.Load(); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Load failed on iter %d: %w", id, i, err)
+					continue
+				}
+				loaded.CurrentFont = fmt.Sprintf("font-%d-%d", id, i)
+				if err := loaded.Save(); err != nil {
+					errCh <- fmt.Errorf("goroutine %d: Save failed on iter %d: %w", id, i, err)
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Error(err)
+	}
 }

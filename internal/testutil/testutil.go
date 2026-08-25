@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -79,6 +80,20 @@ func SetupIsolatedPaths(t *testing.T) PathsCleanup {
 	paths.Paths.App.Root = filepath.Join(tempDir, "app")
 	paths.Paths.Config.Root = filepath.Join(tempDir, "config")
 	paths.Paths.App.Configs.Templates = filepath.Join(tempDir, "templates")
+
+	// internal/config's Load()/Save() cache (internal/config/cache.go) is
+	// process-wide, keyed on {path, modTime, size}. This helper just
+	// repointed Config.Root at a fresh temp dir, so a stale cache entry from
+	// an earlier test can only collide here by accident of that key design
+	// (a reused path, a same-second modTime, a matching size) - not by any
+	// guarantee. Every other importer of internal/config that isolates paths
+	// through this shared helper (e.g. internal/tooling/worktree, after this
+	// task removed its own local cache) needs the same explicit reset
+	// internal/config's own tests already get via setupIsolatedConfigPaths
+	// in fromFile_test.go, so callers outside internal/config aren't relying
+	// on that incidental protection either.
+	config.ResetGlobalConfigCacheForTest()
+	t.Cleanup(config.ResetGlobalConfigCacheForTest)
 
 	// Return cleanup function
 	return func() {
