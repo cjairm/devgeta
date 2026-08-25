@@ -74,6 +74,17 @@ func TestCopyFile(t *testing.T) {
 	}
 	t.Log("Content copied succesfuly")
 
+	// Verify the destination file was written with FilePermission (0644), not
+	// AllPermissions (0777) — CopyFile must never make a deployed config
+	// group- or world-writable.
+	dstInfo, err := os.Stat(dstFilePath)
+	if err != nil {
+		t.Fatalf("Failed to stat destination file: %v", err)
+	}
+	if dstInfo.Mode().Perm() != 0o644 {
+		t.Errorf("Expected destination file permissions 0644, got %o", dstInfo.Mode().Perm())
+	}
+
 	// Test copying from a non-existent source file
 	nonExistentSrc := filepath.Join(tempDir, "nonexistent.txt")
 	err = files.CopyFile(nonExistentSrc, dstFilePath)
@@ -120,6 +131,27 @@ func TestCopyDir(t *testing.T) {
 		t.Errorf("Expected file %q to exist, but it does not", dstFile2)
 	}
 
+	// Verify permissions: copied files get FilePermission (0644), copied
+	// directories get DirPermission (0755) — never AllPermissions (0777).
+	dstFile1Info, err := os.Stat(dstFile1)
+	if err != nil {
+		t.Fatalf("Failed to stat %q: %v", dstFile1, err)
+	}
+	if dstFile1Info.Mode().Perm() != 0o644 {
+		t.Errorf("Expected %q permissions 0644, got %o", dstFile1, dstFile1Info.Mode().Perm())
+	}
+
+	dstSubDirInfo, err := os.Stat(filepath.Join(dstDir, "subdir"))
+	if err != nil {
+		t.Fatalf("Failed to stat destination subdir: %v", err)
+	}
+	if dstSubDirInfo.Mode().Perm() != 0o755 {
+		t.Errorf(
+			"Expected destination subdir permissions 0755, got %o",
+			dstSubDirInfo.Mode().Perm(),
+		)
+	}
+
 	// Test copying an empty directory
 	emptySrcDir := filepath.Join(srcDir, "empty")
 	if err := os.Mkdir(emptySrcDir, 0o755); err != nil {
@@ -135,7 +167,7 @@ func TestCopyDir(t *testing.T) {
 
 	// Test copying from a non-existent source directory
 	nonExistentSrcDir := filepath.Join(tempDir, "nonexistent")
-	err := files.CopyDir(nonExistentSrcDir, dstDir)
+	err = files.CopyDir(nonExistentSrcDir, dstDir)
 	if err == nil {
 		t.Fatal("Expected an error when copying from a nonexistent directory, got nil")
 	}

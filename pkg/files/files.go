@@ -18,8 +18,6 @@ const (
 	FilePermission = 0o644
 	// DirPermission is the default permission for directories (rwxr-xr-x)
 	DirPermission = 0o755
-	// AllPermissions grants all permissions (rwxrwxrwx)
-	AllPermissions = 0o777
 )
 
 // SoftCopyFile copies a file from src to dst only if dst does not already exist.
@@ -53,7 +51,9 @@ func SoftCopyDir(src, dst string) error {
 }
 
 // CopyFile copies a file from src to dst, creating or overwriting the destination file.
-// The destination file will have AllPermissions (0777).
+// The destination file will have FilePermission (0644). Callers that need an
+// executable destination (e.g. hook scripts) must chmod it explicitly after
+// copying — see internal/apps/claude/claude.go for the established pattern.
 // Returns an error if reading the source or writing the destination fails.
 func CopyFile(src, dst string) error {
 	logger.L().Debugw("Copying file", "src", src, "dst", dst)
@@ -61,14 +61,14 @@ func CopyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("failed to read source file %s: %w", src, err)
 	}
-	if err := os.WriteFile(dst, input, AllPermissions); err != nil {
+	if err := os.WriteFile(dst, input, FilePermission); err != nil {
 		return fmt.Errorf("failed to write destination file %s: %w", dst, err)
 	}
 	return nil
 }
 
 // CopyDir recursively copies a directory from src to dst, including all subdirectories and files.
-// Creates the destination directory structure as needed with AllPermissions (0777).
+// Creates the destination directory structure as needed with DirPermission (0755).
 // Returns an error if any directory or file operation fails.
 func CopyDir(src, dst string) error {
 	logger.L().Debugw("Copying directory", "src", src, "dst", dst)
@@ -80,7 +80,7 @@ func CopyDir(src, dst string) error {
 		srcPath := filepath.Join(src, entry.Name())
 		dstPath := filepath.Join(dst, entry.Name())
 		if entry.IsDir() {
-			if err := os.MkdirAll(dstPath, AllPermissions); err != nil {
+			if err := os.MkdirAll(dstPath, DirPermission); err != nil {
 				return fmt.Errorf("failed to create destination directory %s: %w", dstPath, err)
 			}
 			if err := CopyDir(srcPath, dstPath); err != nil {
@@ -93,7 +93,7 @@ func CopyDir(src, dst string) error {
 			}
 		} else {
 			dstDir := filepath.Dir(dstPath)
-			if err := os.MkdirAll(dstDir, AllPermissions); err != nil {
+			if err := os.MkdirAll(dstDir, DirPermission); err != nil {
 				return fmt.Errorf("failed to create parent directory %s: %w", dstDir, err)
 			}
 			if err := CopyFile(srcPath, dstPath); err != nil {
