@@ -3,7 +3,8 @@
 **Date:** 2026-07-16
 **Estimated Duration:** ~3 hours (prompt edits ~2h; optional merge-base code check ~1h,
 splittable into a follow-up).
-**Status:** Edits complete and reviewed (spec + quality, per-file). Deploy has since happened
+**Status:** Done — every §4 deliverable shipped, and every §6 verification now passes.
+Deploy has since happened
 — both agents' live `code-reviewer.md`/`document-reviewer.md` match this cycle's shipped
 content byte-for-byte (checked directly against `~/.claude/agents/` on 2026-08-26: the
 fetch-first discipline, `document-reviewer`'s read-only task allowlist, and the `devgeta`-binary
