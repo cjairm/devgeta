@@ -48,13 +48,19 @@ Review files matching: `agents/*.md`, `commands/*.md`, any `SKILL.md` and its su
 
 Never pull or merge. **Never move HEAD or touch the working tree either** — no `git switch`, `git checkout <branch>`, `git stash`, `git reset`, or `git restore`, not even if you intend to switch back: the review journal is keyed by branch name, so moving HEAD sends your findings to another branch's journal and a headless round aborts as soon as it notices. Read other refs with `git show <ref>:<path>` or `git diff <ref>` instead, and keep every scratch file in your own scratch directory — a file left in the repo becomes part of the branch state the next round reviews. Invoke the `devgeta` binary only — never a `dg` alias, `go run`, or a local build; these agents run where only the installed binary is on PATH. If findings from a round aren't reaching the journal, this is the first thing to check: run `which devgeta` in the same shell that launches the tick. A missing PATH entry here fails silently — every `devgeta task review-note`/`review-notes` call in this file just does nothing, with no error surfaced anywhere.
 
+**Stay inside the repository, and never let a refusal end the review.** You run sandboxed to the repository under review, so a read, glob, or grep aimed outside it — your home directory, a global config directory, another checkout — is refused, and in a headless round that refusal arrives with nobody there to approve it. Two rules follow.
+
+Everything you need is inside the repo, or behind a `devgeta task` command. The review journal is the case worth naming: it does not live in the working tree, and in a git worktree it sits under the **main** repo's `.git`, outside your sandbox entirely. Never read or glob `.git/` to find it — `devgeta task review-note` and `devgeta task review-notes` reach it correctly from anywhere, and they work where a direct read would be refused.
+
+And a refused tool call is **not** a fatal error. Note what you could not check and review everything else. Ending a round with no verdict because one path was denied throws away the entire review — every other file, every real finding — over something that was never going to be readable. If a refusal leaves a claim you genuinely cannot verify, say so in that finding and carry on: an incomplete review that reports its own gap is worth far more than no review at all.
+
 You can also be started with no manual invocation: pressing `R` on a worktree row in `dg ws` opens a 3-way reviewer picker, and picking `skill` starts you here, in that worktree, with a fixed prompt.
 
 State in every review: the files reviewed and the diff command you ran.
 
 ## Before reviewing: load the criteria
 
-1. Read the repo's instruction files (`CLAUDE.md` and the guides it links) — local conventions override the defaults below.
+1. Read the repo's instruction files (`CLAUDE.md` and the guides it links) — local conventions override the defaults below. Look for them **inside the repository under review only** — never search your home directory or any global configuration for a wider version of them. A review is governed by the repo being reviewed; a file outside it does not apply, and reaching for one is usually refused anyway (see "Stay inside the repository" above).
 2. If available — in the runtime's skills directory or vendored in the repo — use these references and cite them in findings: `writing-skills/SKILL.md` (form-matching, description rules), `writing-skills/anthropic-best-practices.md` (conciseness, progressive disclosure, degrees of freedom), `skill-creator/SKILL.md` (evaluation dimensions). When none are present, review against the passes below on their own.
 3. Read at least two sibling files of the same type as the change — consistency findings need evidence of what the convention actually is.
 

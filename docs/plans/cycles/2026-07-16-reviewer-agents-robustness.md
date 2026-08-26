@@ -7,12 +7,17 @@ splittable into a follow-up).
 — both agents' live `code-reviewer.md`/`document-reviewer.md` match this cycle's shipped
 content byte-for-byte (checked directly against `~/.claude/agents/` on 2026-08-26: the
 fetch-first discipline, `document-reviewer`'s read-only task allowlist, and the `devgeta`-binary
-invariant line are all present). Live verification 1 and 3 in §6 were run on 2026-08-26 via
-`devgeta task review-run` and pass — see "Live run" at the end. **Item 2 is the only thing
-still open**, and it cannot be closed on a clean branch: the run returned `APPROVE` with no
-findings, so there was nothing to judge for lead-with-substance or idiom-naming. It needs a
-branch with real defects in it. That run also surfaced a limitation worth a follow-up, written
-up in the same section.
+invariant line are all present). **All of §6's manual verification was run on 2026-08-26 via
+`devgeta task review-run` and passes** — see the two "Live run" sections at the end. Item 2
+needed two purpose-built branches (a defective one and a nit-only one), since neither half of
+it can be judged on a clean branch.
+
+Those runs also exposed a real bug and fixed it: all three reviewer agents were reaching
+outside the repository they were sandboxed to — for a global `CLAUDE.md`, and for the review
+journal, which in a worktree sits under the _main_ repo's `.git` — and a refused read was
+ending whole rounds in `NO VERDICT`, retry included. `gpt-5.6-terra` failed that way 4 times
+out of 4. Both halves are fixed in the prompts and re-verified; the durable follow-up (the
+runner should not retry a permission-denial `NO VERDICT`) is named at the end.
 
 ---
 
@@ -212,11 +217,10 @@ to deploy. PR text written plainly.
        `finish-cycle-leftovers`: the common git dir's `FETCH_HEAD` was rewritten mid-review,
        so the read-only fetch happened, and `HEAD`, the working tree, and the merge-base with
        `origin/main` were byte-identical before and after — nothing pulled or merged.
-2. [ ] Findings lead with design/correctness; at least one names a concrete language idiom;
-       a nit-only run says so and approves rather than blocking. **Not verifiable from the
-       2026-08-26 run:** the reviewer that produced a verdict returned a clean `APPROVE` with
-       no findings at all, so there was nothing to judge for lead-with-substance or
-       idiom-naming. Needs a run against a branch that actually has defects in it.
+2. [x] Findings lead with design/correctness; at least one names a concrete language idiom;
+       a nit-only run says so and approves rather than blocking. **Verified 2026-08-26** with
+       two purpose-built throwaway branches, since neither half can be judged on a clean one —
+       see "Live run" below for what each returned.
 3. [x] Run `document-reviewer` on a plan that references code → it fetches via `review-scope`
        and verifies the claim against current code. **Verified 2026-08-26**, and it surfaced a
        real limitation — see "Live run" below.
@@ -297,3 +301,66 @@ path. Two things follow, and only the second is really about this cycle:
 Neither is fixed here — this cycle's scope is prompt edits, and (2) is a
 behavior change to the review runner's handling of a blocked tool call. Recorded
 for a follow-up cycle.
+
+### Item 2, and the reviewer-boundary bug the runs exposed (2026-08-26)
+
+Item 2 cannot be judged on a clean branch — a review with no findings proves
+nothing about how findings are ordered or worded. So two throwaway branches were
+built and reviewed with `devgeta task review-run --reviewer code`, then discarded.
+
+**A branch with real defects** (a new `probe` package: unclosed file, ignored
+`io.ReadAll` error, `%v` instead of `%w`, and an unchecked `parts[1]` index).
+The review opened five findings, in this order:
+
+1. runtime panic on a line lacking the `=` delimiter
+2. missing `defer f.Close()`, file-descriptor leak
+3. ignored `io.ReadAll` error **and unwrapped error formatting**
+4. `strings.Split` truncates values containing more than one `=`
+5. missing unit tests for the new exported functions
+
+Correctness leads, and finding 3 names Go's error-wrapping idiom explicitly —
+the §2.4 requirement. Finding 4 was **not planted**: `strings.Cut` is the right
+call there and the reviewer found that on its own. Deliberately planted cosmetic
+noise (a pointless `tmp` variable, a `for i := 0; i <= len(x)-1` loop) was not
+raised at all, which is the nit-discipline of §2.3 doing its job.
+
+**A branch with only cosmetic issues** (correct logic, full passing tests, but a
+redundant comment, a `theSettings` name, an unnecessary `else`). Both models
+returned `APPROVE` with no findings opened. Note the first attempt at this branch
+was mis-built — it had no tests, so `REQUEST CHANGES` over "missing unit tests"
+was the _correct_ verdict, not a failure of nit-discipline; the branch only
+became genuinely nit-only once `probe_test.go` was added. One nuance: the journal
+records only opened findings, so "approves rather than blocking" is directly
+evidenced while "says so" would have to be read out of the report body.
+
+**The bug these runs exposed.** Reviewers are sandboxed to the repository under
+review, and were reaching outside it on almost every round:
+
+- `code-reviewer.md`'s step 1 says to read `CLAUDE.md`, and models globbed
+  `~/.claude/*` hunting for a global one.
+- The review journal is worse, because that reach is _legitimate_: it lives under
+  the git common dir, so in a **worktree** it sits under the main repo's `.git`,
+  outside the sandbox. A model that globbed `.git/devgeta/review/*` instead of
+  calling `devgeta task review-notes` hit the same wall.
+
+Each refusal auto-rejects headlessly, and a model that treats it as fatal returns
+`NO VERDICT` — then ADR-0020's retry spends a second full run reaching the same
+wall. `gpt-5.6-terra` failed this way **four times out of four**, across three
+unrelated branches; `gemini-3.6-flash` failed once, on the journal path. Half to
+all of the configured review capacity, dead on every round, at ~$0.12 a time.
+
+Fixed in all three reviewer agents (`code-`, `document-`, `skill-reviewer`), both
+halves being general rules any repo wants: search for instruction files **inside
+the repo under review only**, reach the journal **only** through
+`devgeta task review-note(s)` and never by reading `.git/`, and treat a refused
+tool call as **non-fatal** — note what could not be checked and review the rest,
+because ending a round with no verdict discards every other real finding over one
+unreadable path. Re-run immediately afterwards: **both models `APPROVE`**, with
+`gpt-5.6-terra` completing a full 25-tool review and reading `README.md` from
+inside the repo rather than globbing `~/.claude/*`.
+
+A prompt is a nudge, not an enforcement, so this narrows the trigger rather than
+removing it. The durable follow-up is in the runner: a `NO VERDICT` caused by a
+permission denial is deterministic, so retrying it is pure waste and it should be
+distinguished from a genuine no-report. That is Go code and belongs to its own
+cycle.
