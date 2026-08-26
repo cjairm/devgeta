@@ -2,22 +2,19 @@
 
 **Date:** 2026-08-25
 **Estimated Duration:** ~2 hours
-**Status:** Draft — NOT approved for implementation
+**Status:** Done
 
 ---
 
-**Do not start this cycle yet.** It must not begin until a tagged release has
-been confirmed **by hand** — by loading the actual GitHub release page, not
-by reading this doc or the workflow source — to carry a `checksums.txt`
-asset produced by the workflow change in
-[docs/decisions/ADR-0036](../../decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md).
-Until that confirmation, `install.sh` is fetched live from `main`
-(`install.sh:10`'s own usage line says so) while `latest` may still be a
-release with no `checksums.txt` on it — shipping this cycle's verification
-early means every `curl … | bash` install between merge and that next tag
-hard-fails, because the script would demand an asset the release it
-resolves to doesn't have. See "Rollout order" in the plan text this cycle
-implements, quoted in full below.
+**Pre-flight gate passed on 2026-08-26 against release `v1.22.0`.** That
+release carries `checksums.txt` alongside the four binaries;
+`gh attestation verify` passes against a published binary (SLSA provenance v1,
+`.github/workflows/release.yml @ refs/tags/v1.22.0`); all four attested digests
+match `checksums.txt`; and a one-byte-tampered copy fails closed with exit 1.
+The blocker this section carried — that shipping the verification before a
+release actually carried the assets would hard-fail every `curl … | bash`
+install until the next tag — no longer applies. The rollout-order reasoning is
+kept below for the record.
 
 ---
 
@@ -41,13 +38,19 @@ actually use those artifacts before it runs anything it downloaded.
 ## 2. Engineer Context
 
 - **Relevant files:**
-  - `install.sh` — the script this cycle changes. Key line numbers as of the
-    workflow-half task: `:134` resolves `releases/latest`, `:153` builds the
-    binary's download URL from that tag, `:158` downloads it, `:166` checks
-    only non-emptiness, `:171` `chmod +x`, `:173` executes it
-    (`"$TMP_BINARY" --version`), `:180` moves it onto `PATH`. Re-read the
-    script before editing — these line numbers will have drifted by the time
-    this cycle starts.
+  - `install.sh` — the script this cycle changes. The line numbers cited in
+    this doc were re-read at implementation time (2026-08-26) and had **not**
+    drifted from the workflow-half task: `:134` resolved `releases/latest`,
+    `:153` built the download URL, `:158` downloaded, `:166` checked only
+    non-emptiness, `:171` `chmod +x`, `:173` executed it
+    (`"$TMP_BINARY" --version`), `:180` moved it onto `PATH`.
+
+    **After this cycle's change** those are: `:152` resolves `releases/latest`,
+    `:171` builds the download URL, `:176` downloads, `:184` checks
+    non-emptiness, `:186`–`:277` is the new verification block (`:214`
+    fetches `checksums.txt`, `:259` runs `gh attestation verify`), `:279`
+    `chmod +x`, `:281` executes it, `:288` moves it onto `PATH`.
+
   - `.github/workflows/release.yml` — already emits `checksums.txt` and the
     attestation; this cycle's script downloads and checks against them, it
     does not touch the workflow again.
@@ -82,25 +85,25 @@ failing closed on either mismatch, and printing which check(s) actually ran.
 
 ### In Scope
 
-- [ ] SHA-256 verification against the release's `checksums.txt`, run before
+- [x] SHA-256 verification against the release's `checksums.txt`, run before
       `chmod +x` (currently `install.sh:171`) — the corruption check, works
       with bash+curl alone, runs unconditionally.
-- [ ] When `gh` is present on `PATH`: `gh attestation verify "$TMP_BINARY"
-    --repo "$REPO"`, failing closed on a mismatch — the authenticity
+- [x] When `gh` is present on `PATH`: `gh attestation verify "$TMP_BINARY"
+--repo "$REPO"`, failing closed on a mismatch — the authenticity
       check.
-- [ ] The script prints which of the two checks actually ran, every time —
+- [x] The script prints which of the two checks actually ran, every time —
       never a bare "verified".
-- [ ] Both checks fail closed. In particular: a missing `checksums.txt`
+- [x] Both checks fail closed. In particular: a missing `checksums.txt`
       is a hard failure, not a skip — a soft "skip if missing" is a
       downgrade an attacker can trigger simply by withholding the file.
       Only the _presence_ of `gh` is conditional; once a check runs (or is
       supposed to run because its prerequisite asset should exist), it must
       pass or the install stops.
-- [ ] Document the residual gap in `docs/guides/releasing.md`: with only
+- [x] Document the residual gap in `docs/guides/releasing.md`: with only
       bash and curl, the floor this buys is integrity, not authenticity —
       point readers at ADR-0036 for the full reasoning rather than
       re-explaining it there.
-- [ ] Reference ADR-0036 in the code comment at the verification block.
+- [x] Reference ADR-0036 in the code comment at the verification block.
 
 ### Explicitly Out of Scope
 
@@ -184,6 +187,28 @@ stale line numbers as fact.
 - No `go test` coverage is expected to exist for `install.sh` unless one is
   discovered during Step 1 — this is a plain POSIX shell script, not Go.
 
+### Results (2026-08-26, macOS, against `v1.22.0`)
+
+Run in a throwaway `HOME`, with a stub `curl` on `PATH` for the cases that
+need a controlled release. All eight cases behaved as designed; the three
+fail-closed cases left no binary installed and no temp file behind.
+
+| Case                                                     | Result                                                                                     |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Real release, `gh` authenticated                         | exit 0 — `Verified: SHA-256 checksum (integrity) + GitHub build provenance (authenticity)` |
+| Real release, `gh` installed but not authenticated       | exit 0 — checksum only, plus an explicit `Not verified` line                               |
+| Real release, `gh` absent from `PATH`                    | exit 0 — checksum only, `Not verified: … gh is not installed`                              |
+| Binary tampered, `checksums.txt` genuine                 | **exit 1** — SHA-256 mismatch, expected/actual both printed                                |
+| `checksums.txt` absent from the release                  | **exit 1** — hard failure, not a skip                                                      |
+| `checksums.txt` present, no line for this platform       | **exit 1** — hard failure                                                                  |
+| Forged binary **with** a matching forged `checksums.txt` | **exit 1** — tier 1 passes, tier 2 catches it (this is the case tier 2 exists for)         |
+| `--local /path/to/binary`                                | exit 0 — `Local install: no release verification performed`                                |
+
+No `go test` harness for `install.sh` was found, and no Go code in the repo
+references it (the `install.sh` hits under `internal/` are Homebrew's and
+Claude's own installers). Nothing in the Go tree changed, so no package tests
+apply to this cycle.
+
 ## 8. Risks & Trade-offs
 
 | Risk                                                               | Likelihood | Mitigation                                                                  |
@@ -210,7 +235,35 @@ stale line numbers as fact.
       cycle's to decide?
 - [ ] Does the plan fail closed everywhere a check could be skipped?
 
-**Reviewer notes:** (fill in during review)
+**Reviewer notes:**
+
+**One implementation call ADR-0036 does not literally cover — needs a human
+decision.** ADR-0036 makes tier 2 conditional on `gh` being _present_. It does
+not say what to do when `gh` is present but **not authenticated**, which was
+measured at implementation time to be a distinct state: `gh attestation verify`
+then exits **4** with `To get started with GitHub CLI, please run: gh auth
+login`, and it reports that identically whether or not the binary is genuine
+(exit 0 on a good binary, exit 1 on a forged one, exit 4 when it cannot ask).
+
+The script treats that as "tier 2 could not run" — the same state as `gh` being
+absent — checked up front via `gh auth status` rather than by reading exit codes
+back out of `verify`, so any non-zero from `verify` itself is unambiguously a
+failed verification. It is printed every time, never counted as a pass.
+
+The argument for it: an unauthenticated `gh` is common (installed via Homebrew,
+never logged in), and failing closed there would break installs for those users
+without telling them anything about the binary's authenticity — the tool simply
+could not look. The argument against it: it is a second conditional path, and
+ADR-0036 §4 says never treat a missing input as "nothing to check."
+
+If the stricter reading is wanted instead — an unauthenticated `gh` is a hard
+failure — it is a three-line change to the `elif` chain in `install.sh`. Flagged
+rather than decided alone, per this doc's "Ask before relitigating ADR-0036."
+
+**Out-of-scope defect found, not fixed:** the comment above the "Generate
+checksums" step in `.github/workflows/release.yml` cites **ADR-0031**; the ADR
+it means is **ADR-0036**. §4 puts any further change to that workflow out of
+scope, so it is left for a separate fix.
 
 ---
 

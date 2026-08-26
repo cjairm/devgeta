@@ -108,13 +108,18 @@ After the workflow completes:
 1. **Check the release page**:
    - Visit: https://github.com/cjairm/devgeta/releases
    - Verify your new release appears
-   - Confirm all four binaries are attached
+   - Confirm all four binaries **and `checksums.txt`** are attached. A release
+     without `checksums.txt` breaks every new install — see
+     [Release verification](#release-verification).
 
 2. **Test the installation script**:
 
    ```bash
    curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
    ```
+
+   The output must name the checks that ran, e.g.
+   `Verified: SHA-256 checksum (integrity) + GitHub build provenance (authenticity)`.
 
 3. **Verify the installed version**:
    ```bash
@@ -152,9 +157,14 @@ The workflow:
 
 1. Checks out the code (full history, so the annotated tag's message is available)
 2. Sets up Go 1.25
-3. Builds binaries for all platforms using cross-compilation
-4. Reads the release notes out of the annotated tag
-5. Creates a GitHub release with those notes and all binaries attached
+3. Reads the release notes out of the annotated tag
+4. Builds binaries for all platforms using cross-compilation
+5. Writes `checksums.txt` (`sha256sum devgeta-*`)
+6. Attests build provenance for the four binaries via `actions/attest-build-provenance`
+7. Creates a GitHub release with those notes, all four binaries, and `checksums.txt` attached
+
+Steps 5 and 6 are not optional extras — `install.sh` refuses to install without
+them. See [Release verification](#release-verification) below.
 
 ### Binary Naming Convention
 
@@ -168,6 +178,56 @@ devgeta-{OS}-{ARCH}
 
 - `devgeta-darwin-amd64`
 - `devgeta-linux-arm64`
+
+## Release verification
+
+`install.sh` verifies every binary it downloads before it makes it executable
+or runs it. Two checks, both fail closed:
+
+| Tier | Check                                                  | Runs when                           | What it proves |
+| ---- | ------------------------------------------------------ | ----------------------------------- | -------------- |
+| 1    | SHA-256 against the release's `checksums.txt`          | Always                              | Integrity      |
+| 2    | `gh attestation verify <binary> --repo cjairm/devgeta` | `gh` is installed and authenticated | Authenticity   |
+
+The script always prints which of the two actually ran, and says so plainly
+when tier 2 did not.
+
+**The residual gap, stated plainly: with only bash and curl, what an install
+gets is integrity, not authenticity.** `checksums.txt` is fetched from the same
+mutable release, over the same channel, under the same credentials as the binary
+it describes — so whoever can replace `devgeta-darwin-arm64` can replace
+`checksums.txt` in the same motion, and tier 1 still passes. Tier 1 defeats a
+corrupted transfer and a network attacker who cannot write to the release; it
+does not defeat a compromised release token, workflow, or account. Tier 2 does
+close that gap, because it chains to Sigstore's transparency log instead of to a
+file sitting next to the binary — but only for users who happen to have `gh`.
+
+The full reasoning, and why requiring `gh` was not the answer, is
+[ADR-0036](../decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md).
+Whether authenticity should ever become mandatory is an open question that ADR
+deliberately left for a future one.
+
+### What this means when you cut a release
+
+- A release missing `checksums.txt` is **broken**, not merely incomplete —
+  every `curl … | bash` install resolving to it fails hard. `install.sh` treats
+  an absent checksums file as a failure rather than a skip on purpose: a "skip
+  if missing" path is a downgrade an attacker triggers by withholding one file.
+- Because `install.sh` is served unpinned from `main` and always resolves
+  `releases/latest`, a bad release affects new installs immediately. Confirming
+  the assets (step 6 above) is not a formality.
+
+### Checking a release by hand
+
+```bash
+gh release view v1.22.0 --repo cjairm/devgeta --json assets --jq '.assets[].name'
+gh release download v1.22.0 --repo cjairm/devgeta --pattern 'devgeta-*'
+gh attestation verify devgeta-darwin-arm64 --repo cjairm/devgeta
+```
+
+An unauthenticated `gh` exits 4 with an auth error here rather than a
+verification result — which is why `install.sh` checks `gh auth status` first
+and reports "not authenticated" instead of reading that back as a failure.
 
 ## Troubleshooting
 

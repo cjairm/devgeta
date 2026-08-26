@@ -32,6 +32,24 @@ print_info() {
 	echo -e "${YELLOW}$1${NC}"
 }
 
+# Lowercase hex SHA-256 of a file, with no trailing filename.
+# Debian/Ubuntu ship sha256sum in coreutils; macOS ships shasum (via perl) but
+# not sha256sum, so both are tried before falling back to openssl. Returns 1
+# when none of the three exist, which the caller treats as a hard failure --
+# there is no version of this script that runs a binary it could not hash.
+sha256_of() {
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$1" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$1" | awk '{print $1}'
+	elif command -v openssl >/dev/null 2>&1; then
+		# "SHA256(path)= <hash>" -- the hash is the last field.
+		openssl dgst -sha256 "$1" | awk '{print $NF}'
+	else
+		return 1
+	fi
+}
+
 # Parse command-line arguments
 LOCAL_BINARY=""
 while [[ $# -gt 0 ]]; do
@@ -166,6 +184,96 @@ fi
 if [ ! -s "$TMP_BINARY" ]; then
 	print_error "The devgeta binary is empty; the transfer did not complete"
 	exit 1
+fi
+
+# Nothing downloaded is made executable or run until it has been verified.
+# The policy here -- and, just as importantly, what it does and does not buy --
+# is docs/decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md.
+#
+# Tier 1, SHA-256 against the release's checksums.txt, is the integrity floor:
+# it needs nothing beyond bash and curl, so it always runs. Tier 2, GitHub's
+# build-provenance attestation, is the authenticity check: it chains to
+# Sigstore's transparency log rather than to a file published next to the binary
+# it is checking, so it survives an attacker who can rewrite both. It runs
+# whenever gh can actually run it.
+#
+# Neither check is ever skipped because its input is missing. An absent
+# checksums.txt is a hard failure, not "nothing to check" -- treating it as a
+# skip would hand an attacker a downgrade they trigger by withholding one file.
+VERIFIED_CHECKS=""
+ATTESTATION_NOTE=""
+
+if [ -n "$LOCAL_BINARY" ]; then
+	# --local installs a file the user already has on disk. There is no release
+	# behind it, so no checksums.txt and no attestation exist to check it
+	# against. Said outright rather than quietly reported as a pass.
+	print_info "Local install: no release verification performed"
+else
+	print_info "Verifying download..."
+
+	CHECKSUMS_URL="https://github.com/$REPO/releases/download/$LATEST_RELEASE/checksums.txt"
+
+	if ! CHECKSUMS=$(curl -fsSL "$CHECKSUMS_URL"); then
+		print_error "Failed to download checksums.txt for release $LATEST_RELEASE"
+		print_error "URL: $CHECKSUMS_URL"
+		print_error "Refusing to install a binary that cannot be verified."
+		exit 1
+	fi
+
+	# The workflow writes this with `sha256sum devgeta-* > checksums.txt`, whose
+	# format is "<hash>  <filename>" -- so field 2 is the bare binary name.
+	EXPECTED_SHA=$(printf '%s\n' "$CHECKSUMS" |
+		awk -v want="$BINARY_FILENAME" '$2 == want { print $1 }')
+
+	if [ -z "$EXPECTED_SHA" ]; then
+		print_error "checksums.txt for $LATEST_RELEASE lists no entry for $BINARY_FILENAME"
+		print_error "Refusing to install a binary that cannot be verified."
+		exit 1
+	fi
+
+	if ! ACTUAL_SHA=$(sha256_of "$TMP_BINARY"); then
+		print_error "No SHA-256 tool available (looked for sha256sum, shasum, openssl)"
+		print_error "One of these is required to verify the download before running it."
+		exit 1
+	fi
+
+	if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+		print_error "SHA-256 mismatch for $BINARY_FILENAME - refusing to install"
+		print_error "Expected: $EXPECTED_SHA"
+		print_error "Actual:   $ACTUAL_SHA"
+		exit 1
+	fi
+
+	VERIFIED_CHECKS="SHA-256 checksum (integrity)"
+
+	if ! command -v gh >/dev/null 2>&1; then
+		ATTESTATION_NOTE="gh is not installed"
+	elif ! gh auth status >/dev/null 2>&1; then
+		# gh reaches the attestation API over an authenticated request, and an
+		# unauthenticated gh reports that the same way whether or not the binary
+		# is genuine. So this is "the check could not run" -- the same state as gh
+		# being absent, and reported every time -- never a pass. Checked up front
+		# rather than by reading exit codes back out of `verify`, so that any
+		# non-zero exit below is unambiguously a failed verification.
+		ATTESTATION_NOTE="gh is installed but not authenticated (run: gh auth login)"
+	elif ! gh attestation verify "$TMP_BINARY" --repo "$REPO" >/dev/null 2>&1; then
+		print_error "Build provenance verification failed for $BINARY_FILENAME - refusing to install"
+		print_error "This binary is not what $REPO's release workflow produced."
+		print_error "To see the details, download it by hand and run:"
+		print_error "  gh attestation verify <binary> --repo $REPO"
+		exit 1
+	else
+		VERIFIED_CHECKS="$VERIFIED_CHECKS + GitHub build provenance (authenticity)"
+	fi
+
+	# Always names the checks that actually ran. A script that says "verified"
+	# without saying what it verified is an overclaim, not a summary.
+	print_success "Verified: $VERIFIED_CHECKS"
+
+	if [ -n "$ATTESTATION_NOTE" ]; then
+		print_info "Not verified: build provenance - $ATTESTATION_NOTE"
+		print_info "This install has integrity, not authenticity. See ADR-0036 in the devgeta repo."
+	fi
 fi
 
 chmod +x "$TMP_BINARY"
