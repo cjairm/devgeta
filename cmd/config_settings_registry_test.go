@@ -500,6 +500,88 @@ func TestSettingsAttachAfterCreate_Unset(t *testing.T) {
 	assert.True(t, gc.ShouldAttachAfterCreate())
 }
 
+// --- integrations.output_budget ---
+
+func TestSettingsOutputBudget_Default(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	assert.Equal(t, "false", s.Default())
+}
+
+func TestSettingsOutputBudget_GetUnset(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	gc := &config.GlobalConfig{}
+
+	value, isSet := s.Get(gc)
+
+	assert.False(t, isSet)
+	assert.Equal(t, "", value)
+}
+
+func TestSettingsOutputBudget_SetTrue(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"true"})
+
+	require.NoError(t, err)
+	require.NotNil(t, gc.Integrations.OutputBudget)
+	assert.True(t, *gc.Integrations.OutputBudget)
+	assert.True(t, gc.OutputBudgetEnabled())
+
+	value, isSet := s.Get(gc)
+	assert.True(t, isSet)
+	assert.Equal(t, "true", value)
+}
+
+func TestSettingsOutputBudget_SetFalse(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"false"})
+
+	require.NoError(t, err)
+	require.NotNil(t, gc.Integrations.OutputBudget)
+	assert.False(t, *gc.Integrations.OutputBudget)
+	assert.False(t, gc.OutputBudgetEnabled())
+}
+
+func TestSettingsOutputBudget_SetInvalid(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"maybe"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be a boolean")
+	assert.Nil(t, gc.Integrations.OutputBudget)
+}
+
+func TestSettingsOutputBudget_SetTooManyValues(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	gc := &config.GlobalConfig{}
+
+	err := s.Set(gc, []string{"true", "false"})
+
+	require.Error(t, err)
+	assert.Nil(t, gc.Integrations.OutputBudget)
+}
+
+func TestSettingsOutputBudget_Unset(t *testing.T) {
+	s := findSettingForTest(t, "integrations.output_budget")
+	trueVal := true
+	gc := &config.GlobalConfig{
+		Integrations: config.IntegrationsConfig{OutputBudget: &trueVal},
+	}
+
+	s.Unset(gc)
+
+	assert.Nil(t, gc.Integrations.OutputBudget)
+	_, isSet := s.Get(gc)
+	assert.False(t, isSet)
+	// Unset restores the documented default: off.
+	assert.False(t, gc.OutputBudgetEnabled())
+}
+
 // --- worktree.notify_sound ---
 
 func TestSettingsNotifySound_Default(t *testing.T) {

@@ -575,6 +575,41 @@ func TestShouldAttachAfterCreate(t *testing.T) {
 	}
 }
 
+// TestOutputBudgetEnabled covers the resolver both the output-budget hook's
+// enablement gate and the agent.output_budget settings entry consult
+// (docs/plans/cycles/2026-08-25-token-and-context-efficiency.md, Step 3b).
+// Unlike ShouldAttachAfterCreate, the default is false (drafted off in the
+// cycle doc's §8 open question): absent and explicit-false must agree.
+func TestOutputBudgetEnabled(t *testing.T) {
+	enabledTrue := true
+	enabledFalse := false
+
+	tests := []struct {
+		name string
+		gc   *GlobalConfig
+		want bool
+	}{
+		{name: "nil config is disabled", gc: nil, want: false},
+		{name: "unset key is disabled", gc: &GlobalConfig{}, want: false},
+		{
+			name: "explicit true is enabled",
+			gc:   &GlobalConfig{Integrations: IntegrationsConfig{OutputBudget: &enabledTrue}},
+			want: true,
+		},
+		{
+			name: "explicit false is disabled",
+			gc:   &GlobalConfig{Integrations: IntegrationsConfig{OutputBudget: &enabledFalse}},
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.gc.OutputBudgetEnabled())
+		})
+	}
+}
+
 // TestWorktreeConfig_AttachAfterCreateFalseRoundTrips proves an explicit false
 // survives Save/Load. This is the case `omitempty` could plausibly have eaten:
 // on a *bool it omits only a nil pointer, so a pointer to false still writes

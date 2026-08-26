@@ -257,6 +257,36 @@ var Settings = []Setting{
 		Unset: func(gc *config.GlobalConfig) { gc.Worktree.AttachAfterCreate = nil },
 	},
 	{
+		Key:         "integrations.output_budget",
+		Description: "Whether the output-budget hook caps verbose Bash tool output at write time (docs/guides/output-budget-runner.md)",
+		Kind:        "bool",
+		Default: func() string {
+			return strconv.FormatBool((*config.GlobalConfig)(nil).OutputBudgetEnabled())
+		},
+		Get: func(gc *config.GlobalConfig) (string, bool) {
+			if gc.Integrations.OutputBudget == nil {
+				return "", false
+			}
+			return strconv.FormatBool(*gc.Integrations.OutputBudget), true
+		},
+		Set: func(gc *config.GlobalConfig, raw []string) error {
+			value, err := requireExactlyOne("integrations.output_budget", raw)
+			if err != nil {
+				return err
+			}
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return fmt.Errorf(
+					"integrations.output_budget must be a boolean (true/false), got %q: %w",
+					value, err,
+				)
+			}
+			gc.Integrations.OutputBudget = &parsed
+			return nil
+		},
+		Unset: func(gc *config.GlobalConfig) { gc.Integrations.OutputBudget = nil },
+	},
+	{
 		Key:         "worktree.notify_sound",
 		Description: "Whether an agent pane finishing/blocking/erroring plays a sound while its window is unattended (ADR-0009)",
 		Kind:        "bool",

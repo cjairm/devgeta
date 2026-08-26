@@ -63,6 +63,13 @@ type ShellFeatures struct {
 // hook entry across every `dg configure claude --force`.
 type IntegrationsConfig struct {
 	RtkClaudeHook bool `yaml:"rtk_claude_hook,omitempty"`
+	// OutputBudget is the tri-state opt-in for the output-budget hook
+	// (docs/plans/cycles/2026-08-25-token-and-context-efficiency.md, Step
+	// 3b): nil means unset (falls back to the default, currently off), so a
+	// user can `dg config unset integrations.output_budget` back to it - a
+	// plain bool cannot tell "never configured" apart from "explicitly
+	// false".
+	OutputBudget *bool `yaml:"output_budget,omitempty"`
 }
 
 // FailedInstallation tracks packages that failed to install
@@ -220,6 +227,19 @@ func (gc *GlobalConfig) ShouldAttachAfterCreate() bool {
 		return true
 	}
 	return *gc.Worktree.AttachAfterCreate
+}
+
+// OutputBudgetEnabled reports whether the output-budget hook is turned on.
+// Unlike ShouldAttachAfterCreate, absent resolves to false: the hook is
+// opt-in (cycle doc §8, decision #9), so a config nothing has touched must
+// answer the same as one explicitly set to false. The nil-receiver case
+// mirrors ShouldAttachAfterCreate's for the same reason - callers that may
+// hold a nil *GlobalConfig must not have to guard against it themselves.
+func (gc *GlobalConfig) OutputBudgetEnabled() bool {
+	if gc == nil || gc.Integrations.OutputBudget == nil {
+		return false
+	}
+	return *gc.Integrations.OutputBudget
 }
 
 // UpsertRecentRepo records path as the most-recently-used repo: if path is
