@@ -1471,6 +1471,79 @@ under instead of `/tmp` — see
 [docs/apps/claude.md](apps/claude.md#permissions-model) for why `/tmp` would
 otherwise prompt on every run.
 
+**Handoff subcommand** (a durable, per-branch session checkpoint — written
+explicitly, never automatically, so a session can be ended instead of grown;
+see [ADR-0032](decisions/ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md)):
+
+| Subcommand | Args / Flags                                                                         | Description                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `handoff`  | `--write --note <text>` \| `--note-file <path>`, `--read`, `--clear`, `--branch <b>` | `--write` replaces the branch's note (never appends), stamping the current time and `HEAD`. `--read` prints it, or a clean "no note for `<b>`" sentinel (exit 0, not an error) when there is none — a fresh branch is the normal case — and says so when `HEAD` has moved since the note was written. `--clear` deletes it; clearing an absent note is also success. `--branch` targets another branch, omitted for the current one. |
+
+Nothing here calls a model: `--write` stores whatever text it is given, and
+summarizing a session before calling it is a skill's job, not this command's
+(ADR-0032 §4's own rejection of automatic summarization). The rendered note is
+capped at 8 KiB (front matter included); a write that would exceed it is
+**refused**, not truncated, and the previous note is left exactly as it was
+([`internal/tooling/handoff`](../internal/tooling/handoff)). The note lives
+under the repo's common git directory (`<git common dir>/devgeta/handoff/`,
+shared via [`internal/tooling/branchstore`](../internal/tooling/branchstore)
+with the review journal's own storage), so it is never committed, never
+appears in a diff, and is visible identically from the main checkout and any
+linked worktree of the same repo.
+
+**Context-report subcommand** (measures what actually loads into a session
+before the first prompt — see
+[docs/guides/token-efficiency.md](guides/token-efficiency.md)):
+
+| Subcommand       | Args / Flags | Description                                                                                                                                                                                                                                                            |
+| ---------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context-report` | —            | Prints, per agent (Claude Code and OpenCode reported separately — they load different trees, so one combined number would describe neither), every layer of base context found for the current repo, its byte count, and an explicitly-labeled estimated-token figure. |
+
+Read-only; makes no network calls. For Claude Code: `CLAUDE.md` files
+concatenated root-to-leaf with `@path` imports followed transitively (capped
+at 4 hops, cycle-guarded), the auto-memory index (capped at 200 lines/25KB,
+matching Claude Code's own load cap), `.claude/rules/*.md` excluding
+path-scoped rules, every settings layer, skills and commands counted by their
+YAML frontmatter only (the body loads on invocation, not at session start),
+and agents/plugins/MCP/hooks reported with each row's own confidence and
+counting rule stated explicitly — some (plugins, and whether an agent's body
+is lazy-loaded like a skill's) are reported as informational estimates, not
+verified costs. For OpenCode: `AGENTS.md` (flagging an open upstream ambiguity
+about whether the global file loads at all once a project one exists),
+`opencode.json`, and the plugin directory (informational only). The token
+figure is a character-based approximation (bytes ÷ 4), never a real tokenizer,
+and the output says so.
+
+**Output-budget hook** (caps verbose Bash tool output at write time instead of
+loading it into context and cutting it there — see
+[docs/guides/output-budget-runner.md](guides/output-budget-runner.md) for the
+full contract and [ADR-0031](decisions/ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md)
+for why): opt-in, off by default, toggled with
+`dg config set integrations.output_budget true` followed by
+`dg configure claude --force` and/or `dg configure opencode --force` (either
+one converges both agents — the runner and the sidecar describing it are
+agent-neutral and deployed by both configure paths). When on, a `PreToolUse`
+hook on Claude Code (`configs/claude/output-budget.sh`) and a
+`tool.execute.before` plugin on OpenCode
+(`configs/opencode/plugin/output-budget.js`) match a Bash command against a
+built-in rule table (`go test`, `npm test`, `make`, and similar general-purpose
+runners — no devgeta-specific or user-defined rules in this release) and, on a
+match, rewrite the command to run through a shared bash runner
+(`output-budget-run.sh`) that captures its output, exit status preserved,
+and — only if the captured output exceeds the budget — replays a
+head/marker/tail reduction while leaving the **complete** output on disk at a
+path the marker names, so nothing is ever truly lost, only redirected to a
+targeted `grep` instead of scrolling past in the transcript. Matching never
+parses shell (a whitespace-only token split that refuses to compare anything
+containing a quote, backslash, or `$`), so a command it cannot confidently
+tokenize just runs unmodified rather than risking a wrong match. On Claude
+Code specifically, this hook and a separately-installed `rtk` command-rewrite
+hook race if both are enabled and both would rewrite the same call — Claude
+Code's `PreToolUse` hooks run in parallel with no chaining between them, so
+there is no way to make the outcome deterministic from either hook's own
+code; see the guide's §9 for the accepted, documented trade-off. OpenCode has
+no equivalent limitation, since its plugin hooks run in sequence.
+
 **Redirect hook** (steers agents from raw git to the task equivalents above):
 a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to
 `~/.claude/task-redirect.sh` and registered on the `Bash` tool in

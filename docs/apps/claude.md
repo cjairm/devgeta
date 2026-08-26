@@ -22,6 +22,7 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 | `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                 |
 | `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                 |
 | `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                 |
+| `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below    |
 | `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly       |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                              |
 | `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                         |
@@ -422,6 +423,45 @@ nothing in `lib/` to share. The OpenCode side deliberately does **not**
 mirror the sharing pattern with a standalone helper file under `plugin/`: see
 ADR-0006 for why (OpenCode's plugin loader invokes every export of every file
 in that directory as if it were a plugin).
+
+## Output-budget hook (PreToolUse hook)
+
+Opt-in, off by default. When `integrations.output_budget` is set (via
+`dg config set integrations.output_budget true` then
+`dg configure claude --force`), `settings.json` registers
+`~/.claude/output-budget.sh` under a third `Bash` `PreToolUse` matcher. It
+matches a command against a built-in table of general-purpose test/build
+runners (`go test`, `npm test`, `make`, and similar — see
+[the runner contract's default rule set](../guides/output-budget-runner.md#84-the-default-rule-set))
+and, on a match, rewrites the command to run through a shared runner script
+(`output-budget-run.sh`, deployed to `~/.config/devgeta/`, not `~/.claude/` —
+it is agent-neutral and OpenCode's plugin calls the same one) that caps the
+replayed output while leaving the complete output on disk, exit status
+unchanged. See [docs/guides/output-budget-runner.md](../guides/output-budget-runner.md)
+for the full contract and [docs/guides/token-efficiency.md](../guides/token-efficiency.md)
+for how this ranks against devgeta's other token-efficiency levers.
+
+**Known race with rtk, by design:** `PreToolUse` hooks on the same matcher run
+in parallel on Claude Code, with no chaining between them — confirmed against
+Claude Code's own hook execution model, not assumed. If rtk's command-
+rewriting hook is also enabled and both hooks would rewrite the same call,
+whichever process finishes last wins; there is no ordering either hook's own
+code can enforce. The accepted failure mode is narrow: the command still runs
+correctly and in full, and the only thing that can be lost is this hook's own
+cap for that one call (rtk's compaction is unaffected either way). See the
+runner contract's §9 for the full reasoning; this is not the deny/ask-rule
+asymmetry CLAUDE.md §12 forbids — it changes nothing about what either agent
+is permitted to do.
+
+The OpenCode plugin equivalent (`~/.config/opencode/plugin/output-budget.js`)
+mirrors the same matching/rewrite decision, reading a generated sidecar
+(`~/.config/devgeta/agent-runtime.json`) at runtime for its own gate rather
+than a render-time template conditional — `opencode.json` is validated
+against OpenCode's own schema, so an unrecognized devgeta key there risks
+rejection by a tool devgeta does not control. Unlike Claude Code, OpenCode's
+plugin hooks run in **sequence** and mutate a shared object, so a plugin
+registered after rtk's genuinely sees rtk's already-rewritten command — no
+equivalent race exists there.
 
 ## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
 

@@ -159,6 +159,8 @@ Users should be able to choose between alternatives:
 - **Super powers** — How to extend [super powers](https://github.com/obra/superpowers) for Opencode?
 - **Auto Claude integration** — Reuse or build [Auto Claude](https://github.com/AndyMik90/Auto-Claude)?
 - **`/review-pr` read-only enforcement** — Consider making `/review-pr` genuinely read-only via a dedicated restricted agent (currently it can edit despite reviewing) — see [docs/plans/cycles/2026-08-05-shared-command-permissions.md](docs/plans/cycles/2026-08-05-shared-command-permissions.md)
+- **User-defined output-budget rules** — the output-budget hook ([docs/guides/output-budget-runner.md](docs/guides/output-budget-runner.md)) ships built-in rules only in v1; a user-supplied rule list needs its own design for precedence against the built-ins before it's worth building.
+- **Devgeta's own CLAUDE.md size, and the worktree double-load it picked up** — `dg task context-report` (shipped [2026-08-25 cycle](docs/plans/cycles/2026-08-25-token-and-context-efficiency.md)) measured this repo's CLAUDE.md at ~47KB, and — because devgeta's own worktrees nest inside the main checkout under `.claude/worktrees/<name>/` — a session opened in any devgeta worktree loads it **twice** (worktree + main checkout, both genuine ancestor directories under Claude Code's own CLAUDE.md discovery walk). Shrinking the file is its own cycle; the worktree nesting is a separate layout question.
 
 ### References & Templates
 

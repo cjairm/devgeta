@@ -1,12 +1,15 @@
 # Output-budget hook and runner contract
 
-> **Status: not implemented.** This is the binding contract for the
-> output-budget feature planned in
-> [docs/plans/cycles/2026-08-25-token-and-context-efficiency.md](../plans/cycles/2026-08-25-token-and-context-efficiency.md),
-> which is approved but not yet started. Nothing here ships yet. It lives outside the cycle doc
-> because the contract outlives the cycle: once built, this is the reference for
-> `configs/claude/output-budget.sh`, `configs/opencode/plugin/output-budget.js`,
-> and `configs/claude/output-budget-run.sh`, and the cycle becomes history.
+> **Status: shipped.** Built in
+> [docs/plans/cycles/2026-08-25-token-and-context-efficiency.md](../plans/cycles/2026-08-25-token-and-context-efficiency.md)
+> (Steps 4-6). This is the reference for `configs/claude/output-budget.sh`,
+> `configs/opencode/plugin/output-budget.js`, and
+> `configs/devgeta/output-budget-run.sh` — the runner's source moved out of
+> `configs/claude/` during implementation (§2.2, §5) since it is agent-neutral
+> and does not deploy to `~/.claude/` the way everything else under
+> `configs/claude/` does. Off by default; see
+> [docs/guides/token-efficiency.md](token-efficiency.md) for how to turn it on
+> and where it ranks against devgeta's other token-efficiency levers.
 
 Governed by [ADR-0031](../decisions/ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md):
 context is reduced when output is produced, never by rewriting a request in

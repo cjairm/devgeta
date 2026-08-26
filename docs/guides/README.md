@@ -155,10 +155,26 @@ agents:
 
 ---
 
+### [Token and context efficiency](token-efficiency.md) — What to do, in what order, with the measured reasoning
+
+The three local, deterministic mechanisms this repo ships for cutting agent
+token spend, ranked by measured impact: `dg task context-report` (measure
+first), trimming base context (the biggest lever, per-session), the
+output-budget hook (recurring, per-command, opt-in), and `dg task handoff`
+(a durable checkpoint instead of a longer session). Includes real numbers
+from validating `context-report` in this repo, and what was deliberately
+rejected (a compression proxy, automatic memory).
+
+**When to read:** Before deciding whether to turn on the output-budget hook,
+or before trimming a project's CLAUDE.md.
+
+**Referenced by:** [the token-and-context-efficiency cycle](../plans/cycles/2026-08-25-token-and-context-efficiency.md)
+
+---
+
 ### [Output-budget hook and runner](output-budget-runner.md) — The write-time output cap contract
 
-**Status: not implemented** — the contract for a feature still in an unapproved
-cycle. Read it before writing any of the three artifacts it governs:
+**Status: shipped.** Read it before writing any of the three artifacts it governs:
 
 - The argv shape and sidecar schema, and which numbers are transported vs. Go-only constants
 - Why the naive `2>&1 | head` pipeline is banned: it returns `head`'s exit status, so a red test suite reports green
@@ -170,7 +186,7 @@ cycle. Read it before writing any of the three artifacts it governs:
 
 **When to read:** Before touching `configs/claude/output-budget.sh`,
 `configs/opencode/plugin/output-budget.js`, or
-`configs/claude/output-budget-run.sh`.
+`configs/devgeta/output-budget-run.sh`.
 
 **Referenced by:** [the token-and-context-efficiency cycle](../plans/cycles/2026-08-25-token-and-context-efficiency.md), Steps 4 and 6
 
