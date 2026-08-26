@@ -16,7 +16,15 @@ import (
 // isUnder reports whether path sits inside root. Both sides are produced from
 // the same strings this package derives its paths from, so a prefix comparison
 // is exact here and does not need symlink resolution.
+//
+// Both sides are cleaned first because one of the roots callers pass is
+// os.TempDir(), which on macOS returns $TMPDIR verbatim — trailing slash and
+// all ("/var/folders/../T/"). Appending a separator to that yields "T//", which
+// no real path is ever a prefix of, so the check failed for a sandbox that was
+// correctly placed.
 func isUnder(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
 	return path == root || strings.HasPrefix(path, root+string(os.PathSeparator))
 }
 
