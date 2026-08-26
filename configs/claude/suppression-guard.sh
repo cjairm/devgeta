@@ -49,10 +49,25 @@ TOOL=$(printf '%s' "$input" | jq -r '.tool_name // empty' 2>/dev/null)
 CWD=$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null)
 DIR="${CWD:-$PWD}"
 
+# Scope by the FILE being written, not by where the session is rooted.
+# ADR-0006 gates this ban to devgeta's own code; for Edit/Write the payload
+# names the exact target, so the proxy is unnecessary and wrong in both
+# directions — a session rooted elsewhere could write a suppression INTO
+# devgeta unchecked, and a devgeta-rooted session had the ban imposed on
+# files in unrelated repos. A relative path resolves against the session cwd
+# (the common case, unchanged); an absent one falls back to the cwd, which is
+# all a malformed payload leaves to go on.
+FILE_PATH=$(printf '%s' "$input" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+case "$FILE_PATH" in
+/*) SCOPE_DIR=$(dirname "$FILE_PATH") ;;
+"") SCOPE_DIR="$DIR" ;;
+*) SCOPE_DIR=$(dirname "$DIR/$FILE_PATH") ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/devgeta-repo.sh"
 
-devgeta_is_repo "$DIR" || exit 0
+devgeta_is_repo "$SCOPE_DIR" || exit 0
 
 BYPASS_HINT="bypass: export DEVGETA_SKIP_SUPPRESSION_GUARD=1 in the shell that launches this agent (e.g. the repo's .envrc), not inside the command — this hook reads its own environment"
 

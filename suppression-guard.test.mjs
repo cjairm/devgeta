@@ -174,6 +174,61 @@ test("allows outside the devgeta repo, even for a genuine suppression", async ()
   }
 });
 
+// GO_SUPPRESSION is assembled from two halves on purpose: this file lives in
+// the devgeta repo, so a contiguous literal here would trip the very guard
+// these tests exercise the next time someone edits the file.
+const GO_SUPPRESSION = "//no" + "lint:errcheck";
+
+// The scope gate answers "does devgeta's own policy apply to this write?", and
+// the thing being written is the file — not wherever the session is rooted.
+// These two pin both directions, which the tests above cannot: they pass a
+// relative "main.go", so session and target never disagree.
+test("scopes to the target file, not the session directory", async () => {
+  const outsideDir = mkdtempSync(join(tmpdir(), "suppression-guard-outside-"));
+  const devgetaFile = join(
+    DEVGETA_DIR,
+    "internal",
+    "apps",
+    "claude",
+    "claude.go",
+  );
+
+  const result = await runHook(
+    "edit",
+    {
+      filePath: devgetaFile,
+      oldString: "func f() {}",
+      newString: `func f() { ${GO_SUPPRESSION}\n}`,
+    },
+    outsideDir,
+  );
+
+  assert.equal(
+    result.denied,
+    true,
+    "a suppression written INTO a devgeta file must be denied even when the session is rooted elsewhere",
+  );
+});
+
+test("allows a devgeta-rooted session writing to a file outside the repo", async () => {
+  const outsideFile = join(
+    mkdtempSync(join(tmpdir(), "suppression-guard-target-")),
+    "main.go",
+  );
+
+  const result = await runHook("edit", {
+    filePath: outsideFile,
+    oldString: "func f() {}",
+    newString: `func f() { ${GO_SUPPRESSION}\n}`,
+  });
+
+  assert.equal(
+    result.denied,
+    false,
+    "ADR-0006 scopes this ban to devgeta's own code, not to whatever a devgeta-rooted session touches",
+  );
+});
+
 test("bypass env var allows everything", async () => {
   const result = await runHook(
     "edit",

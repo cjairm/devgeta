@@ -1,7 +1,10 @@
 # Cycle: Secret-commit and lint-suppression guardrail hooks
 
 **Date:** 2026-07-29
-**Status:** In Progress
+**Status:** Done — the last open item, live verification through a real Claude
+Code session, was run on 2026-08-26. It found one defect in the suppression
+guards' scoping, fixed under "Live verification" below; ADR-0006 §1 carries the
+resulting amendment.
 **ADR:** [ADR-0006](../../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md)
 **Origin:** user request to close two gaps in the AI-agent guardrails identified
 while auditing what devgeta's Claude/OpenCode configs already enforce.
@@ -77,11 +80,13 @@ universal directives (Java/Kotlin, Ruby) for reasonable general coverage.
       `internal/apps/opencode`, whole repo), `make lint`, `golangci-lint run
 ./...` (39 pre-existing issues, none in touched files) all green
 - [x] `node --test` on all four `.test.mjs` files green
-- [ ] Manual verification: real `git commit` with a staged secret denies; a
+- [x] Manual verification: real `git commit` with a staged secret denies; a
       clean commit allows; a `//nolint` Edit denies inside this repo and
       allows outside it (covered by automated behavioral tests above with
       real `git`/`jq`/`node`, but not yet exercised through an actual live
-      Claude Code / OpenCode session)
+      Claude Code / OpenCode session) — **run 2026-08-26 through a live Claude
+      Code session; see "Live verification" below. Three of the four cases
+      passed; the fourth found a real defect, now fixed.**
 
 ## Code review round 1 (fixed before merge)
 
@@ -183,3 +188,51 @@ not just extending. Full suite re-verified green: `go build ./...`,
 `go test ./...`, `make lint`, `golangci-lint run ./...` (pre-existing issues
 only, none in touched files), and all four `node --test` files (32 tests
 total).
+
+## Live verification (2026-08-26) — and the defect it found
+
+The last unchecked box above was the one thing the automated suites could not
+do: exercise the hooks through a real Claude Code session, where the payloads
+come from the agent rather than from a test harness. Run on 2026-08-26 against
+the deployed copies in `~/.claude/` and `~/.config/opencode/plugin/`, each of
+which was first confirmed byte-identical to its source under `configs/`.
+
+| Case                                         | Expected | Result                            |
+| -------------------------------------------- | -------- | --------------------------------- |
+| Staged AWS-shaped key, then `git commit`     | deny     | Denied, naming `AKIA[0-9A-Z]{16}` |
+| Clean file, then `git commit`                | allow    | Committed                         |
+| `//nolint` Write to a path inside this repo  | deny     | Denied; nothing written           |
+| `//nolint` Write to a path outside this repo | allow    | **Denied — wrong**                |
+
+The commit case also confirmed round 2's finding 1 fix live and for free: the
+command was `git -C <other-repo> commit`, and the hook scanned that repo's
+index rather than the session's cwd, which had no staged secret.
+
+**The defect.** Both suppression guards resolved "is this the devgeta repo?"
+from the **session** directory (`.cwd`, `ctx.directory`) instead of from the
+file being written. Wrong in both directions, and the second is the one that
+matters:
+
+- **Over-reach** (the failing row above): a devgeta-rooted session had the ban
+  applied to a file in an unrelated location.
+- **Under-enforcement**: feeding the deployed `suppression-guard.sh` a payload
+  with `cwd` outside devgeta and `file_path` pointing at
+  `internal/apps/claude/claude.go` returned **exit 0 — allowed**. The ban
+  ADR-0006 calls structurally impossible to violate was bypassable by wherever
+  the agent happened to be started.
+
+Neither suite could have caught this: every scope test passed a **relative**
+`"main.go"`, so session and target were always the same repo and never
+disagreed. That is the specific blind spot a live run exists to find.
+
+**Fixed** (TDD, both halves RED-verified before either fix): both guards now
+derive the scope directory from the target path — absolute taken as-is,
+relative resolved against the session directory, absent still falling back to
+it — and walk up from there. `secret-guard.sh` is untouched (global scope, and
+a commit has no single target file), as is `task-redirect.sh` (a Bash command
+names no file, so the session directory is all it ever has).
+[ADR-0006](../../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md) §1
+carries the amendment. New guards, each proved by watching it fail first:
+`TestSuppressionGuardHook_ScopesToTargetFileNotSessionCwd`,
+`TestSuppressionGuardHook_AllowsDevgetaSessionWritingOutsideTheRepo`, and
+their two `suppression-guard.test.mjs` counterparts.

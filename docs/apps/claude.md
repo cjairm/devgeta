@@ -283,13 +283,23 @@ untouched suppression elsewhere in the file is unaffected. For a Write, any
 needle in the new content denies, since Write replaces the whole file and
 there is no "before" to diff against.
 
-**Scope:** DEVGETA-REPO-ONLY — gated by the same `is_devgeta_repo` go.mod walk
+**Scope:** DEVGETA-REPO-ONLY — the same `is_devgeta_repo` go.mod walk
 task-redirect.sh's worktree and release rules use. Banning suppression
 comments outright is _devgeta's own_ stance, not a universal one (plenty of
 codebases use them deliberately), so it must not fire in any other repo — see
 [ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md). Denies
 via exit 2; a missing/unparseable payload or `jq` being unavailable falls
 through to exit 0 (allow).
+
+**The repo is the edited file's, not the session's.** Unlike task-redirect.sh
+— where a Bash command names no file, so the working directory is all there is
+— Edit and Write both carry the target path, so the walk starts from that
+file's directory (a relative path is resolved against the payload's `cwd`
+first; an absent one falls back to `cwd`). Scoping by the session instead was
+wrong in both directions and was fixed after live verification found it: an
+agent started outside devgeta could write a suppression **into** devgeta
+unchecked, and an agent started inside devgeta had the ban imposed on files it
+touched in unrelated repos. ADR-0006 §1 carries the amendment.
 
 **Bypass:** export `DEVGETA_SKIP_SUPPRESSION_GUARD=1` in the shell that launches this
 agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the

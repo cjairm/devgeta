@@ -44,6 +44,36 @@ project (devgeta-repo-only, gated by the existing `is_devgeta_repo` /
   everywhere would impose devgeta's own conviction on unrelated repos, exactly
   the failure mode the existing release-rule gating was built to avoid.
 
+**Amended 2026-08-26 — "which repo" is the target file's, not the session's.**
+As first written, this section said to reuse "the existing `is_devgeta_repo` /
+`isDevgetaRepo` go.mod walk," and both suppression guards did so literally:
+they walked up from the **session** directory (`.cwd` / `ctx.directory`). That
+is the only thing `task-redirect.sh` can do — a Bash command names no file —
+but Edit and Write both carry `file_path`/`filePath`, so the exact target was
+available and was being discarded for a proxy. Live verification of
+[cycle 2026-07-29-hook-guardrails](../plans/cycles/2026-07-29-hook-guardrails.md)
+found it wrong in both directions:
+
+- **Under-enforcement, the serious one.** A session rooted anywhere outside
+  devgeta could write a suppression **into** a devgeta source file and the
+  guard never fired — the ban this ADR calls structurally impossible to
+  violate was bypassable by where the agent happened to be started.
+- **Over-reach.** A devgeta-rooted session writing to a file in an unrelated
+  repo had devgeta's stance imposed on it — precisely what §1 above forbids.
+
+So both guards now resolve the scope directory from the target file (relative
+paths against the session directory; an absent path still falls back to it)
+and walk up from there. The go.mod walk itself, its fail-toward-false posture,
+and the sharing arrangement in §3 are unchanged — only the directory handed
+to it. `secret-guard.sh` is unaffected: it is global, and a commit has no
+single target file. `task-redirect.sh` is likewise unchanged, for the reason
+above.
+
+This is why the automated suites did not catch it: every scope test passed a
+**relative** `"main.go"`, so the session and the target were always the same
+repo and could never disagree. Both suites now pin the divergent case in both
+directions.
+
 ### 2. Mechanism: PreToolUse deny, not PostToolUse advisory
 
 Both hooks deny _before_ the action happens (exit 2 / throw), rather than

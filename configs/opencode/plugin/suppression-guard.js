@@ -14,6 +14,8 @@
 // agent (e.g. in the repo's .envrc or your shell profile) BEFORE invoking this
 // plugin — this plugin reads its own environment, not one set inside the command.
 
+import { dirname, isAbsolute, join } from "node:path";
+
 import { isDevgetaRepo } from "./task-redirect.js";
 
 const BYPASS_HINT =
@@ -40,17 +42,31 @@ function countOccurrences(haystack, needle) {
 }
 
 export const SuppressionGuard = async (ctx = {}) => {
-  const projectDir = ctx.directory || ctx.worktree || process.cwd();
+  const sessionDir = ctx.directory || ctx.worktree || process.cwd();
 
-  // Memoized per plugin instance, same pattern task-redirect.js's
-  // findDenyMessage uses for its release-rule gate: computed at most once,
-  // and only if an Edit/Write on this tool call actually needs it.
-  let repoMemo;
-  const inDevgetaRepo = () => {
-    if (repoMemo === undefined) {
-      repoMemo = isDevgetaRepo(projectDir);
+  // Memoized per DIRECTORY, not per plugin instance: the scope gate now
+  // answers for the file being written (see scopeDirFor below), so the answer
+  // varies between calls and a single-slot memo would answer for whichever
+  // directory happened to be asked about first.
+  const repoMemo = new Map();
+  const inDevgetaRepo = (dir) => {
+    if (!repoMemo.has(dir)) {
+      repoMemo.set(dir, isDevgetaRepo(dir));
     }
-    return repoMemo;
+    return repoMemo.get(dir);
+  };
+
+  // Scope by the FILE being written, not by where the session is rooted —
+  // mirrors suppression-guard.sh's SCOPE_DIR, see that file for why the
+  // session directory is wrong in both directions. A relative path resolves
+  // against the session directory; an absent one falls back to it.
+  const scopeDirFor = (filePath) => {
+    if (typeof filePath !== "string" || filePath === "") {
+      return sessionDir;
+    }
+    return dirname(
+      isAbsolute(filePath) ? filePath : join(sessionDir, filePath),
+    );
   };
 
   return {
@@ -61,14 +77,17 @@ export const SuppressionGuard = async (ctx = {}) => {
       if (input.tool !== "edit" && input.tool !== "write") {
         return;
       }
-      if (!inDevgetaRepo()) {
-        return;
-      }
 
       const args = output?.args ?? {};
       const newText = input.tool === "edit" ? args.newString : args.content;
       const oldText = input.tool === "edit" ? args.oldString : "";
       if (!newText || typeof newText !== "string") {
+        return;
+      }
+
+      // Checked after the text, so a call with nothing to scan never pays for
+      // the go.mod walk.
+      if (!inDevgetaRepo(scopeDirFor(args.filePath))) {
         return;
       }
 

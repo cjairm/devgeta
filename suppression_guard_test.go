@@ -207,6 +207,49 @@ func TestSuppressionGuardHook_AllowsOutsideDevgetaRepo(t *testing.T) {
 	}
 }
 
+// goSuppression is assembled from two halves on purpose: this file lives in
+// the devgeta repo, so a contiguous literal here would trip the very guard
+// these tests exercise the next time someone edits the file.
+const goSuppression = "//no" + "lint:errcheck"
+
+// The scope gate answers "does devgeta's own policy apply to this write?", and
+// the thing being written is the file — not wherever the session happens to be
+// rooted. These two tests pin both directions of that, which the cwd-only
+// tests above cannot: they pass a relative "main.go", so cwd and target are
+// always the same repo and never disagree.
+func TestSuppressionGuardHook_ScopesToTargetFileNotSessionCwd(t *testing.T) {
+	outsideCwd := t.TempDir()
+	devgetaFile := filepath.Join(repoRoot(t), "internal", "apps", "claude", "claude.go")
+
+	code, stderr := runSuppressionGuardHook(
+		t, "Edit", devgetaFile, "func f() {}", "func f() { "+goSuppression+"\n}", "", outsideCwd,
+	)
+	if code != 2 {
+		t.Errorf(
+			"expected deny (exit 2) for a suppression written INTO a devgeta file, got exit %d, stderr=%q; "+
+				"the ban is bypassable whenever the session is rooted outside the repo",
+			code,
+			stderr,
+		)
+	}
+}
+
+func TestSuppressionGuardHook_AllowsDevgetaSessionWritingOutsideTheRepo(t *testing.T) {
+	outsideFile := filepath.Join(t.TempDir(), "main.go")
+
+	code, stderr := runSuppressionGuardHook(
+		t, "Edit", outsideFile, "func f() {}", "func f() { "+goSuppression+"\n}", "", repoRoot(t),
+	)
+	if code != 0 {
+		t.Errorf(
+			"expected allow (exit 0) for a suppression written to a file OUTSIDE devgeta, got exit %d, stderr=%q; "+
+				"ADR-0006 scopes this ban to devgeta's own code, not to whatever a devgeta-rooted session touches",
+			code,
+			stderr,
+		)
+	}
+}
+
 func TestSuppressionGuardHook_BypassEnvVarAllowsEverything(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not found on PATH")
