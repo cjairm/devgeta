@@ -1,7 +1,7 @@
 # ADR-0033 — A keyed scratch directory trades isolation for hand-off
 
 **Date:** 2026-08-26
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-25
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
-**Status:** Done (2026-08-26) — four cross-model review rounds settled, all
+**Status:** Complete (2026-08-26) — four cross-model review rounds settled, all
 findings fixed. The three gating ADRs (0033/0034/0035) are written, and all
 eight slices (A–H) are implemented, tested, and committed on this branch:
 A (`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue

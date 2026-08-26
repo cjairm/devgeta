@@ -1,7 +1,7 @@
 # ADR-0034 — An aggregate task composes its parts, never re-derives them
 
 **Date:** 2026-08-26
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

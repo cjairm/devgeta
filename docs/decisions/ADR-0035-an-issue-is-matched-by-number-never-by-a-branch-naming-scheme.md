@@ -1,7 +1,7 @@
 # ADR-0035 — An issue is matched by number, never by a branch-naming scheme
 
 **Date:** 2026-08-26
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
