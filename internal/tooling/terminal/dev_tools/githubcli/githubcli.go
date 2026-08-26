@@ -283,6 +283,85 @@ func (g *GithubCli) FetchPRDiscussion(owner, repo, prNumber string) (string, err
 	)
 }
 
+// issueViewFields is the compact field set IssueScope needs — state and
+// title, and nothing else (task-design.md principle 7: never more than the
+// caller asked for). No body, no comments: those would answer a different
+// question ("what does the issue say") than the one issue-scope answers
+// ("what already exists for it").
+var issueViewFields = []string{"number", "state", "title"}
+
+// IssueView returns an issue's number, state, and title as JSON.
+// issueNumber is required — unlike PRView, gh has no "current issue" concept
+// tied to a checked-out branch to fall back to.
+func (g *GithubCli) IssueView(issueNumber string) (string, error) {
+	if issueNumber == "" {
+		return "", fmt.Errorf("issue view requires an issue number")
+	}
+	return g.RunWithOutput(
+		"issue", "view", issueNumber, "--json", strings.Join(issueViewFields, ","),
+	)
+}
+
+// issueCrossReferencesQuery selects the pull requests that GitHub's own
+// timeline shows as cross-referencing an issue — the same signal its UI
+// uses to display "N linked pull requests" (ADR-0035: the ONLY accepted
+// source for PR<->issue association this cycle; body/title/comment text is
+// never grepped for a reference). Paginated via $endCursor + pageInfo
+// (driven by `gh api graphql --paginate`), because an issue can accumulate
+// more than 100 cross-references over its life and silently dropping the
+// rest would be worse than the round trips pagination costs.
+//
+// source is queried through the CrossReferencedEvent's PullRequest fragment
+// because CROSS_REFERENCED_EVENT's source can also be an Issue
+// (issue-to-issue references, which this query is not asking about); when
+// the union resolves to Issue, every field inside the PullRequest fragment
+// is simply absent from that node's JSON. repository.nameWithOwner and
+// isCrossRepository are what let the caller (task.IssueManager) filter to
+// same-repository references only — cross-repo events are out of scope this
+// cycle and are dropped, never reported as either a candidate or confirmed.
+const issueCrossReferencesQuery = `query($owner: String!, $name: String!, $issue: Int!, $endCursor: String) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $issue) {
+      timelineItems(first: 100, after: $endCursor, itemTypes: [CROSS_REFERENCED_EVENT]) {
+        nodes {
+          ... on CrossReferencedEvent {
+            isCrossRepository
+            source {
+              ... on PullRequest {
+                number
+                title
+                state
+                repository { nameWithOwner }
+              }
+            }
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+}`
+
+// FetchIssueCrossReferences returns the raw, paginated GraphQL JSON for an
+// issue's cross-referenced timeline events (see issueCrossReferencesQuery).
+// With --paginate, gh emits one JSON document per page; task.IssueManager
+// merges them and filters to same-repository PullRequest sources.
+func (g *GithubCli) FetchIssueCrossReferences(owner, repo, issueNumber string) (string, error) {
+	if owner == "" || repo == "" || issueNumber == "" {
+		return "", fmt.Errorf("fetch issue cross references requires owner, repo, and issue number")
+	}
+	return g.RunWithOutput(
+		"api", "graphql", "--paginate",
+		"-f", "query="+issueCrossReferencesQuery,
+		"-f", "owner="+owner,
+		"-f", "name="+repo,
+		"-F", "issue="+issueNumber,
+	)
+}
+
 // ResolveReviewThread marks one PR review thread as resolved and returns the
 // mutation's JSON response.
 func (g *GithubCli) ResolveReviewThread(threadID string) (string, error) {

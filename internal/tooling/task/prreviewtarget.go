@@ -42,30 +42,40 @@ func prLocalRefs(prNumber string) (headRef, baseRef string) {
 // a network-shaped failure for what is really a typo, so they are caught here
 // where the message can say so.
 func validatePRNumber(pr string) error {
-	if pr == "" {
-		return fmt.Errorf("a pull request number is required")
+	return validateGitHubItemNumber("pull request", pr)
+}
+
+// validateGitHubItemNumber is the shared rule behind validatePRNumber and
+// validateIssueNumber: GitHub issues and pull requests are numbered from the
+// same per-repository sequence and both need to reach gh as a positional
+// argument, so the digits-only and no-leading-zero rules are identical for
+// either — only the noun in the message differs. kind names that noun
+// ("pull request" or "issue").
+func validateGitHubItemNumber(kind, n string) error {
+	if n == "" {
+		return fmt.Errorf("a %s number is required", kind)
 	}
-	for _, r := range pr {
+	for _, r := range n {
 		if r < '0' || r > '9' {
-			return fmt.Errorf("invalid pull request number %q (expected digits only)", pr)
+			return fmt.Errorf("invalid %s number %q (expected digits only)", kind, n)
 		}
 	}
-	if len(pr) > 1 && pr[0] == '0' {
+	if len(n) > 1 && n[0] == '0' {
 		return fmt.Errorf(
-			"invalid pull request number %q (leading zeros are not part of a pull request number; pass %s)",
-			pr,
-			strings.TrimLeft(pr, "0"),
+			"invalid %s number %q (leading zeros are not part of a %s number; pass %s)",
+			kind, n, kind,
+			strings.TrimLeft(n, "0"),
 		)
 	}
-	n, err := strconv.Atoi(pr)
+	v, err := strconv.Atoi(n)
 	if err != nil {
 		return fmt.Errorf(
-			"invalid pull request number %q (too large to be a pull request number)",
-			pr,
+			"invalid %s number %q (too large to be a %s number)",
+			kind, n, kind,
 		)
 	}
-	if n < 1 {
-		return fmt.Errorf("invalid pull request number %q (pull requests are numbered from 1)", pr)
+	if v < 1 {
+		return fmt.Errorf("invalid %s number %q (%ss are numbered from 1)", kind, n, kind)
 	}
 	return nil
 }

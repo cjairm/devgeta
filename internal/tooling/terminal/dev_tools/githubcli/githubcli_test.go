@@ -480,6 +480,133 @@ func TestFetchPRDiscussion(t *testing.T) {
 	})
 }
 
+func TestIssueView(t *testing.T) {
+	t.Run("requests state and title", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult(`{"number":3,"state":"OPEN","title":"x"}`, "", nil)
+
+		out, err := app.IssueView("3")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != `{"number":3,"state":"OPEN","title":"x"}` {
+			t.Fatalf("unexpected output: %q", out)
+		}
+
+		call := mockBase.GetLastExecCommandCall()
+		if call.Command != "gh" {
+			t.Fatalf("expected gh, got %q", call.Command)
+		}
+		if !argSeq(call.Args, "issue", "view", "3") {
+			t.Fatalf("expected 'issue view 3' in args, got %v", call.Args)
+		}
+		joined := strings.Join(call.Args, " ")
+		if !strings.Contains(joined, "state") || !strings.Contains(joined, "title") {
+			t.Fatalf("expected state and title in requested fields, got %v", call.Args)
+		}
+	})
+
+	t.Run("requires an issue number", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := app.IssueView(""); err == nil {
+			t.Fatal("expected error for empty issue number")
+		}
+		if mockBase.GetExecCommandCallCount() != 0 {
+			t.Fatal("expected no gh call when validation fails")
+		}
+	})
+
+	t.Run("wraps error from gh", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("", "not found", fmt.Errorf("exit 1"))
+
+		if _, err := app.IssueView("3"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestFetchIssueCrossReferences(t *testing.T) {
+	t.Run("assembles paginated graphql query with vars", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult(`{"data":{}}`, "", nil)
+
+		out, err := app.FetchIssueCrossReferences("octocat", "hello", "3")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != `{"data":{}}` {
+			t.Fatalf("unexpected output: %q", out)
+		}
+
+		call := mockBase.GetLastExecCommandCall()
+		if call.Command != "gh" {
+			t.Fatalf("expected gh, got %q", call.Command)
+		}
+		if !argSeq(call.Args, "api", "graphql", "--paginate") {
+			t.Fatalf("expected 'api graphql --paginate' in args, got %v", call.Args)
+		}
+		joined := strings.Join(call.Args, " ")
+		if !strings.Contains(joined, "CROSS_REFERENCED_EVENT") {
+			t.Fatalf("expected CROSS_REFERENCED_EVENT in query, got %v", call.Args)
+		}
+		if !strings.Contains(joined, "timelineItems") {
+			t.Fatalf("expected timelineItems in query, got %v", call.Args)
+		}
+		if !strings.Contains(joined, "pageInfo") {
+			t.Fatalf("expected pageInfo for pagination, got %v", call.Args)
+		}
+		if !strings.Contains(joined, "nameWithOwner") {
+			t.Fatalf(
+				"expected repository.nameWithOwner (same-repo filtering) in query, got %v",
+				call.Args,
+			)
+		}
+		if !argSeq(call.Args, "-f", "owner=octocat") {
+			t.Fatalf("expected -f owner=octocat, got %v", call.Args)
+		}
+		if !argSeq(call.Args, "-f", "name=hello") {
+			t.Fatalf("expected -f name=hello, got %v", call.Args)
+		}
+		if !argSeq(call.Args, "-F", "issue=3") {
+			t.Fatalf("expected -F issue=3, got %v", call.Args)
+		}
+	})
+
+	t.Run("validates required args", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := app.FetchIssueCrossReferences("", "hello", "3"); err == nil {
+			t.Fatal("expected error for empty owner")
+		}
+		if _, err := app.FetchIssueCrossReferences("octocat", "", "3"); err == nil {
+			t.Fatal("expected error for empty repo")
+		}
+		if _, err := app.FetchIssueCrossReferences("octocat", "hello", ""); err == nil {
+			t.Fatal("expected error for empty issue number")
+		}
+		if mockBase.GetExecCommandCallCount() != 0 {
+			t.Fatal("expected no gh call when validation fails")
+		}
+	})
+
+	t.Run("wraps error from gh", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		app := &GithubCli{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResult("", "unauthorized", fmt.Errorf("exit 1"))
+
+		if _, err := app.FetchIssueCrossReferences("octocat", "hello", "3"); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestResolveReviewThread(t *testing.T) {
 	t.Run("assembles resolve mutation", func(t *testing.T) {
 		mockBase := commands.NewMockBaseCommand()

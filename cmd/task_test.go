@@ -1708,6 +1708,73 @@ func setupPRMock(t *testing.T, mock prRunner) func() {
 	return func() { newPRTasks = orig }
 }
 
+// mockIssueRunner records calls to the issue task methods.
+type mockIssueRunner struct {
+	calls   []string
+	lastArg map[string]string
+	ret     string
+	err     error
+}
+
+func newMockIssueRunner() *mockIssueRunner {
+	return &mockIssueRunner{lastArg: map[string]string{}, ret: "ok"}
+}
+
+func (m *mockIssueRunner) record(name string, kv ...string) (string, error) {
+	m.calls = append(m.calls, name)
+	for i := 0; i+1 < len(kv); i += 2 {
+		m.lastArg[kv[i]] = kv[i+1]
+	}
+	return m.ret, m.err
+}
+
+func (m *mockIssueRunner) IssueScope(n string) (string, error) {
+	return m.record("IssueScope", "n", n)
+}
+
+func setupIssueMock(t *testing.T, mock issueRunner) func() {
+	t.Helper()
+	orig := newIssueTasks
+	newIssueTasks = func() issueRunner { return mock }
+	return func() { newIssueTasks = orig }
+}
+
+func TestTask_IssueScope(t *testing.T) {
+	t.Run("passes the issue number", func(t *testing.T) {
+		mock := newMockIssueRunner()
+		defer setupIssueMock(t, mock)()
+
+		if err := taskIssueScopeCmd.RunE(taskIssueScopeCmd, []string{"3"}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.calls) != 1 || mock.calls[0] != "IssueScope" {
+			t.Fatalf("expected IssueScope, got %v", mock.calls)
+		}
+		if mock.lastArg["n"] != "3" {
+			t.Errorf("expected issue number %q, got %q", "3", mock.lastArg["n"])
+		}
+	})
+
+	t.Run("requires exactly one argument", func(t *testing.T) {
+		if err := taskIssueScopeCmd.Args(taskIssueScopeCmd, []string{}); err == nil {
+			t.Error("expected an error with no arguments")
+		}
+		if err := taskIssueScopeCmd.Args(taskIssueScopeCmd, []string{"1", "2"}); err == nil {
+			t.Error("expected an error with two arguments")
+		}
+	})
+
+	t.Run("propagates error", func(t *testing.T) {
+		mock := newMockIssueRunner()
+		mock.err = fmt.Errorf("gh failed")
+		defer setupIssueMock(t, mock)()
+
+		if err := taskIssueScopeCmd.RunE(taskIssueScopeCmd, []string{"3"}); err == nil {
+			t.Fatal("expected error")
+		}
+	})
+}
+
 func TestPRTask_Dispatch(t *testing.T) {
 	t.Run("review-threads passes flags", func(t *testing.T) {
 		mock := newMockPRRunner()

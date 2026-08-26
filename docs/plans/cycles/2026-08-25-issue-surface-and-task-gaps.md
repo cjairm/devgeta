@@ -4,8 +4,9 @@
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
 all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
-(`dg task scratch --key`) and B (`refresh-branch --rebase`) are implemented and
-tested on this branch; Slices C–H remain.
+(`dg task scratch --key`), B (`refresh-branch --rebase`), and C (the issue
+surface + `issue-scope`) are implemented and tested on this branch; Slices D–H
+remain.
 
 ---
 
@@ -191,7 +192,7 @@ in one repository.
 - [x] **Slice B — `dg task refresh-branch --rebase`.** Rebase the current branch
       onto the freshly-pulled target instead of merging the target into it. The
       merge behavior stays the default in this cycle (see Out of Scope).
-- [ ] **Slice C — the issue surface, and `dg task issue-scope <n>`.** Add issue
+- [x] **Slice C — the issue surface, and `dg task issue-scope <n>`.** Add issue
       methods to the `GithubCli` wrapper and a new
       `internal/tooling/task/issue.go` holding an `IssueManager` that mirrors
       `PRManager`. First and only consumer this cycle: `issue-scope <n>`, which
@@ -566,6 +567,30 @@ answering "what already exists for issue N" in this repository, by the raw route
 Record it in this doc. If the eventual delta plus round-trips does not justify the
 slice, stop here.
 
+**Measured 2026-08-26, against `cjairm/devgeta` issue #3 (the repository's only
+issue), the raw route the domain-context section names — list-PRs-and-grep:**
+
+| Call                                                          | Bytes ingested |
+| ------------------------------------------------------------- | -------------- |
+| `gh issue view 3 --json number,title,state,body`              | 4,590          |
+| `gh pr list --state all --json number,title,body,headRefName` | 8,527          |
+| `git branch -a` (local, then grepped by hand for "3")         | 92             |
+| **Total, three round-trips (two network, one local)**         | **~13,209**    |
+
+That total is the cost of confirming the answer is "nothing references issue
+#3" — every PR's full body has to be fetched and grepped before a caller can
+conclude none of them mention it, and the grep itself is boundary-wrong (would
+false-positive on `#13`, `#31`, `#300`, none of which happen to exist here).
+The GraphQL cross-reference check that Slice C uses instead
+(`timelineItems(itemTypes: [CROSS_REFERENCED_EVENT])`) returns `{"nodes":
+[]}` in one call, confirming both of this repo's PRs (#1 `001-binary-dist-audit`,
+#2 `002-debian-package-fixes`) are unrelated to issue #3 — no PR body fetch, no
+grep, no boundary risk. `issue-scope 3`'s eventual output is one stable
+sentinel line. The round-trip count drops from three to one, and the byte cost
+from ~13KB to whatever the sentinel line costs (measured after C6, below) —
+comfortably justifying the slice on this repository's own numbers, not the
+external report's.
+
 **Step C3: Add issue methods to the `GithubCli` wrapper.** `IssueView` for state +
 title, and the timeline cross-reference query (GraphQL
 `CROSS_REFERENCED_EVENT`, paginated, same-repo filtered). Minimum needed for
@@ -587,6 +612,17 @@ nothing references the issue. Verify: golden-fixture formatter tests pass;
 
 **Step C6: Register `issue-scope`, measure the after-figure, record both.**
 Verify: `go build ./...`; `go test ./internal/tooling/task/ ./cmd/`
+
+**Measured 2026-08-26, `dg task issue-scope 3` against the same repository and
+issue as the Step C2 baseline: 186 bytes, one call to `gh issue view`, one
+paginated GraphQL cross-reference call, and two local git reads (`git branch`,
+`git worktree list`) — no PR bodies fetched, no grep. Verified live: a real
+local branch (`issue-3-test-branch`) is correctly reported as a `candidate`,
+and an issue number with no cross-referencing PR still resolves in one round
+of calls to the stable per-section "none" sentinel, not an error. Against the
+~13,209-byte, three-round-trip baseline, this is a ~98% byte reduction and one
+fewer round-trip class (no PR-body fetch at all) — comfortably justifying the
+slice.**
 
 #### Slice D — `pr-state` (ADR-0034 first)
 
