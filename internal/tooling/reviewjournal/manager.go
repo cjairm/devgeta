@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/tooling/branchstore"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/logger"
 )
@@ -47,10 +48,20 @@ type Manager struct {
 	// must resolve against the same source, and a per-call argument is a
 	// per-call opportunity to pass a different one.
 	Rev string
+	// store is the storage half (directory resolution, atomic write, lock)
+	// shared with internal/tooling/handoff via internal/tooling/branchstore.
+	// LockFile and FilePermission are pinned to this package's pre-extraction
+	// names so no on-disk behavior changes; LockTimeout is re-synced from
+	// journalLockTimeout on every lock (see withJournalLock) because tests
+	// mutate that package var after a Manager already exists.
+	store *branchstore.Store
 }
 
 func New(g *git.Git) *Manager {
-	return &Manager{Git: g, NowFn: time.Now}
+	store := branchstore.New(g, "review")
+	store.LockFile = journalLockFile
+	store.FilePermission = journalPermission
+	return &Manager{Git: g, NowFn: time.Now, store: store}
 }
 
 // NewAtRev builds a Manager that stamps and judges freshness at rev instead of
@@ -68,47 +79,26 @@ func NewAtRev(g *git.Git, rev string) *Manager {
 }
 
 // reviewDir resolves the journal directory for the repo containing repoDir,
-// without creating it.
+// without creating it. Thin wrapper over branchstore.Store.Dir.
 func (m *Manager) reviewDir(repoDir string) (string, error) {
-	common, err := m.Git.CommonDirIn(repoDir)
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(common, "devgeta", "review"), nil
+	return m.store.Dir(repoDir)
 }
 
-// PathFor returns the journal file path for branch, verifying the encoded
-// name resolves inside the review directory. EncodeBranch cannot emit a path
-// separator, so this containment check is defense in depth, not the primary
-// guard.
+// PathFor returns the journal file path for branch. Thin wrapper over
+// branchstore.Store.PathFor.
 func (m *Manager) PathFor(repoDir, branch string) (string, error) {
-	if strings.TrimSpace(branch) == "" {
-		return "", fmt.Errorf("a branch name is required")
-	}
-	dir, err := m.reviewDir(repoDir)
-	if err != nil {
-		return "", err
-	}
-	path := filepath.Join(dir, EncodeBranch(branch)+".md")
-	if filepath.Dir(path) != filepath.Clean(dir) {
-		return "", fmt.Errorf("branch %q does not resolve inside the review directory", branch)
-	}
-	return path, nil
+	return m.store.PathFor(repoDir, branch)
 }
 
 // Load reads branch's journal. A missing file is an empty journal, not an
 // error — every branch starts with no memory.
 func (m *Manager) Load(repoDir, branch string) (*Journal, error) {
-	path, err := m.PathFor(repoDir, branch)
+	data, err := m.store.Read(repoDir, branch)
 	if err != nil {
 		return nil, err
 	}
-	data, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
+	if data == nil {
 		return &Journal{Branch: branch}, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("failed to read the review journal: %w", err)
 	}
 	return Parse(branch, data), nil
 }
@@ -279,35 +269,24 @@ var journalLockTimeout = 10 * time.Second
 // takes minutes of model time, and holding it that long would stall every other
 // writer past any sane timeout for no added safety.
 func (m *Manager) withJournalLock(repoDir string, fn func() error) error {
-	dir, err := m.reviewDir(repoDir)
-	if err != nil {
-		return err
-	}
-	if err := files.WithLock(
-		filepath.Join(dir, journalLockFile),
-		journalLockTimeout,
-		fn,
-	); err != nil {
+	// Re-synced on every call, not just at construction: journalLockTimeout is
+	// a package var tests mutate on an already-constructed Manager (see
+	// TestOpenReportsAWedgedLockInsteadOfHanging), and branchstore.Store reads
+	// its LockTimeout field fresh on every WithLock call.
+	m.store.LockTimeout = journalLockTimeout
+	if err := m.store.WithLock(repoDir, fn); err != nil {
 		return fmt.Errorf("review journal: %w", err)
 	}
 	return nil
 }
 
-// save writes the journal atomically: temp file in the same directory, then
-// rename — the same write-to-temp-then-rename rule CLAUDE.md §7 mandates for
-// the global config. A crash mid-write leaves the previous journal intact.
-//
-// It delegates to files.WriteFileAtomic, which is that rule's one
-// implementation and is what WriteSnapshot above already uses; a second
-// hand-rolled MkdirAll + CreateTemp + rename here would be the same logic
-// twice, differing only in which of the two could grow a bug.
+// save writes the journal atomically via branchstore.Store.Write — temp file
+// in the same directory, then rename — the same write-to-temp-then-rename
+// rule CLAUDE.md §7 mandates for the global config. A crash mid-write leaves
+// the previous journal intact.
 func (m *Manager) save(repoDir string, j *Journal) error {
-	path, err := m.PathFor(repoDir, j.Branch)
-	if err != nil {
-		return err
-	}
 	j.LastReview = m.NowFn().Format("2006-01-02")
-	if err := files.WriteFileAtomic(path, []byte(j.Render()), journalPermission); err != nil {
+	if err := m.store.Write(repoDir, j.Branch, []byte(j.Render())); err != nil {
 		return fmt.Errorf("failed to save the review journal: %w", err)
 	}
 	return nil
