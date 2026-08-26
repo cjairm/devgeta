@@ -100,6 +100,75 @@ being called with an arbitrary `ctx` and satisfy `plugin-loader-safety.test.mjs`
 Two call sites per hook using one routine cannot drift the way two hand-written
 escapes would.
 
+### 2.3 Delivering the rewrite to each host — the two agents differ here
+
+The shell string §2 builds is the same on both sides; how each hook hands it
+back to its host is not, and getting this wrong either drops fields silently
+or loses the rewrite outright. Verified against upstream docs
+(code.claude.com/docs/en/hooks, opencode.ai/docs/plugins/) plus independent
+sources, since the official Claude docs have real gaps here — cross-checked
+rather than taken from a single source.
+
+**Claude.** The hook's stdout is JSON:
+
+```json
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": { "command": "...", "description": "..." }
+  }
+}
+```
+
+`updatedInput` **replaces the whole `tool_input` object**, not just the
+changed field — every other key the original call carried (`description`,
+`timeout`, anything else Claude Code sends for `Bash`) must be echoed through
+unchanged, or it is silently dropped. Passing through the input verbatim
+except for `command` is the only safe implementation; it must never be
+constructed as `{"command": rewritten}` alone.
+
+**`PreToolUse` hooks on the same matcher run in parallel, not sequentially —
+"All matching hooks run in parallel" per the docs — and there is no chaining
+between them.** Each hook decides against the _original_ `tool_input`; none
+of them see another hook's rewrite. When more than one hook on the same
+matcher returns `updatedInput` for the same call, the last process to finish
+wins, non-deterministically — registration order in `settings.json` has no
+bearing on this. See §9 for the concrete consequence with rtk. Whether a
+rewritten command is re-checked by the permission system before running is
+undocumented in every source checked; treat it as unverified rather than
+assume either answer.
+
+**OpenCode.** The hook mutates the call in place — there is no return value to
+construct:
+
+```js
+export const OutputBudgetPlugin = async ({
+  project,
+  client,
+  $,
+  directory,
+  worktree,
+}) => ({
+  "tool.execute.before": async (input, output) => {
+    if (input.tool !== "bash") return;
+    output.args.command = rewritten; // other fields on output.args are untouched by this assignment
+  },
+});
+```
+
+Plugin hooks on `tool.execute.before` **run in sequence**, and later plugins
+see earlier plugins' mutations to the same `output.args` object — confirmed
+independently of the single-field caveat above, and the opposite of Claude's
+behavior. This is what makes "register the output-budget plugin after rtk's"
+a real, working ordering rule on OpenCode, even though the identically-worded
+idea does nothing on Claude (§9).
+
+Neither difference is the asymmetry CLAUDE.md §12 forbids: it compares
+deny/ask permission strings and formatter languages, and this changes neither
+— it is a capability and timing difference in how each host's hook API
+works, not a devgeta policy that could go out of sync between the two agents.
+
 ### 2.2 Resolving the runner path
 
 **`<runner>` is never hardcoded in either hook.** Both resolve it from the
@@ -651,6 +720,18 @@ point of the command), anything interactive, and anything with a TTY requirement
 
 ## 9. Known limitations — document, do not paper over
 
+- **On Claude Code, this hook and rtk's race when both are enabled.** §2.3
+  established that `PreToolUse` hooks on one matcher run in parallel with no
+  chaining, and when two of them return `updatedInput` for the same call the
+  last process to finish wins non-deterministically. If rtk's hook happens to
+  finish last, this hook's cap is silently skipped for that call — the
+  command runs through rtk's rewrite, uncapped. There is no code fix for this
+  within Claude Code's current hook model; the accepted mitigation is that
+  this hook never depends on rtk's behavior at all (it matches and rewrites
+  purely against the original command, exactly as if rtk did not exist), so
+  the failure mode on a race loss is "uncapped for this one call," not a
+  wrong or corrupted rewrite. OpenCode has no equivalent limitation — its
+  plugin hooks chain in registration order (§2.3).
 - stdout and stderr are merged; a caller that needs them separated loses that.
 - Output no longer streams — it appears when the command finishes. Fine for test
   and build runs, wrong for anything long-running and watched.

@@ -195,7 +195,7 @@ cycle and referenced here.
 | Create | `output-budget.test.mjs` (root)                                                 | Node behavioral tests for the mirror                                                                            |
 | Modify | `docs/apps/claude.md`, `docs/spec.md`, `ROADMAP.md`, `docs/decisions/README.md` | Docs                                                                                                            |
 | Create | `docs/guides/token-efficiency.md`                                               | User-facing guide                                                                                               |
-| Modify | `docs/guides/output-budget-runner.md`                                           | Flip the status header once Scope A ships; the contract itself is already written                                |
+| Modify | `docs/guides/output-budget-runner.md`                                           | Flip the status header once Scope A ships; the contract itself is already written                               |
 
 ### Step-by-Step
 
@@ -205,20 +205,78 @@ Same discipline as the hook-guardrails cycle, which verified payload field
 names before writing a line of hook. Nothing below is safe to assume from
 memory; each answer changes an implementation detail downstream.
 
-- [ ] `PreToolUse` `updatedInput.command` semantics for Bash under **both**
+- [x] `PreToolUse` `updatedInput.command` semantics for Bash under **both**
       agents: is the replacement re-permission-checked, and do multiple hooks on
       the same matcher chain their rewrites or does the last one win? Decides
       the rtk-composition rule in Step 4.
-- [ ] Whether OpenCode exposes a `PreToolUse` equivalent with command rewriting
+
+      **Confirmed, and it overturns this step's own assumption.** Claude
+                              Code's `PreToolUse` hooks on the same matcher run in **parallel**, not
+                              sequentially — official docs: "All matching hooks run in parallel."
+                              Independently corroborated detail beyond the docs' own gap: when more
+                              than one hook returns `updatedInput`, **the last one to finish wins,
+                              non-deterministically** — registration order in `settings.json` has no
+                              effect on which rewrite survives. Docs explicitly warn against two
+                              hooks on one matcher both returning `updatedInput`. Also load-bearing
+                              for the runner's argv contract: `updatedInput` **replaces the whole
+                              input object** — a hook that returns only `{"command": ...}` silently
+                              drops every other field (`description`, `timeout`) the original call
+                              carried, so Step 4's hook must echo those through unchanged.
+                              Re-permission-checking of a rewritten command is undocumented (genuine
+                              gap, not found in any source checked).
+
+                              **OpenCode is the opposite.** Its plugin hooks (`tool.execute.before`)
+                              run in **sequence**, mutating a shared `output.args` object in place —
+                              docs: "all hooks run in sequence." A later plugin sees an earlier
+                              plugin's mutation, so composing with rtk by registration order (as
+                              Step 4/5 originally assumed for both agents) is actually correct here.
+
+                              **Consequence for Step 4/5's rtk-composition rule**: "register after
+                              rtk's block so a command it already rewrote is not re-matched" is
+                              correct on OpenCode and **impossible to guarantee on Claude Code** —
+                              there is no chaining to order. Decided: ship both hooks independently
+                              on Claude Code and document the race rather than block on it (see
+                              Step 4/5's own note and the risk table). Revisit only if real usage
+                              shows the race biting in practice.
+
+- [x] Whether OpenCode exposes a `PreToolUse` equivalent with command rewriting
       at all. If it does not, see the fallback rule directly below.
-- [ ] Exact base-context load order and precedence for each agent — the Step 7
+
+      **Confirmed: yes.** `tool.execute.before: async (input, output) => {}`,
+                              already used by `configs/opencode/plugin/task-redirect.js`. A plugin
+                              rewrites the call by mutating `output.args.command` in place (denial is
+                              by throwing). The fallback rule below does not apply — Scope A ships
+                              for both agents.
+
+- [x] Exact base-context load order and precedence for each agent — the Step 7
       tables are drafted from current docs and must be confirmed, especially
       `@import` resolution and whether project settings override or merge.
-- [ ] Whether skill bodies or only frontmatter enter base context (Step 7
+
+      **Confirmed, with two corrections to Step 7's Claude Code table** (now
+                              applied there): CLAUDE.md/CLAUDE.local.md layers **concatenate**, never
+                              override, in root-to-leaf order (managed policy → user → project →
+                              local; `CLAUDE.local.md` after `CLAUDE.md` at each level). `@import`
+                              depth caps at 4 hops. Two always-loaded sources were missing from the
+                              table entirely: the **auto-memory index** (`~/.claude/projects/<repo>/memory/MEMORY.md`,
+                              first 200 lines or 25KB, loaded every session — this session's own
+                              `MEMORY.md` is an instance of it) and **`.claude/rules/*.md`** files
+                              without `paths:` frontmatter (loaded at launch, same priority as
+                              `.claude/CLAUDE.md`). Both are added to the Step 7 table below.
+
+- [x] Whether skill bodies or only frontmatter enter base context (Step 7
       assumes frontmatter only).
 
-**Fallback rule if OpenCode cannot rewrite commands.** Scope A ships for Claude
-only, **and the gap is recorded in the "Accepted differences" list of
+      **Confirmed as assumed.** Docs: "a skill's body loads only when it's
+                              used" — only the frontmatter (name/description) is always-loaded.
+
+**Fallback rule if OpenCode cannot rewrite commands — DOES NOT FIRE.** Step 0
+confirmed OpenCode's `tool.execute.before` can rewrite `output.args.command` in
+place, the same capability Claude's `updatedInput` provides. Scope A ships for
+**both** agents; the rest of this subsection is kept for the record and does
+not describe this cycle's actual shipped state.
+
+Had it fired, Scope A would have shipped for Claude
+only, **and the gap would be recorded in the "Accepted differences" list of
 [docs/guides/agent-sync.md](../../guides/agent-sync.md)** — that recording is
 the deliverable, not an afterthought.
 
@@ -414,17 +472,17 @@ is what keeps the two hooks from disagreeing.
 **The invariants this step must not violate** — each one has a section in the
 guide and a test in its §10:
 
-| Invariant                                                                                    | Guide |
-| -------------------------------------------------------------------------------------------- | ----- |
-| The wrapped command's own exit status is what the wrapper returns                            | §3    |
-| The naive `\| head` pipeline is banned outright                                               | §1    |
-| Nothing devgeta interpolates into shell reaches it unquoted or unvalidated                   | §2.1  |
-| The runner path is resolved from the sidecar, never hardcoded                                | §2.2  |
-| The capture is bounded, and bounding it never kills or blocks the command                    | §4    |
-| Markers and notices count **inside** the budgets they report                                 | §6    |
-| Every transported integer matches `^[1-9][0-9]{0,14}$`, checked before any arithmetic         | §5    |
-| Both hooks reach the same decision and emit the same command for the same input              | §8    |
-| Every degenerate sidecar case leaves the command unmodified                                  | §5.4  |
+| Invariant                                                                             | Guide |
+| ------------------------------------------------------------------------------------- | ----- |
+| The wrapped command's own exit status is what the wrapper returns                     | §3    |
+| The naive `\| head` pipeline is banned outright                                       | §1    |
+| Nothing devgeta interpolates into shell reaches it unquoted or unvalidated            | §2.1  |
+| The runner path is resolved from the sidecar, never hardcoded                         | §2.2  |
+| The capture is bounded, and bounding it never kills or blocks the command             | §4    |
+| Markers and notices count **inside** the budgets they report                          | §6    |
+| Every transported integer matches `^[1-9][0-9]{0,14}$`, checked before any arithmetic | §5    |
+| Both hooks reach the same decision and emit the same command for the same input       | §8    |
+| Every degenerate sidecar case leaves the command unmodified                           | §5.4  |
 
 **Build order:**
 
@@ -444,12 +502,38 @@ guide and a test in its §10:
   design for precedence between user and built-in entries. This corrects Scope
   A's earlier "config-driven rules" phrasing, which implied a user surface that
   is not in this cycle.
-- **Hook ordering with `rtk`:** both are `PreToolUse`/`Bash` and both rewrite
-  `updatedInput.command`. Decide and test the composition — the intended
-  behavior is that a command rtk has already rewritten into a compact form is
-  _not_ matched as verbose, so ordering is observable. Register after rtk's block
-  and add a test for both enabled together. Step 0 answers the chaining question
-  first.
+- **Hook ordering with `rtk` — corrected by Step 0, do not implement as
+  originally drafted.** Both are `PreToolUse`/`Bash` and both rewrite
+  `updatedInput.command`. The original plan here ("register after rtk's block
+  so a command it already rewrote is not re-matched, so ordering is
+  observable") assumed hooks chain. Step 0 confirmed Claude Code's
+  `PreToolUse` hooks on one matcher run in **parallel** off the same original
+  input, and when more than one returns `updatedInput` the **last process to
+  finish wins, non-deterministically** — `settings.json` registration order
+  has no effect on this. There is no ordering to make observable, and no code
+  change here can produce one.
+
+  **Decided (not a Step 4 implementation task): ship both hooks
+  independently and document the race**, rather than block shipping on
+  solving it. Concretely: output-budget's hook matches and rewrites purely
+  against whatever `tool_input.command` it is handed, with no awareness of
+  rtk at all — same as if rtk did not exist. When both hooks are enabled and
+  both match the same call, whichever hook's process finishes last decides
+  what actually runs; if that is rtk's, this cycle's cap is silently skipped
+  for that one call. This is recorded in the risk table (§7) and
+  `docs/guides/token-efficiency.md` (Step 8), not solved in code — no
+  mechanism on Claude Code's current hook model can make it deterministic
+  short of disabling one hook when the other is on, which was considered and
+  rejected: it trades a real feature (the cap) for a guarantee, on every call,
+  to avoid a race that only matters on calls both hooks would rewrite.
+
+  On OpenCode this composition problem does not exist: `tool.execute.before`
+  plugins run in **sequence** and mutate a shared object, so a plugin
+  registered after rtk's genuinely does see rtk's already-rewritten command.
+  Register after rtk's block there, and the Step 6 both-enabled test only
+  needs to assert real chaining on OpenCode — on Claude Code it asserts that
+  each hook still behaves correctly in isolation (the race itself is not
+  something a deterministic test can pin).
 
 - Verify: run the script by hand against captured payloads, including a
   deliberately failing command to prove the exit status survives.
@@ -593,7 +677,13 @@ This step is the work of implementing it:
     return the command unmodified
   - the runner exists at `paths.Paths.Config.Devgeta` after
     `dg configure opencode --force` with **no Claude config present**
-  - rtk enabled together with this hook: composition is what Step 0 determined
+  - rtk enabled together with this hook — **the two suites assert different
+    things per Step 0's finding**: the OpenCode test asserts real chaining
+    (registering after rtk's plugin block, the later plugin sees rtk's
+    already-rewritten `output.args.command`); the Claude Code test asserts
+    each hook still behaves correctly **in isolation** against the original
+    command, since there is no deterministic composition to assert there (see
+    output-budget-runner.md §2.3, §9)
 - Verify: `go test .` and `node --test output-budget.test.mjs`
 
 #### Step 7: `dg task context-report`
@@ -602,18 +692,27 @@ A report that measures the wrong files is worse than none — it produces
 precise-looking numbers nobody can act on. So the discovery list is part of the
 spec, and Step 0 has already verified it against upstream docs.
 
-**Claude Code:**
+**Claude Code** (corrected by Step 0 — two rows added that the original draft
+missed entirely; both are always-loaded and neither is a CLAUDE.md file):
 
-| Layer    | Paths                                                                                                                               |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Memory   | `~/.claude/CLAUDE.md`, `<repo>/CLAUDE.md`, `<repo>/.claude/CLAUDE.md`, plus every file reached transitively through `@path` imports |
-| Settings | `~/.claude/settings.json`, `<repo>/.claude/settings.json`, `.claude/settings.local.json`                                            |
-| Skills   | `~/.claude/skills/*/SKILL.md`, `<repo>/.claude/skills/*/SKILL.md`                                                                   |
-| Commands | `~/.claude/commands/**`, `<repo>/.claude/commands/**`                                                                               |
-| Agents   | `~/.claude/agents/**`, `<repo>/.claude/agents/**`                                                                                   |
-| Plugins  | `~/.claude/plugins/**`                                                                                                              |
-| MCP      | `<repo>/.mcp.json`, plus `mcpServers` in any settings layer                                                                         |
-| Hooks    | `hooks` entries across the settings layers                                                                                          |
+| Layer         | Paths                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Memory        | `~/.claude/CLAUDE.md`, `<repo>/CLAUDE.md`, `<repo>/.claude/CLAUDE.md`, `<repo>/CLAUDE.local.md`, plus every file reached transitively through `@path` imports (max depth 4 hops, verified) |
+| Auto memory   | `~/.claude/projects/<repo>/memory/MEMORY.md` — first 200 lines or 25KB, whichever comes first. Missing from the original draft entirely; this session's own MEMORY.md is an instance of it |
+| Project rules | `<repo>/.claude/rules/*.md` **without** `paths:` frontmatter — loaded at launch, same priority as `.claude/CLAUDE.md`. Also missing from the original draft                                |
+| Settings      | `~/.claude/settings.json`, `<repo>/.claude/settings.json`, `.claude/settings.local.json`                                                                                                   |
+| Skills        | `~/.claude/skills/*/SKILL.md`, `<repo>/.claude/skills/*/SKILL.md` — frontmatter only (verified); the body loads on invocation, not at session start                                        |
+| Commands      | `~/.claude/commands/**`, `<repo>/.claude/commands/**`                                                                                                                                      |
+| Agents        | `~/.claude/agents/**`, `<repo>/.claude/agents/**`                                                                                                                                          |
+| Plugins       | `~/.claude/plugins/**`                                                                                                                                                                     |
+| MCP           | `<repo>/.mcp.json`, plus `mcpServers` in any settings layer                                                                                                                                |
+| Hooks         | `hooks` entries across the settings layers                                                                                                                                                 |
+
+Precedence, confirmed: CLAUDE.md/CLAUDE.local.md layers **concatenate**
+(never override), ordered root-to-leaf — managed policy, then user
+(`~/.claude/CLAUDE.md`), then project, with each level's `CLAUDE.local.md`
+appended right after that level's `CLAUDE.md`. Count every layer found, per
+the "layers concatenate → count both" rule above.
 
 **OpenCode:**
 
@@ -623,6 +722,16 @@ spec, and Step 0 has already verified it against upstream docs.
 | Settings | `~/.config/opencode/opencode.json`, `<repo>/opencode.json` |
 | Plugins  | `~/.config/opencode/plugin/**`                             |
 | Shared   | whatever `configs/shared/` deploys into each agent's tree  |
+
+**Caveat found during Step 0, not something to "fix":** OpenCode's docs
+describe global and project `AGENTS.md` as merging, but a currently open
+upstream issue (anomalyco/opencode#22020) reports the global file is not
+loaded at all when a project one exists — documented behavior and observed
+behavior may disagree. `context-report` should report what it can verify
+reading the two files itself (existence and size of each), and note this
+discrepancy in its own output or docs rather than assume either behavior;
+Step 7's live-comparison validation against OpenCode's own introspection
+(if any exists) is what actually settles which is true on a given version.
 
 **Rules the implementation must follow:**
 
@@ -722,40 +831,40 @@ make lint
 
 ## 7. Risks & Trade-offs
 
-| Risk                                                                                                                                                            | Likelihood | Mitigation                                                                                                                                                    |
-| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Step 1 extraction silently changes review-journal behavior                                                                                                      | **Med**    | Existing reviewjournal tests pass **unmodified**; editing one is the signal it broke                                                                          |
-| Output filter cuts something load-bearing → agent re-runs, net loss                                                                                             | **Med**    | Conservative defaults, mandatory truncation marker, gate defaults off                                                                                         |
-| Bash/JS mirrors drift                                                                                                                                           | Med        | Paired behavioral suites, same cases both sides — the ADR-0006 discipline                                                                                     |
-| Two hooks match or cap differently for the same command                                                                                                         | **Med**    | Rules defined once in Go and generated; token-prefix matching, not regex (no ERE-vs-JS dialect gap); parity test over every built-in rule (Step 4/6)          |
-| A config path with spaces or metacharacters breaks or executes                                                                                                  | **Med**    | Every interpolated field quoted or integer-validated by one shared routine per language; hostile-path tests assert emitted string **and** execution (Step 4)  |
-| Hook rewriting breaks an unrelated command                                                                                                                      | Low        | Pass-through must be byte-identical; explicit test for it                                                                                                     |
-| Handoff note goes stale and misleads a fresh session                                                                                                            | Med        | Stamp `head` on write; `--read` reports drift from current head                                                                                               |
-| Token estimate in context-report read as exact                                                                                                                  | Low        | Label it an approximation in the output itself                                                                                                                |
-| **Wrapped command swallows a failure's exit status**                                                                                                            | **Med**    | Explicit contract clause; test written before the feature; naive pipeline banned in Step 4                                                                    |
-| `context-report` misses a load path → confidently wrong numbers                                                                                                 | **Med**    | Step 0 verifies discovery upstream; Step 7 validates against live `/context`                                                                                  |
-| OpenCode has no command-rewriting hook at all                                                                                                                   | Med        | Step 0 answers first; fallback rule follows it — Claude-only, recorded in agent-sync.md's accepted differences                                                |
-| Runner leaks one output file per wrapped command                                                                                                                | **Med**    | Allocate a `task-*` dir via the existing scratch mechanism; test asserts the path shape (Step 4)                                                              |
-| Feature ships with no way to turn it on or off                                                                                                                  | **Med**    | Settings-registry entry with `Set` **and** `Unset`, not a one-way configure part (Step 3b)                                                                    |
-| OpenCode rewrites commands to a runner that was never deployed                                                                                                  | **Med**    | Runner lives in `Config.Devgeta`, deployed by a shared helper both installers call; OpenCode-only path tested (Steps 5–6)                                     |
-| Sidecar missing or malformed silently breaks every Bash call                                                                                                    | **Med**    | All seven degenerate cases return the command unmodified; one test each (Step 6)                                                                              |
-| Configure order leaves the two agents on different effective state                                                                                              | **Med**    | One `EnsureAgentRuntime` writer called by both paths; both-orders convergence test (Step 5)                                                                   |
-| A hook reads the sidecar mid-`dg configure` and sees a partial file                                                                                             | Low        | Atomic temp-plus-rename write, same discipline as `branchstore` (Step 1)                                                                                      |
-| Two `PreToolUse` Bash hooks (rtk + this) rewrite the same field                                                                                                 | Med        | Step 0 determines chaining; explicit both-enabled test in Step 6                                                                                              |
-| Wrapper breaks TTY / streaming commands                                                                                                                         | Low        | Defaults match non-interactive runners only; limitation documented in Step 4                                                                                  |
-| **A line cap lets unbounded bytes through** — one huge line, or a few large ones                                                                                | **Med**    | `maxLineBytes` + `maxTotalBytes` with a stated order of operations; property test that no reduced result exceeds `maxTotalBytes` (Steps 4/6)                  |
-| **Bash and JS tokenize the same command differently** — `segments.sh` splits compound commands, it does not tokenize                                            | **Med**    | Neither hook parses shell: whitespace-only split plus refuse-on-quoting for the compared prefix; shared fixture table drives both suites (Steps 4/6)          |
-| Refuse-on-quoting under-matches a command the user expected to be capped                                                                                        | Low        | Fails safe — the command runs correctly and in full; the refused prefixes are listed in Step 4                                                                |
-| **A runaway matched command fills the user's disk** — the wrapper invents a disk write that did not exist unwrapped, and the reaper is configure-time only      | **Med**    | `maxCaptureBytes` 16 MiB enforced by a drain that never blocks or signals the child; tests assert bounded file size **and** surviving exit status (Steps 4/6) |
-| Enforcing the capture bound kills the command instead of capping it                                                                                             | **Med**    | `ulimit -f` and bare `head -c` both rejected for exactly this; `${PIPESTATUS[0]}` with `pipefail` off, drain-after-limit (Step 4)                             |
-| Markers push the result past the cap they were just counted against                                                                                             | **Med**    | Both budgets reserve their marker before selecting content; property tests run with a long scratch path and a large omitted count (Steps 4/6)                 |
-| Agent greps a capture-truncated file and trusts the absence of a match                                                                                          | Med        | Notice in the file **and** in the replay marker; documented as the one case where "nothing is lost" does not hold (Step 4)                                    |
-| Runner cannot tell that the capture was capped at all                                                                                                           | **Med**    | Read one byte past the content budget; a file at `probe_limit` proves the cap was reached (Steps 4/6)                                                         |
-| **Notice claims confirmed loss when nothing was discarded** — output of exactly `content_limit + 1` bytes                                                       | **Med**    | Flag named `capture_capped`; both notices state the cap, never truncation; boundary tests assert the wording at `content_limit + 1` (Steps 4/6)               |
-| **A nonpositive budget reaches `head -c`** — an error on BSD, a silent unbounded buffer on GNU | **Med** | Positivity checked in `EnsureAgentRuntime`, in both hooks before rewriting, and in the runner; zero and negative tests per budget (Steps 4/6) |
-| A hook or the runner hardcodes a marker reserve and they drift apart | Low | Reserves never leave Go; the sidecar transports limits already net of them, so there is no constant to duplicate (Step 4) |
-| Devgeta itself writes a wrong-but-positive derived limit | Low | `EnsureAgentRuntime` asserts each derived limit equals its expected derivation before writing — Go-side, no hook constant (Step 4) |
-| **Bash and JS disagree on a large transported integer** — JS rounds above 2^53 and renders `1e+21`; bash `+1` wraps, at 2^63 to a negative | **Med** | 15-digit decimal-width contract checked against the rendered string in both hooks, the runner, and `EnsureAgentRuntime`; cross-hook parity table (Steps 4/6) |
+| Risk                                                                                                                                                                      | Likelihood | Mitigation                                                                                                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step 1 extraction silently changes review-journal behavior                                                                                                                | **Med**    | Existing reviewjournal tests pass **unmodified**; editing one is the signal it broke                                                                                                                                                                                       |
+| Output filter cuts something load-bearing → agent re-runs, net loss                                                                                                       | **Med**    | Conservative defaults, mandatory truncation marker, gate defaults off                                                                                                                                                                                                      |
+| Bash/JS mirrors drift                                                                                                                                                     | Med        | Paired behavioral suites, same cases both sides — the ADR-0006 discipline                                                                                                                                                                                                  |
+| Two hooks match or cap differently for the same command                                                                                                                   | **Med**    | Rules defined once in Go and generated; token-prefix matching, not regex (no ERE-vs-JS dialect gap); parity test over every built-in rule (Step 4/6)                                                                                                                       |
+| A config path with spaces or metacharacters breaks or executes                                                                                                            | **Med**    | Every interpolated field quoted or integer-validated by one shared routine per language; hostile-path tests assert emitted string **and** execution (Step 4)                                                                                                               |
+| Hook rewriting breaks an unrelated command                                                                                                                                | Low        | Pass-through must be byte-identical; explicit test for it                                                                                                                                                                                                                  |
+| Handoff note goes stale and misleads a fresh session                                                                                                                      | Med        | Stamp `head` on write; `--read` reports drift from current head                                                                                                                                                                                                            |
+| Token estimate in context-report read as exact                                                                                                                            | Low        | Label it an approximation in the output itself                                                                                                                                                                                                                             |
+| **Wrapped command swallows a failure's exit status**                                                                                                                      | **Med**    | Explicit contract clause; test written before the feature; naive pipeline banned in Step 4                                                                                                                                                                                 |
+| `context-report` misses a load path → confidently wrong numbers                                                                                                           | **Med**    | Step 0 verifies discovery upstream; Step 7 validates against live `/context`                                                                                                                                                                                               |
+| OpenCode has no command-rewriting hook at all                                                                                                                             | Med        | Step 0 answers first; fallback rule follows it — Claude-only, recorded in agent-sync.md's accepted differences                                                                                                                                                             |
+| Runner leaks one output file per wrapped command                                                                                                                          | **Med**    | Allocate a `task-*` dir via the existing scratch mechanism; test asserts the path shape (Step 4)                                                                                                                                                                           |
+| Feature ships with no way to turn it on or off                                                                                                                            | **Med**    | Settings-registry entry with `Set` **and** `Unset`, not a one-way configure part (Step 3b)                                                                                                                                                                                 |
+| OpenCode rewrites commands to a runner that was never deployed                                                                                                            | **Med**    | Runner lives in `Config.Devgeta`, deployed by a shared helper both installers call; OpenCode-only path tested (Steps 5–6)                                                                                                                                                  |
+| Sidecar missing or malformed silently breaks every Bash call                                                                                                              | **Med**    | All seven degenerate cases return the command unmodified; one test each (Step 6)                                                                                                                                                                                           |
+| Configure order leaves the two agents on different effective state                                                                                                        | **Med**    | One `EnsureAgentRuntime` writer called by both paths; both-orders convergence test (Step 5)                                                                                                                                                                                |
+| A hook reads the sidecar mid-`dg configure` and sees a partial file                                                                                                       | Low        | Atomic temp-plus-rename write, same discipline as `branchstore` (Step 1)                                                                                                                                                                                                   |
+| **On Claude Code, rtk's hook and this one race** — Step 0 confirmed `PreToolUse` hooks run in parallel off one input with no chaining, so this is not preventable in code | **Med**    | Documented as a known, accepted race (Step 4/5), not solved: on a call both hooks would rewrite, whichever process finishes last wins and the other's rewrite is silently dropped. On OpenCode, plugin hooks run in sequence and genuinely chain, so no race exists there. |
+| Wrapper breaks TTY / streaming commands                                                                                                                                   | Low        | Defaults match non-interactive runners only; limitation documented in Step 4                                                                                                                                                                                               |
+| **A line cap lets unbounded bytes through** — one huge line, or a few large ones                                                                                          | **Med**    | `maxLineBytes` + `maxTotalBytes` with a stated order of operations; property test that no reduced result exceeds `maxTotalBytes` (Steps 4/6)                                                                                                                               |
+| **Bash and JS tokenize the same command differently** — `segments.sh` splits compound commands, it does not tokenize                                                      | **Med**    | Neither hook parses shell: whitespace-only split plus refuse-on-quoting for the compared prefix; shared fixture table drives both suites (Steps 4/6)                                                                                                                       |
+| Refuse-on-quoting under-matches a command the user expected to be capped                                                                                                  | Low        | Fails safe — the command runs correctly and in full; the refused prefixes are listed in Step 4                                                                                                                                                                             |
+| **A runaway matched command fills the user's disk** — the wrapper invents a disk write that did not exist unwrapped, and the reaper is configure-time only                | **Med**    | `maxCaptureBytes` 16 MiB enforced by a drain that never blocks or signals the child; tests assert bounded file size **and** surviving exit status (Steps 4/6)                                                                                                              |
+| Enforcing the capture bound kills the command instead of capping it                                                                                                       | **Med**    | `ulimit -f` and bare `head -c` both rejected for exactly this; `${PIPESTATUS[0]}` with `pipefail` off, drain-after-limit (Step 4)                                                                                                                                          |
+| Markers push the result past the cap they were just counted against                                                                                                       | **Med**    | Both budgets reserve their marker before selecting content; property tests run with a long scratch path and a large omitted count (Steps 4/6)                                                                                                                              |
+| Agent greps a capture-truncated file and trusts the absence of a match                                                                                                    | Med        | Notice in the file **and** in the replay marker; documented as the one case where "nothing is lost" does not hold (Step 4)                                                                                                                                                 |
+| Runner cannot tell that the capture was capped at all                                                                                                                     | **Med**    | Read one byte past the content budget; a file at `probe_limit` proves the cap was reached (Steps 4/6)                                                                                                                                                                      |
+| **Notice claims confirmed loss when nothing was discarded** — output of exactly `content_limit + 1` bytes                                                                 | **Med**    | Flag named `capture_capped`; both notices state the cap, never truncation; boundary tests assert the wording at `content_limit + 1` (Steps 4/6)                                                                                                                            |
+| **A nonpositive budget reaches `head -c`** — an error on BSD, a silent unbounded buffer on GNU                                                                            | **Med**    | Positivity checked in `EnsureAgentRuntime`, in both hooks before rewriting, and in the runner; zero and negative tests per budget (Steps 4/6)                                                                                                                              |
+| A hook or the runner hardcodes a marker reserve and they drift apart                                                                                                      | Low        | Reserves never leave Go; the sidecar transports limits already net of them, so there is no constant to duplicate (Step 4)                                                                                                                                                  |
+| Devgeta itself writes a wrong-but-positive derived limit                                                                                                                  | Low        | `EnsureAgentRuntime` asserts each derived limit equals its expected derivation before writing — Go-side, no hook constant (Step 4)                                                                                                                                         |
+| **Bash and JS disagree on a large transported integer** — JS rounds above 2^53 and renders `1e+21`; bash `+1` wraps, at 2^63 to a negative                                | **Med**    | 15-digit decimal-width contract checked against the rendered string in both hooks, the runner, and `EnsureAgentRuntime`; cross-hook parity table (Steps 4/6)                                                                                                               |
 
 ### Trade-offs Made
 
