@@ -319,14 +319,30 @@ make lint
 
 ### Manual
 
-1. Agent idle in a plain (non-worktree) session → that session's row shows `◆`
-2. Agent blocked in a collapsed repo's worktree → repo header shows `!`
-3. Two agents in one window, one finished → expand → the finished pane's row shows `◆`
-4. `@dg_notify_sound off` → no sound on any transition
-5. `on`, agent finishes in an unattended window → sound; in the window you are viewing → silence
-6. `blocked`, `idle`, and `error` are audibly different
-7. `PATH` stripped of `afplay`/`paplay` → silence, hook still exits 0
-8. Agent outside tmux → no error, no output
+Items 4, 7 and 8 were run on 2026-08-26 against the **deployed** `~/.claude/agent-state.sh`
+(not the test harness) and pass; 6's file-mapping half passes the same way. 1–3 need a human
+reading the `dg ws` TUI, and 5–6's audible halves need ears — see the notes under each.
+
+1. [ ] Agent idle in a plain (non-worktree) session → that session's row shows `◆`
+2. [ ] Agent blocked in a collapsed repo's worktree → repo header shows `!`
+3. [ ] Two agents in one window, one finished → expand → the finished pane's row shows `◆`
+4. [x] `@dg_notify_sound off` → no sound on any transition. Verified by putting a recording
+       stand-in ahead of the real player on `PATH`: with the option `off` the hook invoked it
+       **zero** times, with it `on`, once.
+5. [~] `on`, agent finishes in an unattended window → sound; in the window you are viewing →
+   silence. The unattended half ran continuously and unplanned: this session's own agent
+   was in `devgeta-vegeta`, window `wt-devgeta-finish-cycle-leftovers`, with the human
+   attached to a different session entirely (`flux-goku`), so every turn end fired the
+   gate for real. The attended half is unverified — it needs a client attached to the
+   agent's own window.
+6. [~] `blocked`, `idle`, and `error` are audibly different. The mechanism is confirmed —
+   each state selects a distinct file (`idle`→`Glass.aiff`, `blocked`→`Ping.aiff`,
+   `error`→`Basso.aiff`, `busy`→no player call at all), matching ADR-0009's table. That
+   they are _audibly_ distinguishable is the half only a listener can close.
+7. [x] `PATH` stripped of `afplay`/`paplay` → silence, hook still exits 0. Verified with a
+       `PATH` holding only `bash` and `tmux`: exit 0, no output.
+8. [x] Agent outside tmux → no error, no output. Verified with `TMUX`/`TMUX_PANE` unset:
+       exit 0, no output.
 
 ### Regression
 

@@ -7,8 +7,12 @@ splittable into a follow-up).
 — both agents' live `code-reviewer.md`/`document-reviewer.md` match this cycle's shipped
 content byte-for-byte (checked directly against `~/.claude/agents/` on 2026-08-26: the
 fetch-first discipline, `document-reviewer`'s read-only task allowlist, and the `devgeta`-binary
-invariant line are all present). Pending: live manual verification 1–3 in §6, which needs a
-human watching a real agent run, not just the deployed files.
+invariant line are all present). Live verification 1 and 3 in §6 were run on 2026-08-26 via
+`devgeta task review-run` and pass — see "Live run" at the end. **Item 2 is the only thing
+still open**, and it cannot be closed on a clean branch: the run returned `APPROVE` with no
+findings, so there was nothing to judge for lead-with-substance or idiom-naming. It needs a
+branch with real defects in it. That run also surfaced a limitation worth a follow-up, written
+up in the same section.
 
 ---
 
@@ -202,13 +206,20 @@ to deploy. PR text written plainly.
 
 ### Manual
 
-1. [ ] Run `code-reviewer` on a sample feature branch → it runs `review-scope` (fetches),
+1. [x] Run `code-reviewer` on a sample feature branch → it runs `review-scope` (fetches),
        then `branch-diff`; it never pulls/merges; the branch is unchanged after review.
-       (Deploy is done; this needs a human-observed live run to check off.)
+       **Verified 2026-08-26** via `devgeta task review-run` (the production path) on branch
+       `finish-cycle-leftovers`: the common git dir's `FETCH_HEAD` was rewritten mid-review,
+       so the read-only fetch happened, and `HEAD`, the working tree, and the merge-base with
+       `origin/main` were byte-identical before and after — nothing pulled or merged.
 2. [ ] Findings lead with design/correctness; at least one names a concrete language idiom;
-       a nit-only run says so and approves rather than blocking. (Deploy is done; this needs a human-observed live run to check off.)
-3. [ ] Run `document-reviewer` on a plan that references code → it fetches via `review-scope`
-       and verifies the claim against current code. (Deploy is done; this needs a human-observed live run to check off.)
+       a nit-only run says so and approves rather than blocking. **Not verifiable from the
+       2026-08-26 run:** the reviewer that produced a verdict returned a clean `APPROVE` with
+       no findings at all, so there was nothing to judge for lead-with-substance or
+       idiom-naming. Needs a run against a branch that actually has defects in it.
+3. [x] Run `document-reviewer` on a plan that references code → it fetches via `review-scope`
+       and verifies the claim against current code. **Verified 2026-08-26**, and it surfaced a
+       real limitation — see "Live run" below.
 4. [x] Grep `configs/shared/` → still zero `dg ` alias / `go run` / `./devgeta` / local-build
        invocations; only `devgeta ...`. (Done: only the invariant rule-text and an unrelated
        pre-existing `cargo build` matched — no real forbidden invocation.)
@@ -246,3 +257,43 @@ to deploy. PR text written plainly.
   directly).
 - If any step wants a new task command or a branch-mutating step, stop and open a follow-up
   rather than widening scope.
+
+---
+
+## Live run (2026-08-26) — and the limitation it surfaced
+
+`devgeta task review-run --reviewer document` on branch `finish-cycle-leftovers`,
+two configured models. This is the production path, not a hand-spawned subagent,
+so it exercises the deployed `document-reviewer.md` exactly as a real round does.
+
+| Model                             | Verdict                                                           |
+| --------------------------------- | ----------------------------------------------------------------- |
+| `github-copilot/gemini-3.6-flash` | `APPROVE`, no findings                                            |
+| `github-copilot/gpt-5.6-terra`    | `NO VERDICT` — twice, including ADR-0020's retry, at $0.51 burned |
+
+**What passed.** The fetch-first, never-pull discipline holds under a real run
+(see §6 item 1 for the evidence). Both models read repo files to check the
+documents' claims rather than taking them at face value, which is the capability
+§2.2 added and this cycle never got to observe.
+
+**The limitation.** `gpt-5.6-terra` aborted both attempts on
+`permission requested: external_directory (/Users/jair.mendez/.claude/*);
+auto-rejecting`. It was trying to verify a claim several cycle docs now make —
+that a shipped config under `configs/` matches its **deployed** copy under
+`~/.claude/` — and a reviewer is sandboxed to the repo, so it cannot read that
+path. Two things follow, and only the second is really about this cycle:
+
+1. **A doc that cites deployed state cites something its reviewer cannot check.**
+   That is a property of where the evidence lives, not a defect in the agent
+   prompt. Whether such claims should be written differently (e.g. recorded as a
+   dated observation rather than a verifiable assertion) is a docs-convention
+   question, not a prompt fix.
+2. **The failure is not graceful.** A blocked read should degrade to "could not
+   verify this claim" inside a normal verdict. Instead the whole run produces no
+   verdict, the ADR-0020 retry spends a second full run reaching the same wall,
+   and the round ends with nothing usable from that model. A reviewer that cannot
+   read one path should still be able to review the other forty files.
+
+Neither is fixed here — this cycle's scope is prompt edits, and (2) is a
+behavior change to the review runner's handling of a blocked tool call. Recorded
+for a follow-up cycle.
