@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -189,8 +190,8 @@ func TestRelease_HappyPath_SquashNoPush(t *testing.T) {
 	}
 	assertCmd(t, calls[4], "git", "rev-list", "--count", "origin/main..HEAD")
 	assertCmd(t, calls[5], "git", "reset", "--soft", "HEAD~3")
-	assertCmd(t, calls[6], "git", "commit", "-F", msgFile)
-	assertCmd(t, calls[7], "git", "tag", "-a", "v0.12.0", "-F", msgFile)
+	assertCmd(t, calls[6], "git", "commit", "--cleanup=verbatim", "-F", msgFile)
+	assertCmd(t, calls[7], "git", "tag", "-a", "v0.12.0", "--cleanup=verbatim", "-F", msgFile)
 }
 
 // TestRelease_HappyPath_SquashAtBoundary covers ahead=2, the exact threshold
@@ -225,8 +226,8 @@ func TestRelease_HappyPath_SquashAtBoundary(t *testing.T) {
 	}
 	assertCmd(t, calls[4], "git", "rev-list", "--count", "origin/main..HEAD")
 	assertCmd(t, calls[5], "git", "reset", "--soft", "HEAD~2")
-	assertCmd(t, calls[6], "git", "commit", "-F", msgFile)
-	assertCmd(t, calls[7], "git", "tag", "-a", "v0.12.0", "-F", msgFile)
+	assertCmd(t, calls[6], "git", "commit", "--cleanup=verbatim", "-F", msgFile)
+	assertCmd(t, calls[7], "git", "tag", "-a", "v0.12.0", "--cleanup=verbatim", "-F", msgFile)
 }
 
 func TestRelease_HappyPath_SquashWithPush(t *testing.T) {
@@ -283,7 +284,17 @@ func TestRelease_NoSquashNeeded_ZeroAhead(t *testing.T) {
 	if got := gitBase.GetExecCommandCallCount(); got != 6 {
 		t.Fatalf("expected exactly 6 git calls (no reset/commit), got %d", got)
 	}
-	assertCmd(t, gitBase.ExecCommandCalls[5], "git", "tag", "-a", "v0.12.0", "-F", msgFile)
+	assertCmd(
+		t,
+		gitBase.ExecCommandCalls[5],
+		"git",
+		"tag",
+		"-a",
+		"v0.12.0",
+		"--cleanup=verbatim",
+		"-F",
+		msgFile,
+	)
 }
 
 func TestRelease_NoSquashNeeded_OneAhead(t *testing.T) {
@@ -487,4 +498,50 @@ func TestReleaseSummary(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, want)
 		}
 	})
+}
+
+// TestRelease_MessageIsPassedVerbatim pins the flag that keeps the release
+// notes intact. `git tag -a -F` defaults to --cleanup=strip, which deletes
+// every line beginning with '#'. The notes template in
+// docs/guides/RELEASE-NOTES-TEMPLATE.md is markdown whose section headings are
+// exactly those lines, and .github/workflows/release.yml publishes the GitHub
+// release body straight out of this annotation — so without --cleanup=verbatim
+// the release page ships with all of its headings silently removed, and a tag
+// cannot be rewritten once pushed. The commit path carries the same flag so the
+// squashed commit message and the tag message cannot diverge.
+func TestRelease_MessageIsPassedVerbatim(t *testing.T) {
+	tm, gitBase, _ := newTaskSetup()
+	msgFile := writeReleaseMessage(t, "feat: thing\n\n## Section\n\n- bullet\n")
+	gitBase.SetExecCommandResults(
+		commands.ExecCommandResult("", "", nil),              // status --porcelain
+		commands.ExecCommandResult("main\n", "", nil),        // branch --show-current
+		commands.ExecCommandResult("origin/main\n", "", nil), // symbolic-ref
+		commands.ExecCommandResult("", "", nil),              // tag -l (not found)
+		commands.ExecCommandResult("3\n", "", nil),           // rev-list --count
+		commands.ExecCommandResult("", "", nil),              // reset --soft
+		commands.ExecCommandResult("", "", nil),              // commit -F
+		commands.ExecCommandResult("", "", nil),              // tag -a
+	)
+
+	if _, err := tm.Release("v0.12.0", msgFile, false); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// `tag -l` is the existence probe, not the annotate call — match on the
+	// full prefix so this asserts against the call that writes the message.
+	for _, want := range [][]string{{"commit"}, {"tag", "-a"}} {
+		found := false
+		for _, call := range gitBase.ExecCommandCalls {
+			if len(call.Args) < len(want) || !slices.Equal(call.Args[:len(want)], want) {
+				continue
+			}
+			found = true
+			if !slices.Contains(call.Args, "--cleanup=verbatim") {
+				t.Fatalf("git %v must pass --cleanup=verbatim, got: %v", want, call.Args)
+			}
+		}
+		if !found {
+			t.Fatalf("expected a git %v call, got: %+v", want, gitBase.ExecCommandCalls)
+		}
+	}
 }

@@ -62,7 +62,12 @@ func (tm *TaskManager) Release(version, messageFile string, push bool) (string, 
 				ahead, err,
 			)
 		}
-		if err := tm.Git.ExecuteCommand("commit", "-F", messageFile); err != nil {
+		if err := tm.Git.ExecuteCommand(
+			"commit",
+			"--cleanup=verbatim",
+			"-F",
+			messageFile,
+		); err != nil {
 			return "", fmt.Errorf(
 				"release: commit failed after 'git reset --soft HEAD~%d'; your %d commits are staged "+
 					"but uncommitted — run 'git commit -F %s' to finish, or 'git reset --hard ORIG_HEAD' "+
@@ -76,7 +81,19 @@ func (tm *TaskManager) Release(version, messageFile string, push bool) (string, 
 		squashed = ahead
 	}
 
-	if err := tm.Git.ExecuteCommand("tag", "-a", version, "-F", messageFile); err != nil {
+	// --cleanup=verbatim on both: `git tag -a -F` defaults to `strip`, which
+	// deletes every line starting with '#'. The release notes template is
+	// markdown whose section headings are exactly that, and the workflow
+	// publishes the release body out of this annotation — so the default
+	// silently ships a release page with its structure removed.
+	if err := tm.Git.ExecuteCommand(
+		"tag",
+		"-a",
+		version,
+		"--cleanup=verbatim",
+		"-F",
+		messageFile,
+	); err != nil {
 		// squashed > 0 only when the ahead >= 2 block above actually ran a
 		// commit in this invocation; otherwise nothing was committed and the
 		// message must not claim it was.
