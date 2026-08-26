@@ -1,7 +1,7 @@
 # ADR-0009 — An agent that wants you makes a sound, from the hook that already knows
 
 **Date:** 2026-07-29
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

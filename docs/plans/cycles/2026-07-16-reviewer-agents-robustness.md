@@ -3,8 +3,12 @@
 **Date:** 2026-07-16
 **Estimated Duration:** ~3 hours (prompt edits ~2h; optional merge-base code check ~1h,
 splittable into a follow-up).
-**Status:** Edits complete and reviewed (spec + quality, per-file). Pending: deploy
-(`dg configure`) and live manual verification 1–3 in §6.
+**Status:** Edits complete and reviewed (spec + quality, per-file). Deploy has since happened
+— both agents' live `code-reviewer.md`/`document-reviewer.md` match this cycle's shipped
+content byte-for-byte (checked directly against `~/.claude/agents/` on 2026-08-26: the
+fetch-first discipline, `document-reviewer`'s read-only task allowlist, and the `devgeta`-binary
+invariant line are all present). Pending: live manual verification 1–3 in §6, which needs a
+human watching a real agent run, not just the deployed files.
 
 ---
 
@@ -200,11 +204,11 @@ to deploy. PR text written plainly.
 
 1. [ ] Run `code-reviewer` on a sample feature branch → it runs `review-scope` (fetches),
        then `branch-diff`; it never pulls/merges; the branch is unchanged after review.
-       (Pending: requires the deployed agent — run after `dg configure`.)
+       (Deploy is done; this needs a human-observed live run to check off.)
 2. [ ] Findings lead with design/correctness; at least one names a concrete language idiom;
-       a nit-only run says so and approves rather than blocking. (Pending: post-deploy.)
+       a nit-only run says so and approves rather than blocking. (Deploy is done; this needs a human-observed live run to check off.)
 3. [ ] Run `document-reviewer` on a plan that references code → it fetches via `review-scope`
-       and verifies the claim against current code. (Pending: post-deploy.)
+       and verifies the claim against current code. (Deploy is done; this needs a human-observed live run to check off.)
 4. [x] Grep `configs/shared/` → still zero `dg ` alias / `go run` / `./devgeta` / local-build
        invocations; only `devgeta ...`. (Done: only the invariant rule-text and an unrelated
        pre-existing `cargo build` matched — no real forbidden invocation.)

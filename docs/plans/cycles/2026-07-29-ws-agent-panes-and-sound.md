@@ -2,7 +2,16 @@
 
 **Date:** 2026-07-29
 **Estimated Duration:** ~7 hours (Part A ~5, Part B ~2)
-**Status:** Draft — awaiting approval
+**Status:** Done. Both parts are implemented (all checkboxes in §4 below), each had its own
+final whole-branch review (Part A: commit `37930d3`; Part B: commit `b1ce4b3`, "Final
+whole-branch review fixes for Part B"), and both are deployed — verified live on 2026-08-26:
+`@dg_notify_sound` is `on` in `~/.tmux.conf`, and `AggregateAgentState`/`rowPane` are the code
+actually running. This header was never updated after the work landed, and
+[ADR-0008](../../decisions/ADR-0008-agent-state-on-every-pane-row.md) /
+[ADR-0009](../../decisions/ADR-0009-audible-agent-notifications.md) were flipped to ACCEPTED
+in the same pass as this correction. The one thing still genuinely open is §6's eight-item
+manual verification — a human watching real agents transition state and listening for the
+sound — which has not been run.
 
 ---
 

@@ -8,9 +8,15 @@
 (now ACCEPTED). That follow-up changes decisions this cycle's §4 locked, so it went to its own
 cycle — [2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md),
 whose command-file, spec and guard-test work shipped 2026-08-17. **Step 6 below has been
-revised for that split but not re-run**, so it and the final whole-branch review are still
-outstanding, and Step 7's two `dg configure --force` deploys remain deferred until after merge.
-This cycle is therefore not closed out.
+revised for that split but not re-run** — that live sequence, against a real pull request, is
+the only thing still outstanding. The final whole-branch review did run (as part of that
+sibling cycle's implementation, commit `c795d1c`) and its two findings are recorded in
+[cycle 2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md)'s
+Follow-ups; §8 below was never updated to say so. Step 7's two `dg configure --force` deploys
+have also since run — both agents' live `commands/pr-review-loop.md` are byte-identical to
+`configs/shared/commands/pr-review-loop.md` at this commit (checked directly against
+`~/.claude/commands/pr-review-loop.md` and `~/.config/opencode/commands/pr-review-loop.md`).
+This cycle is therefore not closed out only because Step 6 has not been re-run live.
 
 ---
 
@@ -876,10 +882,12 @@ What is **not** done, so the header status is not `Done`:
   `docs/spec.md` narrative and the prose guards now describe the explicit/watch split. Step 6's
   sequence has been revised to match it; running it, and that cycle's own Step 3 four cases
   first, is still outstanding.
-- The final whole-branch review (most capable model) has not been run.
-- The two `dg configure --force` deploys are deliberately deferred: they would
-  overwrite the maintainer's live agent configuration from an unmerged branch, so
-  they belong after the branch merges, not to this step.
+- The final whole-branch review (most capable model) **has** run — see the header and §8
+  above. This bullet stays here only as a record of what this step originally waited on.
+- The two `dg configure --force` deploys have **also** run since — both agents' live
+  `pr-review-loop.md` match this commit's `configs/shared/commands/pr-review-loop.md`
+  byte-for-byte (checked directly on 2026-08-26). They were deferred while the branch was
+  unmerged; the branch has since merged and the deploy has happened.
 
 ### Deferred follow-up: ADR-0025's explicit/watch split — its own cycle
 
@@ -994,8 +1002,13 @@ Step 6's sixteen-point live sequence, plus:
 ## 8. Cross-Model Review Notes
 
 All seven were answered in Round 7's **APPROVE** (see the notes below), after Rounds
-1–6 fixed seventeen findings. They cover the plan document only; the branch's own
-final whole-branch review has not been run yet.
+1–6 fixed seventeen findings. They cover the plan document only. The branch's own
+final whole-branch review did run — as part of the sibling
+[2026-08-12-pr-review-explicit-vs-watch](2026-08-12-pr-review-explicit-vs-watch.md) cycle's
+implementation, since that cycle's changes to `pr-review-loop.md` and its guard tests are this
+same command file and the same test family. Its two findings (`--once` and a first-look
+approval both starting nothing, unpinned) are commit `c795d1c` and that sibling cycle's
+Follow-ups section; this note was simply never updated to say the review had happened.
 
 - [x] Domain context clear?
 - [x] Engineer context sufficient?

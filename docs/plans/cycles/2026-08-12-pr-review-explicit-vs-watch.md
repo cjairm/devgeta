@@ -8,7 +8,10 @@ this change, and
 is ACCEPTED. **Step 3 (manual end-to-end) has not been run** — it drives the command against a
 real pull request and posts real reviews, so it was left to the maintainer rather than run
 unattended. That is the only outstanding work here; the two `dg configure --force` deploys are
-out of scope by §4 and belong after the branch merges.
+out of scope by §4 and belong after the branch merges — which has since happened: both agents'
+live `pr-review-loop.md` match `configs/shared/commands/pr-review-loop.md` at this commit
+byte-for-byte (checked directly on 2026-08-26; see
+[cycle 2026-08-06-pr-review-loop](2026-08-06-pr-review-loop.md)'s Step 7).
 
 ---
 

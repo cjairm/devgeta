@@ -1,7 +1,7 @@
 # ADR-0008 — Agent state belongs to every row in `dg ws`, not just worktree rows
 
 **Date:** 2026-07-29
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
