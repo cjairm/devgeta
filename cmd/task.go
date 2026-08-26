@@ -31,7 +31,7 @@ func standardHelpFunc(cmd *cobra.Command, args []string) {
 
 // taskRunner is the interface used by task subcommands, enabling injection in tests.
 type taskRunner interface {
-	RefreshBranch(target string) error
+	RefreshBranch(target string, rebase bool) error
 	ResetMainBranch() error
 	ReinstallLibraries() error
 	ReinstallLibrary(name string) error
@@ -92,20 +92,28 @@ gh + jq). Run "dg task <subcommand> --help" for flags and examples.`,
   dg task reinstall-library lodash`,
 }
 
-var taskRefreshBranchCmd = &cobra.Command{
-	Use:   "refresh-branch [target]",
-	Short: "Checkout target branch, pull, return to previous branch, and merge",
-	Long: `Checkout the target branch (default: main), pull latest changes from origin,
-return to the previous branch (git checkout -), and merge target into it.
+// taskRefreshBranchRebaseFlag is refresh-branch's --rebase flag.
+var taskRefreshBranchRebaseFlag bool
 
-This is equivalent to the dge refresh-branch shell utility.`,
+var taskRefreshBranchCmd = &cobra.Command{
+	Use:   "refresh-branch [target] [--rebase]",
+	Short: "Checkout target branch, pull, return to previous branch, and merge (or rebase)",
+	Long: `Checkout the target branch (default: main), pull latest changes from origin,
+return to the previous branch (git checkout -), and integrate target into it.
+
+By default that integration is a merge — this is equivalent to the dge
+refresh-branch shell utility, and merge stays the default here too.
+
+--rebase rebases the previous branch onto target instead of merging it in,
+for a repository whose merge gate rejects merge commits. It does not change
+the default; pass it explicitly when you want linear history instead.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		target := ""
 		if len(args) > 0 {
 			target = args[0]
 		}
-		return newTaskManager().RefreshBranch(target)
+		return newTaskManager().RefreshBranch(target, taskRefreshBranchRebaseFlag)
 	},
 }
 
@@ -713,6 +721,9 @@ func init() {
 		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchKeyFlag, "key", "", "Allocate or re-derive a shared, keyed scratch directory instead of a unique one")
+
+	taskRefreshBranchCmd.Flags().
+		BoolVar(&taskRefreshBranchRebaseFlag, "rebase", false, "Rebase onto target instead of merging it in (default stays merge)")
 
 	taskBranchDiffCmd.Flags().
 		StringVar(&taskBranchDiffFileFlag, "file", "", "Diff only this file, bypassing exclusions")

@@ -12,9 +12,10 @@ import (
 
 // mockTaskRunner records calls to each task method.
 type mockTaskRunner struct {
-	refreshBranchArg    string
-	refreshBranchCalled bool
-	refreshBranchErr    error
+	refreshBranchArg       string
+	refreshBranchRebaseArg bool
+	refreshBranchCalled    bool
+	refreshBranchErr       error
 
 	resetMainCalled bool
 	resetMainErr    error
@@ -124,9 +125,10 @@ type mockTaskRunner struct {
 	scratchCleanErr    error
 }
 
-func (m *mockTaskRunner) RefreshBranch(target string) error {
+func (m *mockTaskRunner) RefreshBranch(target string, rebase bool) error {
 	m.refreshBranchCalled = true
 	m.refreshBranchArg = target
+	m.refreshBranchRebaseArg = rebase
 	return m.refreshBranchErr
 }
 
@@ -318,6 +320,38 @@ func TestTask_RefreshBranch(t *testing.T) {
 		err := taskRefreshBranchCmd.RunE(taskRefreshBranchCmd, []string{})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("--rebase defaults to false", func(t *testing.T) {
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskRefreshBranchRebaseFlag = false
+
+		if err := taskRefreshBranchCmd.RunE(taskRefreshBranchCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.refreshBranchRebaseArg {
+			t.Error("expected rebase=false by default")
+		}
+	})
+
+	t.Run("--rebase is passed through", func(t *testing.T) {
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskRefreshBranchRebaseFlag = true
+		defer func() { taskRefreshBranchRebaseFlag = false }()
+
+		if err := taskRefreshBranchCmd.RunE(taskRefreshBranchCmd, []string{"develop"}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.refreshBranchRebaseArg {
+			t.Error("expected rebase=true to be passed through")
+		}
+		if mock.refreshBranchArg != "develop" {
+			t.Errorf("expected target 'develop', got %q", mock.refreshBranchArg)
 		}
 	})
 }

@@ -30,7 +30,7 @@ func TestRefreshBranch(t *testing.T) {
 	t.Run("default target main", func(t *testing.T) {
 		tm, gitBase, _ := newTaskSetup()
 
-		if err := tm.RefreshBranch(""); err != nil {
+		if err := tm.RefreshBranch("", false); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -47,7 +47,7 @@ func TestRefreshBranch(t *testing.T) {
 	t.Run("custom target", func(t *testing.T) {
 		tm, gitBase, _ := newTaskSetup()
 
-		if err := tm.RefreshBranch("develop"); err != nil {
+		if err := tm.RefreshBranch("develop", false); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -60,7 +60,51 @@ func TestRefreshBranch(t *testing.T) {
 		tm, gitBase, _ := newTaskSetup()
 		gitBase.SetExecCommandResult("", "fatal", fmt.Errorf("not a git repo"))
 
-		err := tm.RefreshBranch("")
+		err := tm.RefreshBranch("", false)
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		if !strings.Contains(err.Error(), "refresh-branch") {
+			t.Fatalf("expected error to mention refresh-branch, got: %v", err)
+		}
+	})
+
+	// --rebase (Slice B): the merge path stays the default and byte-for-byte
+	// unchanged (the two cases above) — this only adds a second option.
+	t.Run("rebase rebases instead of merging", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+
+		if err := tm.RefreshBranch("", true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := gitBase.ExecCommandCalls
+		if len(calls) != 4 {
+			t.Fatalf("expected 4 ExecCommand calls, got %d", len(calls))
+		}
+		assertCmd(t, calls[0], "git", "checkout", "main")
+		assertCmd(t, calls[1], "git", "pull", "origin", "main")
+		assertCmd(t, calls[2], "git", "checkout", "-")
+		assertCmd(t, calls[3], "git", "rebase", "main")
+	})
+
+	t.Run("rebase with a custom target", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+
+		if err := tm.RefreshBranch("develop", true); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := gitBase.ExecCommandCalls
+		assertCmd(t, calls[0], "git", "checkout", "develop")
+		assertCmd(t, calls[3], "git", "rebase", "develop")
+	})
+
+	t.Run("rebase propagates error", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		gitBase.SetExecCommandResult("", "fatal", fmt.Errorf("not a git repo"))
+
+		err := tm.RefreshBranch("", true)
 		if err == nil {
 			t.Fatal("expected error")
 		}

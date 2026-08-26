@@ -3,9 +3,9 @@
 **Date:** 2026-08-25
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
-all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slice A
-(`dg task scratch --key`) is implemented and tested on this branch, awaiting
-commit; Slices B–H remain.
+all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
+(`dg task scratch --key`) and B (`refresh-branch --rebase`) are implemented and
+tested on this branch; Slices C–H remain.
 
 ---
 
@@ -188,7 +188,7 @@ in one repository.
       applied to the write path). A symlink or non-directory at the keyed path is
       an error, never reused.
       **Requires ADR-0033 first** — this changes ADR-0015's ownership contract.
-- [ ] **Slice B — `dg task refresh-branch --rebase`.** Rebase the current branch
+- [x] **Slice B — `dg task refresh-branch --rebase`.** Rebase the current branch
       onto the freshly-pulled target instead of merging the target into it. The
       merge behavior stays the default in this cycle (see Out of Scope).
 - [ ] **Slice C — the issue surface, and `dg task issue-scope <n>`.** Add issue

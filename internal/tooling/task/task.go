@@ -75,9 +75,16 @@ func (tm *TaskManager) resolveHead() (current, defaultBranch string, err error) 
 	return current, tm.Git.DefaultBranch(), nil
 }
 
-// RefreshBranch checks out target (default "main"), pulls, returns to the previous
-// branch, and merges target into it — equivalent to the dge refresh-branch shell task.
-func (tm *TaskManager) RefreshBranch(target string) error {
+// RefreshBranch checks out target (default "main"), pulls, returns to the
+// previous branch, and integrates target into it — equivalent to the dge
+// refresh-branch shell task.
+//
+// rebase selects which integration runs: false (the default, unchanged from
+// before this parameter existed) merges target into the previous branch;
+// true rebases the previous branch onto the freshly-pulled target instead,
+// for a repository whose merge gate rejects merge commits. Only the last
+// step differs — checkout/pull/checkout-back are identical either way.
+func (tm *TaskManager) RefreshBranch(target string, rebase bool) error {
 	if target == "" {
 		target = "main"
 	}
@@ -90,7 +97,11 @@ func (tm *TaskManager) RefreshBranch(target string) error {
 	if err := tm.Git.SwitchBranch("-"); err != nil {
 		return fmt.Errorf("refresh-branch: %w", err)
 	}
-	if err := tm.Git.ExecuteCommand("merge", target); err != nil {
+	integrate := "merge"
+	if rebase {
+		integrate = "rebase"
+	}
+	if err := tm.Git.ExecuteCommand(integrate, target); err != nil {
 		return fmt.Errorf("refresh-branch: %w", err)
 	}
 	return nil
