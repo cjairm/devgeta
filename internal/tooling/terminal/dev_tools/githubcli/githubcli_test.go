@@ -373,6 +373,16 @@ func TestFetchReviewThreads(t *testing.T) {
 		if !strings.Contains(joined, "pageInfo") {
 			t.Fatalf("expected pageInfo for pagination, got %v", call.Args)
 		}
+		// Two hasNextPage sites: the outer reviewThreads pagination, and the
+		// per-thread comments(first: 100) connection — a length of exactly
+		// 100 there is otherwise indistinguishable from >100 (Slice G, n14).
+		if got := strings.Count(joined, "hasNextPage"); got != 2 {
+			t.Fatalf(
+				"expected 2 hasNextPage sites (outer + per-thread comments), got %d in %v",
+				got,
+				call.Args,
+			)
+		}
 		if !strings.Contains(joined, "resolvedBy") {
 			t.Fatalf("expected resolvedBy field on reviewThread in query, got %v", call.Args)
 		}
@@ -439,6 +449,15 @@ func TestFetchPRDiscussion(t *testing.T) {
 		}
 		if !strings.Contains(joined, "createdAt") {
 			t.Fatalf("expected createdAt field on comments in query, got %v", call.Args)
+		}
+		// Two hasNextPage sites: reviews(first: 100) and comments(first: 100)
+		// each need their own truncation signal (Slice G, n14).
+		if got := strings.Count(joined, "hasNextPage"); got != 2 {
+			t.Fatalf(
+				"expected 2 hasNextPage sites (reviews + comments), got %d in %v",
+				got,
+				call.Args,
+			)
 		}
 		if !argSeq(call.Args, "-f", "owner=octocat") {
 			t.Fatalf("expected -f owner=octocat, got %v", call.Args)

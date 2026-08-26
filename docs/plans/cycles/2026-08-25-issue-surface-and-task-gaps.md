@@ -5,9 +5,9 @@
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
 all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
 (`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue surface +
-`issue-scope`), D (`pr-state`), E (`dg wt create --base`), and F
-(`review-scope --sizes`) are implemented and tested on this branch; Slices G–H
-remain.
+`issue-scope`), D (`pr-state`), E (`dg wt create --base`), F
+(`review-scope --sizes`), and G (`review-threads --json`) are implemented and
+tested on this branch; Slice H remains.
 
 ---
 
@@ -307,7 +307,7 @@ in one repository.
       with `git diff <commit>^ <commit>` (first-parent), consistent with a
       review reading the merge as one delta. - Fixtures assert exact byte counts against a fixed diff, so the semantics are
       pinned by test, not prose.
-- [ ] **Slice G — `dg task review-threads --json`.** Opt-in machine-readable
+- [x] **Slice G — `dg task review-threads --json`.** Opt-in machine-readable
       output for reply/resolve loops. Markdown stays the default: JSON costs more
       tokens, and the default must stay the cheap one (task-design.md principle 1).
       The existing markdown sentinels are unchanged contracts. The first draft

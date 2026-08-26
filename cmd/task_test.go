@@ -1659,6 +1659,10 @@ func (m *mockPRRunner) ReviewThreads(pr, state string) (string, error) {
 	return m.record("ReviewThreads", "pr", pr, "state", state)
 }
 
+func (m *mockPRRunner) ReviewThreadsJSON(pr, state string) (string, error) {
+	return m.record("ReviewThreadsJSON", "pr", pr, "state", state)
+}
+
 func (m *mockPRRunner) ResolveThread(id string) (string, error) {
 	return m.record("ResolveThread", "id", id)
 }
@@ -1814,6 +1818,39 @@ func TestPRTask_Dispatch(t *testing.T) {
 		}
 		if mock.lastArg["pr"] != "7" || mock.lastArg["state"] != "all" {
 			t.Fatalf("unexpected args: %v", mock.lastArg)
+		}
+	})
+
+	t.Run(
+		"review-threads --json dispatches to ReviewThreadsJSON, not ReviewThreads",
+		func(t *testing.T) {
+			mock := newMockPRRunner()
+			defer setupPRMock(t, mock)()
+			prFlag, prStateFlag, prJSONFlag = "7", "all", true
+			defer func() { prFlag, prStateFlag, prJSONFlag = "", "unresolved", false }()
+
+			if err := taskReviewThreadsCmd.RunE(taskReviewThreadsCmd, nil); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(mock.calls) != 1 || mock.calls[0] != "ReviewThreadsJSON" {
+				t.Fatalf("expected ReviewThreadsJSON call, got %v", mock.calls)
+			}
+			if mock.lastArg["pr"] != "7" || mock.lastArg["state"] != "all" {
+				t.Fatalf("unexpected args: %v", mock.lastArg)
+			}
+		},
+	)
+
+	t.Run("review-threads without --json still dispatches to ReviewThreads", func(t *testing.T) {
+		mock := newMockPRRunner()
+		defer setupPRMock(t, mock)()
+		prJSONFlag = false
+
+		if err := taskReviewThreadsCmd.RunE(taskReviewThreadsCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(mock.calls) != 1 || mock.calls[0] != "ReviewThreads" {
+			t.Fatalf("expected ReviewThreads call, got %v", mock.calls)
 		}
 	})
 

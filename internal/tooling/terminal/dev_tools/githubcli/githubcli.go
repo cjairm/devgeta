@@ -177,6 +177,9 @@ func sortedKeys(m map[string]string) []string {
 //
 // Note: comments(first: 100) is NOT paginated — a thread with >100 comments
 // truncates. That is far rarer than >100 threads and deferred for now.
+// Its own pageInfo { hasNextPage } (Slice G) is the only way to tell that
+// case apart from exactly 100 comments: len(nodes) == 100 cannot, since it
+// is the same length either way.
 const reviewThreadsQuery = `query($owner: String!, $name: String!, $pr: Int!, $endCursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
@@ -195,6 +198,9 @@ const reviewThreadsQuery = `query($owner: String!, $name: String!, $pr: Int!, $e
               author { login }
               body
               createdAt
+            }
+            pageInfo {
+              hasNextPage
             }
           }
           firstComment: comments(first: 1) {
@@ -229,15 +235,19 @@ const reviewThreadsQuery = `query($owner: String!, $name: String!, $pr: Int!, $e
 // Note: reviews(first: 100) and comments(first: 100) are NOT paginated — a PR
 // with >100 reviews or >100 conversation comments truncates. That mirrors the
 // deferred-truncation stance already taken on reviewThreadsQuery's per-thread
-// comments(first: 100).
+// comments(first: 100). Each connection's own pageInfo { hasNextPage }
+// (Slice G) is what lets a caller tell "exactly 100" apart from ">100" —
+// len(nodes) == 100 is the same either way.
 const prDiscussionQuery = `query($owner: String!, $name: String!, $pr: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $pr) {
       reviews(first: 100) {
         nodes { author { login } body state submittedAt }
+        pageInfo { hasNextPage }
       }
       comments(first: 100) {
         nodes { author { login } body createdAt }
+        pageInfo { hasNextPage }
       }
     }
   }

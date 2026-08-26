@@ -16,6 +16,7 @@ import (
 // in tests. It mirrors task.PRManager.
 type prRunner interface {
 	ReviewThreads(prNumber, state string) (string, error)
+	ReviewThreadsJSON(prNumber, state string) (string, error)
 	ResolveThread(threadID string) (string, error)
 	UnresolveThread(threadID string) (string, error)
 	ReplyThread(threadID, body string) (string, error)
@@ -52,6 +53,7 @@ var (
 	prEventFlag    string
 	prCommentsFile string
 	prCommitFlag   string
+	prJSONFlag     bool
 )
 
 // commitFlagUsage documents --commit for the two commands that post a review.
@@ -107,13 +109,28 @@ Each inline thread renders as "## file:line (thread <id>)", an optional diff
 hunk, and one line per comment "**author** (<id>): body" — thread and comment
 ids feed the resolve-thread / reply-thread commands. Review summaries render as
 "**author** [STATE]: body" under "## Review summaries"; conversation comments
-render as "**author**: body" under "## Conversation".`,
+render as "**author**: body" under "## Conversation".
+
+--json switches to one machine-readable document instead of markdown:
+{"schemaVersion": 1, "threads": [...], "discussion": {"reviews": [...],
+"comments": [...]}} — every thread across every page, honoring --state the
+same way, with a "commentsTruncated"/"reviewsTruncated" boolean on any
+connection that hit its 100-item cap (derived from GitHub's own
+hasNextPage, not from a node count that cannot tell 100 apart from more).
+Markdown stays the default: it costs fewer tokens, so plain "review-threads"
+is unchanged either way.`,
 	Example: `  dg task review-threads                 # unresolved on the current branch's PR
   dg task review-threads --state all
-  dg task review-threads --pr 42 --state resolved`,
+  dg task review-threads --pr 42 --state resolved
+  dg task review-threads --json`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		out, err := newPRTasks().ReviewThreads(prFlag, prStateFlag)
+		pm := newPRTasks()
+		if prJSONFlag {
+			out, err := pm.ReviewThreadsJSON(prFlag, prStateFlag)
+			return emitPRResult(cmd, out, err)
+		}
+		out, err := pm.ReviewThreads(prFlag, prStateFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -491,6 +508,8 @@ func init() {
 	taskReviewThreadsCmd.Flags().StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 	taskReviewThreadsCmd.Flags().
 		StringVar(&prStateFlag, "state", "unresolved", "Filter: unresolved, resolved, or all")
+	taskReviewThreadsCmd.Flags().
+		BoolVar(&prJSONFlag, "json", false, "Machine-readable JSON instead of markdown")
 
 	// bodyFileUsage documents the markdown-from-file alternative shared by the
 	// body-bearing commands.
