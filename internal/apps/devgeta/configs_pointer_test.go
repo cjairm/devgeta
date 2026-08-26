@@ -253,6 +253,21 @@ func TestSwapPointer_ReaderNeverSeesAnAbsentOrPartialTree(t *testing.T) {
 		reads,
 		transient,
 	)
+	// Some transient EINVAL is expected noise (see the doc comment above:
+	// measured at roughly 1-2% of reads), but an unbounded count would still
+	// pass this test if the rate rose to 99% — silently absorbing a real
+	// regression in the swap mechanism into "expected noise" instead of
+	// failing on it. 10% is comfortably above the measured rate and still
+	// tight enough to catch a real regression.
+	const maxTransientRate = 0.10
+	if transient > int(float64(reads)*maxTransientRate) {
+		t.Errorf(
+			"transient rename-race errors (%d) exceeded %.0f%% of reads (%d) — this is no longer expected noise",
+			transient,
+			maxTransientRate*100,
+			reads,
+		)
+	}
 	// No temp symlink may survive a completed swap.
 	entries, err := os.ReadDir(root)
 	if err != nil {
@@ -378,6 +393,110 @@ func TestInstall_SweepsDebrisFromAnInterruptedExtract(t *testing.T) {
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
+// seedTempPointer creates a temp-pointer symlink at root/name pointing at an
+// arbitrary target and returns its path.
+func seedTempPointer(t *testing.T, root, name string) string {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.Symlink("configs-v1.0.0-aaaaaaa", path); err != nil {
+		t.Fatalf("failed to seed the temp pointer %s: %v", path, err)
+	}
+	return path
+}
+
+// TestSweepStaleTempPointers_CollectsOrphansButNotLookalikes covers task 14's
+// fix for the debris a process killed between swapPointer's os.Symlink and
+// its os.Rename leaves behind: a stray configs.tmp-<pid>-N symlink that
+// sweepStaleExtracts deliberately never touches (see tempPointerPrefix's doc
+// comment). It also pins the validated-removal discipline: a real directory
+// that merely happens to share the temp-pointer name pattern, and an
+// unrelated symlink that does not match the pattern, must both survive.
+func TestSweepStaleTempPointers_CollectsOrphansButNotLookalikes(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	root := paths.Paths.App.Root
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("failed to create the app root: %v", err)
+	}
+	orphan := seedTempPointer(t, root, tempPointerPrefix+"12345-0")
+
+	// A real directory that happens to match the name pattern must never be
+	// removed: sweepStaleTempPointers only ever unlinks a symlink.
+	dirLookalike := filepath.Join(root, tempPointerPrefix+"99999-0")
+	if err := os.MkdirAll(dirLookalike, 0o755); err != nil {
+		t.Fatalf("failed to create the directory lookalike: %v", err)
+	}
+	// A symlink that does not match the pattern must never be removed either.
+	otherSymlink := filepath.Join(root, "configs.other-link")
+	if err := os.Symlink("configs-v1.0.0-aaaaaaa", otherSymlink); err != nil {
+		t.Fatalf("failed to seed the unrelated symlink: %v", err)
+	}
+
+	sweepStaleTempPointers(root)
+
+	assertNotExists(t, orphan)
+	if _, err := os.Stat(dirLookalike); err != nil {
+		t.Errorf(
+			"expected a directory sharing the temp-pointer name pattern to survive the sweep: %v",
+			err,
+		)
+	}
+	if _, err := os.Lstat(otherSymlink); err != nil {
+		t.Errorf("expected an unrelated symlink to survive the sweep: %v", err)
+	}
+}
+
+// TestInstall_SweepsOrphanedTempPointer proves the sweep is actually wired
+// into the production path: Install calling it after every publish means a
+// temp pointer stranded by an earlier interrupted swap does not linger
+// forever, one install at a time.
+func TestInstall_SweepsOrphanedTempPointer(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.0.0", "aaaaaaa")
+
+	root := paths.Paths.App.Root
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("failed to create the app root: %v", err)
+	}
+	orphan := seedTempPointer(t, root, tempPointerPrefix+"12345-0")
+
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: mockExtractor}
+	if err := dg.Install(); err != nil {
+		t.Fatalf("Install() failed: %v", err)
+	}
+
+	assertNotExists(t, orphan)
+	assertPointsAt(t, "configs-v1.0.0-aaaaaaa")
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// TestUninstall_SweepsOrphanedTempPointer mirrors the Install case for
+// Uninstall: without the sweep, a lingering temp pointer would keep the app
+// root non-empty and the "remove the app root if empty" branch could never
+// fire.
+func TestUninstall_SweepsOrphanedTempPointer(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.0.0", "aaaaaaa")
+
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: mockExtractor}
+	if err := dg.Install(); err != nil {
+		t.Fatalf("Install() failed: %v", err)
+	}
+	root := paths.Paths.App.Root
+	orphan := seedTempPointer(t, root, tempPointerPrefix+"12345-0")
+
+	if err := dg.Uninstall(); err != nil {
+		t.Fatalf("Uninstall() failed: %v", err)
+	}
+
+	assertNotExists(t, orphan)
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
 func TestUninstall_RemovesThePointerTargetNotJustTheLink(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
@@ -498,13 +617,22 @@ func seedLegacyTree(t *testing.T, path string) {
 }
 
 // assertMigrated asserts the migration finished: a live pointer at this build's
-// extract, a complete tree behind it, and no `configs.legacy` left.
+// extract, a complete tree behind it, and no `configs.legacy` left. "Complete"
+// means every file the mock extractor writes (generationFiles), not just one
+// of them — checking a single file would pass even if the migration silently
+// dropped the rest of the tree.
 func assertMigrated(t *testing.T, stampedName string) {
 	t.Helper()
 	assertPointsAt(t, stampedName)
 	assertNotExists(t, legacyPath())
-	if _, err := os.Stat(filepath.Join(pointerPath(), "git", ".gitconfig")); err != nil {
-		t.Errorf("expected a complete extracted tree behind the pointer: %v", err)
+	for _, rel := range generationFiles {
+		if _, err := os.Stat(filepath.Join(pointerPath(), rel)); err != nil {
+			t.Errorf(
+				"expected a complete extracted tree behind the pointer, missing %s: %v",
+				rel,
+				err,
+			)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(pointerPath(), "git", "old-marker.txt")); err == nil {
 		t.Error("the superseded tree is still being served through the pointer")

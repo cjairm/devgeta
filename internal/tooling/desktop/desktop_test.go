@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"testing"
 
 	cmd "github.com/cjairm/devgeta/internal/commands"
@@ -33,7 +34,10 @@ func buildCrossPlatformOverride(names ...string) ([]namedInstaller, map[string]*
 	return entries, mocks
 }
 
-func newTestDesktop(crossPlatformEntries []namedInstaller, launcherName string) (*Desktop, *mockSoftInstaller) {
+func newTestDesktop(
+	crossPlatformEntries []namedInstaller,
+	launcherName string,
+) (*Desktop, *mockSoftInstaller) {
 	launcherMock := &mockSoftInstaller{}
 	return &Desktop{
 		Base:                      *cmd.NewBaseCommand(),
@@ -102,6 +106,53 @@ func TestInstallDesktopApps_LauncherSkippedByFilter(t *testing.T) {
 	}
 }
 
+// interruptingSoftInstaller wraps a mockSoftInstaller and additionally
+// cancels the shared root context (as cmd.Execute's SIGINT/SIGTERM handler
+// does in production) the moment its SoftInstall runs — simulating a Ctrl-C
+// landing mid-loop, right after this entry was processed.
+type interruptingSoftInstaller struct {
+	*mockSoftInstaller
+}
+
+func (m *interruptingSoftInstaller) SoftInstall() error {
+	err := m.mockSoftInstaller.SoftInstall()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	cmd.SetRootContext(ctx)
+	return err
+}
+
+// TestInstallDesktopAppsWithoutConfiguration_StopsOnInterrupt covers task
+// 14's fix: once the root context is cancelled mid-loop, the cross-platform
+// apps loop must stop before its remaining entries instead of calling
+// SoftInstall on every one of them.
+func TestInstallDesktopAppsWithoutConfiguration_StopsOnInterrupt(t *testing.T) {
+	t.Cleanup(func() { cmd.SetRootContext(context.Background()) })
+
+	first := &mockSoftInstaller{}
+	interrupter := &interruptingSoftInstaller{mockSoftInstaller: &mockSoftInstaller{}}
+	third := &mockSoftInstaller{}
+
+	entries := []namedInstaller{
+		{name: "first", app: first},
+		{name: "second", app: interrupter},
+		{name: "third", app: third},
+	}
+	d, _ := newTestDesktop(entries, constants.Raycast)
+
+	d.InstallDesktopAppsWithoutConfiguration(nil, nil)
+
+	if !first.installCalled {
+		t.Error("expected the first app to install before the interrupt happened")
+	}
+	if !interrupter.installCalled {
+		t.Error("expected the second app (which triggers the interrupt) to install")
+	}
+	if third.installCalled {
+		t.Error("expected the third app to be skipped once Interrupted() became true")
+	}
+}
+
 func TestShouldInstallApp(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -114,7 +165,13 @@ func TestShouldInstallApp(t *testing.T) {
 		{"in appFilter", "docker", map[string]bool{"docker": true}, nil, true},
 		{"not in appFilter", "gimp", map[string]bool{"docker": true}, nil, false},
 		{"in skipFilter", "docker", nil, map[string]bool{"docker": true}, false},
-		{"in appFilter but also skipped", "docker", map[string]bool{"docker": true}, map[string]bool{"docker": true}, false},
+		{
+			"in appFilter but also skipped",
+			"docker",
+			map[string]bool{"docker": true},
+			map[string]bool{"docker": true},
+			false,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

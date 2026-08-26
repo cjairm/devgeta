@@ -57,6 +57,26 @@ var (
 // produce. Removal is gated on it, so it must stay in sync with sanitizeStamp.
 var stampedDirPattern = regexp.MustCompile(`^` + stampedPrefix + `[A-Za-z0-9._-]+$`)
 
+// tempPointerPattern matches exactly the names newTempPointerPath can
+// produce: tempPointerPrefix followed by the creating process's pid and an
+// attempt index. sweepStaleTempPointers is gated on it the same way
+// sweepStaleExtracts is gated on stampedDirPattern, so it can only ever
+// collect a temp pointer — never an arbitrary path that happens to sit
+// under the app root.
+//
+// No liveness or age check gates removal, matching sweepStaleExtracts'
+// own precedent right above: a concurrent second devgeta process racing this
+// sweep is pre-existing exposure this file already accepts elsewhere (see
+// TestSwapPointer_ReaderNeverSeesAnAbsentOrPartialTree's doc comment), not
+// something this sweep newly introduces or needs to newly guard against —
+// the window between swapPointer's os.Symlink and its os.Rename is a
+// handful of syscalls, and a temp pointer's name is unique per attempt
+// (pid + index), so this sweep and a concurrent swapPointer can only ever
+// collide on the exact same in-flight name in that narrow window.
+var tempPointerPattern = regexp.MustCompile(
+	`^` + regexp.QuoteMeta(tempPointerPrefix) + `[0-9]+-[0-9]+$`,
+)
+
 // sanitizeStamp reduces a build-info field to the character set
 // stampedDirPattern accepts, so a stamp can never introduce a path separator
 // or a name the removal guard would later refuse to clean up.
@@ -363,6 +383,59 @@ func sweepStaleExtracts(root, keep string) {
 		logger.L().Debugw("Removing stale config extract", "path", path)
 		if err := removeManagedTarget(path); err != nil {
 			logger.L().Warnw("Failed to remove stale config extract", "path", path, "error", err)
+		}
+	}
+}
+
+// sweepStaleTempPointers removes orphaned configs.tmp-* symlinks: debris
+// left when a process was killed between swapPointer's os.Symlink and its
+// os.Rename. Nothing else ever collects these — sweepStaleExtracts
+// deliberately excludes them (see tempPointerPrefix's doc comment) so it can
+// never mistake an in-flight swap for garbage — and without this, Uninstall's
+// "remove the app root if empty" branch can never fire while one lingers.
+// Scoped separately from sweepStaleExtracts because it validates a
+// completely different shape (a symlink matching tempPointerPattern, not a
+// directory matching stampedDirPattern) — see tempPointerPattern's own doc
+// comment for why no age or liveness check is needed on top of that.
+func sweepStaleTempPointers(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			logger.L().Warnw(
+				"Failed to scan the app root for orphaned temp config pointers",
+				"path", root,
+				"error", err,
+			)
+		}
+		return
+	}
+	for _, entry := range entries {
+		if !tempPointerPattern.MatchString(entry.Name()) {
+			continue
+		}
+		path := filepath.Join(root, entry.Name())
+		// Lstat, not Stat: a temp pointer is a symlink and its target may
+		// itself have already been swept, but the link entry is what this
+		// sweep is validating and removing.
+		info, err := os.Lstat(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logger.L().
+					Warnw("Failed to inspect temp config pointer", "path", path, "error", err)
+			}
+			continue
+		}
+		// Validated-removal discipline, same spirit as resolveManagedTarget:
+		// only ever remove an entry that is itself a symlink directly under
+		// root and matches the temp-pointer name pattern, never a directory
+		// or file that merely happens to share the name.
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		logger.L().Debugw("Removing orphaned temp config pointer", "path", path)
+		if err := os.Remove(path); err != nil {
+			logger.L().
+				Warnw("Failed to remove orphaned temp config pointer", "path", path, "error", err)
 		}
 	}
 }

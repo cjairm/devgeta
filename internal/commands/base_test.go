@@ -338,6 +338,12 @@ func setupMaybeInstallTest(t *testing.T, testConfig *config.GlobalConfig) (clean
 	// Override global config path
 	originalConfigDir := paths.Paths.Config.Root
 	paths.Paths.Config.Root = tempDir
+	// cache.go's own doc comment on ResetGlobalConfigCacheForTest requires
+	// every test that populates the process-wide config cache (via
+	// Load/Save/Update, as MaybeInstall does) to call this via t.Cleanup —
+	// otherwise this test's cached document could silently answer another
+	// test's Load() once paths.Paths.Config.Root points elsewhere.
+	t.Cleanup(config.ResetGlobalConfigCacheForTest)
 
 	return func() {
 		paths.Paths.Config.Root = originalConfigDir
@@ -450,6 +456,9 @@ func TestMaybeInstall_ItemPreExisting_TracksAsAlreadyInstalled(t *testing.T) {
 	defer func() {
 		paths.Paths.Config.Root = originalConfigDir
 	}()
+	// See setupMaybeInstallTest's comment on ResetGlobalConfigCacheForTest —
+	// this test populates the process-wide config cache via MaybeInstall too.
+	t.Cleanup(config.ResetGlobalConfigCacheForTest)
 
 	b := commands.NewBaseCommandCustom(FakePlatform{Mac: true})
 	mockInstaller := &MockInstallerPresent{} // This will return true for Check()
@@ -631,6 +640,10 @@ func TestMaybeInstall_DifferentItemTypes(t *testing.T) {
 			defer func() {
 				paths.Paths.Config.Root = originalConfigDir
 			}()
+			// See setupMaybeInstallTest's comment on ResetGlobalConfigCacheForTest
+			// — this subtest populates the process-wide config cache via
+			// MaybeInstall too.
+			t.Cleanup(config.ResetGlobalConfigCacheForTest)
 
 			b := commands.NewBaseCommandCustom(FakePlatform{Mac: true})
 			mockInstaller := &MockInstaller{}

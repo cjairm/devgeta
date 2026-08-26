@@ -14,7 +14,7 @@ Everything marked **verified** below was measured, not reasoned about:
 | Claude Code | 2.1.245               | no rule-level log exists; measured by **outcome** in `-p` mode, always against a control |
 
 Re-measure before trusting any of it against a newer release; none of this is
-contractual upstream behavior. Section 5 has both procedures.
+contractual upstream behavior. Section 6 has both procedures.
 
 **The one-line summary, because the two agents are opposites on both axes:**
 
@@ -320,7 +320,10 @@ claude -p "<prompt>" \
   `--settings` alone is additive and would leave the real deny list in play.
 - `--tools "Read"` removes Bash from the tool set entirely — stronger than
   denying it, and the same purpose: the agent must not be able to `cat` its way
-  around a path check.
+  around a path check. (Add `Edit` — i.e. `--tools "Read Edit"` — when probing
+  an edit rule, as the CC-D/CC-E entries in the task report that produced this
+  page did; `--tools "Read"` alone leaves no Edit tool for the model to call at
+  all.)
 - A denied call comes back as
   `<tool_use_error>File is in a directory that is denied by your permission settings.</tool_use_error>`
   for Read/Edit, and

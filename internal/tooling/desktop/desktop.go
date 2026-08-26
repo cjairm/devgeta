@@ -113,6 +113,10 @@ func (d *Desktop) InstallAndConfigure(appFilter, skipFilter map[string]bool) err
 // InstallDesktopAppsWithoutConfiguration installs cross-platform and launcher apps with filtering.
 func (d *Desktop) InstallDesktopAppsWithoutConfiguration(appFilter, skipFilter map[string]bool) {
 	for _, entry := range d.getCrossPlatformApps() {
+		if cmd.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping desktop app installs.")
+			break
+		}
 		if !shouldInstallApp(entry.name, appFilter, skipFilter) {
 			continue
 		}

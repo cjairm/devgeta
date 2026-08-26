@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 )
@@ -268,6 +269,56 @@ func TestInstallChosen_WithSelections(t *testing.T) {
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
+}
+
+// TestInstallChosen_StopsOnInterrupt covers task 14's fix for InstallChosen's
+// loop. Ten of the eleven configured languages install via a fresh
+// mise.New() that installLanguage constructs directly rather than going
+// through dl.Cmd/dl.Base, so there is no seam to mock a "stop after N of M"
+// the way TestInstallChosen_StopsOnInterrupt does for databases (whose
+// installs all route through the mockable Cmd) — mocking would require
+// actually reaching a mise-based entry's install call, which shells out for
+// real. Instead this proves the guard fires before the loop body runs at
+// all: with the root context already cancelled, selecting every language
+// (mise and native alike) must still result in zero install attempts,
+// because the Interrupted() check breaks out on the loop's very first
+// iteration before any entry — mise or native — is touched.
+func TestInstallChosen_StopsOnInterrupt(t *testing.T) {
+	commands.SetRootContext(mustCancelledContext())
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+
+	mockApp := testutil.NewMockApp()
+
+	dl := &DevLanguages{
+		Cmd:  mockApp.Cmd,
+		Base: mockApp.Base,
+	}
+
+	allLanguages := make([]string, 0)
+	for _, langCfg := range GetLanguageConfigs() {
+		allLanguages = append(allLanguages, langCfg.DisplayName)
+	}
+	ctx := context.Background()
+	initialConfig := config.ContextConfig{SelectedLanguages: allLanguages}
+	ctx = config.WithConfig(ctx, initialConfig)
+
+	dl.InstallChosen(ctx)
+
+	if mockApp.Cmd.MaybeInstalled != "" {
+		t.Errorf(
+			"expected no package installs once already interrupted, got %q",
+			mockApp.Cmd.MaybeInstalled,
+		)
+	}
+	testutil.VerifyNoRealCommands(t, mockApp.Base)
+}
+
+// mustCancelledContext returns a context that is already cancelled, for
+// simulating a root context that a prior SIGINT/SIGTERM already cancelled.
+func mustCancelledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
 }
 
 func TestLanguageConfig_MiseVsNative(t *testing.T) {

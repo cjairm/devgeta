@@ -50,12 +50,17 @@ func init() {
 }
 
 // mockExtractor creates a test configs directory with sample files
+// mockExtractor writes exactly the files generationFiles (configs_pointer_test.go)
+// names, so assertMigrated's "the whole tree is there" check holds for every test
+// that builds its tree with this extractor, not just the ones using
+// generationExtractor directly.
 func mockExtractor(destDir string) error {
 	// Create sample config directories
 	dirs := []string{
 		filepath.Join(destDir, "git"),
 		filepath.Join(destDir, "neovim"),
 		filepath.Join(destDir, "tmux"),
+		filepath.Join(destDir, "zsh"),
 	}
 
 	for _, dir := range dirs {
@@ -69,6 +74,7 @@ func mockExtractor(destDir string) error {
 		filepath.Join(destDir, "git", ".gitconfig"):      "[user]\n\tname = Test\n",
 		filepath.Join(destDir, "neovim", "init.lua"):     "-- Test config\n",
 		filepath.Join(destDir, "tmux", "tmux.conf.tmpl"): "# Test config\n",
+		filepath.Join(destDir, "zsh", "zshenv.zsh"):      "# Test config\n",
 	}
 
 	for path, content := range files {

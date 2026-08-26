@@ -87,11 +87,16 @@ type CommandParams struct {
 	// Zero is no longer unbounded. Every call, timed or not, is additionally
 	// bounded by outputDrainGrace: exec.Cmd.WaitDelay stops a process that
 	// outlived the command — a daemon holding the inherited pipe — from
-	// blocking ExecCommand for that process's lifetime. So the effective
-	// wall-clock bound of a timed call is Timeout + outputDrainGrace, not
-	// Timeout: a Timeout of 300ms whose output is held past the deadline
-	// returns at roughly 2.3s, not 300ms. Size a Timeout with that tail in
-	// mind, and don't read a zero as "this can hang forever" — it can't.
+	// blocking ExecCommand for that process's lifetime. Timeout +
+	// outputDrainGrace is an UPPER BOUND on that wall-clock time, not the
+	// typical measured duration: WaitDelay's grace period starts at the
+	// process's actual exit, not at the Timeout deadline, so the real bound
+	// is min(Timeout, time-to-exit) + outputDrainGrace, and it only reaches
+	// the full Timeout + outputDrainGrace ceiling in the unexercised case
+	// where the process is still running exactly at the deadline and
+	// something it left behind then holds the pipe for the entire grace
+	// period too. Size a Timeout with that ceiling in mind, and don't read
+	// a zero as "this can hang forever" — it can't.
 	Timeout time.Duration
 	// Dir, when non-empty, sets the command's working directory, so a caller
 	// can run a tool that has no directory flag (e.g. gh) against a specific
@@ -557,6 +562,19 @@ func SetRootContext(ctx context.Context) {
 
 func rootContext() context.Context {
 	return *rootCtx.Load()
+}
+
+// Interrupted reports whether the process-level root context has been
+// cancelled — true after cmd.Execute's SIGINT/SIGTERM handler fires (see
+// SetRootContext). Every ExecCommand call made after that point fails
+// instantly with a wrapped "operation interrupted" error, so an install-loop
+// coordinator that keeps calling ExecCommand once this is true just grinds
+// through its remaining work logging spurious failures instead of stopping.
+// Coordinators (internal/tooling/{terminal,desktop,languages,databases} and
+// cmd/install.go) check this at the top of each loop iteration, or between
+// top-level categories, and break out cleanly instead of continuing.
+func Interrupted() bool {
+	return rootContext().Err() != nil
 }
 
 // commandTimeoutContext builds the context used to bound a command's

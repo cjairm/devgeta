@@ -1,6 +1,7 @@
 package terminal
 
 import (
+	"context"
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/commands"
@@ -118,6 +119,105 @@ func TestInstallTerminalApps_SkipFilter(t *testing.T) {
 		if !mocks[name].installCalled {
 			t.Errorf("expected %s to be installed (not in skipFilter)", name)
 		}
+	}
+}
+
+// interruptingInstallable wraps a mockInstallable and additionally cancels
+// the shared root context (as cmd.Execute's SIGINT/SIGTERM handler does in
+// production) the moment its SoftInstall runs — simulating a Ctrl-C that
+// lands mid-loop, right after this entry was processed.
+type interruptingInstallable struct {
+	*mockInstallable
+}
+
+func (m *interruptingInstallable) SoftInstall() error {
+	err := m.mockInstallable.SoftInstall()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	commands.SetRootContext(ctx)
+	return err
+}
+
+// TestInstallTerminalApps_StopsOnInterrupt covers task 14's fix: once the
+// root context is cancelled mid-loop, InstallTerminalApps must stop before
+// its remaining entries rather than call SoftInstall on every one of them
+// and let each fail spuriously.
+func TestInstallTerminalApps_StopsOnInterrupt(t *testing.T) {
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+
+	first := &mockInstallable{}
+	interrupter := &interruptingInstallable{mockInstallable: &mockInstallable{}}
+	third := &mockInstallable{}
+
+	entries := []namedInstallable{
+		{name: "first", app: first},
+		{name: "second", app: interrupter},
+		{name: "third", app: third},
+	}
+	term := &Terminal{appsOverride: entries}
+	summary := &InstallationSummary{}
+
+	term.InstallTerminalApps(summary, nil, nil)
+
+	if !first.installCalled {
+		t.Error("expected the first app to install before the interrupt happened")
+	}
+	if !interrupter.installCalled {
+		t.Error("expected the second app (which triggers the interrupt) to install")
+	}
+	if third.installCalled {
+		t.Error("expected the third app to be skipped once Interrupted() became true")
+	}
+	if summary.Total() != 2 {
+		t.Errorf("expected exactly 2 apps attempted before stopping, got %d", summary.Total())
+	}
+}
+
+// TestInstallDevTools_StopsOnInterrupt covers InstallDevTools' outer loop and
+// its Debian-only inner loop. Both loop over hardcoded real apps with no test
+// override, so this proves the loop-entry guard rather than a mid-loop stop:
+// with the root context already cancelled before the call, neither loop may
+// call a single real app method (which would shell out for real), so the
+// summary must stay empty.
+func TestInstallDevTools_StopsOnInterrupt(t *testing.T) {
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	commands.SetRootContext(ctx)
+
+	term := &Terminal{}
+	summary := &InstallationSummary{}
+
+	term.InstallDevTools(summary)
+
+	if summary.Total() != 0 {
+		t.Errorf(
+			"expected InstallDevTools to attempt nothing once already interrupted, got %d attempts: %+v",
+			summary.Total(),
+			summary.Results,
+		)
+	}
+}
+
+// TestInstallCoreLibs_StopsOnInterrupt mirrors TestInstallDevTools_StopsOnInterrupt
+// for InstallCoreLibs' loop over hardcoded real apps.
+func TestInstallCoreLibs_StopsOnInterrupt(t *testing.T) {
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	commands.SetRootContext(ctx)
+
+	term := &Terminal{}
+	summary := &InstallationSummary{}
+
+	term.InstallCoreLibs(summary)
+
+	if summary.Total() != 0 {
+		t.Errorf(
+			"expected InstallCoreLibs to attempt nothing once already interrupted, got %d attempts: %+v",
+			summary.Total(),
+			summary.Results,
+		)
 	}
 }
 

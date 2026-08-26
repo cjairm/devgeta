@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 )
@@ -245,6 +246,75 @@ func TestInstallChosen_WithSelections(t *testing.T) {
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
+}
+
+// interruptingCommand wraps a cmd.Command and additionally cancels the
+// shared root context (as cmd.Execute's SIGINT/SIGTERM handler does in
+// production) the moment MaybeInstallPackage is called for a chosen trigger
+// package — simulating a Ctrl-C landing right after that entry finished.
+type interruptingCommand struct {
+	cmd.Command
+	trigger string
+}
+
+func (c *interruptingCommand) MaybeInstallPackage(packageName string, alias ...string) error {
+	err := c.Command.MaybeInstallPackage(packageName, alias...)
+	if packageName == c.trigger {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		cmd.SetRootContext(ctx)
+	}
+	return err
+}
+
+// TestInstallChosen_StopsOnInterrupt covers task 14's fix: once the root
+// context is cancelled mid-loop, InstallChosen must stop before its
+// remaining selected databases rather than attempt every one of them.
+func TestInstallChosen_StopsOnInterrupt(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	t.Cleanup(func() { cmd.SetRootContext(context.Background()) })
+
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult("", "", nil)
+
+	dbConfigs := GetDatabaseConfigs()
+	if len(dbConfigs) < 2 {
+		t.Fatal("test needs at least 2 database configs to prove a mid-loop stop")
+	}
+	// The loop iterates dbConfigs in order, so the first entry is what
+	// triggers the interrupt and the rest must never be attempted.
+	wrapped := &interruptingCommand{Command: mockApp.Cmd, trigger: dbConfigs[0].Name}
+
+	d := &Databases{
+		Cmd:  wrapped,
+		Base: mockApp.Base,
+	}
+
+	selections := make([]string, 0, len(dbConfigs))
+	for _, cfg := range dbConfigs {
+		selections = append(selections, cfg.DisplayName)
+	}
+	ctx := context.Background()
+	initialConfig := config.ContextConfig{SelectedDbs: selections}
+	ctx = config.WithConfig(ctx, initialConfig)
+
+	d.InstallChosen(ctx)
+
+	if len(mockApp.Cmd.MaybeInstalledPkgs) != 1 {
+		t.Errorf(
+			"expected exactly 1 database attempted before stopping, got %d: %v",
+			len(mockApp.Cmd.MaybeInstalledPkgs),
+			mockApp.Cmd.MaybeInstalledPkgs,
+		)
+	}
+	if mockApp.Cmd.MaybeInstalledPkgs[0] != dbConfigs[0].Name {
+		t.Errorf(
+			"expected %s to be the one attempted, got %s",
+			dbConfigs[0].Name,
+			mockApp.Cmd.MaybeInstalledPkgs[0],
+		)
+	}
 }
 
 func TestGetVersionCommand(t *testing.T) {

@@ -123,6 +123,10 @@ func (d *Databases) InstallChosen(ctx context.Context) {
 	}
 	databaseConfigs := GetDatabaseConfigs()
 	for _, dbCfg := range databaseConfigs {
+		if cmd.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping database installs.")
+			break
+		}
 		if containsIgnoreCase(dbCfg.DisplayName, selections.SelectedDbs) {
 			d.installDatabase(dbCfg)
 		}

@@ -134,6 +134,10 @@ func (dl *DevLanguages) InstallChosen(ctx context.Context) {
 	}
 	languageConfigs := GetLanguageConfigs()
 	for _, langCfg := range languageConfigs {
+		if cmd.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping language installs.")
+			break
+		}
 		if containsIgnoreCase(langCfg.DisplayName, selections.SelectedLanguages) {
 			dl.installLanguage(langCfg)
 		}

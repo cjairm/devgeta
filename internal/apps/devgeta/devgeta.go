@@ -128,6 +128,7 @@ func (dg *Devgeta) Install() error {
 	}
 
 	sweepStaleExtracts(root, filepath.Base(target))
+	sweepStaleTempPointers(root)
 	return nil
 }
 
@@ -175,6 +176,10 @@ func (dg *Devgeta) Uninstall() error {
 	// Any stamped extract still on disk — debris from an interrupted run, or a
 	// generation a failed post-swap removal left behind — goes too.
 	sweepStaleExtracts(paths.Paths.App.Root, "")
+	// So does an orphaned temp pointer from a swap interrupted before its
+	// rename — without this, the "remove the app root if empty" branch below
+	// could never fire while one lingers.
+	sweepStaleTempPointers(paths.Paths.App.Root)
 	if err := os.RemoveAll(legacyPath()); err != nil {
 		return fmt.Errorf("failed to remove %s: %w", legacyPath(), err)
 	}

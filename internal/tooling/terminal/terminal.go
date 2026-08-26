@@ -156,6 +156,10 @@ func (t *Terminal) InstallTerminalApps(
 	appFilter, skipFilter map[string]bool,
 ) {
 	for _, entry := range t.getApps() {
+		if commands.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping terminal app installs.")
+			break
+		}
 		if skipFilter[entry.name] {
 			continue
 		}
@@ -215,6 +219,10 @@ func (t *Terminal) InstallDevTools(summary *InstallationSummary) {
 		{constants.ZshAutosuggestions, autosuggestions.New()},
 	}
 	for _, devtool := range devtools {
+		if commands.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping dev tool installs.")
+			return
+		}
 		if err := devtool.app.SoftInstall(); err != nil {
 			displayMessage(err, devtool.name)
 			trackResult(summary, devtool.name, err)
@@ -230,6 +238,12 @@ func (t *Terminal) InstallDevTools(summary *InstallationSummary) {
 	if !t.Base.Platform.IsMac() {
 		debianOnlyPackages := []string{constants.Plocate, constants.ApacheUtils}
 		for _, pkg := range debianOnlyPackages {
+			if commands.Interrupted() {
+				utils.PrintWarning(
+					"Installation interrupted; stopping Debian-only package installs.",
+				)
+				break
+			}
 			if err := t.Cmd.MaybeInstallPackage(pkg); err != nil {
 				displayMessage(err, pkg)
 				trackResult(summary, pkg, err)
@@ -283,6 +297,10 @@ func (t *Terminal) InstallCoreLibs(summary *InstallationSummary) {
 		{constants.Zlib, zlib.New()},
 	}
 	for _, lib := range libs {
+		if commands.Interrupted() {
+			utils.PrintWarning("Installation interrupted; stopping core lib installs.")
+			break
+		}
 		switch lib.name {
 		case constants.Xcode:
 			if t.Base.Platform.IsMac() {

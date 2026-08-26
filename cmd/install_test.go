@@ -1,13 +1,45 @@
 package cmd
 
 import (
+	"context"
 	"strings"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
 )
 
 func init() { testutil.InitLogger() }
+
+// --- stopIfInterrupted (task 14: install loops must stop on Ctrl-C) ---
+
+// TestStopIfInterrupted_NotInterrupted covers run()'s between-category guard
+// when nothing has cancelled the root context: it must not report a stop, so
+// the next category actually starts.
+func TestStopIfInterrupted_NotInterrupted(t *testing.T) {
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+
+	if stopIfInterrupted("languages") {
+		t.Error(
+			"expected stopIfInterrupted to report false against the default, uncancelled root context",
+		)
+	}
+}
+
+// TestStopIfInterrupted_Interrupted covers run()'s between-category guard
+// once a prior SIGINT/SIGTERM already cancelled the root context: it must
+// report a stop so run() skips starting the next category instead of
+// grinding through its loop against an already-dead context.
+func TestStopIfInterrupted_Interrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	commands.SetRootContext(ctx)
+	t.Cleanup(func() { commands.SetRootContext(context.Background()) })
+
+	if !stopIfInterrupted("databases") {
+		t.Error("expected stopIfInterrupted to report true once the root context is cancelled")
+	}
+}
 
 // --- helpers ---
 

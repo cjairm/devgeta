@@ -1037,9 +1037,12 @@ not exist anywhere `internal/apps/devgeta` can read them today. `Version`,
 `Commit` and `BuildDate` are package-level vars in **package `cmd`**
 (`cmd/version.go:14-21`), and `cmd` imports `internal/apps/devgeta` — so
 importing `cmd` back is an import cycle and will not compile. Both build paths
-inject into that package:
+inject into that package, as of before this step runs:
 
 - `Makefile:9-11` — `-X 'github.com/cjairm/devgeta/cmd.Version=…'` and siblings.
+  (Task 6, already merged, is what carries out this step: after it, these
+  three flags target `pkg/buildinfo` instead — see `Makefile:9-11` as it
+  reads today.)
 - `.github/workflows/release.yml:67-70` — the same three `-X` flags.
 
 So the step must first move the metadata to a **leaf package with no devgeta

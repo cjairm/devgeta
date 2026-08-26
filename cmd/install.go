@@ -135,30 +135,45 @@ func run(cmd *cobra.Command, args []string) error {
 
 	installDevgeta()
 
+	if stopIfInterrupted("terminal tools") {
+		return nil
+	}
 	if cfg.runTerminal {
 		installTerminalTools(cfg.terminalAppFilter, cfg.terminalSkipFilter)
 	} else {
 		utils.PrintInfo("Skipping terminal tools installation")
 	}
 
+	if stopIfInterrupted("languages") {
+		return nil
+	}
 	if cfg.runLanguages {
 		installLanguages(ctx)
 	} else {
 		utils.PrintInfo("Skipping development languages installation")
 	}
 
+	if stopIfInterrupted("databases") {
+		return nil
+	}
 	if cfg.runDatabases {
 		installDatabases(ctx)
 	} else {
 		utils.PrintInfo("Skipping databases installation")
 	}
 
+	if stopIfInterrupted("desktop applications") {
+		return nil
+	}
 	if cfg.runDesktop {
 		installDesktopTools(cfg.desktopAppFilter, cfg.desktopSkipFilter)
 	} else {
 		utils.PrintInfo("Skipping desktop applications installation")
 	}
 
+	if stopIfInterrupted("AI tools") {
+		return nil
+	}
 	if cfg.runAITools {
 		installAITools(cfg.aiToolsAppFilter, cfg.aiToolsSkipFilter)
 	} else {
@@ -166,6 +181,20 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// stopIfInterrupted reports whether the process-level root context is
+// already cancelled (commands.Interrupted) — a Ctrl-C or SIGTERM that fired
+// during an earlier category. When it has, it prints one calm message naming
+// the category run() was about to start and returns true so run() can skip
+// the rest of the install instead of starting a whole new category that
+// would just grind through its own loop hitting the same cancelled context.
+func stopIfInterrupted(nextCategory string) bool {
+	if !commands.Interrupted() {
+		return false
+	}
+	utils.PrintWarning(fmt.Sprintf("Installation interrupted; stopping before %s.", nextCategory))
+	return true
 }
 
 // parseInstallFlags splits --only/--skip into category and app sets, validates them,
