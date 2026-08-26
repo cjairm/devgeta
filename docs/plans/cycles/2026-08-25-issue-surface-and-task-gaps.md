@@ -2,12 +2,13 @@
 
 **Date:** 2026-08-25
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
-**Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
-all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
-(`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue surface +
-`issue-scope`), D (`pr-state`), E (`dg wt create --base`), F
-(`review-scope --sizes`), and G (`review-threads --json`) are implemented and
-tested on this branch; Slice H remains.
+**Status:** Done (2026-08-26) — four cross-model review rounds settled, all
+findings fixed. The three gating ADRs (0033/0034/0035) are written, and all
+eight slices (A–H) are implemented, tested, and committed on this branch:
+A (`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue
+surface + `issue-scope`), D (`pr-state`), E (`dg wt create --base`), F
+(`review-scope --sizes`), G (`review-threads --json`), and H
+(`commit-trailers` + `smart-commit.md`).
 
 ---
 
@@ -335,7 +336,7 @@ in one repository.
       `hasNextPage`, never from `len(nodes) == 100`. The test asserts exactly-100
       (not truncated) separately from 101+ (truncated), which a count-based check
       would get wrong.
-- [ ] **Slice H — `dg task commit-trailers`.** Parse a commit message's trailer
+- [x] **Slice H — `dg task commit-trailers`.** Parse a commit message's trailer
       block via `git interpret-trailers --parse` and print the parsed trailers;
       `--require <key>` (repeatable) exits non-zero when a named trailer is **not
       among the parsed trailers**. **The command hardcodes no trailer names** —

@@ -6,6 +6,8 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/spf13/cobra"
@@ -50,6 +52,7 @@ type taskRunner interface {
 	Release(version, messageFile string, push bool) (string, error)
 	Scratch(key string) (string, error)
 	ScratchClean(target string) error
+	CommitTrailers(message string, require []string) (string, error)
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
@@ -705,6 +708,60 @@ reconstructed or parent path is refused rather than silently widened.`,
 	},
 }
 
+// taskCommitTrailersMessageFileFlag / taskCommitTrailersRequireFlags are
+// commit-trailers' flags.
+var (
+	taskCommitTrailersMessageFileFlag string
+	taskCommitTrailersRequireFlags    []string
+)
+
+var taskCommitTrailersCmd = &cobra.Command{
+	Use:   "commit-trailers",
+	Short: "Parse a commit message's trailers, and optionally require some (for agents)",
+	Long: `Parse a candidate commit message's trailer block via
+"git interpret-trailers --parse" and print the trailers it recognized.
+
+The message comes from --message-file, or stdin when that flag is omitted —
+never an implicit "current commit". Validate a message BEFORE it becomes a
+commit.
+
+--require <key> (repeatable) exits non-zero when key is not among the
+trailers git itself parsed, case-insensitively. This command hardcodes no
+trailer name — which trailers a commit needs is a per-repository decision,
+so it is always an argument, never a default.
+
+This does NOT scan for "a trailer-looking line that failed to parse": that
+is undecidable from syntax alone (a line like "Reason: needed" followed by
+more prose is not a recognized trailer block, and a scanner would reject an
+ordinary commit message over it). --require only ever checks whether a key
+you named is among what git actually parsed — which still catches a
+required trailer glued to the body with no blank-line separator, since git
+parses nothing for that shape.`,
+	Example: `  dg task commit-trailers --message-file msg.txt
+  dg task commit-trailers --message-file msg.txt --require Co-authored-by
+  git log -1 --format=%B | dg task commit-trailers --require Signed-off-by`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		var data []byte
+		var err error
+		if taskCommitTrailersMessageFileFlag != "" {
+			data, err = os.ReadFile(taskCommitTrailersMessageFileFlag)
+			if err != nil {
+				return fmt.Errorf(
+					"failed to read --message-file %q: %w", taskCommitTrailersMessageFileFlag, err,
+				)
+			}
+		} else {
+			data, err = io.ReadAll(cmd.InOrStdin())
+			if err != nil {
+				return fmt.Errorf("failed to read stdin: %w", err)
+			}
+		}
+		out, err := newTaskManager().CommitTrailers(string(data), taskCommitTrailersRequireFlags)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(taskCmd)
 	// Standard Cobra help for the whole task subtree (overrides the branded
@@ -726,11 +783,19 @@ func init() {
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
 	taskCmd.AddCommand(taskScratchCmd)
+	taskCmd.AddCommand(taskCommitTrailersCmd)
 
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchKeyFlag, "key", "", "Allocate or re-derive a shared, keyed scratch directory instead of a unique one")
+
+	taskCommitTrailersCmd.Flags().
+		StringVar(&taskCommitTrailersMessageFileFlag, "message-file", "",
+			"Read the candidate commit message from this file (default: stdin)")
+	taskCommitTrailersCmd.Flags().
+		StringArrayVar(&taskCommitTrailersRequireFlags, "require", nil,
+			"Fail unless this trailer key is among what git parsed (repeatable, case-insensitive)")
 
 	taskRefreshBranchCmd.Flags().
 		BoolVar(&taskRefreshBranchRebaseFlag, "rebase", false, "Rebase onto target instead of merging it in (default stays merge)")

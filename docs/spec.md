@@ -344,12 +344,21 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 - `reviewers` — list of AI reviewer models `dg task review-run` runs headless, each written as `provider/model` (e.g. `anthropic/claude-opus-4-6`). Default: empty, which runs one reviewer on OpenCode's own default model. Validation only checks the shape (at least one `/`, non-empty on both sides of the first one) — a stale or unconfigured provider is not caught here; it surfaces as an `ERROR(<reason>)` outcome from `review-run` at run time instead. `/review-loop` narrows this key mid-run to just the reviewers still blocking, and restores it after every round — see `/review-loop` below for the mechanics and the interruption residual.
 - `rounds` — max review rounds `/review-loop` performs **per phase** before moving on. Default: `3`. Valid range: `1`–`5`; anything outside it is rejected by `dg config set`, not clamped. A full run is at most this cap plus 2 rounds — the one opening round and the one confirming round that bracket the phase this caps.
 
-**Flag for `create`**:
+**Flags for `create`**:
 
 - `--repo <path>` / `-r <path>` — Path to the repository (`~` is expanded), so the command works
   from any directory. The window opens in a tmux session named after the repo — created when
   missing, reused otherwise. Without the flag, the repo is the one containing the current
   directory and the window opens in the current session.
+- `--base <ref>` — Root the new branch at `<ref>` instead of the freshly-fetched default branch.
+  Only applies when `<name>` is a genuinely **new** branch: `create` normally adopts a local or
+  remote branch of the same name into the worktree rather than failing, and `--base` for a branch
+  that would be adopted is an **error**, not a silent no-op — omit `--base` to adopt it instead.
+  `CreateWorktreeAtBaseIn` gives this the same pre-flight the no-`--base` path already has: a
+  best-effort bounded fetch of `origin`, the same local/remote existence check that decides
+  adopt-vs-new, and the base ref resolved to a real commit before any directory is created —
+  routing `--base` around that pre-flight would reopen the staleness and divergence bugs the
+  normal path avoids.
 
 Either way, `dg wt create` moves you to the new window when run inside tmux, and says so if it
 can't (the create still succeeded; it prints the window name to jump to by hand). `dg wt repair`
@@ -733,22 +742,22 @@ dg task <subcommand> [args]
 dg t <subcommand> [args]   # alias
 ```
 
-| Subcommand            | Args       | Description                                                                            |
-| --------------------- | ---------- | -------------------------------------------------------------------------------------- |
-| `refresh-branch`      | `[target]` | Checkout target (default: `main`), pull, return to previous branch, merge              |
-| `reset-main-branch`   | —          | Checkout `main`, hard-reset to `origin/main`                                           |
-| `delete-branch`       | `[target]` | Checkout target (default: `main`), fetch, pick a branch via fzf to force-delete        |
-| `reinstall-libraries` | —          | `git clean -Xdf`, remove `node_modules/`, `npm install`, remove `tsconfig.tsbuildinfo` |
-| `reinstall-library`   | `<name>`   | Remove `node_modules/<name>`, run `npm install`                                        |
+| Subcommand            | Args                   | Description                                                                                                                                                                                                                       |
+| --------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refresh-branch`      | `[target]`, `--rebase` | Checkout target (default: `main`), pull, return to previous branch, merge target in — or, with `--rebase`, rebase onto it instead (merge stays the default; a repository whose merge gate rejects merge commits wants `--rebase`) |
+| `reset-main-branch`   | —                      | Checkout `main`, hard-reset to `origin/main`                                                                                                                                                                                      |
+| `delete-branch`       | `[target]`             | Checkout target (default: `main`), fetch, pick a branch via fzf to force-delete                                                                                                                                                   |
+| `reinstall-libraries` | —                      | `git clean -Xdf`, remove `node_modules/`, `npm install`, remove `tsconfig.tsbuildinfo`                                                                                                                                            |
+| `reinstall-library`   | `<name>`               | Remove `node_modules/<name>`, run `npm install`                                                                                                                                                                                   |
 
 **Review scope subcommands** (compact, noise-filtered git context for agents — the
 `review-threads` pattern applied to git; `git` plumbing is fetched, Go formatters render):
 
-| Subcommand       | Args / Flags                     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ---------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `review-scope`   | `--bodies`                       | Fetch origin (bounded, best-effort), then print branch, default branch, ahead/behind, commit lines (short SHA, ISO date, subject), and a per-file stat table. The table covers everything the branch would merge — its commits AND its uncommitted work, staged or not ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md)) — with two notes under it: `uncommitted (in the table above, in no commit yet): …` names the changed files no commit carries, and `untracked (not in the table above, no diff — read them directly): …` names files git does not track (no counts exist for those, so they are named only and are not in the table's file count). `--bodies` appends each commit's body as indented lines beneath its subject. Lockfile-style noise (`package-lock.json`, `go.sum`, `*.min.js`, …) is excluded from the table, and from the uncommitted note, and reported separately with its own counts — never silently dropped.                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `branch-diff`    | `--file <path>`                  | Diff the working tree against the merge-base with the default branch (`git diff <base>`, two dots) — so committed AND uncommitted work is included ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md)) — with the same default exclusions applied in one `git diff` call, and untracked files listed by name at the end under `Untracked files (no diff — read them directly):` since `git diff` cannot see them. This is the same gather `dg ws`'s diff pane uses, so the two always agree. Does **not** fetch (reuses `review-scope`'s comparison base within the same review session). `--file` bypasses exclusions for that one file and, on an untracked file, says so instead of reporting "no changes" — an empty diff there means the whole file is the change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `review-package` | `<base> <head>`, `--file <path>` | Verify both refs resolve (`rev-parse --verify`, an actionable error names whichever ref failed), then in one call print `range: <base>..<head>`, the commit list (short SHA, date, subject), a noise-filtered per-file stat table with exclusion receipts, and the full `-U10`-context diff of the included files as a fenced ` ```diff ` block. Unlike `review-scope`/`branch-diff`, base and head are not tied to the current branch's default-branch merge-base — this is for reviewing an arbitrary historical range or a PR that isn't checked out. `--file` bypasses exclusions and returns just that file's `-U10` diff. Sentinels: `No commits in range.` when the commit list is empty, `No file changes in range.` when the stat table is empty. Replaces a 6-call raw dance (`rev-parse --verify` x2, `log --oneline`, `diff --stat`, `diff -U10`, `rev-list --count`) that measured 793,426 bytes on a representative 10-commit range (`b0e98fd..main` in this repo); the one-call equivalent on the same range measured 792,704 bytes — the byte savings come from applying the same default lockfile exclusions as `review-scope`/`branch-diff`, not from compressing the diff itself (which review-package still prints in full); the real win is collapsing 6 round-trips into 1, per the "collapse round-trips" justification in `docs/guides/task-design.md`. |
+| Subcommand       | Args / Flags                     | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `review-scope`   | `--bodies`, `--sizes`            | Fetch origin (bounded, best-effort), then print branch, default branch, ahead/behind, commit lines (short SHA, ISO date, subject), and a per-file stat table. The table covers everything the branch would merge — its commits AND its uncommitted work, staged or not ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md)) — with two notes under it: `uncommitted (in the table above, in no commit yet): …` names the changed files no commit carries, and `untracked (not in the table above, no diff — read them directly): …` names files git does not track (no counts exist for those, so they are named only and are not in the table's file count). `--bodies` appends each commit's body as indented lines beneath its subject. `--sizes` adds a `range size: <N> bytes` line (`len(git diff <base>)`, the same two-dot patch and exclusion filter the file table already uses) and a `commit sizes:` line per commit (`len(git diff <commit>^ <commit>)`, that commit's own exclusion partition — first-parent for a merge commit) — a real per-commit `git diff`, so it is opt-in and costs nothing when omitted; the default output is byte-identical either way. Lockfile-style noise (`package-lock.json`, `go.sum`, `*.min.js`, …) is excluded from the table, the uncommitted note, and both size figures — and reported separately with its own counts — never silently dropped. |
+| `branch-diff`    | `--file <path>`                  | Diff the working tree against the merge-base with the default branch (`git diff <base>`, two dots) — so committed AND uncommitted work is included ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md)) — with the same default exclusions applied in one `git diff` call, and untracked files listed by name at the end under `Untracked files (no diff — read them directly):` since `git diff` cannot see them. This is the same gather `dg ws`'s diff pane uses, so the two always agree. Does **not** fetch (reuses `review-scope`'s comparison base within the same review session). `--file` bypasses exclusions for that one file and, on an untracked file, says so instead of reporting "no changes" — an empty diff there means the whole file is the change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `review-package` | `<base> <head>`, `--file <path>` | Verify both refs resolve (`rev-parse --verify`, an actionable error names whichever ref failed), then in one call print `range: <base>..<head>`, the commit list (short SHA, date, subject), a noise-filtered per-file stat table with exclusion receipts, and the full `-U10`-context diff of the included files as a fenced ` ```diff ` block. Unlike `review-scope`/`branch-diff`, base and head are not tied to the current branch's default-branch merge-base — this is for reviewing an arbitrary historical range or a PR that isn't checked out. `--file` bypasses exclusions and returns just that file's `-U10` diff. Sentinels: `No commits in range.` when the commit list is empty, `No file changes in range.` when the stat table is empty. Replaces a 6-call raw dance (`rev-parse --verify` x2, `log --oneline`, `diff --stat`, `diff -U10`, `rev-list --count`) that measured 793,426 bytes on a representative 10-commit range (`b0e98fd..main` in this repo); the one-call equivalent on the same range measured 792,704 bytes — the byte savings come from applying the same default lockfile exclusions as `review-scope`/`branch-diff`, not from compressing the diff itself (which review-package still prints in full); the real win is collapsing 6 round-trips into 1, per the "collapse round-trips" justification in `docs/guides/task-design.md`.                                             |
 
 **Review journal subcommands** (per-branch review memory, so a re-review does not re-ask
 what was already answered — see
@@ -859,12 +868,67 @@ trackers):
 | `worktree-start`  | `<name>`, `--base <ref>`                           | Refuse on a dirty tree, fetch origin, then create a worktree + branch at `dg wt`'s shared location. Without `--base`, the branch is based on the freshly-fetched default branch (reusing the same local/remote-branch-reuse logic as `dg wt create`); with `--base`, the branch starts fresh from exactly that ref. Prints `Created worktree <path> (branch <name>, base <ref>)`.                                                                                                                                                                                                                                                                                                                                                                      |
 | `worktree-finish` | `[name]`, `--merge\|--discard\|--check`, `--force` | Tear down a worktree via merge, discard, or a read-only check — exactly one of `--merge`, `--discard`, or `--check` is required. Target resolution is deterministic: an explicit `name` wins; otherwise the current directory resolves to the linked worktree it's inside; otherwise the command errors and lists the worktrees it found — it never guesses from a main checkout. `--merge` refuses on a dirty worktree, refuses when the main checkout isn't on the default branch, refuses when the main checkout is dirty (any uncommitted changes there, not just paths overlapping the merge), refuses when the branch's review journal has an open, non-stale finding (settle it with `devgeta task review-note --settle --id <id> --as answered | rejected | fixed --note "<text>"`), and refuses when the divergence probe itself can't be answered (an unanswerable `git merge-base --is-ancestor`, e.g. no local branch by the default branch's name) — then rebases onto the default branch if diverged, fast-forward-merges from the main checkout, and removes the worktree and deletes the branch (safe only once the fast-forward landed the branch's commits). `--discard`refuses on a dirty worktree unless`--force`, then removes the worktree and deletes the branch unconditionally. Does not run a build or test suite — verification is the caller's responsibility. `--check`reports the same readiness`--merge`would act on, without acting: no fetch, no ref moved, and no mutation — except that a`git merge-tree`conflict prediction can write unreferenced objects to the object database, advisory-only and does not block. Prints dirty state, ahead/behind and rebase need, predicted merge conflicts, open review-journal findings, and changed docs' status markers, ending in a`ready: yes`or`ready: no — <reason>`line naming the first blocking refusal above (in the same order`--merge` checks them); exits non-zero when not ready. |
 
+**Issue surface subcommand** (orient on a tracked issue in one call — see
+[ADR-0035](decisions/ADR-0035-an-issue-is-matched-by-number-never-by-a-branch-naming-scheme.md)):
+
+| Subcommand    | Args / Flags | Description                                                                                                                                                                                                                           |
+| ------------- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `issue-scope` | `<n>`        | Report what already exists for issue `n`: its state and title, PRs GitHub's own cross-reference confirms reference it, local branches whose name looks like a reference to it, and any worktree holding one of those matched branches |
+
+Issue state/title comes from `gh issue view`. Referencing pull requests come
+from the issue's timeline **cross-referenced events**
+(`timelineItems(itemTypes: [CROSS_REFERENCED_EVENT])`, paginated) — the same
+signal GitHub's own UI uses for "N linked pull requests" — same-repository
+only; body/title/comment text is never grepped for a reference, since a
+substring search is boundary-wrong (`#12` also matches inside `#1234`).
+These are reported as **confirmed**.
+
+Branch references are reported as **candidates only, never confirmed**: a
+local branch matches when its name contains the exact digit run of `n`, with
+the characters immediately before and after (if any) outside
+`[0-9A-Za-z.]` (an optional single `#` may precede the run) — so `#12`,
+`12`, and `x#12` match issue 12, while `#1234`, `#12x`, `v1.12`, `2012`, and
+`12.3` do not. No branch-naming convention is assumed; a bare number in a
+branch name is a coincidence as often as it is a link. Every worktree
+holding a matched branch is reported alongside it. When nothing references
+the issue, every section still prints its own `none` line — the labels stay
+in a fixed position rather than the whole payload collapsing to one
+sentinel.
+
+**Commit trailer validation subcommand** (validate a candidate commit
+message before it becomes a commit):
+
+| Subcommand        | Args / Flags                                            | Description                                                                                                                                                             |
+| ----------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `commit-trailers` | `--message-file <path>`, `--require <key>` (repeatable) | Parse a message's trailer block via `git interpret-trailers --parse --only-trailers` and print what it recognized; `--require` fails when a named key is not among them |
+
+The message comes from `--message-file`, or stdin when that flag is
+omitted — never an implicit "current commit". `--require <key>` (repeatable,
+case-insensitive) is the **entire** enforcement mechanism, and it hardcodes
+no key of its own: which trailers a commit needs is a per-repository
+decision, so it is always an argument. There is no syntax scan for "a
+trailer-looking line that failed to parse" — verified against git 2.51.1,
+`Subject\n\nReason: this is needed\nMore explanation.` parses to **zero**
+trailers (a trailer line followed by prose is not a recognized block), so a
+scanner counting trailer-looking lines would reject an ordinary commit
+message that never claimed to carry a trailer. `--require` only asks
+whether a **declared** key is among what git actually parsed, which still
+catches a required trailer glued to the body with no blank-line separator
+(confirmed: git parses nothing for `Subject\nCo-authored-by: A <a@x.com>`),
+with no false positive on prose the caller never named. `smart-commit`
+(`configs/shared/commands/smart-commit.md`) is the shipped consumer: it
+writes its generated message to a scratch file, runs `commit-trailers
+--require <keys it generated for this commit>` (no keys, and a successful
+no-op, when it generated none), then commits the validated bytes with
+`git commit -F <file>` — `-m`/`-m` cannot guarantee the committed bytes are
+the ones that were validated.
+
 **Pull request subcommands** (via `gh`; data-returning ones are formatted by `jq`
 into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
 
 | Subcommand              | Args / Flags                                                                                                                      | Description                                                                                                                                                                                                                                                                                                                                                                   |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all`                                                                                     | Render PR review threads as compact markdown (default: unresolved)                                                                                                                                                                                                                                                                                                            |
+| `review-threads`        | `--pr N`, `--state unresolved\|resolved\|all`, `--json`                                                                           | Render PR review threads as compact markdown (default: unresolved). `--json` switches to one versioned document instead (`{"schemaVersion": 1, "threads": [...], "discussion": {...}}`, honoring `--state` the same way) — see below                                                                                                                                          |
 | `resolve-thread`        | `<id>`                                                                                                                            | Mark a review thread resolved                                                                                                                                                                                                                                                                                                                                                 |
 | `unresolve-thread`      | `<id>`                                                                                                                            | Reopen a resolved review thread                                                                                                                                                                                                                                                                                                                                               |
 | `reply-thread`          | `<id> <body>`                                                                                                                     | Reply to a review thread                                                                                                                                                                                                                                                                                                                                                      |
@@ -880,11 +944,38 @@ into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
 | `pr-checks`             | `--pr N`                                                                                                                          | CI check status, one line per check; failing checks get an indented log digest appended (see below)                                                                                                                                                                                                                                                                           |
 | `pr-review-target`      | `--pr N`                                                                                                                          | Immutable review target for a PR: merge-base/head SHAs, journal key, noise-filtered file list (see below)                                                                                                                                                                                                                                                                     |
 | `pr-review-state`       | `--pr N`                                                                                                                          | Whether a PR wants a review from you right now: `pr:` / `requested:` / `my-review:` (see below)                                                                                                                                                                                                                                                                               |
+| `pr-state`              | `--pr N`                                                                                                                          | One call answering "where does this PR stand?": `pr:`/`requested:`/`my-review:` (same fields as `pr-review-state`), `checks: pass=.. fail=.. pending=.. skipping=.. cancel=..` (counts only, no log digest), and `threads-unresolved: <N>` — composed from the same gathers those four commands use, never re-queried (see below)                                             |
 | `current-pr`            | —                                                                                                                                 | PR number for the current branch                                                                                                                                                                                                                                                                                                                                              |
 | `current-repo`          | —                                                                                                                                 | Current repository as `owner/name`                                                                                                                                                                                                                                                                                                                                            |
 
 For every PR subcommand, `--pr` defaults to the current branch's PR when omitted.
 Review-thread output is paginated across all threads (`gh api graphql --paginate`).
+
+**`review-threads --json`.** Markdown stays the default (fewer tokens); `--json`
+merges every paginated `FetchReviewThreads` page plus the separate discussion
+fetch into one object: `{"schemaVersion": 1, "threads": [...], "discussion":
+{"reviews": [...], "reviewsTruncated": bool, "comments": [...],
+"commentsTruncated": bool}}`. Each thread carries its own `commentsTruncated`.
+Every truncation flag comes from that connection's own `pageInfo.hasNextPage`
+— never from `len(nodes) == 100`, which cannot tell exactly 100 apart from
+more. `--state` filters `threads` identically to the markdown path; the
+markdown path and its sentinels are unchanged by this flag's existence.
+Empty collections marshal as `[]`, never `null`.
+
+**`pr-state` composition (ADR-0034).** Never re-queries GitHub for a fact one
+of the four originals already answers: it composes the same structured
+gatherers `pr-checks` and `pr-review-state` use internally
+(`gatherPRChecks`, `gatherPRReviewState`) and a Go-side count over the same
+paginated review-threads fetch (`countUnresolvedReviewThreads`) — never a
+markdown parse, never `pr-checks`'s per-failure log-digest fetch, never a PR
+discussion fetch (the unresolved count needs only the review-threads query).
+Owner/repo/PR are resolved exactly once and passed into every gatherer. Call
+budget: 5 `gh` calls with `--pr` given, 6 when it must be inferred from the
+current branch. One gatherer failing degrades only that field to
+`unavailable: <reason>` (three lines together for the review-state gatherer,
+since `pr:`/`requested:`/`my-review:` come from one fetch) — the rest of the
+payload still renders, and the command itself only fails if the PR cannot be
+resolved at all. The four original commands are unchanged.
 
 **`pr-checks` failure digest.** Passing and pending checks stay exactly one
 line each, in `gh pr checks`'s own format (`<STATE>\t<name>  <link>`) —
@@ -1328,9 +1419,9 @@ steps are hard to reverse once they run.
 **Scratch directory subcommand** (a devgeta-owned working directory instead of
 `/tmp` — see [ADR-0015](decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md)):
 
-| Subcommand | Args / Flags     | Description                                                                                                                  |
-| ---------- | ---------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `scratch`  | `--clean <path>` | Bare call allocates a fresh directory under the scratch root and prints its path; `--clean` removes one previously allocated |
+| Subcommand | Args / Flags                     | Description                                                                                                                                                                                                     |
+| ---------- | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scratch`  | `--key <name>`, `--clean <path>` | Bare call allocates a fresh, unique directory under the scratch root and prints its path; `--key` allocates or re-derives a shared, keyed one instead; `--clean` removes one previously allocated (either form) |
 
 Bare `dg task scratch` calls `paths.EnsureScratchDir()` — creating
 `~/.cache/devgeta/scratch` (honoring `XDG_CACHE_HOME`) at mode `0700` if
@@ -1338,23 +1429,42 @@ absent, rather than assuming a prior `dg configure` did — then
 `os.MkdirTemp`s a `task-*`-prefixed subdirectory under it and prints its
 absolute path on one line.
 
-`--clean <path>` accepts only a real directory that is a direct child of the
-scratch root and carries the `task-` prefix: the root itself, a grandchild, a
-directory beside the root, an unprefixed child, a relative path, a `..`
-escape, and **any** symlink (resolvable or not) are all refused rather than
-silently widening what gets deleted. Bounds are checked lexically first, so
-an out-of-bounds path is an error whether or not it exists, then re-checked
-after symlink resolution to catch a symlinked ancestor. It is idempotent — an
-in-bounds path that is already gone succeeds — so a command's cleanup can run
-on failure paths and retries. Pass it the exact path `scratch` printed; a
-reconstructed or parent path is refused by design. Not enforced: a session
-cleaning a sibling session's directory by guessing its random suffix — the
-only parties able to do that are the same user's own agent sessions, so
-ownership isolation stops there deliberately.
+`--key <name>` (ADR-0033) trades the unique path's isolation for a
+**re-derivable** one: the same key always maps to the same
+`key-<name>`-prefixed path, so a later, independent session that knows the
+key can find a file an earlier one left there — a hand-off, not a private
+working directory. The directory is **shared**, not private: two sessions
+that pick the same key by accident share it, and whichever writes last wins.
+It also does not age out on its own: an unkeyed allocation is pruned after
+24h by `dg configure --force`'s maintenance pass, but a keyed one persists
+until explicitly `--clean`ed, because durability across sessions that may not
+run for days is the entire point. Reusing an existing keyed path is refused
+outright — never silently written through — when it is a symlink or a
+non-directory, or when a symlinked ancestor would move it outside the
+scratch root; only a `Lstat`-verified real directory, contained under the
+root, is reused. The key must survive as a single path element: empty or
+whitespace-only, `.`, `..`, a path separator, or a null byte are all refused
+before anything is touched.
 
-The same `task-` ownership rule bounds the stale-directory prune that
-`dg configure --force` runs: anything a user keeps under the granted scratch
-root is left alone regardless of age.
+`--clean <path>` accepts only a real directory that is a direct child of the
+scratch root and carries the `task-` **or** `key-` prefix: the root itself, a
+grandchild, a directory beside the root, an unprefixed child, a relative
+path, a `..` escape, and **any** symlink (resolvable or not) are all refused
+rather than silently widening what gets deleted. Bounds are checked lexically
+first, so an out-of-bounds path is an error whether or not it exists, then
+re-checked after symlink resolution to catch a symlinked ancestor. It is
+idempotent — an in-bounds path that is already gone succeeds — so a command's
+cleanup can run on failure paths and retries. Pass it the exact path
+`scratch` printed; a reconstructed or parent path is refused by design. Not
+enforced: a session cleaning a sibling session's directory by guessing its
+random suffix — the only parties able to do that are the same user's own
+agent sessions, so ownership isolation stops there deliberately.
+
+The same ownership rule bounds the stale-directory prune that
+`dg configure --force` runs, but only for the `task-` prefix: anything a user
+keeps under the granted scratch root is left alone regardless of age, and a
+`key-` prefixed directory is skipped entirely (never pruned by age at all,
+per ADR-0033) rather than reaped out from under a hand-off.
 
 This is what `/review-pr` and `/create-pr` allocate their scratch files
 under instead of `/tmp` — see

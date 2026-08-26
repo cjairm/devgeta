@@ -120,6 +120,43 @@ zero mocking; orchestration tests only assert which commands ran and the error p
 (`testutil.MockApp` + `VerifyNoRealCommands`, per
 [testing-patterns.md](testing-patterns.md)).
 
+## Aggregate tasks compose, never re-derive (ADR-0034)
+
+A task that answers a question several existing tasks already partly answer
+(e.g. `pr-state`, composing what `pr-view`/`pr-checks`/`review-threads`/
+`pr-review-state` each already fetch) must not re-query the same facts from
+scratch. Re-querying gives one fact two independent spellings that can
+silently disagree the next time either path changes — principle 7's "does
+not carry the record" concern, one level up: an aggregate is not a place to
+re-derive a fact that already has an owner.
+
+The mechanism: split each existing command's raw-fetch-plus-reduce core into
+a **structured gatherer** — a function returning a small struct, not
+rendered text — and have both the original command and the new aggregate
+render from the same struct. The gatherer is the seam; the aggregate never
+parses a sibling command's markdown or one-line output to recover data it
+could have gotten as a struct. `internal/tooling/task/prstate.go` composing
+`gatherPRChecks`/`gatherPRReviewState` (extracted from `pr.go` and
+`prreviewstate.go`) is the precedent.
+
+Two rules follow directly:
+
+- **No incidental heavy work.** A gatherer built for the aggregate must stop
+  at what the aggregate needs, even when the sibling command that also uses
+  it does more. `pr-state`'s checks gatherer stops at a pass/fail/pending
+  tally; it never calls the per-failure log-digest fetch `pr-checks` makes
+  for its own richer answer.
+- **Resolve identifying context once.** When every gatherer needs the same
+  resolved identifiers (owner/repo/PR, in `pr-state`'s case), resolve them
+  once in the aggregate and pass the resolved values into each gatherer —
+  never let each gatherer re-run its own resolution, which multiplies calls
+  that were already paid for once.
+
+Partial failure is a per-field concern, not a whole-command one: one
+gatherer erroring reports that field as unavailable and the rest of the
+payload still renders, per principle 4's stable-sentinel spirit extended to
+failure.
+
 ## Measure before and after
 
 Token estimates: `bytes / 4` is close enough for prose; code runs ~3.5 chars/token.

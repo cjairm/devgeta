@@ -65,19 +65,40 @@ Match repo conventions (conventional commits, prefixes, etc.).
 
 ### 5. Execute
 
-Run git commit with generated message:
+Write the generated message to a scratch file, validate it, then commit the
+validated bytes:
 
 ```bash
-git commit -m "Subject line"
+SCRATCH=$(devgeta task scratch)
+
+# Write the full message (subject + blank line + body) to the scratch file.
+cat > "$SCRATCH/commit-msg.txt" <<'EOF'
+Subject line
+
+Body explaining why.
+
+Closes #123
+EOF
+
+# Validate: if this commit's message carries a trailer you generated (e.g. a
+# Co-authored-by line the user asked for), pass --require for that exact key.
+# Generated none this time? Pass no --require — the check is then a
+# successful no-op. Never hardcode a key: which trailers matter is a
+# per-repository decision, not this command's.
+devgeta task commit-trailers --message-file "$SCRATCH/commit-msg.txt" \
+  [--require <key-you-generated> ...]
+
+# Commit the SAME validated bytes. `git commit -m`/`-F -` cannot guarantee
+# that; `-F <file>` reads exactly what was validated.
+git commit -F "$SCRATCH/commit-msg.txt"
+
+devgeta task scratch --clean "$SCRATCH"
 ```
 
-With body:
-
-```bash
-git commit -m "Subject" -m "Body explaining why.
-
-Closes #123"
-```
+`git commit -m "Subject" -m "Body"` is not equivalent here: it reassembles
+the message from separate `-m` arguments rather than committing the file
+`commit-trailers` just validated, so a discrepancy between the two could
+slip through uncaught.
 
 After commit: show hash and message. If large, suggest splitting next time.
 

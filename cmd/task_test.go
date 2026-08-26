@@ -37,6 +37,12 @@ type mockTaskRunner struct {
 	reviewScopeRet    string
 	reviewScopeErr    error
 
+	commitTrailersCalled     bool
+	commitTrailersMessageArg string
+	commitTrailersRequireArg []string
+	commitTrailersRet        string
+	commitTrailersErr        error
+
 	branchDiffArg    string
 	branchDiffCalled bool
 	branchDiffRet    string
@@ -261,6 +267,13 @@ func (m *mockTaskRunner) Release(version, messageFile string, push bool) (string
 	m.releaseMessageFileArg = messageFile
 	m.releasePushArg = push
 	return m.releaseRet, m.releaseErr
+}
+
+func (m *mockTaskRunner) CommitTrailers(message string, require []string) (string, error) {
+	m.commitTrailersCalled = true
+	m.commitTrailersMessageArg = message
+	m.commitTrailersRequireArg = require
+	return m.commitTrailersRet, m.commitTrailersErr
 }
 
 func (m *mockTaskRunner) Scratch(key string) (string, error) {
@@ -1536,6 +1549,97 @@ func TestTask_Release(t *testing.T) {
 		err := taskReleaseCmd.RunE(taskReleaseCmd, []string{"v0.12.0"})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+}
+
+func TestTask_CommitTrailers(t *testing.T) {
+	t.Run("reads --message-file and passes --require flags", func(t *testing.T) {
+		mock := &mockTaskRunner{commitTrailersRet: "Co-authored-by: A <a@x.com>"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+
+		f, err := os.CreateTemp(t.TempDir(), "msg-*.txt")
+		if err != nil {
+			t.Fatalf("failed to create temp file: %v", err)
+		}
+		if _, err := f.WriteString("Subject\n\nCo-authored-by: A <a@x.com>\n"); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		_ = f.Close()
+
+		taskCommitTrailersMessageFileFlag = f.Name()
+		taskCommitTrailersRequireFlags = []string{"Co-authored-by"}
+		defer func() {
+			taskCommitTrailersMessageFileFlag = ""
+			taskCommitTrailersRequireFlags = nil
+		}()
+
+		out := &bytes.Buffer{}
+		taskCommitTrailersCmd.SetOut(out)
+		defer taskCommitTrailersCmd.SetOut(nil)
+
+		if err := taskCommitTrailersCmd.RunE(taskCommitTrailersCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.commitTrailersCalled {
+			t.Fatal("expected CommitTrailers to be called")
+		}
+		if mock.commitTrailersMessageArg != "Subject\n\nCo-authored-by: A <a@x.com>\n" {
+			t.Fatalf("expected the file's exact content, got %q", mock.commitTrailersMessageArg)
+		}
+		if len(mock.commitTrailersRequireArg) != 1 ||
+			mock.commitTrailersRequireArg[0] != "Co-authored-by" {
+			t.Fatalf("expected require=[Co-authored-by], got %v", mock.commitTrailersRequireArg)
+		}
+		if !strings.Contains(out.String(), "Co-authored-by: A <a@x.com>") {
+			t.Fatalf("expected output to be printed, got %q", out.String())
+		}
+	})
+
+	t.Run("falls back to stdin when --message-file is empty", func(t *testing.T) {
+		mock := &mockTaskRunner{commitTrailersRet: "(no trailers)"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskCommitTrailersMessageFileFlag = ""
+		taskCommitTrailersRequireFlags = nil
+
+		taskCommitTrailersCmd.SetIn(strings.NewReader("Subject\n\nBody only.\n"))
+		defer taskCommitTrailersCmd.SetIn(nil)
+
+		if err := taskCommitTrailersCmd.RunE(taskCommitTrailersCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.commitTrailersMessageArg != "Subject\n\nBody only.\n" {
+			t.Fatalf("expected stdin content, got %q", mock.commitTrailersMessageArg)
+		}
+	})
+
+	t.Run("propagates an unreadable --message-file", func(t *testing.T) {
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskCommitTrailersMessageFileFlag = "/nonexistent/path/does-not-exist.txt"
+		defer func() { taskCommitTrailersMessageFileFlag = "" }()
+
+		if err := taskCommitTrailersCmd.RunE(taskCommitTrailersCmd, nil); err == nil {
+			t.Fatal("expected an error")
+		}
+		if mock.commitTrailersCalled {
+			t.Fatal("expected CommitTrailers not to be called when the file can't be read")
+		}
+	})
+
+	t.Run("propagates a CommitTrailers error", func(t *testing.T) {
+		mock := &mockTaskRunner{commitTrailersErr: fmt.Errorf("missing required trailer")}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskCommitTrailersMessageFileFlag = ""
+		taskCommitTrailersCmd.SetIn(strings.NewReader("Subject\n"))
+		defer taskCommitTrailersCmd.SetIn(nil)
+
+		if err := taskCommitTrailersCmd.RunE(taskCommitTrailersCmd, nil); err == nil {
+			t.Fatal("expected an error")
 		}
 	})
 }
