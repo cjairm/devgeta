@@ -1,4 +1,4 @@
-# ADR-0033 — Release verification is checksum-always, attestation-when-`gh`-is-present
+# ADR-0036 — Release verification is checksum-always, attestation-when-`gh`-is-present
 
 **Date:** 2026-08-25
 **Status:** ACCEPTED

@@ -52,4 +52,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0030](ADR-0030-global-config-loads-once-per-run.md) — `global_config.yaml` is loaded once per run and served from a cache
 - [ADR-0031](ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md) — Context is reduced at write time, never at send time
 - [ADR-0032](ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) — Session continuity is a durable note, not a longer session
-- [ADR-0033](ADR-0033-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present
+- [ADR-0036](ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present

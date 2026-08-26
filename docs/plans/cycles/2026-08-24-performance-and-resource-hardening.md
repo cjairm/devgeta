@@ -521,7 +521,9 @@ follow-up cycle doc at
 [docs/plans/cycles/2026-08-25-install-sh-verification.md](2026-08-25-install-sh-verification.md),
 gated on confirming a real tagged release actually carries `checksums.txt`
 before it starts. The verification-policy decision this step asks for is
-recorded in ADR-0031.
+recorded in ADR-0036 (renumbered from ADR-0031 during merge — `main` had
+already taken that number for an unrelated decision by the time this cycle
+landed).
 
 `install.sh:158` fetches the release binary, `:166` checks only that it is
 non-empty, `:171` chmods it +x, `:173` **executes it** (`"$TMP_BINARY" --version`),

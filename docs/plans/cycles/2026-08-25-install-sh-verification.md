@@ -10,7 +10,7 @@
 been confirmed **by hand** — by loading the actual GitHub release page, not
 by reading this doc or the workflow source — to carry a `checksums.txt`
 asset produced by the workflow change in
-[docs/decisions/ADR-0033](../../decisions/ADR-0033-release-verification-is-checksum-always-attestation-when-gh-is-present.md).
+[docs/decisions/ADR-0036](../../decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md).
 Until that confirmation, `install.sh` is fetched live from `main`
 (`install.sh:10`'s own usage line says so) while `latest` may still be a
 release with no `checksums.txt` on it — shipping this cycle's verification
@@ -27,7 +27,7 @@ implements, quoted in full below.
 .../install.sh | bash`. It resolves `releases/latest` from the GitHub API,
 downloads the platform binary for that release, and installs it onto
 `PATH`. Today it executes that binary (`"$TMP_BINARY" --version`) with no
-verification at all — see [ADR-0033](../../decisions/ADR-0033-release-verification-is-checksum-always-attestation-when-gh-is-present.md)
+verification at all — see [ADR-0036](../../decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md)
 for the full defect writeup and the verification policy this cycle
 implements. That ADR is already decided; this cycle does not reopen it, it
 only scopes the code change.
@@ -53,7 +53,7 @@ actually use those artifacts before it runs anything it downloaded.
     does not touch the workflow again.
   - `docs/guides/releasing.md` — gets a new section documenting the residual
     gap (see Scope below).
-  - [ADR-0033](../../decisions/ADR-0033-release-verification-is-checksum-always-attestation-when-gh-is-present.md) —
+  - [ADR-0036](../../decisions/ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) —
     the design decision this cycle implements. Reference it from the code
     comment at the verification block, not just from this doc.
 
@@ -61,7 +61,7 @@ actually use those artifacts before it runs anything it downloaded.
 "$TMP_BINARY" --repo "$REPO"` — only when `gh` is already on `PATH`.
   Nothing in this cycle may make `gh` a hard requirement; that would break
   product principle 1 ("no pre-installed tools required beyond bash/curl"),
-  which is exactly what ADR-0033 preserves by keeping the SHA-256 check
+  which is exactly what ADR-0036 preserves by keeping the SHA-256 check
   unconditional.
 
 - **Testing pattern for shell scripts in this repo:** the root package
@@ -98,15 +98,15 @@ failing closed on either mismatch, and printing which check(s) actually ran.
       pass or the install stops.
 - [ ] Document the residual gap in `docs/guides/releasing.md`: with only
       bash and curl, the floor this buys is integrity, not authenticity —
-      point readers at ADR-0033 for the full reasoning rather than
+      point readers at ADR-0036 for the full reasoning rather than
       re-explaining it there.
-- [ ] Reference ADR-0033 in the code comment at the verification block.
+- [ ] Reference ADR-0036 in the code comment at the verification block.
 
 ### Explicitly Out of Scope
 
 - Making authenticity (the attestation check) mandatory, or requiring `gh`,
   or adding an embedded public key / `minisign`/`cosign` signature check.
-  ADR-0033 explicitly leaves that decision open for a future ADR; this cycle
+  ADR-0036 explicitly leaves that decision open for a future ADR; this cycle
   implements the default that applies until that ADR exists, not a
   replacement for it.
 - Any further change to `.github/workflows/release.yml`. That shipped in
@@ -134,7 +134,7 @@ cycle's boundary.
 4. Only once both are confirmed, flip this doc's Status to "In Progress" and
    begin Step 1.
 
-Skipping this gate reproduces the exact hazard ADR-0033's prerequisite task
+Skipping this gate reproduces the exact hazard ADR-0036's prerequisite task
 avoided by not shipping this half early: `install.sh` is fetched from `main`
 on every install, so if this cycle's code lands before a release actually
 carries these assets, `curl … | bash` breaks for everyone until the next
@@ -147,7 +147,7 @@ tag.
 | Action | File Path                  | Description                                                                                                               |
 | ------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Modify | `install.sh`               | Add checksum download + verification before `chmod +x`; add conditional `gh attestation verify`; print which check(s) ran |
-| Modify | `docs/guides/releasing.md` | Document the integrity-vs-authenticity gap, referencing ADR-0033                                                          |
+| Modify | `docs/guides/releasing.md` | Document the integrity-vs-authenticity gap, referencing ADR-0036                                                          |
 
 ### Step-by-Step (sketch)
 
@@ -163,7 +163,7 @@ tag.
    "checksum verified" vs. "checksum + attestation verified") before
    proceeding to `chmod +x` and the move onto `PATH`.
 5. Update `docs/guides/releasing.md` with the residual-gap note and a link
-   to ADR-0033.
+   to ADR-0036.
 
 Refine this into 5–15 minute steps with explicit `Verify:` commands once the
 pre-flight gate has passed and the current `install.sh` line numbers are
@@ -196,8 +196,8 @@ stale line numbers as fact.
 
 - **Fail closed on missing `checksums.txt` vs. warn-and-continue:** always
   fail closed. A warn-and-continue path is exactly the downgrade an attacker
-  can trigger by withholding the file — ADR-0033 rules this out explicitly.
-- **Requiring `gh` vs. optional:** optional, per ADR-0033's still-open
+  can trigger by withholding the file — ADR-0036 rules this out explicitly.
+- **Requiring `gh` vs. optional:** optional, per ADR-0036's still-open
   question on making authenticity mandatory. This cycle implements the
   default, not a resolution of that question.
 
@@ -262,6 +262,6 @@ Step 4.
   cited here will be stale by the time this cycle starts; the prerequisite
   task and anything else that lands on `main` in between will have shifted
   them.
-- **Ask before relitigating ADR-0033.** Its policy (checksum always,
+- **Ask before relitigating ADR-0036.** Its policy (checksum always,
   attestation when `gh` is present, fail closed, print which check ran) is
   a decision already made — this cycle implements it, it doesn't second-guess it.
