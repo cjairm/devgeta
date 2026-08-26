@@ -115,6 +115,7 @@ type mockTaskRunner struct {
 	releaseErr            error
 
 	scratchCalled bool
+	scratchKeyArg string
 	scratchRet    string
 	scratchErr    error
 
@@ -258,8 +259,9 @@ func (m *mockTaskRunner) Release(version, messageFile string, push bool) (string
 	return m.releaseRet, m.releaseErr
 }
 
-func (m *mockTaskRunner) Scratch() (string, error) {
+func (m *mockTaskRunner) Scratch(key string) (string, error) {
 	m.scratchCalled = true
+	m.scratchKeyArg = key
 	return m.scratchRet, m.scratchErr
 }
 
@@ -1512,6 +1514,30 @@ func TestTask_Scratch(t *testing.T) {
 		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
 		if err == nil {
 			t.Fatal("expected error")
+		}
+	})
+
+	t.Run("--key is passed through to Scratch", func(t *testing.T) {
+		mock := &mockTaskRunner{scratchRet: "/home/user/.cache/devgeta/scratch/key-demo"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskScratchCleanFlag = ""
+		taskScratchKeyFlag = "demo"
+		defer func() { taskScratchKeyFlag = "" }()
+
+		err := taskScratchCmd.RunE(taskScratchCmd, []string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.scratchCalled {
+			t.Error("expected Scratch to be called")
+		}
+		if mock.scratchKeyArg != "demo" {
+			t.Errorf(
+				"expected Scratch to be called with key %q, got %q",
+				"demo",
+				mock.scratchKeyArg,
+			)
 		}
 	})
 

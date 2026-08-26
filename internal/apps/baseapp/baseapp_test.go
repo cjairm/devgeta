@@ -238,6 +238,35 @@ func TestMaintainScratchDir(t *testing.T) {
 		}
 	})
 
+	// A keyed scratch directory (paths.ScratchKeyPrefix, ADR-0033) must never
+	// be pruned by age: it exists so a LATER session can re-derive the same
+	// path, and reaping it out from under that hand-off would defeat the
+	// point of keying it at all. Unlike the "leaves an old directory that
+	// devgeta did not allocate" case above, this one IS ours — it is simply
+	// exempt from the 24h rule the unkeyed (task-*) prefix is subject to.
+	t.Run("leaves an old keyed directory alone regardless of age", func(t *testing.T) {
+		home := t.TempDir()
+		t.Setenv("HOME", home)
+		t.Setenv("XDG_CACHE_HOME", "")
+
+		root := filepath.Join(home, ".cache", "devgeta", "scratch")
+		keyed := filepath.Join(root, "key-demo")
+		writeFileTree(t, filepath.Join(keyed, "handoff.txt"), "for a later session")
+
+		old := time.Now().Add(-30 * 24 * time.Hour)
+		if err := os.Chtimes(keyed, old, old); err != nil {
+			t.Fatalf("failed to backdate %s: %v", keyed, err)
+		}
+
+		if err := MaintainScratchDir(); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(keyed, "handoff.txt")); err != nil {
+			t.Errorf("expected the keyed directory to survive pruning, stat err=%v", err)
+		}
+	})
+
 	t.Run("leaves plain files in the root alone", func(t *testing.T) {
 		home := t.TempDir()
 		t.Setenv("HOME", home)

@@ -467,6 +467,16 @@ func GetCacheDir(subPath ...string) string {
 // baseapp → tooling/task → apps/git → baseapp is an import cycle.
 const ScratchAllocPrefix = "task-"
 
+// ScratchKeyPrefix names a keyed scratch directory (`devgeta task scratch
+// --key <name>`) — deliberately DISTINCT from ScratchAllocPrefix, not a
+// variant spelling of it (ADR-0033). A keyed directory is created once and
+// re-derived on every later call with the same key, so it must never be
+// swept by configure's stale-directory prune the way an unkeyed allocation
+// is: MaintainScratchDir skips any entry carrying this prefix entirely,
+// regardless of age. ScratchClean's bounds checks accept either prefix, so
+// `--clean` works uniformly on both forms.
+const ScratchKeyPrefix = "key-"
+
 // EnsureScratchDir creates (if absent) and tightens devgeta's scratch
 // directory — a disposable, per-user location under the cache root
 // (ADR-0015) that shipped commands use instead of `/tmp` for working files.

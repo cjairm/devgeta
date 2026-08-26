@@ -48,7 +48,7 @@ type taskRunner interface {
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, check, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
-	Scratch() (string, error)
+	Scratch(key string) (string, error)
 	ScratchClean(target string) error
 }
 
@@ -640,28 +640,49 @@ origin main --tags".`,
 // taskScratchCleanFlag is scratch's --clean flag.
 var taskScratchCleanFlag string
 
+// taskScratchKeyFlag is scratch's --key flag (ADR-0033).
+var taskScratchKeyFlag string
+
 var taskScratchCmd = &cobra.Command{
-	Use:   "scratch [--clean <path>]",
+	Use:   "scratch [--key <name>] [--clean <path>]",
 	Short: "Allocate or remove a devgeta-owned scratch directory (for agents)",
 	Long: `Bare "dg task scratch" allocates a fresh, uniquely-named directory under
 devgeta's scratch root (~/.cache/devgeta/scratch, ADR-0015) and prints its
 absolute path — the destination for a command's working files instead of
 /tmp, which both agents prompt on when written to directly.
 
---clean <path> removes a directory this command allocated. Pass it the exact
-path scratch printed: cleanup only accepts a direct child of the scratch
-root whose name carries the allocation prefix, so a reconstructed or parent
-path is refused rather than silently widened.`,
+--key <name> allocates (or re-derives) a directory at a fixed, predictable
+path instead of a unique one, so a LATER, independent session that knows the
+same key can find a file an earlier one left there — a hand-off, not a
+private working directory (ADR-0033). This directory is SHARED, not
+private: any process that passes the same key gets the same path, so two
+sessions that pick the same key by accident share one directory, and
+whichever writes last wins. It also does not age out on its own — an
+unkeyed allocation is pruned after 24h by "dg configure --force" as a
+safety net, but a keyed one persists until explicitly "--clean"ed, because
+that is what makes a hand-off durable across sessions that may not run for
+days. The key must be a single path element: no "/", no ".", no "..", not
+empty or whitespace-only.
+
+--clean <path> removes a directory this command allocated (keyed or not).
+Pass it the exact path scratch printed: cleanup only accepts a direct child
+of the scratch root whose name carries an allocation prefix, so a
+reconstructed or parent path is refused rather than silently widened.`,
 	Example: `  SCRATCH=$(dg task scratch)
   ... write files under "$SCRATCH" ...
-  dg task scratch --clean "$SCRATCH"`,
+  dg task scratch --clean "$SCRATCH"
+
+  HANDOFF=$(dg task scratch --key issue-42)
+  ... a later, independent session re-derives the same path ...
+  dg task scratch --key issue-42
+  dg task scratch --clean "$HANDOFF"`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		tm := newTaskManager()
 		if taskScratchCleanFlag != "" {
 			return tm.ScratchClean(taskScratchCleanFlag)
 		}
-		out, err := tm.Scratch()
+		out, err := tm.Scratch(taskScratchKeyFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -690,6 +711,8 @@ func init() {
 
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
+	taskScratchCmd.Flags().
+		StringVar(&taskScratchKeyFlag, "key", "", "Allocate or re-derive a shared, keyed scratch directory instead of a unique one")
 
 	taskBranchDiffCmd.Flags().
 		StringVar(&taskBranchDiffFileFlag, "file", "", "Diff only this file, bypassing exclusions")

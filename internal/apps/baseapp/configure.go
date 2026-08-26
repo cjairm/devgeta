@@ -83,6 +83,12 @@ func MaintainScratchDir() error {
 
 	cutoff := time.Now().Add(-scratchStalePruneAge)
 	for _, entry := range entries {
+		// Only paths.ScratchAllocPrefix ("task-") entries are candidates —
+		// NOT paths.ScratchKeyPrefix ("key-"). A keyed scratch directory
+		// (ADR-0033) exists precisely so a later, independent session can
+		// re-derive its path; reaping it on a 24h timer would silently empty
+		// a hand-off the moment `dg configure --force` next runs. It is
+		// skipped here entirely, not pruned on a longer timer.
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), paths.ScratchAllocPrefix) {
 			continue
 		}

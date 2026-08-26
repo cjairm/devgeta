@@ -9,24 +9,85 @@ import (
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
-// Scratch allocates a fresh, uniquely-named directory under devgeta's
-// scratch root (ADR-0015) and returns its absolute path — the destination
-// shipped commands write scratch files to instead of /tmp.
+// Scratch allocates a directory under devgeta's scratch root (ADR-0015) and
+// returns its absolute path — the destination shipped commands write scratch
+// files to instead of /tmp.
+//
+// An empty key keeps today's behavior byte-for-byte: a fresh, uniquely-named
+// directory via os.MkdirTemp, unrelated to any prior call. A non-empty key
+// (ADR-0033) is re-derivable instead of unique: the same key always maps to
+// the same path, so a later, independent session can find a file an earlier
+// one left there without either process telling the other a random suffix.
+// That determinism is opt-in and only reachable by passing a key — the
+// default path's isolation guarantee is unchanged.
 //
 // Calls paths.EnsureScratchDir() first rather than assuming configure
 // already created the root: the root lives under the cache directory
 // specifically because a user or a cleaner may empty it at any time
 // (ADR-0015 §1), so allocation has to be able to recreate it.
-func (tm *TaskManager) Scratch() (string, error) {
+func (tm *TaskManager) Scratch(key string) (string, error) {
 	root, err := paths.EnsureScratchDir()
 	if err != nil {
 		return "", fmt.Errorf("scratch: %w", err)
 	}
-	dir, err := os.MkdirTemp(root, paths.ScratchAllocPrefix+"*")
-	if err != nil {
-		return "", fmt.Errorf("scratch: %w", err)
+	if key == "" {
+		dir, err := os.MkdirTemp(root, paths.ScratchAllocPrefix+"*")
+		if err != nil {
+			return "", fmt.Errorf("scratch: %w", err)
+		}
+		return dir, nil
+	}
+
+	if err := validateScratchKey(key); err != nil {
+		return "", fmt.Errorf("scratch --key: %w", err)
+	}
+	dir := filepath.Join(root, paths.ScratchKeyPrefix+key)
+	if err := reuseOrCreateKeyedScratchDir(root, dir); err != nil {
+		return "", fmt.Errorf("scratch --key: %w", err)
 	}
 	return dir, nil
+}
+
+// reuseOrCreateKeyedScratchDir makes dir exist as a real directory under
+// root, creating it on first use and reusing it on every later call with the
+// same key — but only after proving what is already there is safe to reuse
+// (ADR-0033).
+//
+// A symlink or a non-directory found at dir is refused outright, never
+// resolved-and-judged: nothing this allocator ever creates is a symlink or a
+// plain file, so either one found there was substituted by something else,
+// and writing through it would write to whatever that something else points
+// at. Containment under root is re-checked after resolving symlinks, the
+// same defense ScratchClean applies on the delete side, so a symlinked
+// ANCESTOR that quietly moved dir outside root is also caught.
+func reuseOrCreateKeyedScratchDir(root, dir string) error {
+	lst, err := os.Lstat(dir)
+	switch {
+	case os.IsNotExist(err):
+		if mkErr := os.Mkdir(dir, 0o700); mkErr != nil {
+			return fmt.Errorf("failed to create %q: %w", dir, mkErr)
+		}
+		return nil
+	case err != nil:
+		return fmt.Errorf("failed to stat %q: %w", dir, err)
+	case lst.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("%q is a symlink; refusing to reuse it as a scratch directory", dir)
+	case !lst.IsDir():
+		return fmt.Errorf("%q exists and is not a directory", dir)
+	}
+
+	canonRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return fmt.Errorf("failed to resolve scratch root: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return fmt.Errorf("failed to resolve %q: %w", dir, err)
+	}
+	if _, ok := scratchChildName(canonRoot, resolved); !ok {
+		return fmt.Errorf("%q is not contained under the scratch root", dir)
+	}
+	return nil
 }
 
 // ScratchClean removes a directory allocated by Scratch.
@@ -127,6 +188,40 @@ func (tm *TaskManager) ScratchClean(target string) error {
 	return nil
 }
 
+// scratchKeyDisallowedChars breaks a key's role as a single path element
+// under the scratch root if present anywhere in it.
+const scratchKeyDisallowedChars = "/\\\x00"
+
+// validateScratchKey rejects any --key value that could not survive as a
+// single, contained path element under the scratch root: path separators
+// (forward and backward slash, so the rule is the same regardless of which
+// one the host OS treats as significant), a null byte, the special entries
+// "." and "..", and anything empty or made only of whitespace. It is a pure
+// function so its adversarial table (TestScratchKeyValidation) doubles as
+// the manual verification for this boundary, per ADR-0033.
+//
+// filepath.Base is checked in addition to the explicit character scan as a
+// second, independent layer — the same defense-in-depth style
+// validScratchChild and ScratchClean already use for the delete side of this
+// same boundary: a key that passes the character scan but still would not
+// round-trip through filepath.Base unchanged is refused too, rather than
+// trusting one check alone to be complete.
+func validateScratchKey(key string) error {
+	if strings.TrimSpace(key) == "" {
+		return fmt.Errorf("scratch key must not be empty or whitespace-only")
+	}
+	if key == "." || key == ".." {
+		return fmt.Errorf("scratch key %q is not allowed", key)
+	}
+	if strings.ContainsAny(key, scratchKeyDisallowedChars) {
+		return fmt.Errorf("scratch key %q must not contain a path separator", key)
+	}
+	if filepath.Base(key) != key {
+		return fmt.Errorf("scratch key %q must be a single path element", key)
+	}
+	return nil
+}
+
 // scratchChildName returns path's location relative to base, and false when
 // path is base itself or sits outside it.
 func scratchChildName(base, path string) (string, bool) {
@@ -141,13 +236,16 @@ func scratchChildName(base, path string) (string, bool) {
 }
 
 // validScratchChild enforces the two remaining ownership rules on an
-// already-in-bounds relative name: direct child, carrying the allocation
-// prefix.
+// already-in-bounds relative name: direct child, carrying either allocation
+// prefix — paths.ScratchAllocPrefix (an unkeyed, unique allocation) or
+// paths.ScratchKeyPrefix (a keyed, re-derivable one, ADR-0033) — so --clean
+// works uniformly on both forms.
 func validScratchChild(rel, target string) error {
 	if strings.Contains(rel, string(filepath.Separator)) {
 		return fmt.Errorf("scratch --clean: %q is not a direct child of the scratch root", target)
 	}
-	if !strings.HasPrefix(rel, paths.ScratchAllocPrefix) {
+	if !strings.HasPrefix(rel, paths.ScratchAllocPrefix) &&
+		!strings.HasPrefix(rel, paths.ScratchKeyPrefix) {
 		return fmt.Errorf("scratch --clean: %q was not allocated by `devgeta task scratch`", target)
 	}
 	return nil

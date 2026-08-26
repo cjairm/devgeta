@@ -2,9 +2,10 @@
 
 **Date:** 2026-08-25
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
-**Status:** Approved (2026-08-25) — ready to implement; four cross-model review
-rounds settled, all findings fixed. Not yet started (no code); moves to In Progress
-when Slice A begins. The three gating ADRs (0033/0034/0035) are still written first.
+**Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
+all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slice A
+(`dg task scratch --key`) is implemented and tested on this branch, awaiting
+commit; Slices B–H remain.
 
 ---
 
@@ -165,7 +166,7 @@ in one repository.
 
 ### In Scope
 
-- [ ] **Slice A — `dg task scratch --key <name>`.** A deterministic, re-derivable
+- [x] **Slice A — `dg task scratch --key <name>`.** A deterministic, re-derivable
       scratch directory so a file written by one session is findable by a later,
       independent one. Sanitizes the key (rejects path separators, `.`, `..`,
       empty/whitespace, and anything that would escape the root); documents that
