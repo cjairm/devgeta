@@ -122,7 +122,7 @@ func TestCreateRecordsRepoOnSuccess(t *testing.T) {
 		}
 	})
 
-	if err := wm.Create("feature-test", stubLayout, true); err != nil {
+	if err := wm.Create("feature-test", "", stubLayout, true); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
@@ -184,7 +184,7 @@ func TestCreateRecordsRepoThroughUpdatePreservesOtherFields(t *testing.T) {
 		}
 	})
 
-	if err := wm.Create("feature-test", stubLayout, true); err != nil {
+	if err := wm.Create("feature-test", "", stubLayout, true); err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
 
@@ -263,7 +263,7 @@ func TestCreateSucceedsDespiteRecordFailure(t *testing.T) {
 		}
 	})
 
-	err := wm.Create("feature-test", stubLayout, true)
+	err := wm.Create("feature-test", "", stubLayout, true)
 	if err != nil {
 		t.Fatalf("Create must succeed even when repo recording fails: %v", err)
 	}

@@ -716,11 +716,72 @@ func (g *Git) CreateWorktreeIn(repoDir, path, branch string) error {
 // pick up the same post-creation invariants as CreateWorktreeIn — before this,
 // `devgeta task worktree-start --base` assembled its own `worktree add` and so
 // was the one creation path that produced an un-normalized gitfile.
+//
+// It gives an explicit base the SAME pre-flight createWorktreeIn already runs
+// for the no-base path, so choosing --base does not resurrect the staleness
+// and divergence bugs that path avoids:
+//   - a best-effort, bounded fetch of origin, so a recently pushed base is
+//     visible;
+//   - a local-or-remote existence check on branch — --base only applies when
+//     branch is genuinely new; a branch that already exists is being adopted,
+//     which is a different operation (createWorktreeIn's own branch) and an
+//     error here, not a silent no-op;
+//   - resolving base to a real commit BEFORE any directory is created, so a
+//     typo'd or nonexistent base leaves nothing behind.
 func (g *Git) CreateWorktreeAtBaseIn(repoDir, path, branch, base string) error {
+	// Best-effort, bounded, non-interactive — see createWorktreeIn's identical
+	// call for why a stalled or credential-prompting fetch must never be what
+	// keeps this caller waiting.
+	_ = g.fetchTimeout(repoDir, worktreeFetchTimeout, "origin")
+
+	localExists, err := g.BranchExistsIn(repoDir, branch)
+	if err != nil {
+		return fmt.Errorf("failed to check if local branch exists: %w", err)
+	}
+	if localExists {
+		return fmt.Errorf(
+			"branch %q already exists locally; --base only creates a NEW branch — omit --base to adopt the existing one",
+			branch,
+		)
+	}
+	remoteExists, err := g.RemoteBranchExistsIn(repoDir, branch)
+	if err != nil {
+		return fmt.Errorf("failed to check if remote branch exists: %w", err)
+	}
+	if remoteExists {
+		return fmt.Errorf(
+			"branch %q already exists on origin; --base only creates a NEW branch — omit --base to adopt the existing one",
+			branch,
+		)
+	}
+
+	if err := g.validateRefExistsIn(repoDir, base); err != nil {
+		return fmt.Errorf("failed to resolve base %q: %w", base, err)
+	}
+
 	if err := g.ExecuteCommandAt(repoDir, "worktree", "add", "-b", branch, path, base); err != nil {
 		return err
 	}
 	return g.NormalizeWorktreeGitfile(path)
+}
+
+// validateRefExistsIn confirms ref resolves to a real commit in the
+// repository at dir, without exposing the resolved sha — callers that need
+// only "does this ref exist" (like CreateWorktreeAtBaseIn's base check) use
+// this instead of ResolveCommitIn.
+func (g *Git) validateRefExistsIn(dir, ref string) error {
+	execCommand := cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "rev-parse", "--verify", ref+"^{commit}"),
+	}
+	_, stderr, err := g.Base.ExecCommand(execCommand)
+	if err != nil {
+		if stderr != "" {
+			return fmt.Errorf("git: %s", stderr)
+		}
+		return fmt.Errorf("failed to run git command: %w", err)
+	}
+	return nil
 }
 
 // NormalizeWorktreeGitfile rewrites a linked worktree's .git file to carry no

@@ -97,7 +97,12 @@ func TestWorktreeStart(t *testing.T) {
 		}
 	})
 
-	t.Run("explicit --base hand-rolls a single worktree add", func(t *testing.T) {
+	// Slice E gave CreateWorktreeAtBaseIn the same fetch/collision/base
+	// validation pre-flight createWorktreeIn already runs for the no-base
+	// path, so this call sequence grew from the single hand-rolled
+	// `worktree add` it used to be — see internal/apps/git's
+	// TestCreateWorktreeAtBaseIn for that pre-flight's own dedicated coverage.
+	t.Run("explicit --base runs the full pre-flight before worktree add", func(t *testing.T) {
 		tm, gitBase, _ := newTaskSetup()
 		repoSlug := uniqueRepoSlug(t)
 		repoRoot := "/fake/repos/" + repoSlug
@@ -108,8 +113,20 @@ func TestWorktreeStart(t *testing.T) {
 		gitBase.SetExecCommandResults(
 			commands.ExecCommandResult("", "", nil),            // status --porcelain (clean)
 			commands.ExecCommandResult(repoRoot+"\n", "", nil), // rev-parse --show-toplevel
-			commands.ExecCommandResult("", "", nil),            // fetch origin
-			commands.ExecCommandResult("", "", nil),            // worktree add -b name path base
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // fetch origin (worktree-start's own)
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // fetch origin (CreateWorktreeAtBaseIn's)
+			commands.ExecCommandResult("", "", nil),         // local branch? no
+			commands.ExecCommandResult("", "", nil),         // remote branch? no
+			commands.ExecCommandResult("abc123\n", "", nil), // base resolves
+			commands.ExecCommandResult("", "", nil),         // worktree add -b name path base
 		)
 
 		out, err := tm.WorktreeStart("hotfix-123", "origin/release-2.0")
@@ -126,10 +143,10 @@ func TestWorktreeStart(t *testing.T) {
 		}
 
 		calls := gitBase.ExecCommandCalls
-		if len(calls) != 4 {
-			t.Fatalf("expected 4 git calls, got %d", len(calls))
+		if len(calls) != 8 {
+			t.Fatalf("expected 8 git calls, got %d: %v", len(calls), calls)
 		}
-		last := calls[3]
+		last := calls[7]
 		if last.Command != "git" {
 			t.Fatalf("expected git command, got %q", last.Command)
 		}

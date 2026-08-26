@@ -173,7 +173,7 @@ func TestCreateMultiPaneLayoutCallOrder(t *testing.T) {
 		}
 	})
 
-	if err := wm.Create("feature-test", twoPaneLayout, true); err != nil {
+	if err := wm.Create("feature-test", "", twoPaneLayout, true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -267,7 +267,7 @@ func TestCreateSinglePaneLayoutSkipsReselect(t *testing.T) {
 		}
 	})
 
-	if err := wm.Create("feature-test", stubLayout, true); err != nil {
+	if err := wm.Create("feature-test", "", stubLayout, true); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -345,7 +345,7 @@ func TestPaneShellCandidateLadder(t *testing.T) {
 			}
 		})
 
-		if err := wm.Create("feature-test", stubLayout, true); err != nil {
+		if err := wm.Create("feature-test", "", stubLayout, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -441,7 +441,7 @@ func TestCreateMultiPaneMidBuildFailureRollsBack(t *testing.T) {
 		}
 	})
 
-	err := wm.Create("feature-test", twoPaneLayout, true)
+	err := wm.Create("feature-test", "", twoPaneLayout, true)
 	if err == nil {
 		t.Fatal("expected an error when a mid-build tmux call fails")
 	}
@@ -518,7 +518,7 @@ func TestCreateAtMultiPaneFailureKillsWindowNotSession(t *testing.T) {
 		}
 	})
 
-	err := wm.CreateAt(repoRoot, "feature-test", twoPaneLayout, true)
+	err := wm.CreateAt(repoRoot, "feature-test", "", twoPaneLayout, true)
 	if err == nil {
 		t.Fatal("expected an error when a mid-build tmux call fails")
 	}
@@ -619,7 +619,7 @@ func TestCreateNeverMovesTheClient(t *testing.T) {
 				)
 			},
 			create: func(wm *WorktreeManager, _ string) error {
-				return wm.Create("feature-test", twoPaneLayout, true)
+				return wm.Create("feature-test", "", twoPaneLayout, true)
 			},
 		},
 		{
@@ -638,7 +638,7 @@ func TestCreateNeverMovesTheClient(t *testing.T) {
 				)
 			},
 			create: func(wm *WorktreeManager, repoRoot string) error {
-				return wm.CreateAt(repoRoot, "feature-test", twoPaneLayout, true)
+				return wm.CreateAt(repoRoot, "feature-test", "", twoPaneLayout, true)
 			},
 		},
 	}
@@ -782,7 +782,7 @@ func TestShellLayoutTypesNothingIntoThePane(t *testing.T) {
 			}
 		})
 
-		if err := wm.Create("plain-test", shell, true); err != nil {
+		if err := wm.Create("plain-test", "", shell, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -850,7 +850,7 @@ func TestCreateValidateLayoutFailsBeforeAnyTmuxCall(t *testing.T) {
 	mockTmuxBase := commands.NewMockBaseCommand()
 	wm := newLayoutTestWM(mockGitBase, mockTmuxBase)
 
-	err := wm.Create("feature-test", failingLayout, true)
+	err := wm.Create("feature-test", "", failingLayout, true)
 	if err == nil {
 		t.Fatal("expected an error from the failing pane checker")
 	}

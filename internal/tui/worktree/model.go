@@ -439,7 +439,7 @@ func newModel(
 		// worktree.go's raw fmt.Println/stdin-read version of it is just
 		// redundant by this point and would otherwise corrupt or hang the
 		// running bubbletea alt-screen display.
-		if err := mgr.CreateAt(repoPath, name, layout, true); err != nil {
+		if err := mgr.CreateAt(repoPath, name, "", layout, true); err != nil {
 			return "", err
 		}
 		return strings.Join(warnings, " · "), nil

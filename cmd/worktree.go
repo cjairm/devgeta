@@ -74,6 +74,12 @@ Window layout selection precedence (--layout and --ai are mutually exclusive):
 Valid AI coders: opencode (oc), claude (cc, claudecode)
 Valid layouts: opencode, claude, claude-nvim, nvim, shell
 
+--base <ref>       roots the new branch at <ref> instead of the freshly-fetched
+                   default branch. Only applies when <name> is a genuinely new
+                   branch: if a local or remote branch named <name> already
+                   exists, --base is an error — omit it to adopt the existing
+                   branch instead, which is create's default behavior.
+
 Starting the coder on a task, and adding panes:
 
   --prompt '<text>'  launches the AI coder with <text> as its opening prompt,
@@ -110,12 +116,12 @@ worktree.attach_after_create, and stays put when it is false.`,
 		wm := worktree.New()
 		var repoRoot string
 		if repoFlag != "" {
-			if err := wm.CreateAt(repoFlag, name, layout, forceFlag); err != nil {
+			if err := wm.CreateAt(repoFlag, name, createBaseFlag, layout, forceFlag); err != nil {
 				return err
 			}
 			repoRoot, _ = wm.Git.GetRepoRootIn(paths.ExpandHome(repoFlag))
 		} else {
-			if err := wm.Create(name, layout, forceFlag); err != nil {
+			if err := wm.Create(name, createBaseFlag, layout, forceFlag); err != nil {
 				return err
 			}
 			repoRoot, _ = wm.Git.GetRepoRoot()
@@ -419,6 +425,7 @@ var (
 	createLayoutFlag string
 	createPromptFlag string
 	createPaneFlags  []string
+	createBaseFlag   string
 	repairAIFlag     string
 	repairLayoutFlag string
 	forceFlag        bool
@@ -482,6 +489,9 @@ func init() {
 	worktreeCreateCmd.Flags().
 		StringVarP(&repoFlag, "repo", "r", "",
 			"Path to the repository (defaults to the repo containing the current directory); the window opens in the repo's tmux session")
+	worktreeCreateCmd.Flags().
+		StringVar(&createBaseFlag, "base", "",
+			"Root the new branch at this ref instead of the default; error if <name> already exists (defaults to the freshly-fetched default branch)")
 	_ = worktreeCreateCmd.RegisterFlagCompletionFunc(
 		"repo",
 		func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

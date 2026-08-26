@@ -108,7 +108,7 @@ func TestCreate(t *testing.T) {
 		mockGitBase.SetExecCommandResult(tempDir+"\n", "", nil)
 		mockTmuxBase.SetExecCommandResult("", "window not found", os.ErrNotExist)
 
-		err := wm.Create("feature-test", stubLayout, true)
+		err := wm.Create("feature-test", "", stubLayout, true)
 		if err == nil {
 			if mockGitBase.GetExecCommandCallCount() < 1 {
 				t.Error("Expected git commands to be called")
@@ -118,7 +118,7 @@ func TestCreate(t *testing.T) {
 
 	t.Run("empty layout returns error", func(t *testing.T) {
 		wm := &WorktreeManager{}
-		err := wm.Create("test", Layout{}, true)
+		err := wm.Create("test", "", Layout{}, true)
 		if err == nil {
 			t.Fatal("Expected error for a layout with no panes")
 		}
@@ -145,9 +145,119 @@ func TestCreate(t *testing.T) {
 
 		mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
 
-		err := wm.Create("feature-test", stubLayout, true)
+		err := wm.Create("feature-test", "", stubLayout, true)
 		if err == nil {
 			t.Fatal("Expected error when not in git repo")
+		}
+	})
+}
+
+// TestCreateWithBase covers Slice E: create() must dispatch to
+// CreateWorktreeAtBaseIn when a base is given, and its adopt-conflict error
+// must propagate without ever reaching a tmux call (no window for a rejected
+// creation).
+func TestCreateWithBase(t *testing.T) {
+	t.Run(
+		"dispatches to CreateWorktreeAtBaseIn, naming the base in worktree add",
+		func(t *testing.T) {
+			t.Setenv("TMUX", "")
+			repoRoot := t.TempDir()
+
+			mockGitBase := commands.NewMockBaseCommand()
+			mockGitBase.SetExecCommandResult("", "", nil) // every git call succeeds, empty output
+			mockTmuxBase := commands.NewMockBaseCommand()
+			mockTmuxBase.SetExecCommandResults(
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // worktreeState list-windows
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // ensureWindow list-windows
+				commands.ExecCommandResult(
+					"",
+					"",
+					nil,
+				), // show-options (paneShell)
+				commands.ExecCommandResult(
+					"",
+					"no such session",
+					os.ErrNotExist,
+				), // has-session -> missing
+				commands.ExecCommandResult("", "", nil), // new-session
+			)
+
+			wm := &WorktreeManager{
+				Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+				Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+				Base: commands.NewMockBaseCommand(),
+			}
+
+			if err := wm.create(
+				repoRoot,
+				"feature-test",
+				"v1.0.0",
+				stubLayout,
+				true,
+				true,
+			); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			sawBaseInWorktreeAdd := false
+			for _, call := range mockGitBase.ExecCommandCalls {
+				if slices.Contains(call.Args, "worktree") && slices.Contains(call.Args, "add") &&
+					slices.Contains(call.Args, "v1.0.0") {
+					sawBaseInWorktreeAdd = true
+				}
+			}
+			if !sawBaseInWorktreeAdd {
+				t.Fatalf(
+					"expected a worktree-add call naming the base, calls: %+v",
+					mockGitBase.ExecCommandCalls,
+				)
+			}
+		},
+	)
+
+	t.Run("propagates the adopt-conflict error, launches no window", func(t *testing.T) {
+		mockGitBase := commands.NewMockBaseCommand()
+		mockGitBase.SetExecCommandResults(
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // worktreeState: worktree list --porcelain
+			commands.ExecCommandResult("", "", nil),                 // fetch origin
+			commands.ExecCommandResult("  feature-test\n", "", nil), // local branch already exists
+		)
+		mockTmuxBase := commands.NewMockBaseCommand()
+		mockTmuxBase.SetExecCommandResult("", "", nil)
+
+		wm := &WorktreeManager{
+			Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+			Base: commands.NewMockBaseCommand(),
+		}
+
+		err := wm.create(t.TempDir(), "feature-test", "v1.0.0", stubLayout, true, true)
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("expected an 'already exists' error, got: %v", err)
+		}
+		for _, call := range mockTmuxBase.ExecCommandCalls {
+			joined := strings.Join(call.Args, " ")
+			if strings.HasPrefix(joined, "new-session") || strings.HasPrefix(joined, "new-window") {
+				t.Fatalf(
+					"expected no window to be launched for a rejected creation, got: %v",
+					call.Args,
+				)
+			}
 		}
 	})
 }
@@ -2895,7 +3005,7 @@ func TestCreateAt(t *testing.T) {
 			Base: commands.NewMockBaseCommand(),
 		}
 
-		if err := wm.CreateAt("/nowhere", "feat", stubLayout, true); err == nil {
+		if err := wm.CreateAt("/nowhere", "feat", "", stubLayout, true); err == nil {
 			t.Fatal("expected error for a non-repo path")
 		}
 	})
@@ -2936,7 +3046,7 @@ func TestCreateAt(t *testing.T) {
 			Base: commands.NewMockBaseCommand(),
 		}
 
-		if err := wm.CreateAt(repoRoot, "feat", stubLayout, true); err != nil {
+		if err := wm.CreateAt(repoRoot, "feat", "", stubLayout, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -3044,7 +3154,7 @@ func TestCreateAt(t *testing.T) {
 				Base: commands.NewMockBaseCommand(),
 			}
 
-			if err := wm.CreateAt(repoRoot, "feat", stubLayout, true); err != nil {
+			if err := wm.CreateAt(repoRoot, "feat", "", stubLayout, true); err != nil {
 				t.Fatalf(
 					"expected create to succeed for a repo that is neither the "+
 						"current directory nor in the recent-repos store, got: %v",

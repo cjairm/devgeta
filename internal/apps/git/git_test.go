@@ -769,6 +769,144 @@ func TestCreateWorktree(t *testing.T) {
 	})
 }
 
+// TestCreateWorktreeAtBaseIn covers Slice E's pre-flight: CreateWorktreeAtBaseIn
+// must gain the same fetch/collision/base-validation checks createWorktreeIn
+// already runs, so routing --base through it doesn't resurrect the staleness
+// and divergence bugs the normal path avoids.
+func TestCreateWorktreeAtBaseIn(t *testing.T) {
+	t.Run("fetches, checks for collisions, validates base, then creates", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),         // fetch origin
+			commands.ExecCommandResult("", "", nil),         // local branch? no
+			commands.ExecCommandResult("", "", nil),         // remote branch? no
+			commands.ExecCommandResult("abc123\n", "", nil), // base resolves
+			commands.ExecCommandResult("", "", nil),         // worktree add
+		)
+
+		if err := g.CreateWorktreeAtBaseIn("", "/path/to/wt", "new-branch", "v1.0.0"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		calls := mockBase.ExecCommandCalls
+		if len(calls) != 5 {
+			t.Fatalf("expected 5 git calls, got %d: %v", len(calls), calls)
+		}
+		if !slices.Contains(calls[0].Args, "fetch") {
+			t.Fatalf("expected the first call to fetch, got %v", calls[0].Args)
+		}
+		if !slices.Equal(calls[1].Args, []string{"branch", "--list", "new-branch"}) {
+			t.Fatalf("unexpected local-branch check args: %v", calls[1].Args)
+		}
+		if !slices.Equal(calls[2].Args, []string{"branch", "-r", "--list", "origin/new-branch"}) {
+			t.Fatalf("unexpected remote-branch check args: %v", calls[2].Args)
+		}
+		if !slices.Equal(calls[3].Args, []string{"rev-parse", "--verify", "v1.0.0^{commit}"}) {
+			t.Fatalf("unexpected base-validation args: %v", calls[3].Args)
+		}
+		wantAdd := []string{
+			"-C",
+			"",
+			"worktree",
+			"add",
+			"-b",
+			"new-branch",
+			"/path/to/wt",
+			"v1.0.0",
+		}
+		if !slices.Equal(calls[4].Args, wantAdd) {
+			t.Fatalf("unexpected worktree-add args: %v, want %v", calls[4].Args, wantAdd)
+		}
+	})
+
+	t.Run("rejects when the branch already exists locally, creates nothing", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),                    // fetch
+			commands.ExecCommandResult("  existing-branch\n", "", nil), // local exists
+		)
+
+		err := g.CreateWorktreeAtBaseIn("", "/path/to/wt", "existing-branch", "v1.0.0")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("expected an 'already exists' error, got: %v", err)
+		}
+		if got := len(mockBase.ExecCommandCalls); got != 2 {
+			t.Fatalf("expected exactly 2 git calls (fetch, local check), got %d: %v",
+				got, mockBase.ExecCommandCalls)
+		}
+	})
+
+	t.Run("rejects when the branch already exists on origin, creates nothing", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),                           // fetch
+			commands.ExecCommandResult("", "", nil),                           // local: none
+			commands.ExecCommandResult("  origin/existing-branch\n", "", nil), // remote exists
+		)
+
+		err := g.CreateWorktreeAtBaseIn("", "/path/to/wt", "existing-branch", "v1.0.0")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if !strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("expected an 'already exists' error, got: %v", err)
+		}
+		if got := len(mockBase.ExecCommandCalls); got != 3 {
+			t.Fatalf("expected exactly 3 git calls, got %d: %v", got, mockBase.ExecCommandCalls)
+		}
+	})
+
+	t.Run("rejects an unresolvable base before creating anything", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil), // fetch
+			commands.ExecCommandResult("", "", nil), // local: none
+			commands.ExecCommandResult("", "", nil), // remote: none
+			commands.ExecCommandResult(
+				"",
+				"fatal: Needed a single revision",
+				fmt.Errorf("exit 128"),
+			),
+		)
+
+		err := g.CreateWorktreeAtBaseIn("", "/path/to/wt", "new-branch", "not-a-real-ref")
+		if err == nil {
+			t.Fatal("expected an error")
+		}
+		if got := len(mockBase.ExecCommandCalls); got != 4 {
+			t.Fatalf("expected exactly 4 git calls (no worktree add), got %d: %v",
+				got, mockBase.ExecCommandCalls)
+		}
+	})
+
+	t.Run("propagates a worktree add failure", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+		mockBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("abc123\n", "", nil),
+			commands.ExecCommandResult(
+				"",
+				"fatal: could not create worktree",
+				fmt.Errorf("exit 128"),
+			),
+		)
+
+		if err := g.CreateWorktreeAtBaseIn("", "/path/to/wt", "new-branch", "v1.0.0"); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}
+
 func TestCreateWorktreeIn_AdoptsBranchHeldElsewhere(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -1437,7 +1575,11 @@ func TestIsPathIgnored(t *testing.T) {
 
 	t.Run("any other non-zero exit is a real error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", testutil.ExitError(t, 128))
+		mockApp.Base.SetExecCommandResult(
+			"",
+			"fatal: not a git repository",
+			testutil.ExitError(t, 128),
+		)
 
 		_, err := app.IsPathIgnored("/repo", ".claude/worktrees")
 		if err == nil {
@@ -1618,7 +1760,11 @@ func TestMergeTreeConflicts(t *testing.T) {
 
 	t.Run("exit 128 is a real error", func(t *testing.T) {
 		mockApp.Base.ResetExecCommand()
-		mockApp.Base.SetExecCommandResult("", "fatal: not a git repository", testutil.ExitError(t, 128))
+		mockApp.Base.SetExecCommandResult(
+			"",
+			"fatal: not a git repository",
+			testutil.ExitError(t, 128),
+		)
 
 		conflicts, err := app.MergeTreeConflicts("/repo", "main", "feature")
 		if err == nil {

@@ -5,8 +5,8 @@
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
 all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
 (`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue surface +
-`issue-scope`), and D (`pr-state`) are implemented and tested on this branch;
-Slices E–H remain.
+`issue-scope`), D (`pr-state`), and E (`dg wt create --base`) are implemented and
+tested on this branch; Slices F–H remain.
 
 ---
 
@@ -265,7 +265,7 @@ in one repository.
       Partial-failure behavior: if one gatherer errors (e.g. checks unavailable),
       that field reports an explicit "unavailable" sentinel and the rest still
       render — one failed fetch does not fail the whole command.
-- [ ] **Slice E — `dg wt create --base <ref>`.** Let `create` start the new branch
+- [x] **Slice E — `dg wt create --base <ref>`.** Let `create` start the new branch
       at an explicit ref while still opening the tmux window and launching the
       coder. Applies only when the branch does not already exist; passing `--base`
       for a branch that is being adopted is an error, not a silent no-op. Corrected

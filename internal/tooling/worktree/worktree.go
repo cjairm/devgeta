@@ -281,7 +281,13 @@ func GetWorktreeBasePath() string {
 // containing the current directory and the window opens in the current tmux
 // session. If force is false and the repo has hooks incompatible with git
 // worktrees, the user is prompted to confirm before proceeding.
-func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
+//
+// base is optional (""  = let the git wrapper pick the base, exactly as
+// before this parameter existed: adopt an existing local/remote branch of
+// name, or fall back to the freshly-fetched default branch). When base is
+// given, name must be a genuinely NEW branch — adopting an existing one with
+// --base is an error, not a silent no-op (ADR gated by Slice E).
+func (w *WorktreeManager) Create(name, base string, layout Layout, force bool) error {
 	layout, err := validateLayout(layout)
 	if err != nil {
 		return err
@@ -290,7 +296,7 @@ func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
-	return w.create(repoRoot, name, layout, force, false)
+	return w.create(repoRoot, name, base, layout, force, false)
 }
 
 // CreateAt is Create for a repository the caller is not inside: repoPath ("~"
@@ -299,7 +305,7 @@ func (w *WorktreeManager) Create(name string, layout Layout, force bool) error {
 //
 // Like Create, it does not move the attached client — call FollowWindow if the
 // user should end up in the new window.
-func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force bool) error {
+func (w *WorktreeManager) CreateAt(repoPath, name, base string, layout Layout, force bool) error {
 	layout, err := validateLayout(layout)
 	if err != nil {
 		return err
@@ -308,7 +314,7 @@ func (w *WorktreeManager) CreateAt(repoPath, name string, layout Layout, force b
 	if err != nil {
 		return fmt.Errorf("no git repository at %s: %w", repoPath, err)
 	}
-	return w.create(repoRoot, name, layout, force, true)
+	return w.create(repoRoot, name, base, layout, force, true)
 }
 
 // validateLayout guards the shared create/repair flow: a layout with at
@@ -335,9 +341,10 @@ func validateLayout(layout Layout) (Layout, error) {
 
 // create is the shared worktree-creation flow. useRepoSession selects where
 // the window goes: the current tmux session (plain Create) or the repo-slug
-// session (CreateAt).
+// session (CreateAt). base, when non-empty, roots a NEW branch named name at
+// that ref instead of letting the git wrapper pick the base (Slice E).
 func (w *WorktreeManager) create(
-	repoRoot, name string,
+	repoRoot, name, base string,
 	layout Layout,
 	force, useRepoSession bool,
 ) error {
@@ -411,10 +418,20 @@ func (w *WorktreeManager) create(
 		return fmt.Errorf("failed to create worktree directory: %w", err)
 	}
 
-	if err := w.Git.CreateWorktreeIn(repoRoot, wtPath, name); err != nil {
+	// createFn is the ONLY thing that differs between the base and no-base
+	// paths: which git wrapper call actually creates the worktree. Everything
+	// before this point (state checks, hook check, MkdirAll) and after it
+	// (the stale-registration retry, launchWindowAndRecord) is identical
+	// either way.
+	createFn := func() error { return w.Git.CreateWorktreeIn(repoRoot, wtPath, name) }
+	if base != "" {
+		createFn = func() error { return w.Git.CreateWorktreeAtBaseIn(repoRoot, wtPath, name, base) }
+	}
+
+	if err := createFn(); err != nil {
 		if isStaleRegistrationError(err) {
 			if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr == nil {
-				if retryErr := w.Git.CreateWorktreeIn(repoRoot, wtPath, name); retryErr == nil {
+				if retryErr := createFn(); retryErr == nil {
 					return w.launchWindowAndRecord(
 						repoRoot,
 						repoSlug,
