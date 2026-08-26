@@ -49,9 +49,28 @@ jobs:
         env:
           VERSION: ${{ steps.get_version.outputs.VERSION }}
         run: |
+          # actions/checkout fetches every tag correctly and then OVERWRITES this
+          # one, re-fetching the raw commit SHA into refs/tags/<version>:
+          #   git fetch --no-tags origin +<sha>:refs/tags/<version>
+          #   t [tag update]  <sha> -> <version>
+          # That leaves a LIGHTWEIGHT tag, whose %(contents) is the commit's
+          # message rather than the annotation `devgeta task release` wrote — so
+          # the page silently published the last commit message instead of the
+          # release notes. Re-fetch the real tag object before reading it.
+          git fetch --force origin "refs/tags/${VERSION}:refs/tags/${VERSION}"
+
+          # Then fail loudly. Reading a lightweight tag does not error, it just
+          # returns the wrong text, which is how this went unnoticed across
+          # three releases: the body looked plausible because a squashed release
+          # commit happens to carry the same message.
+          OBJTYPE="$(git cat-file -t "refs/tags/${VERSION}")"
+          if [ "$OBJTYPE" != "tag" ]; then
+            echo "::error::refs/tags/${VERSION} is a ${OBJTYPE}, not an annotated tag; refusing to publish a release body read from it." >&2
+            exit 1
+          fi
+
           # %(contents) is the annotation's subject + body, without any
-          # signature block. A lightweight tag yields an empty string, which
-          # simply falls back to the auto-generated notes alone.
+          # signature block.
           NOTES="$(git tag -l --format='%(contents)' "$VERSION" \
             | sed '/^Co-Authored-By:/d' \
             | sed -e :a -e '/^\n*$/{$d;N;};/\n$/ba')"
