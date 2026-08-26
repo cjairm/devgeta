@@ -9,9 +9,11 @@ whole-branch review fixes for Part B"), and both are deployed — verified live 
 actually running. This header was never updated after the work landed, and
 [ADR-0008](../../decisions/ADR-0008-agent-state-on-every-pane-row.md) /
 [ADR-0009](../../decisions/ADR-0009-audible-agent-notifications.md) were flipped to ACCEPTED
-in the same pass as this correction. The one thing still genuinely open is §6's eight-item
-manual verification — a human watching real agents transition state and listening for the
-sound — which has not been run.
+in the same pass as this correction. §6's manual verification was then run on 2026-08-26:
+**all five sound items (4–8) pass**, verified against the deployed hook, with the two audible
+halves confirmed by ear. The three still open are 1–3 — the `dg ws` TUI's own rendering of
+agent state on session rows, collapsed repo headers, and pane rows — which need a human
+reading the dashboard.
 
 ---
 
@@ -319,9 +321,10 @@ make lint
 
 ### Manual
 
-Items 4, 7 and 8 were run on 2026-08-26 against the **deployed** `~/.claude/agent-state.sh`
-(not the test harness) and pass; 6's file-mapping half passes the same way. 1–3 need a human
-reading the `dg ws` TUI, and 5–6's audible halves need ears — see the notes under each.
+**Items 4–8 were all run on 2026-08-26 and pass**, against the **deployed**
+`~/.claude/agent-state.sh` rather than the test harness — every sound item is therefore
+closed, including the two audible halves the maintainer confirmed by ear. Items 1–3 remain
+open: they are the `dg ws` TUI's rendering, which needs a human reading the dashboard.
 
 1. [ ] Agent idle in a plain (non-worktree) session → that session's row shows `◆`
 2. [ ] Agent blocked in a collapsed repo's worktree → repo header shows `!`
@@ -329,20 +332,26 @@ reading the `dg ws` TUI, and 5–6's audible halves need ears — see the notes 
 4. [x] `@dg_notify_sound off` → no sound on any transition. Verified by putting a recording
        stand-in ahead of the real player on `PATH`: with the option `off` the hook invoked it
        **zero** times, with it `on`, once.
-5. [~] `on`, agent finishes in an unattended window → sound; in the window you are viewing →
-   silence. The unattended half ran continuously and unplanned: this session's own agent
-   was in `devgeta-vegeta`, window `wt-devgeta-finish-cycle-leftovers`, with the human
-   attached to a different session entirely (`flux-goku`), so every turn end fired the
-   gate for real. The attended half is unverified — it needs a client attached to the
-   agent's own window.
-6. [~] `blocked`, `idle`, and `error` are audibly different. The mechanism is confirmed —
-   each state selects a distinct file (`idle`→`Glass.aiff`, `blocked`→`Ping.aiff`,
-   `error`→`Basso.aiff`, `busy`→no player call at all), matching ADR-0009's table. That
-   they are _audibly_ distinguishable is the half only a listener can close.
-7. [x] `PATH` stripped of `afplay`/`paplay` → silence, hook still exits 0. Verified with a
-       `PATH` holding only `bash` and `tmux`: exit 0, no output.
-8. [x] Agent outside tmux → no error, no output. Verified with `TMUX`/`TMUX_PANE` unset:
-       exit 0, no output.
+5. [x] `on`, agent finishes in an unattended window → sound; in the window you are viewing →
+       silence. **Both halves verified.** Sound: this session's agent sat in an unattended window
+       while the maintainer was elsewhere, so every turn end fired the gate for real, and three
+       deliberate transitions from an unattended pane were heard and confirmed. Silence: all three
+       sounding states fired at a pane whose window reported `window_active_clients=1` — the
+       window a client was genuinely viewing — and the player was invoked **zero** times.
+6. [x] `blocked`, `idle`, and `error` are audibly different. Both halves: each state selects a
+       distinct file (`idle`→`Glass.aiff`, `blocked`→`Ping.aiff`, `error`→`Basso.aiff`,
+       `busy`→no player call at all), matching ADR-0009's table, and the maintainer confirmed
+       hearing all three when fired five seconds apart.
+
+**A note on `window_active_clients`, because it reads as broken until you check it.** It
+counts clients viewing _that window_, not clients attached to its session. So every
+non-current window of an attached session reports `0`, and only the single window a client is
+actually looking at reports `1`. Two attempts to test the silence half above were aimed at
+windows that were merely inside an attached session, and the player fired both times —
+correctly, since nobody was viewing them. The format is sound (tmux 3.5a; a bogus format name
+returns empty, this returns a real count) and so is the gate. 7. [x] `PATH` stripped of `afplay`/`paplay` → silence, hook still exits 0. Verified with a
+`PATH` holding only `bash` and `tmux`: exit 0, no output. 8. [x] Agent outside tmux → no error, no output. Verified with `TMUX`/`TMUX_PANE` unset:
+exit 0, no output.
 
 ### Regression
 
