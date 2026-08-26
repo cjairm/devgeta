@@ -52,4 +52,7 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0030](ADR-0030-global-config-loads-once-per-run.md) — `global_config.yaml` is loaded once per run and served from a cache
 - [ADR-0031](ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md) — Context is reduced at write time, never at send time
 - [ADR-0032](ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) — Session continuity is a durable note, not a longer session
+- [ADR-0033](ADR-0033-a-keyed-scratch-directory-trades-isolation-for-hand-off.md) — A keyed scratch directory trades isolation for hand-off
+- [ADR-0034](ADR-0034-an-aggregate-task-composes-its-parts-never-re-derives-them.md) — An aggregate task composes its parts, never re-derives them
+- [ADR-0035](ADR-0035-an-issue-is-matched-by-number-never-by-a-branch-naming-scheme.md) — An issue is matched by number, never by a branch-naming scheme
 - [ADR-0036](ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present
