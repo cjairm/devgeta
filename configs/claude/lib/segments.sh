@@ -44,6 +44,21 @@ DEVGETA_GIT_GLOBAL_OPT='(-[Cc][[:space:]]+[^[:space:]]+|--[A-Za-z-]+=[^[:space:]
 # space-separated `value` forms of a long flag are needed.
 DEVGETA_GH_GLOBAL_OPT='(-R[[:space:]]+[^[:space:]]+|--[A-Za-z-]+=[^[:space:]]+|--[A-Za-z-]+[[:space:]]+[^[:space:]]+|--[A-Za-z-]+|-[A-Za-z])'
 
+# devgeta_shell_quote wraps a value in single quotes, escaping any embedded
+# single quote as '\'' (close the quote, an escaped literal quote, reopen
+# the quote), so the result can be spliced into a `bash -c` command line as
+# one literal argument whatever bytes it contains — no other character has
+# any special meaning inside a single-quoted span. Used by
+# output-budget.sh's rewrite (docs/guides/output-budget-runner.md §2.1),
+# which must quote the runner path (arbitrary user-controlled
+# XDG_CONFIG_HOME) and the original command the same way.
+devgeta_shell_quote() {
+	local s="$1"
+	local quote="'"
+	local esc="'\\''"
+	printf '%s' "$quote${s//$quote/$esc}$quote"
+}
+
 # devgeta_trim strips leading/trailing whitespace so a segment that followed
 # a separator (e.g. " git commit -m foo") anchors correctly against a `^`
 # pattern.
