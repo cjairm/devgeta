@@ -5,8 +5,9 @@
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
 all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
 (`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue surface +
-`issue-scope`), D (`pr-state`), and E (`dg wt create --base`) are implemented and
-tested on this branch; Slices F–H remain.
+`issue-scope`), D (`pr-state`), E (`dg wt create --base`), and F
+(`review-scope --sizes`) are implemented and tested on this branch; Slices G–H
+remain.
 
 ---
 
@@ -287,7 +288,7 @@ in one repository.
       (`internal/tui/worktree/model.go:442` calls `mgr.CreateAt`). The signature
       change and all its callers (cmd, TUI) land in one commit — see the
       committability note in §"Step-by-Step".
-- [ ] **Slice F — `dg task review-scope --sizes`.** Add diff sizes to the existing
+- [x] **Slice F — `dg task review-scope --sizes`.** Add diff sizes to the existing
       report so the per-commit-vs-range review decision is a ratio rather than a
       feel. A flag on the existing command, not a sibling command (CLAUDE.md §6,
       reuse before writing). "Size" is defined precisely so it is testable: - **Unit: bytes of unified-patch text.** The range size is

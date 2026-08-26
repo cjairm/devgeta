@@ -302,6 +302,72 @@ func TestFormatReviewScope(t *testing.T) {
 		}
 	})
 
+	t.Run("sizes flag renders range and per-commit byte counts", func(t *testing.T) {
+		got := formatReviewScope(scopeData{
+			CurrentBranch:  "feat/x",
+			DefaultBranch:  "main",
+			Ahead:          2,
+			Sizes:          true,
+			RangeSizeBytes: 987,
+			Commits: []commit{
+				{
+					SHA:       "abc123",
+					Date:      "2026-07-14",
+					Subject:   "feat(task): add review-scope",
+					SizeBytes: 654,
+				},
+				{
+					SHA:       "def456",
+					Date:      "2026-07-15",
+					Subject:   "test(task): cover offline fetch",
+					SizeBytes: 333,
+				},
+			},
+			Files: []fileChange{
+				{Path: "internal/tooling/task/task.go", Status: "M", Added: 120, Removed: 30},
+			},
+		})
+		want := "branch: feat/x -> main (default)  [ahead 2, behind 0]\n" +
+			"commits:\n" +
+			"- abc123 2026-07-14 feat(task): add review-scope\n" +
+			"- def456 2026-07-15 test(task): cover offline fetch\n" +
+			"files (1):\n" +
+			"M  internal/tooling/task/task.go  +120/-30\n" +
+			"total: +120/-30\n" +
+			"range size: 987 bytes\n" +
+			"commit sizes:\n" +
+			"- abc123: 654 bytes\n" +
+			"- def456: 333 bytes"
+		if got != want {
+			t.Fatalf("unexpected output:\n%s\n---want---\n%s", got, want)
+		}
+	})
+
+	t.Run(
+		"sizes flag omitted renders no size lines (default output unchanged)",
+		func(t *testing.T) {
+			got := formatReviewScope(scopeData{
+				CurrentBranch: "feat/x",
+				DefaultBranch: "main",
+				Ahead:         1,
+				Commits: []commit{
+					{
+						SHA:       "abc123",
+						Date:      "2026-07-14",
+						Subject:   "feat(task): add review-scope",
+						SizeBytes: 654,
+					},
+				},
+				Files: []fileChange{
+					{Path: "a.go", Status: "M", Added: 1, Removed: 1},
+				},
+			})
+			if strings.Contains(got, "range size") || strings.Contains(got, "commit sizes") {
+				t.Fatalf("expected no size lines when Sizes is false, got:\n%s", got)
+			}
+		},
+	)
+
 	t.Run("bodies flag renders indented body lines", func(t *testing.T) {
 		got := formatReviewScope(scopeData{
 			CurrentBranch: "feat/x",
@@ -500,7 +566,7 @@ func TestReviewScope(t *testing.T) {
 			commands.ExecCommandResult("docs/draft.md\x00", "", nil), // ls-files --others -z
 		)
 
-		out, err := tm.ReviewScope(false)
+		out, err := tm.ReviewScope(false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -529,6 +595,99 @@ func TestReviewScope(t *testing.T) {
 		}
 	})
 
+	// Slice F: --sizes adds a range byte count and a per-commit byte count,
+	// each restricted to the reviewable (non-excluded) paths — go.sum here
+	// must not inflate either size, same as it's already excluded from the
+	// file table. The range and the (single) commit's own diff text are
+	// deliberately DIFFERENT fixed strings, so a passing assertion proves
+	// each size came from its own git call rather than one value leaking
+	// into the other.
+	t.Run("sizes flag adds range and per-commit byte counts", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		rangePatch := "diff --git a/a.go b/a.go\n" +
+			"index aaaaaaa..bbbbbbb 100644\n" +
+			"--- a/a.go\n+++ b/a.go\n@@ -1,2 +1,3 @@\n line1\n+line2\n"
+		commitPatch := "diff --git a/a.go b/a.go\n" +
+			"index ccccccc..ddddddd 100644\n" +
+			"--- a/a.go\n+++ b/a.go\n@@ -1,1 +1,2 @@\n+onlyline\n"
+
+		gitBase.SetExecCommandResults(
+			commands.ExecCommandResult("", "", nil),              // fetch origin
+			commands.ExecCommandResult("feat/x\n", "", nil),      // branch --show-current
+			commands.ExecCommandResult("origin/main\n", "", nil), // symbolic-ref (default branch)
+			commands.ExecCommandResult("base000\n", "", nil),     // merge-base
+			commands.ExecCommandResult("0\t1\n", "", nil),        // rev-list --left-right --count
+			commands.ExecCommandResult(
+				"abc123"+commitFieldSep+"2026-07-14"+commitFieldSep+
+					"feat(task): add a"+commitFieldSep+commitRecordSep+"\n",
+				"", nil,
+			), // log --format=commitLogFormat --reverse
+			commands.ExecCommandResult(
+				"10\t2\ta.go\n5\t1\tgo.sum\n",
+				"",
+				nil,
+			), // diff --numstat base000
+			commands.ExecCommandResult(
+				"M\ta.go\nM\tgo.sum\n",
+				"",
+				nil,
+			), // diff --name-status base000
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // diff --numstat HEAD (uncommitted)
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // diff --name-status HEAD
+			commands.ExecCommandResult(
+				"",
+				"",
+				nil,
+			), // ls-files --others -z
+			commands.ExecCommandResult(
+				rangePatch,
+				"",
+				nil,
+			), // diff base000 -- a.go (range size)
+			commands.ExecCommandResult(
+				"10\t2\ta.go\n5\t1\tgo.sum\n",
+				"",
+				nil,
+			), // diff --numstat abc123^..abc123
+			commands.ExecCommandResult(
+				"M\ta.go\nM\tgo.sum\n",
+				"",
+				nil,
+			), // diff --name-status abc123^..abc123
+			commands.ExecCommandResult(
+				commitPatch,
+				"",
+				nil,
+			), // diff abc123^..abc123 -- a.go (commit size)
+		)
+
+		out, err := tm.ReviewScope(false, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		wantRangeLine := fmt.Sprintf("range size: %d bytes", len(rangePatch))
+		wantCommitLine := fmt.Sprintf("- abc123: %d bytes", len(commitPatch))
+		if !strings.Contains(out, wantRangeLine) {
+			t.Fatalf("expected %q, got:\n%s", wantRangeLine, out)
+		}
+		if !strings.Contains(out, wantCommitLine) {
+			t.Fatalf("expected %q, got:\n%s", wantCommitLine, out)
+		}
+		// go.sum's bytes must not be folded into either size.
+		if len(rangePatch) == len(commitPatch) {
+			t.Fatalf("test fixture bug: range and commit patches must differ in length")
+		}
+	})
+
 	t.Run("bodies flag renders commit bodies", func(t *testing.T) {
 		tm, gitBase, _ := newTaskSetup()
 		gitBase.SetExecCommandResults(
@@ -547,7 +706,7 @@ func TestReviewScope(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),
 		)
 
-		out, err := tm.ReviewScope(true)
+		out, err := tm.ReviewScope(true, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -575,7 +734,7 @@ func TestReviewScope(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),
 		)
 
-		out, err := tm.ReviewScope(false)
+		out, err := tm.ReviewScope(false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -592,7 +751,7 @@ func TestReviewScope(t *testing.T) {
 			commands.ExecCommandResult("origin/main\n", "", nil), // symbolic-ref (default branch)
 		)
 
-		out, err := tm.ReviewScope(false)
+		out, err := tm.ReviewScope(false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -617,7 +776,7 @@ func TestReviewScope(t *testing.T) {
 			commands.ExecCommandResult("abc1234\n", "", nil), // rev-parse --short HEAD
 		)
 
-		out, err := tm.ReviewScope(false)
+		out, err := tm.ReviewScope(false, false)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

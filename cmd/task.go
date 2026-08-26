@@ -36,7 +36,7 @@ type taskRunner interface {
 	ReinstallLibraries() error
 	ReinstallLibrary(name string) error
 	DeleteBranch(target string) error
-	ReviewScope(bodies bool) (string, error)
+	ReviewScope(bodies, sizes bool) (string, error)
 	BranchDiff(file string) (string, error)
 	ReviewPackage(base, head, file string) (string, error)
 	ReviewNotes(branch, rev string, showPath, prune bool) (string, error)
@@ -180,7 +180,10 @@ var taskBranchDiffFileFlag string
 var taskReviewPackageFileFlag string
 
 // taskReviewScopeBodiesFlag is review-scope's --bodies flag.
-var taskReviewScopeBodiesFlag bool
+var (
+	taskReviewScopeBodiesFlag bool
+	taskReviewScopeSizesFlag  bool
+)
 
 var taskReviewScopeCmd = &cobra.Command{
 	Use:   "review-scope",
@@ -193,15 +196,22 @@ noted separately with its own stat counts, never silently dropped.
 
 --bodies appends each commit's body as indented lines beneath its subject.
 
+--sizes adds a "range size" line (unified-patch bytes for the whole
+comparison, excluded paths left out) and a "commit sizes" line per commit
+(that commit's own patch bytes, same exclusion). Use this to decide between
+reviewing per-commit or as one range: costs one extra ` + "`git diff`" + ` per commit,
+so it is opt-in — the default output is unchanged without it.
+
 Run "dg task branch-diff" next to see the full (noise-filtered) diff, or
 "dg task branch-diff --file <path>" to inspect one file, including an
 otherwise-excluded one.`,
 	Example: `  dg task review-scope
   dg task review-scope --bodies
+  dg task review-scope --sizes
   dg task review-scope && dg task branch-diff`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		out, err := newTaskManager().ReviewScope(taskReviewScopeBodiesFlag)
+		out, err := newTaskManager().ReviewScope(taskReviewScopeBodiesFlag, taskReviewScopeSizesFlag)
 		return emitPRResult(cmd, out, err)
 	},
 }
@@ -731,6 +741,8 @@ func init() {
 		StringVar(&taskReviewPackageFileFlag, "file", "", "Diff only this file, bypassing exclusions")
 	taskReviewScopeCmd.Flags().
 		BoolVar(&taskReviewScopeBodiesFlag, "bodies", false, "Append each commit's body beneath its subject")
+	taskReviewScopeCmd.Flags().
+		BoolVar(&taskReviewScopeSizesFlag, "sizes", false, "Add range and per-commit diff-byte sizes")
 
 	taskReviewNotesCmd.Flags().
 		StringVar(&taskReviewNotesBranchFlag, "branch", "", "Branch to read (default: current)")

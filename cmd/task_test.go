@@ -33,6 +33,7 @@ type mockTaskRunner struct {
 
 	reviewScopeCalled bool
 	reviewScopeBodies bool
+	reviewScopeSizes  bool
 	reviewScopeRet    string
 	reviewScopeErr    error
 
@@ -154,9 +155,10 @@ func (m *mockTaskRunner) DeleteBranch(target string) error {
 	return m.deleteBranchErr
 }
 
-func (m *mockTaskRunner) ReviewScope(bodies bool) (string, error) {
+func (m *mockTaskRunner) ReviewScope(bodies, sizes bool) (string, error) {
 	m.reviewScopeCalled = true
 	m.reviewScopeBodies = bodies
+	m.reviewScopeSizes = sizes
 	return m.reviewScopeRet, m.reviewScopeErr
 }
 
@@ -520,6 +522,24 @@ func TestTask_ReviewScope(t *testing.T) {
 		}
 		if !mock.reviewScopeBodies {
 			t.Error("expected bodies=true when --bodies passed")
+		}
+	})
+
+	t.Run("passes --sizes flag", func(t *testing.T) {
+		mock := &mockTaskRunner{
+			reviewScopeRet: "branch: feat/x -> main (default)  [ahead 1, behind 0]",
+		}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskReviewScopeSizesFlag = true
+		defer func() { taskReviewScopeSizesFlag = false }()
+
+		err := taskReviewScopeCmd.RunE(taskReviewScopeCmd, []string{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.reviewScopeSizes {
+			t.Error("expected sizes=true when --sizes passed")
 		}
 	})
 

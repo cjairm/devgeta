@@ -38,6 +38,10 @@ type commit struct {
 	Date    string
 	Subject string
 	Body    string
+	// SizeBytes is this commit's own unified-patch byte size, restricted to
+	// its reviewable (non-excluded) paths. Only populated when --sizes was
+	// requested; zero otherwise.
+	SizeBytes int
 }
 
 // fileChange is one file's row from a merged --numstat / --name-status pair.
@@ -67,6 +71,17 @@ type scopeData struct {
 	Commits []commit
 	Bodies  bool
 
+	// Sizes gates whether formatReviewScope renders RangeSizeBytes and each
+	// commit's SizeBytes at all — the default output's byte count must stay
+	// unchanged when --sizes was not requested, even though the fields below
+	// are always present on the struct.
+	Sizes bool
+	// RangeSizeBytes is len(git diff <base>), restricted to the reviewable
+	// (non-excluded) paths — the same two-dot semantics and exclusion filter
+	// the file table already uses, so the size and the reviewable-file list
+	// agree.
+	RangeSizeBytes int
+
 	Files    []fileChange
 	Excluded []fileChange
 	// Uncommitted is the subset of the branch's changes that no commit
@@ -91,7 +106,11 @@ type scopeData struct {
 // reviewer reads right after this. Which of those files are not in any commit
 // yet, and which are untracked, are each called out on their own line: a file
 // the commit list above never mentions would otherwise look like a mistake.
-func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
+//
+// sizes gates whether this also computes diff-byte sizes (the range's and
+// each commit's own) — a real per-commit `git diff` cost, so it is skipped
+// entirely unless requested, never computed-then-hidden.
+func (tm *TaskManager) ReviewScope(bodies, sizes bool) (string, error) {
 	fetchFailed := tm.Git.FetchOriginTimeout(reviewFetchTimeout) != nil
 
 	currentBranch, err := tm.Git.CurrentBranch()
@@ -148,18 +167,40 @@ func (tm *TaskManager) ReviewScope(bodies bool) (string, error) {
 	}
 	uncommittedReviewable, _ := partitionExcluded(uncommitted)
 
+	// Hoisted out of the return struct literal (where it lived before this
+	// parameter existed) so its git call keeps its ORIGINAL position in the
+	// call sequence — a struct literal's field expressions run when the
+	// literal is built, so leaving it inline would move this call after the
+	// --sizes block below, silently reordering every existing call this
+	// method's tests already pin.
+	untracked := untrackedFiles(tm.Git, "")
+
+	rangeSizeBytes := 0
+	if sizes {
+		rangeSizeBytes, err = diffByteSize(tm.Git, base, reviewablePaths(reviewable))
+		if err != nil {
+			return "", fmt.Errorf("review-scope: %w", err)
+		}
+		commits, err = commitSizes(tm.Git, commits)
+		if err != nil {
+			return "", fmt.Errorf("review-scope: %w", err)
+		}
+	}
+
 	return formatReviewScope(scopeData{
-		CurrentBranch: currentBranch,
-		DefaultBranch: defaultBranch,
-		FetchFailed:   fetchFailed,
-		Behind:        behind,
-		Ahead:         ahead,
-		Commits:       commits,
-		Bodies:        bodies,
-		Files:         reviewable,
-		Excluded:      excluded,
-		Uncommitted:   uncommittedReviewable,
-		Untracked:     untrackedFiles(tm.Git, ""),
+		CurrentBranch:  currentBranch,
+		DefaultBranch:  defaultBranch,
+		FetchFailed:    fetchFailed,
+		Behind:         behind,
+		Ahead:          ahead,
+		Commits:        commits,
+		Bodies:         bodies,
+		Sizes:          sizes,
+		RangeSizeBytes: rangeSizeBytes,
+		Files:          reviewable,
+		Excluded:       excluded,
+		Uncommitted:    uncommittedReviewable,
+		Untracked:      untracked,
 	}), nil
 }
 
@@ -229,6 +270,61 @@ func parseCommitLog(raw string) ([]commit, error) {
 			Subject: parts[2],
 			Body:    strings.Trim(parts[3], "\n"),
 		})
+	}
+	return out, nil
+}
+
+// reviewablePaths extracts just the paths from a reviewable fileChange list,
+// for handing to diffByteSize as a pathspec.
+func reviewablePaths(files []fileChange) []string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.Path
+	}
+	return paths
+}
+
+// diffByteSize returns the byte length of the unified patch `git diff
+// rangeSpec -- <paths...>` produces — the same two-dot semantics the file
+// table's fileChanges call already uses when rangeSpec is a plain base ref.
+// Restricting to paths is what applies "the same exclusion filter as the
+// file table" (an excluded lockfile's bytes never reach this call at all,
+// rather than being diffed and subtracted). An empty paths list means every
+// file in range was excluded, so the size is trivially 0 — no git call, and
+// no risk of the empty-pathspec case reading as "no restriction" instead.
+func diffByteSize(g *git_app.Git, rangeSpec string, paths []string) (int, error) {
+	if len(paths) == 0 {
+		return 0, nil
+	}
+	args := append([]string{"diff", rangeSpec, "--"}, paths...)
+	out, err := g.RunCapture(args...)
+	if err != nil {
+		return 0, err
+	}
+	return len(out), nil
+}
+
+// commitSizes returns commits with SizeBytes populated: each commit's own
+// unified-patch byte size (`git diff <sha>^..<sha>`, first-parent for a
+// merge commit since `^` names the first parent), restricted to that
+// commit's OWN reviewable paths — a commit can touch a different file set
+// than the whole range, so its exclusion partition is computed fresh rather
+// than reused from the range's.
+func commitSizes(g *git_app.Git, commits []commit) ([]commit, error) {
+	out := make([]commit, len(commits))
+	for i, c := range commits {
+		out[i] = c
+		commitRange := c.SHA + "^.." + c.SHA
+		files, err := fileChanges(g, commitRange)
+		if err != nil {
+			return nil, err
+		}
+		reviewable, _ := partitionExcluded(files)
+		size, err := diffByteSize(g, commitRange, reviewablePaths(reviewable))
+		if err != nil {
+			return nil, err
+		}
+		out[i].SizeBytes = size
 	}
 	return out, nil
 }
@@ -471,6 +567,17 @@ func formatReviewScope(s scopeData) string {
 
 	fmt.Fprintf(&b, "files (%d):\n", len(s.Files))
 	b.WriteString(formatFileStats(s.Files))
+
+	// Rendered only when --sizes was requested — the default output's byte
+	// count must stay unchanged otherwise (task-design.md principle 1: the
+	// default path is the cheap one).
+	if s.Sizes {
+		fmt.Fprintf(&b, "\nrange size: %d bytes", s.RangeSizeBytes)
+		b.WriteString("\ncommit sizes:")
+		for _, c := range s.Commits {
+			fmt.Fprintf(&b, "\n- %s: %d bytes", c.SHA, c.SizeBytes)
+		}
+	}
 
 	// Both notes name files the commit list above cannot account for, so they
 	// sit directly under the table those files appear in (or, for untracked
