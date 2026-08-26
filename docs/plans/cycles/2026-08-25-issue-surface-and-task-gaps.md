@@ -4,9 +4,9 @@
 **Estimated Duration:** ~16 hours (8 slices, independently shippable)
 **Status:** In Progress (2026-08-26) — four cross-model review rounds settled,
 all findings fixed. The three gating ADRs (0033/0034/0035) are written. Slices A
-(`dg task scratch --key`), B (`refresh-branch --rebase`), and C (the issue
-surface + `issue-scope`) are implemented and tested on this branch; Slices D–H
-remain.
+(`dg task scratch --key`), B (`refresh-branch --rebase`), C (the issue surface +
+`issue-scope`), and D (`pr-state`) are implemented and tested on this branch;
+Slices E–H remain.
 
 ---
 
@@ -224,7 +224,7 @@ in one repository.
       **Requires ADR-0035 first** — see §"Decisions to record" for the full grammar
       ADR-0035 must pin down (accepted sources, same-repo vs cross-repo,
       pagination, candidate-vs-confirmed reporting).
-- [ ] **Slice D — `dg task pr-state`.** One call answering "where does this PR
+- [x] **Slice D — `dg task pr-state`.** One call answering "where does this PR
       stand?": PR state, a CI checks summary, the unresolved-thread count, and the
       authenticated user's own review state. Returns counts and states only —
       never thread bodies (task-design.md principle 7). The four existing commands

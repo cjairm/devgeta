@@ -1698,6 +1698,10 @@ func (m *mockPRRunner) PRReviewTarget(pr string) (string, error) {
 func (m *mockPRRunner) PRReviewState(pr string) (string, error) {
 	return m.record("PRReviewState", "pr", pr)
 }
+
+func (m *mockPRRunner) PRState(pr string) (string, error) {
+	return m.record("PRState", "pr", pr)
+}
 func (m *mockPRRunner) CurrentPR() (string, error)   { return m.record("CurrentPR") }
 func (m *mockPRRunner) CurrentRepo() (string, error) { return m.record("CurrentRepo") }
 
@@ -1879,6 +1883,23 @@ func TestPRTask_Dispatch(t *testing.T) {
 		}
 		if mock.calls[0] != "PRView" {
 			t.Fatalf("expected PRView, got %v", mock.calls)
+		}
+	})
+
+	t.Run("pr-state dispatches with the pr flag", func(t *testing.T) {
+		mock := newMockPRRunner()
+		defer setupPRMock(t, mock)()
+		prFlag = "42"
+		defer func() { prFlag = "" }()
+
+		if err := taskPRStateCmd.RunE(taskPRStateCmd, nil); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.calls[0] != "PRState" {
+			t.Fatalf("expected PRState, got %v", mock.calls)
+		}
+		if mock.lastArg["pr"] != "42" {
+			t.Fatalf("expected pr flag %q, got %q", "42", mock.lastArg["pr"])
 		}
 	})
 

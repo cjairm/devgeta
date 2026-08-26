@@ -31,6 +31,7 @@ type prRunner interface {
 	PRChecks(prNumber string) (string, error)
 	PRReviewTarget(prNumber string) (string, error)
 	PRReviewState(prNumber string) (string, error)
+	PRState(prNumber string) (string, error)
 	CurrentPR() (string, error)
 	CurrentRepo() (string, error)
 }
@@ -412,6 +413,40 @@ command with an error rather than resolving to a wrong answer.
 	},
 }
 
+var taskPRStateCmd = &cobra.Command{
+	Use:   "pr-state",
+	Short: "One-call answer to \"where does this PR stand?\" (for agents)",
+	Long: `Compose pr-view, pr-checks, review-threads, and pr-review-state's own
+underlying reads into one compact payload — five labeled lines:
+
+  pr: open
+  requested: yes
+  my-review: none
+  checks: pass=3 fail=1 pending=0 skipping=0 cancel=0
+  threads-unresolved: 2
+
+This never re-queries GitHub for a fact one of those four commands already
+answers (ADR-0034): it composes the same underlying reads and reduces them
+to counts and states only, never thread bodies or a per-check log digest —
+pass --checks-digest to pr-checks directly if you need that. If one part
+fails to fetch (e.g. checks temporarily unavailable), that line reports
+"unavailable: <reason>" and the rest still render; the command itself only
+fails if the PR cannot be resolved at all.
+
+The four original commands are unchanged and still exist for when you want
+just one of these answers, or pr-checks' failing-log digest, or
+review-threads' thread bodies.
+
+--pr targets a PR number; omit it to use the current branch's PR.`,
+	Example: `  dg task pr-state --pr 42
+  dg task pr-state             # the current branch's PR`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newPRTasks().PRState(prFlag)
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 var taskCurrentPRCmd = &cobra.Command{
 	Use:   "current-pr",
 	Short: "Print the PR number for the current branch",
@@ -449,6 +484,7 @@ func init() {
 	taskCmd.AddCommand(taskPRChecksCmd)
 	taskCmd.AddCommand(taskPRReviewTargetCmd)
 	taskCmd.AddCommand(taskPRReviewStateCmd)
+	taskCmd.AddCommand(taskPRStateCmd)
 	taskCmd.AddCommand(taskCurrentPRCmd)
 	taskCmd.AddCommand(taskCurrentRepoCmd)
 
@@ -515,5 +551,7 @@ func init() {
 	taskPRReviewTargetCmd.Flags().
 		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 	taskPRReviewStateCmd.Flags().
+		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
+	taskPRStateCmd.Flags().
 		StringVar(&prFlag, "pr", "", "PR number (default: current branch)")
 }

@@ -368,6 +368,23 @@ func isFailingCheck(c prCheck) bool {
 	return strings.EqualFold(strings.TrimSpace(c.Bucket), "fail")
 }
 
+// gatherPRChecks is the raw-fetch-plus-reduce core PRChecks and pr-state
+// both build on (ADR-0034): one gh call, then a best-effort parse into
+// prCheck structs. Parse failure is not itself an error — it degrades to a
+// nil checks slice, matching PRChecks' existing "the base jq formatting
+// already succeeded; don't fail the whole command over a payload shape only
+// the digest enrichment (or pr-state's bucket tally) can't parse" stance.
+func (p *PRManager) gatherPRChecks(prNumber string) (raw string, checks []prCheck, err error) {
+	raw, err = p.Gh.PRChecks(prNumber)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := json.Unmarshal([]byte(raw), &checks); err != nil {
+		return raw, nil, nil
+	}
+	return raw, checks, nil
+}
+
 // PRChecks returns a compact, one-line-per-check CI status for a PR.
 // Passing/pending checks keep exactly today's one-line format (jq's
 // prChecksFilter, unchanged — this is the sentinel-adjacent contract
@@ -384,7 +401,7 @@ func isFailingCheck(c prCheck) bool {
 // per task-design.md's "line-oriented text processing is a pure Go
 // function's job" guidance.
 func (p *PRManager) PRChecks(prNumber string) (string, error) {
-	raw, err := p.Gh.PRChecks(prNumber)
+	raw, checks, err := p.gatherPRChecks(prNumber)
 	if err != nil {
 		return "", err
 	}
@@ -395,11 +412,8 @@ func (p *PRManager) PRChecks(prNumber string) (string, error) {
 	if strings.TrimSpace(formatted) == "" || formatted == "No checks." {
 		return formatted, nil
 	}
-
-	var checks []prCheck
-	if err := json.Unmarshal([]byte(raw), &checks); err != nil {
-		// The base formatting already succeeded via jq; don't fail the whole
-		// command over a payload shape only the digest enrichment can't parse.
+	if checks == nil {
+		// gatherPRChecks could not parse the payload — see its doc comment.
 		return formatted, nil
 	}
 

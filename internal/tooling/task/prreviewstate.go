@@ -96,6 +96,40 @@ type prReviewStateData struct {
 //   - Nothing is guessed. A state gh reports that this does not recognize ends
 //     the command with an error rather than resolving to a row.
 //
+// gatherPRReviewState is the raw-fetch-plus-reduce core PRReviewState and
+// pr-state both build on (ADR-0034): given an already-resolved and
+// -validated pr number, it makes the same two gh calls (the state read,
+// then the authenticated login) and reduces them to the same struct either
+// caller renders from.
+func (p *PRManager) gatherPRReviewState(pr string) (prReviewStateData, error) {
+	raw, err := p.Gh.PRView(pr, prReviewStateFields...)
+	if err != nil {
+		return prReviewStateData{}, fmt.Errorf("pr-review-state: %w", err)
+	}
+	var view prStateView
+	if err := json.Unmarshal([]byte(raw), &view); err != nil {
+		return prReviewStateData{}, fmt.Errorf(
+			"pr-review-state: could not read PR #%s's review state from gh: %w",
+			pr, err,
+		)
+	}
+	lifecycle, err := prLifecycle(view.State, view.IsDraft)
+	if err != nil {
+		return prReviewStateData{}, fmt.Errorf("pr-review-state: PR #%s: %w", pr, err)
+	}
+
+	me, err := p.Gh.AuthenticatedLogin()
+	if err != nil {
+		return prReviewStateData{}, fmt.Errorf("pr-review-state: %w", err)
+	}
+
+	return prReviewStateData{
+		Lifecycle: lifecycle,
+		Requested: requestsReviewFrom(view.ReviewRequests, me),
+		MyReview:  latestReviewBy(view.Reviews, me),
+	}, nil
+}
+
 // prNumber may be empty, in which case the current branch's PR is used.
 func (p *PRManager) PRReviewState(prNumber string) (string, error) {
 	// The full family resolver, not just the PR-number half: owner/name go
@@ -113,32 +147,11 @@ func (p *PRManager) PRReviewState(prNumber string) (string, error) {
 		return "", fmt.Errorf("pr-review-state: %w", err)
 	}
 
-	raw, err := p.Gh.PRView(pr, prReviewStateFields...)
+	data, err := p.gatherPRReviewState(pr)
 	if err != nil {
-		return "", fmt.Errorf("pr-review-state: %w", err)
+		return "", err
 	}
-	var view prStateView
-	if err := json.Unmarshal([]byte(raw), &view); err != nil {
-		return "", fmt.Errorf(
-			"pr-review-state: could not read PR #%s's review state from gh: %w",
-			pr, err,
-		)
-	}
-	lifecycle, err := prLifecycle(view.State, view.IsDraft)
-	if err != nil {
-		return "", fmt.Errorf("pr-review-state: PR #%s: %w", pr, err)
-	}
-
-	me, err := p.Gh.AuthenticatedLogin()
-	if err != nil {
-		return "", fmt.Errorf("pr-review-state: %w", err)
-	}
-
-	return formatPRReviewState(prReviewStateData{
-		Lifecycle: lifecycle,
-		Requested: requestsReviewFrom(view.ReviewRequests, me),
-		MyReview:  latestReviewBy(view.Reviews, me),
-	}), nil
+	return formatPRReviewState(data), nil
 }
 
 // prLifecycle maps gh's `state` and `isDraft` onto the single `pr:` value.
