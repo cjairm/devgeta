@@ -13,6 +13,31 @@ import (
 
 func init() { testutil.InitLogger() }
 
+// itemsUnder returns only the items whose path lies under one of roots.
+//
+// claudeMemoryRow deliberately walks every ancestor directory of repoDir up
+// to the filesystem root, because that is what Claude Code itself does — a
+// CLAUDE.md above the repository is genuinely loaded and genuinely costs
+// tokens, so the report must count it. That makes any assertion on a raw
+// item count depend on directories the test does not own: run the suite with
+// TMPDIR pointing anywhere beneath a stray CLAUDE.md and the count changes.
+// Tests therefore assert over the items under their own temp roots, never
+// over the whole slice.
+func itemsUnder(t *testing.T, row Row, roots ...string) []Item {
+	t.Helper()
+	var kept []Item
+	for _, it := range row.Items {
+		for _, root := range roots {
+			rel, err := filepath.Rel(root, it.Path)
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				kept = append(kept, it)
+				break
+			}
+		}
+	}
+	return kept
+}
+
 // findRow returns the row whose Layer starts with prefix, failing the test
 // if none does.
 func findRow(t *testing.T, rows []Row, prefix string) Row {
@@ -35,13 +60,17 @@ func TestClaudeMemoryRowConcatenatesUserAndProjectLayers(t *testing.T) {
 	writeFile(t, filepath.Join(repo, "CLAUDE.local.md"), "local layer\n")
 
 	row := claudeMemoryRow(repo, home)
-	if len(row.Items) != 3 {
-		t.Fatalf("items = %+v, want 3 (user, project, local)", row.Items)
+	items := itemsUnder(t, row, home, repo)
+	if len(items) != 3 {
+		t.Fatalf("items = %+v, want 3 (user, project, local)", items)
 	}
-	total := row.TotalBytes()
+	total := 0
+	for _, it := range items {
+		total += it.Bytes
+	}
 	want := len("user layer\n") + len("project layer\n") + len("local layer\n")
 	if total != want {
-		t.Errorf("TotalBytes = %d, want %d", total, want)
+		t.Errorf("bytes = %d, want %d", total, want)
 	}
 }
 
@@ -53,8 +82,39 @@ func TestClaudeMemoryRowFollowsImportsFromTheUserLayer(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".claude", "RTK.md"), "rtk instructions\n")
 
 	row := claudeMemoryRow(repo, home)
-	if len(row.Items) != 2 {
-		t.Fatalf("items = %+v, want 2 (CLAUDE.md + imported RTK.md)", row.Items)
+	items := itemsUnder(t, row, home, repo)
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want 2 (CLAUDE.md + imported RTK.md)", items)
+	}
+}
+
+// A CLAUDE.md ABOVE the repository is counted on purpose. Claude Code walks
+// every ancestor directory of the session's working directory, so that file
+// is genuinely loaded and genuinely billed; a report that stopped at the
+// repository boundary would understate what a session costs. This is also
+// what surfaces devgeta's own worktree double-load (ROADMAP.md): a worktree
+// under .claude/worktrees/<name>/ has the main checkout as a real ancestor,
+// so its CLAUDE.md loads twice. Bounding the walk to the repo root would
+// silently erase that finding — hence this test.
+func TestClaudeMemoryRowCountsAncestorsAboveTheRepository(t *testing.T) {
+	home := t.TempDir()
+	above := t.TempDir()
+	repo := filepath.Join(above, "nested", "repo")
+
+	writeFile(t, filepath.Join(above, "CLAUDE.md"), "ancestor layer\n")
+	writeFile(t, filepath.Join(repo, "CLAUDE.md"), "project layer\n")
+
+	row := claudeMemoryRow(repo, home)
+	items := itemsUnder(t, row, above)
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want 2 (ancestor CLAUDE.md + project CLAUDE.md)", items)
+	}
+	// Root-to-leaf order: the ancestor is concatenated before the project.
+	if items[0].Path != filepath.Join(above, "CLAUDE.md") {
+		t.Errorf("first item = %q, want the ancestor CLAUDE.md", items[0].Path)
+	}
+	if items[1].Path != filepath.Join(repo, "CLAUDE.md") {
+		t.Errorf("second item = %q, want the project CLAUDE.md", items[1].Path)
 	}
 }
 
