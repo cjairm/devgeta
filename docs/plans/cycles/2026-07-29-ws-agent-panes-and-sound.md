@@ -9,11 +9,10 @@ whole-branch review fixes for Part B"), and both are deployed — verified live 
 actually running. This header was never updated after the work landed, and
 [ADR-0008](../../decisions/ADR-0008-agent-state-on-every-pane-row.md) /
 [ADR-0009](../../decisions/ADR-0009-audible-agent-notifications.md) were flipped to ACCEPTED
-in the same pass as this correction. §6's manual verification was then run on 2026-08-26:
-**all five sound items (4–8) pass**, verified against the deployed hook, with the two audible
-halves confirmed by ear. The three still open are 1–3 — the `dg ws` TUI's own rendering of
-agent state on session rows, collapsed repo headers, and pane rows — which need a human
-reading the dashboard.
+in the same pass as this correction. §6's manual verification was then run in full on
+2026-08-26 and **all eight items pass** — the five sound items against the deployed hook, and
+the three `dg ws` rendering items driven on an isolated tmux server and read back with
+`capture-pane`. Nothing in this cycle is outstanding.
 
 ---
 
@@ -321,14 +320,27 @@ make lint
 
 ### Manual
 
-**Items 4–8 were all run on 2026-08-26 and pass**, against the **deployed**
-`~/.claude/agent-state.sh` rather than the test harness — every sound item is therefore
-closed, including the two audible halves the maintainer confirmed by ear. Items 1–3 remain
-open: they are the `dg ws` TUI's rendering, which needs a human reading the dashboard.
+**All eight items were run on 2026-08-26 and pass.** 4–8 ran against the **deployed**
+`~/.claude/agent-state.sh` rather than the test harness, with the two audible halves confirmed
+by ear. 1–3 were driven on an **isolated tmux server** (`tmux -L dgws-probe`, its own socket),
+seeding `@dg_agent_state` on panes there and reading the rendered dashboard back with
+`capture-pane` — so the TUI's actual output is checked as text, and nothing can reach the
+maintainer's real sessions. Prefer that method to driving a live server: an earlier attempt
+used `list-panes -t <session>`, which lists only the session's _current_ window, so the target
+resolved empty and tmux sent the keystrokes to whatever pane was active instead. Validate every
+pane id before using it as a target.
 
-1. [ ] Agent idle in a plain (non-worktree) session → that session's row shows `◆`
-2. [ ] Agent blocked in a collapsed repo's worktree → repo header shows `!`
-3. [ ] Two agents in one window, one finished → expand → the finished pane's row shows `◆`
+1. [x] Agent idle in a plain (non-worktree) session → that session's row shows `◆`. Captured:
+       `◆ plainsess               session`. Note that adding a `wt-…` window to that session
+       later removed the row entirely — the `wt-` session-exclusion filter working as designed.
+2. [x] Agent blocked in a collapsed repo's worktree → repo header shows `!`. Captured:
+       `! ▶ flux                   10 trees` — collapsed (`▶`), carrying the `!` of a child it
+       is hiding, while collapsed `○ ▶ jobvite-context` with no agent stays `○`.
+3. [x] Two agents in one window, one finished → expand → the finished pane's row shows `◆`.
+       Captured: the worktree row became `▼ └ ◆∕ token-context-efficiency` (aggregating `idle`
+       over `busy`, ADR-0005's precedence) with two pane rows under it — `●` for the busy pane
+       and `◆` for the finished one. It expanded on its own at the 2+ stateful-pane threshold,
+       with no keypress, exactly as §8's deferred note describes.
 4. [x] `@dg_notify_sound off` → no sound on any transition. Verified by putting a recording
        stand-in ahead of the real player on `PATH`: with the option `off` the hook invoked it
        **zero** times, with it `on`, once.
