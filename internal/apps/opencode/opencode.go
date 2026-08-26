@@ -171,6 +171,13 @@ func (o *OpenCode) ForceConfigure() error {
 		return fmt.Errorf("failed to maintain scratch dir: %w", err)
 	}
 
+	// Deploys the output-budget runner and writes agent-runtime.json.
+	// Called from both opencode's and claude's configure paths (cycle doc
+	// Step 5) so running either one converges both agents.
+	if err := baseapp.EnsureAgentRuntime(gc); err != nil {
+		return fmt.Errorf("failed to ensure the output-budget runtime: %w", err)
+	}
+
 	gc.ReconcileShellFeatures()
 	gc.AddToInstalled(constants.OpenCode, "package")
 	gc.Shell.Opencode = true

@@ -18,7 +18,7 @@ import (
 // command line, not registered as a hook itself.
 func writeOutputBudgetRunScript(t *testing.T) string {
 	t.Helper()
-	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/claude/output-budget-run.sh")
+	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/devgeta/output-budget-run.sh")
 	if err != nil {
 		t.Fatalf("failed to read embedded output-budget-run.sh: %v", err)
 	}

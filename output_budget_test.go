@@ -58,7 +58,7 @@ func newOutputBudgetTestHarness(t *testing.T) *outputBudgetTestHarness {
 func (h *outputBudgetTestHarness) writeSidecar(sc outputBudgetSidecar) {
 	h.t.Helper()
 	if sc.Runner == "" {
-		runnerBytes, err := fs.ReadFile(ConfigsFS, "configs/claude/output-budget-run.sh")
+		runnerBytes, err := fs.ReadFile(ConfigsFS, "configs/devgeta/output-budget-run.sh")
 		if err != nil {
 			h.t.Fatalf("failed to read embedded output-budget-run.sh: %v", err)
 		}

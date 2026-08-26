@@ -99,6 +99,7 @@
       "Edit(**/.claude/suppression-guard.sh)",
       "Edit(**/.claude/agent-config-guard.sh)",
       "Edit(**/.claude/agent-state.sh)",
+      "Edit(**/.claude/output-budget.sh)",
       "Edit(~/.claude/agents/**)",
       "Edit(**/.claude/agents/**)",
       "Edit(~/.claude/commands/**)",
@@ -162,6 +163,15 @@
           {
             "type": "command",
             "command": "rtk hook claude"
+          }
+        ]
+      }{{end}}{{if .OutputBudgetEnabled}},
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/output-budget.sh"
           }
         ]
       }{{end}},

@@ -25,6 +25,15 @@ import (
 // scratch directory granted through permissions.additionalDirectories
 // (ADR-0015 §2).
 //
+// OutputBudgetEnabled is a plain bool, computed via
+// GlobalConfig.OutputBudgetEnabled() rather than referencing the embedded
+// *bool field directly: Go templates treat any non-nil pointer as true
+// regardless of what it points to, so `{{if .OutputBudget}}` on the raw
+// IntegrationsConfig.OutputBudget field would render the hook as enabled
+// even after an explicit `dg config set integrations.output_budget false`
+// (a non-nil pointer to false). The template must reference
+// OutputBudgetEnabled, never OutputBudget.
+//
 // ScratchDir must already be JSON-encoded (quotes included, via
 // json.Marshal) by the time it reaches the template: text/template does no
 // escaping of its own, and this is the first user-influenced value
@@ -33,7 +42,8 @@ import (
 // cannot parse at all.
 type settingsTemplateData struct {
 	config.IntegrationsConfig
-	ScratchDir string
+	ScratchDir          string
+	OutputBudgetEnabled bool
 }
 
 var (
@@ -131,8 +141,9 @@ func (c *Claude) ForceConfigure() error {
 		filepath.Join(paths.Paths.App.Configs.Claude, "settings.json.tmpl"),
 		filepath.Join(paths.Paths.Config.Claude, "settings.json"),
 		settingsTemplateData{
-			IntegrationsConfig: gc.Integrations,
-			ScratchDir:         string(scratchDirJSON),
+			IntegrationsConfig:  gc.Integrations,
+			ScratchDir:          string(scratchDirJSON),
+			OutputBudgetEnabled: gc.OutputBudgetEnabled(),
 		},
 	); err != nil {
 		return fmt.Errorf("failed to render claude settings: %w", err)
@@ -146,6 +157,7 @@ func (c *Claude) ForceConfigure() error {
 		"suppression-guard.sh",
 		"agent-config-guard.sh",
 		"agent-state.sh",
+		"output-budget.sh",
 	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(
@@ -185,6 +197,13 @@ func (c *Claude) ForceConfigure() error {
 
 	if err := baseapp.MaintainScratchDir(); err != nil {
 		return fmt.Errorf("failed to maintain scratch dir: %w", err)
+	}
+
+	// Deploys the output-budget runner and writes agent-runtime.json.
+	// Called from both claude's and opencode's configure paths (cycle doc
+	// Step 5) so running either one converges both agents.
+	if err := baseapp.EnsureAgentRuntime(gc); err != nil {
+		return fmt.Errorf("failed to ensure the output-budget runtime: %w", err)
 	}
 
 	gc.ReconcileShellFeatures()

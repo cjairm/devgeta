@@ -207,6 +207,7 @@ var Paths = struct {
 			Aerospace string
 			Alacritty string
 			Claude    string
+			Devgeta   string
 			Fastfetch string
 			Fonts     string
 			Git       string
@@ -264,6 +265,7 @@ var Paths = struct {
 			Aerospace string
 			Alacritty string
 			Claude    string
+			Devgeta   string
 			Fastfetch string
 			Fonts     string
 			Git       string
@@ -287,6 +289,7 @@ var Paths = struct {
 			Aerospace string
 			Alacritty string
 			Claude    string
+			Devgeta   string
 			Fastfetch string
 			Fonts     string
 			Git       string
@@ -301,6 +304,7 @@ var Paths = struct {
 			Aerospace: GetAppDir(constants.App.Dir.Configs, constants.Aerospace),
 			Alacritty: GetAppDir(constants.App.Dir.Configs, constants.Alacritty),
 			Claude:    GetAppDir(constants.App.Dir.Configs, constants.Claude),
+			Devgeta:   GetAppDir(constants.App.Dir.Configs, constants.DevgetaApp),
 			Fastfetch: GetAppDir(constants.App.Dir.Configs, constants.Fastfetch),
 			Fonts:     GetAppDir(constants.App.Dir.Configs, constants.Fonts),
 			Git:       GetAppDir(constants.App.Dir.Configs, constants.Git),

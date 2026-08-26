@@ -528,6 +528,13 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "output-budget.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json"),
 		[]byte(`{}`),
 		0o644,
@@ -550,11 +557,29 @@ func TestForceConfigure(t *testing.T) {
 		}
 	}
 
+	// The output-budget runner's own source dir — agent-neutral, like its
+	// deploy destination, not configs/claude/ (see EnsureAgentRuntime).
+	devgetaConfigDir := filepath.Join(tc.AppDir, "configs", "devgeta")
+	if err := os.MkdirAll(devgetaConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(devgetaConfigDir, "output-budget-run.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
 	testutil.IsolateXDGDirs(t)
 
 	oldAppConfigsClaude := paths.Paths.App.Configs.Claude
 	t.Cleanup(func() { paths.Paths.App.Configs.Claude = oldAppConfigsClaude })
 	paths.Paths.App.Configs.Claude = appConfigDir
+
+	oldAppConfigsDevgeta := paths.Paths.App.Configs.Devgeta
+	t.Cleanup(func() { paths.Paths.App.Configs.Devgeta = oldAppConfigsDevgeta })
+	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
 
 	oldAppConfigsShared := paths.Paths.App.Configs.Shared
 	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldAppConfigsShared })
@@ -580,8 +605,8 @@ func TestForceConfigure(t *testing.T) {
 	}
 
 	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
-	// suppression-guard.sh, agent-config-guard.sh, and agent-state.sh
-	// deployed and executable
+	// suppression-guard.sh, agent-config-guard.sh, agent-state.sh, and
+	// output-budget.sh deployed and executable
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
@@ -590,6 +615,7 @@ func TestForceConfigure(t *testing.T) {
 		"suppression-guard.sh",
 		"agent-config-guard.sh",
 		"agent-state.sh",
+		"output-budget.sh",
 	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
@@ -685,5 +711,73 @@ func TestForceConfigureParts_RtkRefusesRealExecInTests(t *testing.T) {
 	err := app.ForceConfigureParts([]string{"rtk"})
 	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
 		t.Fatalf("expected test-guard refusal, got: %v", err)
+	}
+}
+
+// renderRealSettingsTemplate renders the ACTUAL configs/claude/settings.json.tmpl
+// (not a test fixture stub) with the given data, and returns the result.
+// This is what proves settingsTemplateData.OutputBudgetEnabled — not the
+// raw embedded *bool — is what the template actually reads.
+func renderRealSettingsTemplate(t *testing.T, data settingsTemplateData) string {
+	t.Helper()
+	out := filepath.Join(t.TempDir(), "settings.json")
+	if err := files.GenerateFromTemplate(
+		"../../../configs/claude/settings.json.tmpl", out, data,
+	); err != nil {
+		t.Fatalf("failed to render the real settings.json.tmpl: %v", err)
+	}
+	rendered, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("failed to read rendered settings.json: %v", err)
+	}
+	var js any
+	if err := json.Unmarshal(rendered, &js); err != nil {
+		t.Fatalf("rendered settings.json is not valid JSON: %v\n%s", err, rendered)
+	}
+	return string(rendered)
+}
+
+// outputBudgetHookRegistration is the PreToolUse hooks-array entry, distinct
+// from the (always-present, gate-independent) Edit() deny rule for the
+// script file itself — a bare "output-budget.sh" substring match would find
+// the deny rule regardless of gate state and prove nothing.
+const outputBudgetHookRegistration = `"command": "~/.claude/output-budget.sh"`
+
+func TestSettingsTemplate_OutputBudgetGateControlsTheHookEntry(t *testing.T) {
+	off := renderRealSettingsTemplate(
+		t,
+		settingsTemplateData{ScratchDir: `"/tmp"`, OutputBudgetEnabled: false},
+	)
+	if strings.Contains(off, outputBudgetHookRegistration) {
+		t.Errorf("expected no hook registration when the gate is off, got:\n%s", off)
+	}
+
+	on := renderRealSettingsTemplate(
+		t,
+		settingsTemplateData{ScratchDir: `"/tmp"`, OutputBudgetEnabled: true},
+	)
+	if !strings.Contains(on, outputBudgetHookRegistration) {
+		t.Errorf("expected the hook registration when the gate is on, got:\n%s", on)
+	}
+}
+
+// TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook pins the
+// exact bug a raw `{{if .OutputBudget}}` on the embedded *bool field would
+// have: Go templates treat any non-nil pointer as true, so a *bool pointing
+// at false would render as enabled. This proves the resolved bool
+// (GlobalConfig.OutputBudgetEnabled(), computed the same way
+// ForceConfigure does) is what actually reaches the template.
+func TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook(t *testing.T) {
+	falseVal := false
+	gc := &config.GlobalConfig{Integrations: config.IntegrationsConfig{OutputBudget: &falseVal}}
+
+	rendered := renderRealSettingsTemplate(t, settingsTemplateData{
+		ScratchDir:          `"/tmp"`,
+		OutputBudgetEnabled: gc.OutputBudgetEnabled(),
+	})
+	if strings.Contains(rendered, outputBudgetHookRegistration) {
+		t.Errorf(
+			"an explicit false must not enable the hook, got:\n%s", rendered,
+		)
 	}
 }

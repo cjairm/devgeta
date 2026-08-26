@@ -301,6 +301,23 @@ export function splitCommandSegments(command) {
   return segments.map((s) => s.trim());
 }
 
+// shellQuote wraps a value in single quotes, escaping any embedded single
+// quote as '\'' (close the quote, an escaped literal quote, reopen the
+// quote) — the JS mirror of devgeta_shell_quote in
+// configs/claude/lib/segments.sh. output-budget.js uses this to quote the
+// runner path and the original command the same way the bash hook does
+// (docs/guides/output-budget-runner.md §2.1, §2.3).
+//
+// Exported here rather than a new file, for the same ADR-0006 reason
+// splitCommandSegments is: OpenCode's plugin loader invokes every export of
+// every file under plugin/ as a plugin factory, so this must tolerate being
+// called with a ctx object (not a string) without throwing — hence the
+// explicit typeof guard rather than assuming a string argument.
+export function shellQuote(value) {
+  const s = typeof value === "string" ? value : "";
+  return `'${s.replace(/'/g, "'\\''")}'`;
+}
+
 // findDenyMessage returns the deny message for the first matching rule across
 // all segments, or null. `isDevgetaRepoFn` is a zero-arg memoized predicate:
 // a devgeta-scoped rule (worktree-start, worktree-finish, release) only

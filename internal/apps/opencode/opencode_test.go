@@ -75,6 +75,31 @@ func setupSharedDir(t *testing.T, baseDir string) {
 	paths.Paths.App.Configs.Shared = sharedDir
 }
 
+// setupOutputBudgetRunnerSource stubs the runner source
+// baseapp.EnsureAgentRuntime deploys — configs/devgeta/, its own agent-
+// neutral source dir (not configs/claude/: output-budget.sh, the HOOK,
+// lives there, but the shared runner does not) — so OpenCode's own
+// ForceConfigure, which also calls EnsureAgentRuntime (cycle doc Step 5),
+// has something to copy even though these tests otherwise only stub
+// configs/opencode/.
+func setupOutputBudgetRunnerSource(t *testing.T, baseDir string) {
+	t.Helper()
+	devgetaConfigDir := filepath.Join(baseDir, "configs", "devgeta")
+	if err := os.MkdirAll(devgetaConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(devgetaConfigDir, "output-budget-run.sh"),
+		[]byte("#!/usr/bin/env bash\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	oldDevgeta := paths.Paths.App.Configs.Devgeta
+	t.Cleanup(func() { paths.Paths.App.Configs.Devgeta = oldDevgeta })
+	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
+}
+
 func TestNew(t *testing.T) {
 	app := New()
 	if app == nil {
@@ -248,6 +273,7 @@ func TestForceConfigure(t *testing.T) {
 		}
 
 		setupSharedDir(t, tc.AppDir)
+		setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -342,6 +368,7 @@ func TestForceConfigure(t *testing.T) {
 		}
 
 		setupSharedDir(t, tc.AppDir)
+		setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -438,6 +465,7 @@ func TestSoftConfigure(t *testing.T) {
 		}
 
 		setupSharedDir(t, tc.AppDir)
+		setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -509,6 +537,7 @@ shell:
 		}
 
 		setupSharedDir(t, tc.AppDir)
+		setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
