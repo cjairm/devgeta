@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/spf13/cobra"
@@ -53,6 +54,9 @@ type taskRunner interface {
 	Scratch(key string) (string, error)
 	ScratchClean(target string) error
 	CommitTrailers(message string, require []string) (string, error)
+	HandoffWrite(branch, note string) (string, error)
+	HandoffRead(branch string) (string, error)
+	HandoffClear(branch string) (string, error)
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
@@ -438,6 +442,76 @@ or hold unrelated content. It applies to --open and --settle only; --ratify and
 	},
 }
 
+// handoff flags (ADR-0032's per-branch handoff note).
+var (
+	taskHandoffBranchFlag   string
+	taskHandoffWriteFlag    bool
+	taskHandoffReadFlag     bool
+	taskHandoffClearFlag    bool
+	taskHandoffNoteFlag     string
+	taskHandoffNoteFileFlag string
+)
+
+var taskHandoffCmd = &cobra.Command{
+	Use:   "handoff --write (--note <text>|--note-file <path>) | --read | --clear",
+	Short: "Write, read, or clear this branch's session handoff note (for agents and humans)",
+	Long: `Write a durable checkpoint for the branch you are working on, so a fresh
+session can read what came before instead of growing one session forever.
+Exactly one of --write, --read, or --clear is required.
+
+--write replaces the note (never appends) and stamps the current time and
+HEAD. Give the text with --note, or --note-file for anything multi-line.
+Nothing calls a model here — write whatever text you are given; summarizing
+before you call this is a skill's job, not this command's.
+
+--read prints the note. A branch with no note prints a clean message and
+exits 0 — that is the normal state for a fresh branch, not an error. When
+HEAD has moved since the note was written, the output says so.
+
+--clear deletes the note. Clearing a branch with no note is also success.
+
+--branch targets another branch; omit it for the current one. A detached
+HEAD has no branch and therefore no note.
+
+The note lives under the repo's common git directory, so it is never
+committed and never appears in a diff.`,
+	Example: `  dg task handoff --write --note "left off wiring the OAuth callback"
+  dg task handoff --write --note-file handoff.md
+  dg task handoff --read
+  dg task handoff --clear`,
+	Args: cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		switch {
+		case taskHandoffWriteFlag:
+			note := taskHandoffNoteFlag
+			if taskHandoffNoteFileFlag != "" {
+				data, err := os.ReadFile(taskHandoffNoteFileFlag)
+				if err != nil {
+					return fmt.Errorf(
+						"failed to read --note-file %q: %w", taskHandoffNoteFileFlag, err,
+					)
+				}
+				note = string(data)
+			}
+			if strings.TrimSpace(note) == "" {
+				return fmt.Errorf("--write requires --note or --note-file")
+			}
+			out, err := newTaskManager().HandoffWrite(taskHandoffBranchFlag, note)
+			return emitPRResult(cmd, out, err)
+		case taskHandoffReadFlag:
+			out, err := newTaskManager().HandoffRead(taskHandoffBranchFlag)
+			return emitPRResult(cmd, out, err)
+		case taskHandoffClearFlag:
+			out, err := newTaskManager().HandoffClear(taskHandoffBranchFlag)
+			return emitPRResult(cmd, out, err)
+		default:
+			// Cobra's MarkFlagsOneRequired already rejects this in production,
+			// but RunE is also called directly by tests (see review-note above).
+			return fmt.Errorf("one of --write, --read, or --clear is required")
+		}
+	},
+}
+
 // taskReviewRunReviewerFlag/NoteFlag are review-run's flags, and
 // taskReviewRunBase/Head/Journal/ReportDirFlag are its explicit-range mode's
 // group — all four together, or none of them (ADR-0023 §5).
@@ -784,6 +858,7 @@ func init() {
 	taskCmd.AddCommand(taskReleaseCmd)
 	taskCmd.AddCommand(taskScratchCmd)
 	taskCmd.AddCommand(taskCommitTrailersCmd)
+	taskCmd.AddCommand(taskHandoffCmd)
 
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
@@ -850,6 +925,22 @@ func init() {
 		StringVar(&taskReviewNoteNoteFlag, "note", "", "The question, finding, or answer text (required for --open and --settle)")
 	taskReviewNoteCmd.MarkFlagsMutuallyExclusive("open", "settle", "ratify", "reopen")
 	taskReviewNoteCmd.MarkFlagsOneRequired("open", "settle", "ratify", "reopen")
+
+	taskHandoffCmd.Flags().
+		StringVar(&taskHandoffBranchFlag, "branch", "", "Branch the note belongs to (default: current)")
+	taskHandoffCmd.Flags().
+		BoolVar(&taskHandoffWriteFlag, "write", false, "Replace the note for this branch")
+	taskHandoffCmd.Flags().
+		BoolVar(&taskHandoffReadFlag, "read", false, "Print the note for this branch")
+	taskHandoffCmd.Flags().
+		BoolVar(&taskHandoffClearFlag, "clear", false, "Delete the note for this branch")
+	taskHandoffCmd.Flags().
+		StringVar(&taskHandoffNoteFlag, "note", "", "Note text (with --write; use --note-file for multi-line)")
+	taskHandoffCmd.Flags().
+		StringVar(&taskHandoffNoteFileFlag, "note-file", "", "Read the note text from this file instead of --note")
+	taskHandoffCmd.MarkFlagsMutuallyExclusive("write", "read", "clear")
+	taskHandoffCmd.MarkFlagsOneRequired("write", "read", "clear")
+	taskHandoffCmd.MarkFlagsMutuallyExclusive("note", "note-file")
 
 	taskReviewRunCmd.Flags().
 		StringVar(&taskReviewRunReviewerFlag, "reviewer", task.DefaultReviewerKey, "Reviewer agent to run: code, document, or skill")

@@ -93,6 +93,12 @@ func newRepoSetup(
 			return "origin/main\n", "", nil
 		case slices.Contains(args, "--short"):
 			return "abc1234\n", "", nil
+		// ResolveCommit's `rev-parse --verify <ref>^{commit}` — handoff's HEAD
+		// stamp. A fixed default so any test that does not care which sha it
+		// gets still resolves one; withHeadResolvesTo (handoff_test.go)
+		// overrides this per test.
+		case slices.Contains(args, "--verify"):
+			return "0000000000000000000000000000000000000000\n", "", nil
 		}
 		return "", "", nil
 	}

@@ -130,6 +130,22 @@ type mockTaskRunner struct {
 	scratchCleanArg    string
 	scratchCleanCalled bool
 	scratchCleanErr    error
+
+	handoffWriteBranchArg string
+	handoffWriteNoteArg   string
+	handoffWriteCalled    bool
+	handoffWriteRet       string
+	handoffWriteErr       error
+
+	handoffReadBranchArg string
+	handoffReadCalled    bool
+	handoffReadRet       string
+	handoffReadErr       error
+
+	handoffClearBranchArg string
+	handoffClearCalled    bool
+	handoffClearRet       string
+	handoffClearErr       error
 }
 
 func (m *mockTaskRunner) RefreshBranch(target string, rebase bool) error {
@@ -286,6 +302,25 @@ func (m *mockTaskRunner) ScratchClean(target string) error {
 	m.scratchCleanCalled = true
 	m.scratchCleanArg = target
 	return m.scratchCleanErr
+}
+
+func (m *mockTaskRunner) HandoffWrite(branch, note string) (string, error) {
+	m.handoffWriteCalled = true
+	m.handoffWriteBranchArg = branch
+	m.handoffWriteNoteArg = note
+	return m.handoffWriteRet, m.handoffWriteErr
+}
+
+func (m *mockTaskRunner) HandoffRead(branch string) (string, error) {
+	m.handoffReadCalled = true
+	m.handoffReadBranchArg = branch
+	return m.handoffReadRet, m.handoffReadErr
+}
+
+func (m *mockTaskRunner) HandoffClear(branch string) (string, error) {
+	m.handoffClearCalled = true
+	m.handoffClearBranchArg = branch
+	return m.handoffClearRet, m.handoffClearErr
 }
 
 func setupTaskMock(t *testing.T, mock taskRunner) func() {
@@ -2311,6 +2346,125 @@ func TestPRTask_BodyFile(t *testing.T) {
 		}
 		if mock.lastArg["body"] != "Fixed in **abc123**" {
 			t.Fatalf("unexpected body: %q", mock.lastArg["body"])
+		}
+	})
+}
+
+func resetHandoffFlags(t *testing.T) {
+	t.Helper()
+	reset := func() {
+		taskHandoffBranchFlag = ""
+		taskHandoffWriteFlag, taskHandoffReadFlag, taskHandoffClearFlag = false, false, false
+		taskHandoffNoteFlag, taskHandoffNoteFileFlag = "", ""
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+func TestTask_Handoff(t *testing.T) {
+	t.Run("--write --note passes branch and note through", func(t *testing.T) {
+		resetHandoffFlags(t)
+		mock := &mockTaskRunner{handoffWriteRet: "Wrote the handoff note for feat."}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskHandoffWriteFlag = true
+		taskHandoffBranchFlag = "feat"
+		taskHandoffNoteFlag = "left off wiring OAuth"
+
+		if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.handoffWriteCalled {
+			t.Fatal("expected HandoffWrite to be called")
+		}
+		if mock.handoffWriteBranchArg != "feat" ||
+			mock.handoffWriteNoteArg != "left off wiring OAuth" {
+			t.Errorf("args not passed through: %+v", mock)
+		}
+	})
+
+	t.Run("--write --note-file reads the file", func(t *testing.T) {
+		resetHandoffFlags(t)
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+
+		path := t.TempDir() + "/note.md"
+		if err := os.WriteFile(path, []byte("multi\nline\nnote"), 0o644); err != nil {
+			t.Fatalf("write temp: %v", err)
+		}
+		taskHandoffWriteFlag = true
+		taskHandoffNoteFileFlag = path
+
+		if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if mock.handoffWriteNoteArg != "multi\nline\nnote" {
+			t.Errorf("expected the file's content as the note, got %q", mock.handoffWriteNoteArg)
+		}
+	})
+
+	t.Run(
+		"--write without --note or --note-file errors before calling HandoffWrite",
+		func(t *testing.T) {
+			resetHandoffFlags(t)
+			mock := &mockTaskRunner{}
+			restore := setupTaskMock(t, mock)
+			defer restore()
+			taskHandoffWriteFlag = true
+
+			if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err == nil {
+				t.Fatal("expected an error")
+			}
+			if mock.handoffWriteCalled {
+				t.Error("HandoffWrite must not be called without a note")
+			}
+		},
+	)
+
+	t.Run("--read passes branch through", func(t *testing.T) {
+		resetHandoffFlags(t)
+		mock := &mockTaskRunner{handoffReadRet: "Handoff note for feat"}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskHandoffReadFlag = true
+		taskHandoffBranchFlag = "feat"
+
+		if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.handoffReadCalled || mock.handoffReadBranchArg != "feat" {
+			t.Errorf("expected HandoffRead called with branch 'feat', got %+v", mock)
+		}
+	})
+
+	t.Run("--clear passes branch through", func(t *testing.T) {
+		resetHandoffFlags(t)
+		mock := &mockTaskRunner{handoffClearRet: "Cleared the handoff note for feat."}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+		taskHandoffClearFlag = true
+		taskHandoffBranchFlag = "feat"
+
+		if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mock.handoffClearCalled || mock.handoffClearBranchArg != "feat" {
+			t.Errorf("expected HandoffClear called with branch 'feat', got %+v", mock)
+		}
+	})
+
+	t.Run("no mode flag errors without calling any method", func(t *testing.T) {
+		resetHandoffFlags(t)
+		mock := &mockTaskRunner{}
+		restore := setupTaskMock(t, mock)
+		defer restore()
+
+		if err := taskHandoffCmd.RunE(taskHandoffCmd, []string{}); err == nil {
+			t.Fatal("expected an error")
+		}
+		if mock.handoffWriteCalled || mock.handoffReadCalled || mock.handoffClearCalled {
+			t.Error("no method should be called without a mode flag")
 		}
 	})
 }
