@@ -146,6 +146,10 @@ type mockTaskRunner struct {
 	handoffClearCalled    bool
 	handoffClearRet       string
 	handoffClearErr       error
+
+	contextReportCalled bool
+	contextReportRet    string
+	contextReportErr    error
 }
 
 func (m *mockTaskRunner) RefreshBranch(target string, rebase bool) error {
@@ -321,6 +325,11 @@ func (m *mockTaskRunner) HandoffClear(branch string) (string, error) {
 	m.handoffClearCalled = true
 	m.handoffClearBranchArg = branch
 	return m.handoffClearRet, m.handoffClearErr
+}
+
+func (m *mockTaskRunner) ContextReport() (string, error) {
+	m.contextReportCalled = true
+	return m.contextReportRet, m.contextReportErr
 }
 
 func setupTaskMock(t *testing.T, mock taskRunner) func() {
@@ -2467,4 +2476,19 @@ func TestTask_Handoff(t *testing.T) {
 			t.Error("no method should be called without a mode flag")
 		}
 	})
+}
+
+func TestTask_ContextReport(t *testing.T) {
+	mock := &mockTaskRunner{
+		contextReportRet: "claude base context\n...\nopencode base context\n...",
+	}
+	restore := setupTaskMock(t, mock)
+	defer restore()
+
+	if err := taskContextReportCmd.RunE(taskContextReportCmd, []string{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !mock.contextReportCalled {
+		t.Error("expected ContextReport to be called")
+	}
 }

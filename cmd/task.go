@@ -57,6 +57,7 @@ type taskRunner interface {
 	HandoffWrite(branch, note string) (string, error)
 	HandoffRead(branch string) (string, error)
 	HandoffClear(branch string) (string, error)
+	ContextReport() (string, error)
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
@@ -512,6 +513,29 @@ committed and never appears in a diff.`,
 	},
 }
 
+var taskContextReportCmd = &cobra.Command{
+	Use:   "context-report",
+	Short: "Report what loads into a Claude Code or OpenCode session before the first prompt (for agents and humans)",
+	Long: `Measures the base-context cost of the current repo: CLAUDE.md/AGENTS.md
+files (with @imports followed transitively for Claude), auto-memory,
+settings, skills, commands, agents, plugins, MCP, and hooks — reported per
+agent, since the two load different trees and a combined number would
+describe neither.
+
+Read-only; makes no network calls. The token figure is a character-based
+estimate (bytes / 4), not a real tokenizer — treat it as a rough order of
+magnitude, not an exact count.
+
+Run this before deciding what to trim from CLAUDE.md or a skill: it turns
+"this file feels big" into an actual number.`,
+	Example: `  dg task context-report`,
+	Args:    cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		out, err := newTaskManager().ContextReport()
+		return emitPRResult(cmd, out, err)
+	},
+}
+
 // taskReviewRunReviewerFlag/NoteFlag are review-run's flags, and
 // taskReviewRunBase/Head/Journal/ReportDirFlag are its explicit-range mode's
 // group — all four together, or none of them (ADR-0023 §5).
@@ -859,6 +883,7 @@ func init() {
 	taskCmd.AddCommand(taskScratchCmd)
 	taskCmd.AddCommand(taskCommitTrailersCmd)
 	taskCmd.AddCommand(taskHandoffCmd)
+	taskCmd.AddCommand(taskContextReportCmd)
 
 	taskScratchCmd.Flags().
 		StringVar(&taskScratchCleanFlag, "clean", "", "Remove a directory scratch previously allocated")
