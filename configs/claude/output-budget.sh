@@ -32,6 +32,18 @@ SIDECAR="${XDG_CONFIG_HOME:-$HOME/.config}/devgeta/agent-runtime.json"
 sidecar_json=$(cat "$SIDECAR" 2>/dev/null) || exit 0
 printf '%s' "$sidecar_json" | jq -e . >/dev/null 2>&1 || exit 0
 
+# jq is lenient about a leading-zero JSON number literal (`0099`) — invalid
+# per the JSON grammar, but jq parses it anyway and silently renormalizes it
+# to "99" on output, which would make the width check below see a corrected,
+# in-range value instead of rejecting the malformed literal that produced it.
+# JSON.parse on the JS side throws on the same input outright, so without this
+# check the two hooks would disagree on a hand-edited sidecar containing one
+# (guide §8: "both hooks reach the same decision"). A plain grep over the raw
+# text catches it before jq ever gets to normalize it away.
+if printf '%s' "$sidecar_json" | grep -qE ':[[:space:]]*-?0[0-9]'; then
+	exit 0
+fi
+
 enabled=$(printf '%s' "$sidecar_json" | jq -r '.outputBudget // false' 2>/dev/null)
 [ "$enabled" = "true" ] || exit 0
 

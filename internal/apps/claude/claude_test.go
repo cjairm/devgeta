@@ -781,3 +781,63 @@ func TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook(t *testing.T)
 		)
 	}
 }
+
+// TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks is the
+// Claude-side half of the rtk-composition case (cycle doc Step 6): since
+// Step 0 found PreToolUse hooks on Claude Code run in parallel with no
+// chaining (docs/guides/output-budget-runner.md §2.3, §9), there is no
+// ordering behavior to assert — only that enabling both leaves each hook
+// registered as its own independent matcher block, neither one folded into
+// or gated by the other's presence.
+func TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks(t *testing.T) {
+	rendered := renderRealSettingsTemplate(t, settingsTemplateData{
+		IntegrationsConfig:  config.IntegrationsConfig{RtkClaudeHook: true},
+		ScratchDir:          `"/tmp"`,
+		OutputBudgetEnabled: true,
+	})
+	var js any
+	if err := json.Unmarshal([]byte(rendered), &js); err != nil {
+		t.Fatalf(
+			"rendered settings.json is not valid JSON with both hooks on: %v\n%s",
+			err,
+			rendered,
+		)
+	}
+	if !strings.Contains(rendered, `"command": "rtk hook claude"`) {
+		t.Errorf("expected the rtk hook entry, got:\n%s", rendered)
+	}
+	if !strings.Contains(rendered, outputBudgetHookRegistration) {
+		t.Errorf("expected the output-budget hook entry, got:\n%s", rendered)
+	}
+
+	// Each is registered as its own object in the "PreToolUse"/"Bash"
+	// matcher array, not nested inside the other's "hooks" list — this is
+	// what would break if a future edit accidentally folded one template
+	// conditional inside the other's braces.
+	top, ok := js.(map[string]any)
+	if !ok {
+		t.Fatalf("rendered settings.json root is not an object")
+	}
+	hooks, ok := top["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("rendered settings.json has no top-level \"hooks\" object")
+	}
+	preToolUse, ok := hooks["PreToolUse"].([]any)
+	if !ok {
+		t.Fatalf("rendered settings.json has no \"PreToolUse\" array")
+	}
+	bashMatcherBlocks := 0
+	for _, entry := range preToolUse {
+		m, ok := entry.(map[string]any)
+		if !ok || m["matcher"] != "Bash" {
+			continue
+		}
+		bashMatcherBlocks++
+	}
+	if bashMatcherBlocks < 3 {
+		t.Errorf(
+			"expected at least 3 independent Bash matcher blocks (task-redirect+secret-guard, rtk, output-budget), got %d",
+			bashMatcherBlocks,
+		)
+	}
+}

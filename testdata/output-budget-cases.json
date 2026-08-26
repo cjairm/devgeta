@@ -1,0 +1,163 @@
+{
+  "rules": [
+    {
+      "name": "go-test",
+      "match": ["go", "test"],
+      "head": 30,
+      "tail": 120,
+      "matchingCommand": "go test ./...",
+      "nearMissCommand": "go tests ./..."
+    },
+    {
+      "name": "cargo-test",
+      "match": ["cargo", "test"],
+      "head": 30,
+      "tail": 120,
+      "matchingCommand": "cargo test",
+      "nearMissCommand": "cargo testing"
+    },
+    {
+      "name": "pytest",
+      "match": ["pytest"],
+      "head": 30,
+      "tail": 120,
+      "matchingCommand": "pytest -v",
+      "nearMissCommand": "pytests -v"
+    },
+    {
+      "name": "npm-test",
+      "match": ["npm", "test"],
+      "head": 30,
+      "tail": 120,
+      "matchingCommand": "npm test",
+      "nearMissCommand": "npm testx"
+    },
+    {
+      "name": "npm-run",
+      "match": ["npm", "run"],
+      "head": 30,
+      "tail": 100,
+      "matchingCommand": "npm run build",
+      "nearMissCommand": "npm running"
+    },
+    {
+      "name": "make",
+      "match": ["make"],
+      "head": 20,
+      "tail": 100,
+      "matchingCommand": "make all",
+      "nearMissCommand": "makefile"
+    },
+    {
+      "name": "cargo-build",
+      "match": ["cargo", "build"],
+      "head": 20,
+      "tail": 100,
+      "matchingCommand": "cargo build --release",
+      "nearMissCommand": "cargo builder"
+    },
+    {
+      "name": "gradle",
+      "match": ["gradle"],
+      "head": 20,
+      "tail": 100,
+      "matchingCommand": "gradle build",
+      "nearMissCommand": "gradlew build"
+    },
+    {
+      "name": "maven",
+      "match": ["mvn"],
+      "head": 20,
+      "tail": 100,
+      "matchingCommand": "mvn test",
+      "nearMissCommand": "mvnw test"
+    }
+  ],
+  "tokenizationCases": [
+    {
+      "description": "CI env assignment stripped",
+      "command": "CI=1 go test ./...",
+      "shouldMatch": true
+    },
+    {
+      "description": "env + assignment run stripped",
+      "command": "env CI=1 go test ./...",
+      "shouldMatch": true
+    },
+    {
+      "description": "metachar in an argument (subshell)",
+      "command": "make -j$(nproc)",
+      "shouldMatch": true
+    },
+    {
+      "description": "quoted argument",
+      "command": "npm test -- --grep \"foo bar\"",
+      "shouldMatch": true
+    },
+    {
+      "description": "quoted executable path",
+      "command": "\"/opt/my go/bin/go\" test",
+      "shouldMatch": false
+    },
+    {
+      "description": "quoted assignment value",
+      "command": "FOO=\"a b\" go test",
+      "shouldMatch": false
+    },
+    {
+      "description": "unstripped command wrapper",
+      "command": "command go test",
+      "shouldMatch": false
+    },
+    {
+      "description": "unstripped timeout wrapper",
+      "command": "timeout 60 make",
+      "shouldMatch": false
+    },
+    {
+      "description": "tab-separated tokens",
+      "command": "go\ttest",
+      "shouldMatch": true
+    },
+    {
+      "description": "multiply-space-separated tokens",
+      "command": "go   test",
+      "shouldMatch": true
+    }
+  ],
+  "numericCases": [
+    {
+      "description": "the maximum accepted value (15 nines)",
+      "value": "999999999999999",
+      "valid": true
+    },
+    {
+      "description": "16 digits, rejected on width alone",
+      "value": "1000000000000000",
+      "valid": false
+    },
+    {
+      "description": "JS changes this to ...992 above 2^53",
+      "value": "9007199254740993",
+      "valid": false
+    },
+    {
+      "description": "bash +1 wraps this negative at 2^63",
+      "value": "9223372036854775807",
+      "valid": false
+    },
+    {
+      "description": "bash +1 wraps this to a different positive",
+      "value": "99999999999999999999",
+      "valid": false
+    },
+    {
+      "description": "JS renders this as 1e+21",
+      "value": "1000000000000000000000",
+      "valid": false
+    },
+    { "description": "leading zero", "value": "0099", "valid": false },
+    { "description": "zero", "value": "0", "valid": false },
+    { "description": "negative", "value": "-1", "valid": false }
+  ]
+}

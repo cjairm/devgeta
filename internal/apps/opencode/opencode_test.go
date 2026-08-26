@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -818,4 +819,90 @@ func TestRun(t *testing.T) {
 			t.Fatalf("expected stdout on error path, got %q", out.Stdout)
 		}
 	})
+}
+
+// TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime is the
+// cycle-level case Step 5's design exists to protect against: on a machine
+// with no Claude config at all, `dg configure opencode --force` alone must
+// still produce a working runner and a valid sidecar (cycle doc Step 6,
+// "the runner exists at paths.Paths.Config.Devgeta ... with no Claude
+// config present"). An earlier draft had only claude.go deploy the runner,
+// which broke exactly this.
+func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+
+	if err := os.MkdirAll(filepath.Join(appConfigDir, "themes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "themes", "default.json"),
+		[]byte(`{}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	pluginDir := filepath.Join(appConfigDir, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigsOpenCode := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigsOpenCode })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+
+	// EnsureAgentRuntime writes here, independent of paths.Paths.Config.Root
+	// (Devgeta is its own already-resolved field, not derived from Root at
+	// read time) — override it explicitly so this test can assert on it.
+	devgetaDeployDir := filepath.Join(t.TempDir(), "devgeta")
+	oldConfigDevgeta := paths.Paths.Config.Devgeta
+	t.Cleanup(func() { paths.Paths.Config.Devgeta = oldConfigDevgeta })
+	paths.Paths.Config.Devgeta = devgetaDeployDir
+
+	// No paths.Paths.Config.Claude or App.Configs.Claude override at all —
+	// this is the point: no Claude config exists anywhere in this test.
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	runnerPath := filepath.Join(devgetaDeployDir, "output-budget-run.sh")
+	info, err := os.Stat(runnerPath)
+	if err != nil {
+		t.Fatalf("expected the runner to be deployed to %s: %v", runnerPath, err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("deployed runner is not executable: mode %o", info.Mode().Perm())
+	}
+
+	sidecarData, err := os.ReadFile(filepath.Join(devgetaDeployDir, "agent-runtime.json"))
+	if err != nil {
+		t.Fatalf("expected a sidecar at %s: %v", devgetaDeployDir, err)
+	}
+	var sidecar map[string]any
+	if err := json.Unmarshal(sidecarData, &sidecar); err != nil {
+		t.Fatalf("sidecar is not valid JSON: %v\n%s", err, sidecarData)
+	}
+	if sidecar["runner"] != runnerPath {
+		t.Errorf("sidecar runner = %v, want %q", sidecar["runner"], runnerPath)
+	}
 }
