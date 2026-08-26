@@ -80,6 +80,16 @@ which can outweigh a one-time base-context trim over a long working session,
 but it only helps commands devgeta's built-in rules recognize, and it starts
 at zero until you turn it on.
 
+**Only single commands are capped.** `go test ./...` is rewritten;
+`cd sub && go test ./...` is left alone, as is anything joined with `&&`,
+`||`, `;`, or `|`. The hook also never tells your agent that a command is
+permitted — it supplies the rewrite and nothing else. Both are deliberate:
+the rewrite replaces the whole command string, so wrapping a compound command
+would carry its other segments along too, past any deny rule written against
+the original text. Capping output is not worth widening what a command can do,
+so the hook declines instead. If you want a compound command capped, run its
+test step on its own.
+
 **One known limitation, by design, not by oversight:** on Claude Code, this
 hook and a separately-installed `rtk` command-rewrite hook race if both are
 enabled and both would rewrite the same call — `PreToolUse` hooks run in

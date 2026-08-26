@@ -441,6 +441,17 @@ unchanged. See [docs/guides/output-budget-runner.md](../guides/output-budget-run
 for the full contract and [docs/guides/token-efficiency.md](../guides/token-efficiency.md)
 for how this ranks against devgeta's other token-efficiency levers.
 
+**It never widens permission, and it only touches single-segment commands.**
+The hook emits no `permissionDecision` on any path — it caps output, which is
+never a reason to change what a command is allowed to do. And a compound
+command (`cd sub && go test ./...`, `go test ./... | tee out.log`) is passed
+through untouched even when one of its segments matches, because the rewrite
+replaces the _whole_ command string and would otherwise carry the unmatched
+segments along with it, past any deny rule written against the original text.
+The cost is real — that `cd sub && go test` case is common and goes uncapped —
+and it is the intended trade. Reasoning in
+[the runner contract's §2.4](../guides/output-budget-runner.md#24-the-hook-caps-output-it-never-widens-permission).
+
 **Known race with rtk, by design:** `PreToolUse` hooks on the same matcher run
 in parallel on Claude Code, with no chaining between them — confirmed against
 Claude Code's own hook execution model, not assumed. If rtk's command-

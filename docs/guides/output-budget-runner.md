@@ -118,11 +118,14 @@ rather than taken from a single source.
 {
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
-    "permissionDecision": "allow",
     "updatedInput": { "command": "...", "description": "..." }
   }
 }
 ```
+
+**No `permissionDecision`, deliberately — see §2.4.** The field is available
+and an earlier version of this hook sent `"allow"`; that was wrong, and the
+reasoning is worth keeping because the mistake is an easy one to make again.
 
 `updatedInput` **replaces the whole `tool_input` object**, not just the
 changed field — every other key the original call carried (`description`,
@@ -171,6 +174,48 @@ Neither difference is the asymmetry CLAUDE.md §12 forbids: it compares
 deny/ask permission strings and formatter languages, and this changes neither
 — it is a capability and timing difference in how each host's hook API
 works, not a devgeta policy that could go out of sync between the two agents.
+
+### 2.4 The hook caps output; it never widens permission
+
+Two rules, both load-bearing, both learned the hard way.
+
+**1. Never emit a `permissionDecision`.** Claude's hook API lets a
+`PreToolUse` hook answer `"allow"`, and this hook used to. That is an
+unconditional grant, issued because a rule matched a command's _name_ —
+the hook has no idea whether the call should be permitted, and was never
+asked. Worse, §2.3 records that whether a rewritten `tool_input` is
+re-checked by the permission system is **undocumented in every source
+checked**; sending `"allow"` settles that open question in the worst
+available direction. Emitting only `updatedInput` leaves the host's own
+evaluation exactly as it would have been. If a host someday declines to
+apply a rewrite carrying no decision, the feature no-ops and the command
+runs uncapped — the correct way for an output optimisation to fail.
+
+**2. Only rewrite a command that is a single segment.** Matching scans every
+segment, but the rewrite replaces the _whole_ command string. Wrapping a
+compound command therefore drags everything beside the matched segment along
+with it:
+
+```
+rm -rf ~/wherever && go test ./...
+  -> output-budget-run.sh 30 120 ... 'rm -rf ~/wherever && go test ./...'
+```
+
+A deny rule written against the original text does not match that string. Add
+rule 1's open question — the host may or may not re-check the rewrite at all —
+and a benign matching segment becomes a way to launder a denied one past the
+permission layer. So a compound command is passed through untouched.
+
+This costs real coverage: `cd sub && go test ./...` is a common shape and is
+no longer capped. That trade is not close. The feature's entire value is an
+opt-in token saving, and no token saving justifies widening what a command may
+do; a missed capping opportunity is the only failure direction it is allowed.
+
+Both rules are pinned on both agents —
+`TestOutputBudgetHook_NeverGrantsPermission`,
+`TestOutputBudgetHook_LeavesCompoundCommandsAlone`, and their
+`output-budget.test.mjs` mirror — because both are invisible in ordinary use
+and would come back the moment someone optimises for coverage.
 
 ### 2.2 Resolving the runner path
 
@@ -604,10 +649,16 @@ inside it. This is reuse of an existing owned lifecycle, not a new one.
 ## 8. Matching
 
 The hook matches the command against the rules in the sidecar. It sources
-`lib/segments.sh` to split a compound command into segments rather than
-re-implementing that, then applies the tokenization contract in §8.2 to each
-segment — **segmentation and tokenization are two different steps and only the
-first one already exists.**
+`lib/segments.sh` to split the command into segments rather than
+re-implementing that, then applies the tokenization contract in §8.2 —
+**segmentation and tokenization are two different steps and only the first one
+already exists.**
+
+Segmentation is used here as a **guard, not a search**: a command that splits
+into more than one segment is passed through untouched, and only a
+single-segment command is matched and rewritten. §2.4 has the reasoning; the
+short version is that the rewrite replaces the whole command string, so
+wrapping a compound command would carry the unmatched segments along with it.
 
 ### 8.1 Rule schema — one source, generated into the sidecar
 
@@ -798,7 +849,9 @@ These are the contract's own tests. Both suites — Go in the root package
 - a **failing** command wrapped by the runner still exits non-zero (the regression
   that makes this feature dangerous if wrong — write it first)
 - output under the cap is byte-identical to running unwrapped
-- a compound command (`a && b`, `a; b`) keeps its semantics and caps as a whole
+- a compound command (`a && b`, `a; b`, `a | b`, `a || b`) is **not rewritten at
+  all**, even when one of its segments matches a rule (§2.4), and the hook
+  emits **no `permissionDecision`** on any path
 - a command containing single quotes, `$`, and backticks survives the rewrite
   unchanged
 - an unmatched command passes through byte-identical

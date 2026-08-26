@@ -422,3 +422,100 @@ func containsAll(s string, substrs ...string) bool {
 	}
 	return true
 }
+
+// TestOutputBudgetHook_NeverGrantsPermission is a security regression test.
+//
+// The hook exists to cap output, and capping output is not a reason to widen
+// what a command is allowed to do. It used to answer with
+// "permissionDecision": "allow", which hands the host an unconditional grant
+// for the rewritten call — decided off a partial match, since a single
+// matching segment is enough to trigger a rewrite of the whole command.
+//
+// Whether Claude Code re-evaluates permissions against a rewritten
+// tool_input is undocumented (see the runner guide's §2.3, which recorded it
+// as unverified). An explicit "allow" makes that question moot in the worst
+// possible direction, so the hook must not answer it at all: supply the
+// rewrite and let the host's own permission evaluation stand.
+func TestOutputBudgetHook_NeverGrantsPermission(t *testing.T) {
+	h := newOutputBudgetTestHarness(t)
+	h.writeSidecar(defaultTestSidecar())
+
+	_, stdout, _ := h.run(t, "go test ./...", nil)
+	if stdout == "" {
+		t.Fatal("expected a rewrite for a matched command, got no output")
+	}
+	if strings.Contains(stdout, "permissionDecision") {
+		t.Errorf(
+			"hook output carries a permissionDecision; it must never grant "+
+				"(or otherwise decide) permission:\n%s", stdout,
+		)
+	}
+	// The rewrite itself must still be delivered.
+	if got := rewrittenCommand(t, stdout); !strings.Contains(got, "go test ./...") {
+		t.Errorf("rewritten command = %q, want it to still wrap the original", got)
+	}
+}
+
+// TestOutputBudgetHook_LeavesCompoundCommandsAlone is the other half of the
+// same security property.
+//
+// Matching scans every segment of a compound command, but the rewrite
+// replaces the WHOLE command string — so one benign matching segment used to
+// be enough to wrap, and thereby textually launder, everything beside it:
+//
+//	rm -rf ~/wherever && go test ./...
+//	  -> output-budget-run.sh 20 40 ... 'rm -rf ~/wherever && go test ./...'
+//
+// Any deny rule written against the original text no longer matches that,
+// and since it is undocumented whether the host re-checks the rewritten
+// input at all, the only safe answer is not to rewrite compound commands.
+// Declining costs a missed capping opportunity, which is the failure
+// direction this feature is allowed to have.
+func TestOutputBudgetHook_LeavesCompoundCommandsAlone(t *testing.T) {
+	h := newOutputBudgetTestHarness(t)
+	h.writeSidecar(defaultTestSidecar())
+
+	for _, command := range []string{
+		"rm -rf /tmp/whatever && go test ./...",
+		"go test ./... && rm -rf /tmp/whatever",
+		"cd somewhere; go test ./...",
+		"go test ./... || echo failed",
+		"go test ./... | tee out.log",
+	} {
+		t.Run(command, func(t *testing.T) {
+			code, stdout, _ := h.run(t, command, nil)
+			if code != 0 {
+				t.Errorf("exit code = %d, want 0 (decline is a clean no-op)", code)
+			}
+			if stdout != "" {
+				t.Errorf(
+					"compound command was rewritten; one matching segment must "+
+						"not wrap the rest:\nstdout: %s", stdout,
+				)
+			}
+		})
+	}
+}
+
+// A single-segment command still gets capped — the guard above must not be a
+// blanket refusal to do the job.
+func TestOutputBudgetHook_StillRewritesSingleSegmentCommands(t *testing.T) {
+	h := newOutputBudgetTestHarness(t)
+	h.writeSidecar(defaultTestSidecar())
+
+	for _, command := range []string{
+		"go test ./...",
+		"go test ./... -run TestFoo -v",
+		"make",
+	} {
+		t.Run(command, func(t *testing.T) {
+			_, stdout, _ := h.run(t, command, nil)
+			if stdout == "" {
+				t.Fatalf("single-segment command %q was not rewritten", command)
+			}
+			if got := rewrittenCommand(t, stdout); !strings.Contains(got, command) {
+				t.Errorf("rewritten command = %q, want it to wrap %q", got, command)
+			}
+		})
+	}
+}

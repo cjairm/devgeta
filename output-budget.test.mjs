@@ -246,3 +246,43 @@ test("degenerate sidecar cases all pass through unmodified", async () => {
     });
   }
 });
+
+// The OpenCode mirror of the compound-command security guard in
+// output_budget_test.go. Matching scans every segment, but the rewrite
+// replaces the WHOLE command string, so one benign matching segment would
+// otherwise wrap — and textually launder — everything beside it. Capping
+// output is never a reason to change what a command is allowed to do.
+test("compound commands are left exactly as they came in", async () => {
+  const home = newHome();
+  writeSidecar(home);
+
+  for (const command of [
+    "rm -rf /tmp/whatever && go test ./...",
+    "go test ./... && rm -rf /tmp/whatever",
+    "cd somewhere; go test ./...",
+    "go test ./... || echo failed",
+    "go test ./... | tee out.log",
+  ]) {
+    const args = await runHook(command, envFor(home));
+    assert.equal(
+      args.command,
+      command,
+      `compound command was rewritten: ${command}`,
+    );
+  }
+});
+
+// ...and the guard must not become a blanket refusal to do the job.
+test("single-segment commands are still rewritten", async () => {
+  const home = newHome();
+  writeSidecar(home);
+
+  for (const command of ["go test ./...", "go test ./... -run TestFoo -v", "make"]) {
+    const args = await runHook(command, envFor(home));
+    assert.notEqual(args.command, command, `not rewritten: ${command}`);
+    assert.ok(
+      args.command.includes(command),
+      `rewrite should wrap the original: ${args.command}`,
+    );
+  }
+});

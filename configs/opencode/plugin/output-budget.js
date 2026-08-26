@@ -132,11 +132,19 @@ export const OutputBudget = async () => ({
     const sidecar = loadSidecar();
     if (!sidecar) return;
 
-    let matched = null;
-    for (const segment of splitCommandSegments(command)) {
-      matched = matchSegment(segment, sidecar.rules);
-      if (matched) break;
-    }
+    // Only ever rewrite a command that is ONE segment.
+    //
+    // The rewrite replaces the whole command string, so wrapping a compound
+    // command would take everything beside the matched segment along with
+    // it — "rm -rf ~/wherever && go test ./..." becomes a runner invocation
+    // that no deny rule written against the original text still matches.
+    // Capping output is never a reason to change what a command is allowed
+    // to do. Declining costs a missed capping opportunity, which is the
+    // direction this feature is allowed to fail in.
+    const segments = splitCommandSegments(command);
+    if (segments.length !== 1) return;
+
+    const matched = matchSegment(segments[0], sidecar.rules);
     if (!matched) return;
 
     // Defence in depth: re-validate everything about to be interpolated,

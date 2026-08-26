@@ -160,14 +160,24 @@ devgeta_ob_match_segment() {
 	return 1
 }
 
-MATCHED=""
-while IFS= read -r seg; do
-	if MATCHED=$(devgeta_ob_match_segment "$seg"); then
-		break
-	fi
-	MATCHED=""
-done <<<"$(devgeta_split_command_segments "$COMMAND")"
+# Only ever rewrite a command that is ONE segment.
+#
+# The rewrite replaces the whole command string, so wrapping a compound
+# command would take everything beside the matched segment along with it:
+#
+#   rm -rf ~/wherever && go test ./...
+#     -> output-budget-run.sh 30 120 ... 'rm -rf ~/wherever && go test ./...'
+#
+# A deny rule written against the original text does not match that, and
+# whether the host re-checks a rewritten tool_input at all is undocumented
+# (guide §2.3). Capping output is never a reason to change what a command is
+# permitted to do, so a compound command is left exactly as it came in. The
+# cost is a missed capping opportunity, which is the direction this feature
+# is allowed to fail in.
+SEGMENTS=$(devgeta_split_command_segments "$COMMAND")
+[ "$(printf '%s\n' "$SEGMENTS" | wc -l)" -eq 1 ] || exit 0
 
+MATCHED=$(devgeta_ob_match_segment "$SEGMENTS") || exit 0
 [ -n "$MATCHED" ] || exit 0
 read -r RHEAD RTAIL <<<"$MATCHED"
 
@@ -186,6 +196,13 @@ REWRITTEN="$(devgeta_shell_quote "$RUNNER") $RHEAD $RTAIL $LINE_LIMIT $TOTAL_LIM
 updated_input=$(printf '%s' "$input" | jq --arg cmd "$REWRITTEN" '.tool_input | .command = $cmd' 2>/dev/null)
 [ -n "$updated_input" ] || exit 0
 
+# No permissionDecision, deliberately. This hook caps output; it has no
+# business deciding whether the command may run, and an "allow" here would be
+# an unconditional grant issued off a rule match — handing the host a decision
+# it never asked this hook to make. Supplying only updatedInput leaves the
+# normal permission evaluation exactly as it would have been. If a host ever
+# declines to apply a rewrite that carries no decision, the feature no-ops and
+# the command runs uncapped, which is the correct way for it to fail.
 jq -n --argjson ui "$updated_input" \
-	'{hookSpecificOutput: {hookEventName: "PreToolUse", permissionDecision: "allow", updatedInput: $ui}}'
+	'{hookSpecificOutput: {hookEventName: "PreToolUse", updatedInput: $ui}}'
 exit 0
