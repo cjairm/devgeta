@@ -1,7 +1,7 @@
 # ADR-0031 — Context is reduced at write time, never at send time
 
 **Date:** 2026-08-25
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

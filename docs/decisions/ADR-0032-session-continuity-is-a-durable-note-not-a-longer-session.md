@@ -1,7 +1,7 @@
 # ADR-0032 — Session continuity is a durable note, not a longer session
 
 **Date:** 2026-08-25
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

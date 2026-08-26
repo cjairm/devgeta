@@ -155,6 +155,27 @@ agents:
 
 ---
 
+### [Output-budget hook and runner](output-budget-runner.md) — The write-time output cap contract
+
+**Status: not implemented** — the contract for a feature still in an unapproved
+cycle. Read it before writing any of the three artifacts it governs:
+
+- The argv shape and sidecar schema, and which numbers are transported vs. Go-only constants
+- Why the naive `2>&1 | head` pipeline is banned: it returns `head`'s exit status, so a red test suite reports green
+- How the capture is bounded without killing or blocking the command, and why `ulimit -f` and a bare `head -c` were rejected
+- Why markers count inside the budgets they report, not on top of them
+- The 15-digit decimal contract: what bash and JavaScript actually do to large integers, measured
+- The tokenization contract — under-match rather than parse, because `segments.sh` segments but does not tokenize
+- The conformance test matrix, kept beside the clauses it pins
+
+**When to read:** Before touching `configs/claude/output-budget.sh`,
+`configs/opencode/plugin/output-budget.js`, or
+`configs/claude/output-budget-run.sh`.
+
+**Referenced by:** [the token-and-context-efficiency cycle](../plans/cycles/2026-08-25-token-and-context-efficiency.md), Steps 4 and 6
+
+---
+
 ### [Releasing](releasing.md) — Version management and GitHub Actions
 
 Complete release workflow:

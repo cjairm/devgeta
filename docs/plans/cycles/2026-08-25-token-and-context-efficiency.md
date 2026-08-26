@@ -2,7 +2,8 @@
 
 **Date:** 2026-08-25
 **Estimated Duration:** ~10–14 hours
-**Status:** Draft
+**Status:** Approved (2026-08-26) — ready to implement, no work started
+**Review:** nine cross-model rounds settled, n1–n14 (n10 rejected with reasoning)
 **ADRs:** [ADR-0031](../../decisions/ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md),
 [ADR-0032](../../decisions/ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md)
 **Origin:** maintainer repeatedly hitting plan usage limits; investigated whether
@@ -141,6 +142,9 @@ measurable.
 - [ ] **F. Docs** — `docs/apps/claude.md` (new hook), `docs/spec.md` (three new
       surfaces), `docs/guides/token-efficiency.md` (new: what to do, in what
       order, with the measured reasoning), ADR index entries, ROADMAP update.
+      [docs/guides/output-budget-runner.md](../../guides/output-budget-runner.md)
+      already exists and holds the Scope A contract; on completion its status
+      header flips from "not implemented" to describing shipped behavior.
 
 ### Explicitly Out of Scope
 
@@ -191,6 +195,7 @@ cycle and referenced here.
 | Create | `output-budget.test.mjs` (root)                                                 | Node behavioral tests for the mirror                                                                            |
 | Modify | `docs/apps/claude.md`, `docs/spec.md`, `ROADMAP.md`, `docs/decisions/README.md` | Docs                                                                                                            |
 | Create | `docs/guides/token-efficiency.md`                                               | User-facing guide                                                                                               |
+| Modify | `docs/guides/output-budget-runner.md`                                           | Flip the status header once Scope A ships; the contract itself is already written                                |
 
 ### Step-by-Step
 
@@ -301,6 +306,27 @@ package doc so nobody "fixes" it into a shared lock later.
 - `Note` type, `Parse`, `Render`, and a `MaxBytes` cap that returns a sentinel
   error rather than truncating (ADR-0032 §2).
 - Format: front matter (`branch`, `updated`, `head`) plus free markdown body.
+
+**The cap is a number, not an intention.** ADR-0032 §2 makes the cap the
+mechanism that stops the note becoming the per-request tax the ADR exists to
+avoid. Left unspecified, neither the public contract nor the cap-exceeded test
+can be written, and each would invent its own answer:
+
+| Clause       | Value                                                                                 |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `MaxBytes`   | `8 * 1024`                                                                            |
+| Measured on  | UTF-8 byte length of the **fully rendered file**, front matter included               |
+| Over the cap | `ErrNoteTooLarge`; nothing is written and the previous note is left exactly as it was |
+| Never        | Silent truncation — the failure ADR-0032 §2 names outright                            |
+
+8 KiB is roughly 2,000 tokens, about four times ADR-0032's "500-token note"
+framing: generous enough that an honest checkpoint never reaches it, small
+enough to be a real ceiling. 16 KiB was considered and rejected — at ~4,000
+tokens read into every fresh session, the note starts becoming the cost it was
+meant to replace. Measuring the rendered file rather than the body means front
+matter cannot be used to slip past the cap. The value is one constant in one
+package, so revising it later is a one-line change, not a format change.
+
 - Verify: `go test ./internal/tooling/handoff/`
 
 #### Step 3: `dg task handoff` subcommand
@@ -371,214 +397,60 @@ disappear from `settings.json` entirely rather than linger as a no-op.
 
 `PreToolUse` sees the command _before_ it runs and can only replace the command
 string. It never sees output. So capping cannot be done in the hook — the hook
-redirects to a wrapper, and **the wrapper is the feature**. Settle this contract
-before choosing a single default pattern.
+redirects to a wrapper, and **the wrapper is the feature**.
 
-**The naive pipeline is wrong and must not be used.** Appending
-`2>&1 | grep … | head -100` (including the form in Anthropic's own cost docs)
-breaks three things at once:
+**The contract lives in
+[docs/guides/output-budget-runner.md](../../guides/output-budget-runner.md) and
+is binding.** It carries the argv shape, the sidecar schema, the shell-quoting
+rule, the capture bound and its rejected alternatives, the reduction order and
+marker reserves, the numeric-width contract, the tokenization rule, and the
+conformance test matrix — with the measurements behind each. It is a separate
+document because it outlives this cycle: it describes the behavior of three
+shipped artifacts, while this step only describes building them.
 
-1. **Exit status becomes `head`'s.** A failing test suite reports success. This
-   alone disqualifies it — the agent would proceed on red.
-2. **Compound commands mis-bind.** In `a && b`, the pipe attaches to `b` only.
-3. **Quoting.** Splicing an arbitrary command into a JSON string field is an
-   injection surface, not just an escaping nuisance.
+Do not restate any of it here. Every number and rule has exactly one home, which
+is what keeps the two hooks from disagreeing.
 
-**The rewrite.** The hook emits:
+**The invariants this step must not violate** — each one has a section in the
+guide and a test in its §10:
 
-```
-'<runner>' <head-lines> <tail-lines> '<original command>'
-```
+| Invariant                                                                                    | Guide |
+| -------------------------------------------------------------------------------------------- | ----- |
+| The wrapped command's own exit status is what the wrapper returns                            | §3    |
+| The naive `\| head` pipeline is banned outright                                               | §1    |
+| Nothing devgeta interpolates into shell reaches it unquoted or unvalidated                   | §2.1  |
+| The runner path is resolved from the sidecar, never hardcoded                                | §2.2  |
+| The capture is bounded, and bounding it never kills or blocks the command                    | §4    |
+| Markers and notices count **inside** the budgets they report                                 | §6    |
+| Every transported integer matches `^[1-9][0-9]{0,14}$`, checked before any arithmetic         | §5    |
+| Both hooks reach the same decision and emit the same command for the same input              | §8    |
+| Every degenerate sidecar case leaves the command unmodified                                  | §5.4  |
 
-**Every interpolated field is made shell-safe — not just the command.** The
-emitted string is shell source, so any value spliced into it is code until
-quoted. Three fields go in, and all three are handled:
+**Build order:**
 
-| Field                | Treatment                                                                                      |
-| -------------------- | ---------------------------------------------------------------------------------------------- |
-| `<runner>`           | Single-quote wrapped, inner `'` → `'\''` — the **same routine** as the command                 |
-| `<original command>` | Single-quote wrapped, inner `'` → `'\''`                                                       |
-| `<head>` / `<tail>`  | Validated as non-negative integers; a non-integer disables rewriting rather than interpolating |
+1. `internal/apps/baseapp/outputrules.go` — the rule table and the derived
+   limits, with the generation-time invariants (guide §5.4, §8.1).
+2. `configs/claude/output-budget-run.sh` — the runner. Write the failing-command
+   exit-status test first (guide §10).
+3. `configs/claude/output-budget.sh` — matching and the rewrite, sourcing
+   `lib/segments.sh` for segmentation and adding `devgeta_shell_quote()`.
 
-The runner path comes from `paths.Paths.Config.Devgeta`, which resolves through
-`GetConfigDir` — and that reads `XDG_CONFIG_HOME` directly (`paths.go:412`),
-falling back to `~/.config`. So it is arbitrary user-controlled input: a space
-(`/Users/Some Name/.config/...`) breaks argument splitting, and a `;`, backtick,
-or `$(…)` turns a config path into executable shell. Unquoted interpolation here
-is the same defect class as the naive pipeline this step already bans, reached
-by a different route.
+**Scope decisions that belong to this cycle, not the guide:**
 
-Head and tail are included because they are interpolated too. They are generated
-by devgeta today, but the sidecar is a plain file a user can edit, and "our own
-generated value" is not a security property — validating is one comparison.
-
-**One escaping routine per language, shared, not reimplemented.** Add
-`devgeta_shell_quote()` to `configs/claude/lib/segments.sh` (already sourced by
-this hook for splitting) and export a `shellQuote` counterpart from the OpenCode
-plugin side, following the `splitCommandSegments` precedent that `secret-guard.js`
-already imports. Note the ADR-0006 loader constraint: every export in a plugin
-file is invoked as a plugin, so `shellQuote` must tolerate being called with an
-arbitrary `ctx` and satisfy `plugin-loader-safety.test.mjs`. Two call sites per
-hook using one routine cannot drift the way two hand-written escapes would.
-
-**Tests:** hostile paths containing a space, a single quote, `$`, a semicolon,
-and a backtick — asserting both the **exact emitted string** and that executing
-it end to end runs the original command and returns its real exit status. An
-exact-string assertion alone would not catch a path that quotes correctly but
-executes wrongly; an execution test alone would not pin the emitted form. Both,
-in both hooks.
-
-**`<runner>` is never hardcoded in either hook.** Both resolve it from the
-generated sidecar (Step 5), which is the single artifact that knows where the
-runner was deployed:
-
-| Hook               | Resolution                                                                                                                                                                                                                    |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `output-budget.sh` | `jq -r '.runner' "$SIDECAR"` — `jq` is already a hard dependency of all five shipped Claude hooks (`task-redirect.sh`, `secret-guard.sh`, `suppression-guard.sh`, `agent-config-guard.sh`, `format.sh`), so this adds nothing |
-| `output-budget.js` | the `runner` field of the sidecar object it already parses for the gate                                                                                                                                                       |
-
-A hardcoded `~/.claude/output-budget-run.sh` — which an earlier draft of this
-step emitted — breaks every OpenCode-only installation, because that path only
-exists when Claude is configured. Resolving through the sidecar is what makes
-the agent-neutral deployment in Step 5 actually reachable.
-
-If the sidecar is absent or its `runner` names a nonexistent path, the hook
-rewrites nothing (Step 5's failure table). **Test the exact emitted command
-string for both agents**, not just that a rewrite happened — an assertion on
-"was rewritten" would have passed against the hardcoded path.
-
-**The wrapper's contract**, each clause testable:
-
-| Clause        | Behavior                                                                                                                                                                                               |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Execution     | `bash -c "$cmd"` — the whole string, so `&&`, `\|\|`, `;`, and pipes keep their original semantics. Not `eval`                                                                                         |
-| Exit status   | Captured immediately after the run and re-raised as the wrapper's own exit code. **Non-negotiable**                                                                                                    |
-| Allocation    | One `task-*` directory per invocation via the existing `dg task scratch` mechanism — **not** a bare file at the scratch root. See the lifecycle note below                                             |
-| Capture       | stdout and stderr both redirected to one file **inside that directory** (ADR-0015), preserving interleave order                                                                                        |
-| Under the cap | File replayed verbatim. Byte-identical to running the command unwrapped                                                                                                                                |
-| Over the cap  | First `<head-lines>`, a marker line, last `<tail-lines>` — tail matters because failures land at the end                                                                                               |
-| Marker        | Names the omitted line count **and the absolute path to the full output**                                                                                                                              |
-| Full output   | Left on disk under the scratch root, which `settings.json.tmpl` already lists in `additionalDirectories` — so the agent can `grep` it with no permission prompt and **without re-running the command** |
-| Cleanup       | Falls to the existing `task-*` directory reaper; no new lifecycle. Requires the Allocation clause above to hold                                                                                        |
-| Escape hatch  | `DEVGETA_OUTPUT_BUDGET=off` in the environment makes the wrapper a pass-through, and the hook skips rewriting entirely                                                                                 |
-
-That "full output on disk" clause is what makes this safe. ADR-0031's stated
-risk is that a lossy cut costs more than it saves when the agent re-runs the
-command; here nothing is lost, so the recovery is a targeted `grep` on a file
-rather than a second full run.
-
-**Scratch lifecycle — the allocation shape is load-bearing.** Both reapers
-match on a directory carrying `paths.ScratchAllocPrefix` (`"task-"`):
-`MaintainScratchDir` skips any entry failing `entry.IsDir() &&
-strings.HasPrefix(entry.Name(), ScratchAllocPrefix)` (`baseapp/configure.go:86`),
-and `ScratchClean` refuses anything that is not a direct child of the scratch
-root carrying that prefix (`task/scratch.go:150`). So a file written straight to
-the scratch root is **never** collected — it would leak one file per wrapped
-command, forever, in a feature that runs on every test invocation. The runner
-therefore allocates through the same path `dg task scratch` uses
-(`os.MkdirTemp(root, ScratchAllocPrefix+"*")`, `task/scratch.go:25`) and writes
-inside it. This is reuse of an existing owned lifecycle, not a new one — add a
-test asserting the output path is a direct `task-*` child of the scratch root,
-so a later refactor cannot quietly reintroduce the leak.
-
-**Known limitations — document, do not paper over:**
-
-- stdout and stderr are merged; a caller that needs them separated loses that.
-- Output no longer streams — it appears when the command finishes. Fine for test
-  and build runs, wrong for anything long-running and watched.
-- Anything needing a TTY must not be matched. Default patterns cover
-  non-interactive runners only.
-
-**Then the hook itself:**
-
-- Match the command against the rules in the sidecar (schema below); source
-  `lib/segments.sh` for splitting rather than re-implementing it.
-
-**Rule schema — one source, generated into the sidecar.** "Config-driven with
-general defaults" is not a specification: two independent implementations would
-invent different matchers and different caps. The rules are therefore **defined
-once in Go**, rendered into `agent-runtime.json` by `EnsureAgentRuntime`, and
-both hooks consume that generated array. Neither hook contains a pattern
-literal.
-
-```json
-{
-  "outputBudget": true,
-  "runner": "/abs/path/to/output-budget-run.sh",
-  "rules": [
-    { "name": "go-test", "match": ["go", "test"], "head": 30, "tail": 120 },
-    {
-      "name": "cargo-test",
-      "match": ["cargo", "test"],
-      "head": 30,
-      "tail": 120
-    },
-    { "name": "pytest", "match": ["pytest"], "head": 30, "tail": 120 },
-    { "name": "npm-test", "match": ["npm", "test"], "head": 30, "tail": 120 },
-    { "name": "npm-run", "match": ["npm", "run"], "head": 30, "tail": 100 },
-    { "name": "make", "match": ["make"], "head": 20, "tail": 100 },
-    {
-      "name": "cargo-build",
-      "match": ["cargo", "build"],
-      "head": 20,
-      "tail": 100
-    },
-    { "name": "gradle", "match": ["gradle"], "head": 20, "tail": 100 },
-    { "name": "maven", "match": ["mvn"], "head": 20, "tail": 100 }
-  ]
-}
-```
-
-| Field   | Meaning                                                                         |
-| ------- | ------------------------------------------------------------------------------- |
-| `name`  | Stable identifier. Appears in the truncation marker and is what tests assert on |
-| `match` | **Token prefix**, not a regex — see below                                       |
-| `head`  | Lines kept from the start                                                       |
-| `tail`  | Lines kept from the end. Larger than `head` throughout: failures land last      |
-
-**`match` is a token prefix, deliberately not a regex.** Bash EREs and
-JavaScript `RegExp` differ in escaping, character classes, and anchoring, so the
-same pattern string can match differently in the two hooks — the exact
-divergence [CLAUDE.md §12](../../../CLAUDE.md#keeping-the-two-ai-agents-in-sync)
-warns about, where a rule is identical in both configs and still enforces
-something different. A rule matches when the command segment's leading tokens
-equal `match` element for element, after `lib/segments.sh` splitting and after
-skipping env-var assignments and the global options `lib/segments.sh` already
-recognizes. Equality of string arrays behaves identically in bash and JS; regex
-does not.
-
-**Precedence: first match in array order wins.** Not longest-match, not
-most-specific — array order is the Go slice order, so it is stable, obvious in
-the generated file, and trivially identical in both implementations. `npm test`
-precedes `npm run` in the array for that reason.
-
-**Malformed rules disable rewriting entirely** — the whole array, not just the
-bad entry. Skipping individual bad entries would require both implementations to
-agree, field by field, on what "bad" means, which reintroduces exactly the
-divergence the token-prefix decision removes. All-or-nothing is one comparison
-and is trivially identical across the two. It also fails in the safe direction:
-no rewriting means commands run untouched.
-
-**v1 ships built-in defaults only.** No user-defined rules, no settings surface
-for the array. The schema is designed so a user-supplied list can be merged in
-later without a format change, but building that now is speculative work
-([CLAUDE.md §6](../../../CLAUDE.md#coding-standards)) and would need its own
-design for precedence between user and built-in entries. This corrects Scope A's
-earlier "config-driven rules" phrasing, which implied a user surface that is not
-in this cycle.
-
-The defaults above are general-purpose runners across ecosystems, with no
-devgeta-specific or Go-specific bias — this ships to strangers
-([CLAUDE.md §12](../../../CLAUDE.md#anything-we-ship-is-built-for-strangers)).
-Deliberately **not** included: `tail`/`cat` of log files (frequently the whole
-point of the command), anything interactive, and anything with a TTY
-requirement.
-
+- **v1 ships built-in defaults only.** No user-defined rules, no settings surface
+  for the array. The schema is designed so a user-supplied list can be merged in
+  later without a format change, but building that now is speculative work
+  ([CLAUDE.md §6](../../../CLAUDE.md#coding-standards)) and would need its own
+  design for precedence between user and built-in entries. This corrects Scope
+  A's earlier "config-driven rules" phrasing, which implied a user surface that
+  is not in this cycle.
 - **Hook ordering with `rtk`:** both are `PreToolUse`/`Bash` and both rewrite
   `updatedInput.command`. Decide and test the composition — the intended
   behavior is that a command rtk has already rewritten into a compact form is
-  _not_ matched as verbose, so ordering is observable. Register after rtk's
-  block and add a test for both enabled together.
+  _not_ matched as verbose, so ordering is observable. Register after rtk's block
+  and add a test for both enabled together. Step 0 answers the chaining question
+  first.
+
 - Verify: run the script by hand against captured payloads, including a
   deliberately failing command to prove the exit status survives.
 
@@ -658,10 +530,11 @@ and spawning `dg config get` per Bash call (a process spawn and a second failure
 mode on every tool call, in a feature meant to reduce cost).
 
 **Failure behavior — off, in every degenerate case.** Sidecar missing,
-unreadable, malformed JSON, missing key, wrong type, or naming a `runner` path
-that does not exist: the plugin returns the command **unmodified**. Off means no
-rewriting, so the command runs exactly as it would with no plugin at all — the
-safe direction, and the one that matches the feature's default. Every one of
+unreadable, malformed JSON, missing key, wrong type, naming a `runner` path that
+does not exist, or carrying a budget that violates one of Step 4's
+reserve relationships: the plugin returns the command **unmodified**. Off means
+no rewriting, so the command runs exactly as it would with no plugin at all —
+the safe direction, and the one that matches the feature's default. Every one of
 those cases gets a test in Step 6.
 
 **The runner is agent-neutral.** `output-budget-run.sh` deploys to
@@ -694,41 +567,32 @@ in Step 6.
 
 #### Step 6: Hook behavioral tests, both languages
 
+**The case list is
+[docs/guides/output-budget-runner.md §10](../../guides/output-budget-runner.md#10-conformance-tests).**
+It sits with the contract on purpose: a clause and the test that pins it drift
+apart the moment they live in different documents, which is how three of this
+cycle's review findings happened.
+
+This step is the work of implementing it:
+
 - Go tests in the root package mirroring `secret_guard_test.go`; Node tests
-  mirroring `secret-guard.test.mjs`.
-- Cover, per the Step 4 contract — each clause is a test:
-  - a **failing** command wrapped by the runner still exits non-zero (the
-    regression that makes this feature dangerous if wrong — write it first)
-  - output under the cap is byte-identical to running unwrapped
-  - output over the cap has head, marker, and tail, and the marker names a path
-    that exists and holds the complete output
-  - a compound command (`a && b`, `a; b`) keeps its semantics and caps as a
-    whole
-  - a command containing single quotes, `$`, and backticks survives the rewrite
-    unchanged
-  - an unmatched command passes through byte-identical
-  - `DEVGETA_OUTPUT_BUDGET=off` is a true pass-through
+  mirroring `secret-guard.test.mjs`. Both run the real scripts against real temp
+  dirs — the established rigor for hooks in this repo.
+- **Drive the parity groups from one shared case table**, not two hand-kept
+  lists. The guide marks which groups are parity tests; for those, a rule or
+  tokenization case added on one side without the other must fail the build.
+- **Write the failing-command exit-status test first.** It is the regression that
+  makes this feature dangerous rather than merely disappointing.
+- Two cases in the guide's list are cycle-level rather than contract-level and
+  belong here:
   - the gate-off path is a true no-op under **both** agents — the behavioral
-    equivalence that Step 5's asymmetric gating makes necessary
+    equivalence Step 5's asymmetric gating makes necessary
   - **sidecar degradation, one test each**: file absent, unreadable, malformed
-    JSON, `outputBudget` key missing, key present but wrong type, and `runner`
-    naming a nonexistent path. All six return the command unmodified
+    JSON, `outputBudget` key missing, key present but wrong type, `runner` naming
+    a nonexistent path, and a budget violating the width contract. All seven
+    return the command unmodified
   - the runner exists at `paths.Paths.Config.Devgeta` after
     `dg configure opencode --force` with **no Claude config present**
-  - **rule-decision parity, table-driven over every built-in rule**: for each
-    rule, a matching command and a near-miss (e.g. `npm testx`, `go tests`), the
-    bash hook and the JS hook produce the **same** decision and the **same**
-    emitted command. Drive both suites from the same case table so a rule added
-    in Go without a mirrored decision fails the build
-  - precedence: `npm test` selects `npm-test`, not `npm-run`
-  - env-var prefixes and global options don't defeat a match
-    (`CI=1 go test ./...`)
-  - a malformed `rules` array disables rewriting entirely, under both hooks
-  - **hostile config paths**, both hooks: runner path containing a space, a
-    single quote, `$`, `;`, and a backtick — exact emitted string asserted
-    **and** executed end to end, returning the original command's exit status
-  - non-integer `head`/`tail` in the sidecar disables rewriting rather than
-    interpolating the value
   - rtk enabled together with this hook: composition is what Step 0 determined
 - Verify: `go test .` and `node --test output-budget.test.mjs`
 
@@ -790,6 +654,9 @@ rounding difference. Repeat for OpenCode with its equivalent introspection.
 
 - `docs/guides/token-efficiency.md` — ordered by measured impact, with the
   reasoning and the sources.
+- `docs/guides/output-budget-runner.md` — flip the "not implemented" status
+  header. Do **not** re-explain the contract anywhere else; that duplication is
+  what this cycle's review rounds kept catching.
 - `docs/apps/claude.md`, `docs/spec.md`, `ROADMAP.md`, ADR index.
 - Verify: read them cold; would a stranger to this repo follow them?
 
@@ -813,13 +680,15 @@ make lint
 2. With the gate **off**, run a large test command in a live session — output is
    byte-identical to no hook at all.
 3. With the gate **on**, same command — output capped, truncation marker
-   present and naming how to get the full output.
+   present and naming how to get the full output. Then a command emitting one
+   very long single line (e.g. a minified bundle to stdout): the replayed line
+   is bounded, and the full line is recoverable from the file the marker names.
 4. `dg task handoff --write --note "..."` then `--read` from a _different
    worktree of the same repo_ → same note (common-dir behavior).
 5. `dg task handoff --read` on a branch with no note → clean "no note" line,
    exit 0.
-6. Write a note exceeding the cap → rejected with an actionable message, nothing
-   written.
+6. Write a note exceeding 8 KiB → rejected with an actionable message, and the
+   note that was already there is unchanged.
 7. `dg task context-report` in this repo and in a non-Go repo → sensible output
    in both.
 8. Both agents behave identically in 2–3.
@@ -828,11 +697,16 @@ make lint
    command works end to end.
 10. **Degraded sidecar**: delete it, then corrupt it with invalid JSON. Both
     times commands run unmodified, with no error surfaced to the agent.
-11. **Configure order**: `dg config set agent.output_budget true`, then
+11. **Runaway output**: with the feature on, run a matched command that emits
+    far past `maxCaptureBytes` (e.g. `make` wrapping a loop that prints
+    endlessly). The scratch file stops at the capture limit, the command still
+    finishes with its own exit status, and both the file and the marker say the
+    capture is incomplete. Check disk use before and after.
+12. **Configure order**: `dg config set agent.output_budget true`, then
     `dg configure claude --force` **only**. OpenCode must already be enabled —
     the sidecar is shared and either path writes it. Repeat with `opencode`
     only, and with `false` and `unset`.
-12. **Emitted command**: with the feature on, confirm the rewritten command
+13. **Emitted command**: with the feature on, confirm the rewritten command
     names the runner under `~/.config/devgeta/` under both agents — not
     `~/.claude/`.
 
@@ -848,36 +722,56 @@ make lint
 
 ## 7. Risks & Trade-offs
 
-| Risk                                                                | Likelihood | Mitigation                                                                                                                                                   |
-| ------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Step 1 extraction silently changes review-journal behavior          | **Med**    | Existing reviewjournal tests pass **unmodified**; editing one is the signal it broke                                                                         |
-| Output filter cuts something load-bearing → agent re-runs, net loss | **Med**    | Conservative defaults, mandatory truncation marker, gate defaults off                                                                                        |
-| Bash/JS mirrors drift                                               | Med        | Paired behavioral suites, same cases both sides — the ADR-0006 discipline                                                                                    |
-| Two hooks match or cap differently for the same command             | **Med**    | Rules defined once in Go and generated; token-prefix matching, not regex (no ERE-vs-JS dialect gap); parity test over every built-in rule (Step 4/6)         |
-| A config path with spaces or metacharacters breaks or executes      | **Med**    | Every interpolated field quoted or integer-validated by one shared routine per language; hostile-path tests assert emitted string **and** execution (Step 4) |
-| Hook rewriting breaks an unrelated command                          | Low        | Pass-through must be byte-identical; explicit test for it                                                                                                    |
-| Handoff note goes stale and misleads a fresh session                | Med        | Stamp `head` on write; `--read` reports drift from current head                                                                                              |
-| Token estimate in context-report read as exact                      | Low        | Label it an approximation in the output itself                                                                                                               |
-| **Wrapped command swallows a failure's exit status**                | **Med**    | Explicit contract clause; test written before the feature; naive pipeline banned in Step 4                                                                   |
-| `context-report` misses a load path → confidently wrong numbers     | **Med**    | Step 0 verifies discovery upstream; Step 7 validates against live `/context`                                                                                 |
-| OpenCode has no command-rewriting hook at all                       | Med        | Step 0 answers first; fallback rule follows it — Claude-only, recorded in agent-sync.md's accepted differences                                               |
-| Runner leaks one output file per wrapped command                    | **Med**    | Allocate a `task-*` dir via the existing scratch mechanism; test asserts the path shape (Step 4)                                                             |
-| Feature ships with no way to turn it on or off                      | **Med**    | Settings-registry entry with `Set` **and** `Unset`, not a one-way configure part (Step 3b)                                                                   |
-| OpenCode rewrites commands to a runner that was never deployed      | **Med**    | Runner lives in `Config.Devgeta`, deployed by a shared helper both installers call; OpenCode-only path tested (Steps 5–6)                                    |
-| Sidecar missing or malformed silently breaks every Bash call        | **Med**    | All six degenerate cases return the command unmodified; one test each (Step 6)                                                                               |
-| Configure order leaves the two agents on different effective state  | **Med**    | One `EnsureAgentRuntime` writer called by both paths; both-orders convergence test (Step 5)                                                                  |
-| A hook reads the sidecar mid-`dg configure` and sees a partial file | Low        | Atomic temp-plus-rename write, same discipline as `branchstore` (Step 1)                                                                                     |
-| Two `PreToolUse` Bash hooks (rtk + this) rewrite the same field     | Med        | Step 0 determines chaining; explicit both-enabled test in Step 6                                                                                             |
-| Wrapper breaks TTY / streaming commands                             | Low        | Defaults match non-interactive runners only; limitation documented in Step 4                                                                                 |
+| Risk                                                                                                                                                            | Likelihood | Mitigation                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Step 1 extraction silently changes review-journal behavior                                                                                                      | **Med**    | Existing reviewjournal tests pass **unmodified**; editing one is the signal it broke                                                                          |
+| Output filter cuts something load-bearing → agent re-runs, net loss                                                                                             | **Med**    | Conservative defaults, mandatory truncation marker, gate defaults off                                                                                         |
+| Bash/JS mirrors drift                                                                                                                                           | Med        | Paired behavioral suites, same cases both sides — the ADR-0006 discipline                                                                                     |
+| Two hooks match or cap differently for the same command                                                                                                         | **Med**    | Rules defined once in Go and generated; token-prefix matching, not regex (no ERE-vs-JS dialect gap); parity test over every built-in rule (Step 4/6)          |
+| A config path with spaces or metacharacters breaks or executes                                                                                                  | **Med**    | Every interpolated field quoted or integer-validated by one shared routine per language; hostile-path tests assert emitted string **and** execution (Step 4)  |
+| Hook rewriting breaks an unrelated command                                                                                                                      | Low        | Pass-through must be byte-identical; explicit test for it                                                                                                     |
+| Handoff note goes stale and misleads a fresh session                                                                                                            | Med        | Stamp `head` on write; `--read` reports drift from current head                                                                                               |
+| Token estimate in context-report read as exact                                                                                                                  | Low        | Label it an approximation in the output itself                                                                                                                |
+| **Wrapped command swallows a failure's exit status**                                                                                                            | **Med**    | Explicit contract clause; test written before the feature; naive pipeline banned in Step 4                                                                    |
+| `context-report` misses a load path → confidently wrong numbers                                                                                                 | **Med**    | Step 0 verifies discovery upstream; Step 7 validates against live `/context`                                                                                  |
+| OpenCode has no command-rewriting hook at all                                                                                                                   | Med        | Step 0 answers first; fallback rule follows it — Claude-only, recorded in agent-sync.md's accepted differences                                                |
+| Runner leaks one output file per wrapped command                                                                                                                | **Med**    | Allocate a `task-*` dir via the existing scratch mechanism; test asserts the path shape (Step 4)                                                              |
+| Feature ships with no way to turn it on or off                                                                                                                  | **Med**    | Settings-registry entry with `Set` **and** `Unset`, not a one-way configure part (Step 3b)                                                                    |
+| OpenCode rewrites commands to a runner that was never deployed                                                                                                  | **Med**    | Runner lives in `Config.Devgeta`, deployed by a shared helper both installers call; OpenCode-only path tested (Steps 5–6)                                     |
+| Sidecar missing or malformed silently breaks every Bash call                                                                                                    | **Med**    | All seven degenerate cases return the command unmodified; one test each (Step 6)                                                                              |
+| Configure order leaves the two agents on different effective state                                                                                              | **Med**    | One `EnsureAgentRuntime` writer called by both paths; both-orders convergence test (Step 5)                                                                   |
+| A hook reads the sidecar mid-`dg configure` and sees a partial file                                                                                             | Low        | Atomic temp-plus-rename write, same discipline as `branchstore` (Step 1)                                                                                      |
+| Two `PreToolUse` Bash hooks (rtk + this) rewrite the same field                                                                                                 | Med        | Step 0 determines chaining; explicit both-enabled test in Step 6                                                                                              |
+| Wrapper breaks TTY / streaming commands                                                                                                                         | Low        | Defaults match non-interactive runners only; limitation documented in Step 4                                                                                  |
+| **A line cap lets unbounded bytes through** — one huge line, or a few large ones                                                                                | **Med**    | `maxLineBytes` + `maxTotalBytes` with a stated order of operations; property test that no reduced result exceeds `maxTotalBytes` (Steps 4/6)                  |
+| **Bash and JS tokenize the same command differently** — `segments.sh` splits compound commands, it does not tokenize                                            | **Med**    | Neither hook parses shell: whitespace-only split plus refuse-on-quoting for the compared prefix; shared fixture table drives both suites (Steps 4/6)          |
+| Refuse-on-quoting under-matches a command the user expected to be capped                                                                                        | Low        | Fails safe — the command runs correctly and in full; the refused prefixes are listed in Step 4                                                                |
+| **A runaway matched command fills the user's disk** — the wrapper invents a disk write that did not exist unwrapped, and the reaper is configure-time only      | **Med**    | `maxCaptureBytes` 16 MiB enforced by a drain that never blocks or signals the child; tests assert bounded file size **and** surviving exit status (Steps 4/6) |
+| Enforcing the capture bound kills the command instead of capping it                                                                                             | **Med**    | `ulimit -f` and bare `head -c` both rejected for exactly this; `${PIPESTATUS[0]}` with `pipefail` off, drain-after-limit (Step 4)                             |
+| Markers push the result past the cap they were just counted against                                                                                             | **Med**    | Both budgets reserve their marker before selecting content; property tests run with a long scratch path and a large omitted count (Steps 4/6)                 |
+| Agent greps a capture-truncated file and trusts the absence of a match                                                                                          | Med        | Notice in the file **and** in the replay marker; documented as the one case where "nothing is lost" does not hold (Step 4)                                    |
+| Runner cannot tell that the capture was capped at all                                                                                                           | **Med**    | Read one byte past the content budget; a file at `probe_limit` proves the cap was reached (Steps 4/6)                                                         |
+| **Notice claims confirmed loss when nothing was discarded** — output of exactly `content_limit + 1` bytes                                                       | **Med**    | Flag named `capture_capped`; both notices state the cap, never truncation; boundary tests assert the wording at `content_limit + 1` (Steps 4/6)               |
+| **A nonpositive budget reaches `head -c`** — an error on BSD, a silent unbounded buffer on GNU | **Med** | Positivity checked in `EnsureAgentRuntime`, in both hooks before rewriting, and in the runner; zero and negative tests per budget (Steps 4/6) |
+| A hook or the runner hardcodes a marker reserve and they drift apart | Low | Reserves never leave Go; the sidecar transports limits already net of them, so there is no constant to duplicate (Step 4) |
+| Devgeta itself writes a wrong-but-positive derived limit | Low | `EnsureAgentRuntime` asserts each derived limit equals its expected derivation before writing — Go-side, no hook constant (Step 4) |
+| **Bash and JS disagree on a large transported integer** — JS rounds above 2^53 and renders `1e+21`; bash `+1` wraps, at 2^63 to a negative | **Med** | 15-digit decimal-width contract checked against the rendered string in both hooks, the runner, and `EnsureAgentRuntime`; cross-hook parity table (Steps 4/6) |
 
 ### Trade-offs Made
 
 - **Hook defaults off.** Costs adoption, but a filter that surprises someone by
   eating output they needed is worse than one they turned on deliberately. See
-  Open Question 1 — this is the call most worth challenging.
+  §8's open question — this is the call most worth challenging.
 - **Handoff written explicitly, not on `SessionEnd`.** ADR-0032 §4. Devgeta
   usually prefers structural over conventional; this is the documented
   exception, and the reasoning is in the ADR.
+- **A user-raised capture limit is honored, not clamped — inside the width
+  contract.** The shipped 16 MiB is a default, not a policy enforced against the
+  machine's owner; 15 decimal digits is not a policy either, it is where bash and
+  JavaScript stop agreeing. Clamping
+  would mean the literal living in bash and JS as well as Go, and a default that
+  can never change. Recorded because it reads like a gap until you notice that
+  "large positive" means exactly what it says, unlike zero or negative.
 - **Extract storage rather than copy it.** More upfront risk than a copy, but a
   second per-branch store diverging from the first is the defect
   [CLAUDE.md §6](../../../CLAUDE.md#coding-standards) tells us to fix in the PR
@@ -908,9 +802,58 @@ made the gate look undesigned.
 3. **The gate is one config field with two enforcement points** (Step 5), not
    one mechanism forced onto both agents.
 
+4. **The budget is bounded in bytes as well as lines** — `maxLineBytes` 2048,
+   `maxTotalBytes` 65536, with the three-step reduction order pinned (Step 4).
+   A line cap alone bounds nothing: one line has no newlines, and 25 lines of
+   1 MB is "under" a 30-line cap.
+
+5. **Neither hook parses shell.** Tokenization is a whitespace-only split, and
+   any quote, backslash, or `$` in the tokens being compared refuses the match
+   (Step 4). This replaced two rejected options: specifying a full
+   quoting/escaping contract twice, and shelling out to a Go matcher on every
+   Bash call — the latter being the process spawn Step 5 already rejected for
+   the gate.
+
+6. **The handoff cap is 8 KiB of rendered file** (Step 2), front matter
+   included, rejecting rather than truncating.
+
+7. **Markers are inside the budgets, not appended to them** (Step 4). Both
+   caps reserve their marker before selecting content, with the inline
+   reservation a constant so the rule stays one subtraction in both languages.
+   The reserves stay **inside Go**: the sidecar transports
+   `lineContentLimit` and `captureContentLimit` already net of them, so no hook
+   and no runner holds a reserve constant, and the relationship check reduces to
+   one field test at every layer: `^[1-9][0-9]{0,14}$`, which is positivity and
+   the bash/JS shared numeric range in a single pattern. A type check alone admits `0`,
+   which reaches `head -c -N`: an error on BSD, and on GNU a silent "all but the
+   last N bytes" that buffers the whole stream and defeats the bound.
+
+8. **The capture is bounded at 16 MiB, and bounding it must not touch the
+   command** (Step 4). `ulimit -f` and a bare `head -c` were both rejected —
+   each enforces the bound by killing or signalling the child, which breaks the
+   exit-status clause. The accepted form caps the file and keeps draining. When
+   it trips, both the file and the replay marker say the full output is
+   incomplete, because "nothing is lost" stops being true there.
+
+   Detecting that it tripped is its own decision: the runner reads **one byte
+   past** the content budget, so a file at `probe_limit` proves the cap was
+   reached. `head`'s exit status cannot answer this, and neither can a size
+   check at the budget itself, which is ambiguous for output landing exactly on
+   it. The extra byte stays in the file — it is real output, and the notice
+   reserve is sized to keep it inside `maxCaptureBytes`.
+
+   What that probe proves is "capped", **not** "lost": a command emitting
+   exactly `content_limit + 1` bytes fills the probe and loses nothing. So the
+   flag is `capture_capped` and both notices state the cap rather than asserting
+   truncation. Getting certainty instead would mean trimming the byte back off
+   (needs a non-portable in-place `truncate`) or counting the remainder through
+   the drain (unsound — `head -c` may swallow a block, so the count can read 0
+   when bytes really were dropped). A false "complete" is the worst failure
+   available here, so the claim is narrowed to what the evidence supports.
+
 **Still open — needs your call before Step 4 ships, not before it starts:**
 
-4. **Does the output-budget hook default on or off?** Drafted **off**. Off is
+9. **Does the output-budget hook default on or off?** Drafted **off**. Off is
    safe but most users never find it; on delivers the savings by default and
    risks a surprising cap on someone's machine. The Step 4 contract weakens the
    argument for "off" — full output stays on disk at a path the agent can
