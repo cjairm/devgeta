@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeOutputBudgetRunScript extracts the embedded runner to a temp file and
@@ -328,5 +329,65 @@ func TestOutputBudgetRun_NoReducedResultExceedsMaxTotalBytes(t *testing.T) {
 				t.Errorf("reduced output is %d bytes, want <= %d", len(stdout), maxTotalBytes)
 			}
 		})
+	}
+}
+
+// TestOutputBudgetRun_CostDoesNotScaleWithTheNumberOfCapturedLines pins the
+// fix for a measured regression: the runner used to read the whole capture
+// into bash arrays and copy them several times, so a 200k-line command took
+// 3.8s wrapped against 0.3s unwrapped, and a 524k-line one took 12s. That
+// cost landed on the critical path of every matched command — spending real
+// seconds of the user's time to save tokens on output they were already
+// waiting for.
+//
+// The property that matters is not an absolute duration (too machine- and
+// load-dependent to assert on) but the SHAPE of the curve: reducing a capture
+// must cost about the same whether it holds 50k lines or ten times that. A
+// linear implementation shows up here as a ~10x ratio; the streaming one
+// stays near 1x.
+func TestOutputBudgetRun_CostDoesNotScaleWithTheNumberOfCapturedLines(t *testing.T) {
+	if testing.Short() {
+		t.Skip("timing-sensitive; skipped under -short")
+	}
+	scriptPath := writeOutputBudgetRunScript(t)
+
+	// seq alone is the control: it is what produces the lines in both runs, so
+	// timing the wrapped run against it isolates the wrapper's own overhead.
+	const small, large = 50000, 500000
+
+	measure := func(n int) time.Duration {
+		t.Helper()
+		command := "seq 1 " + strconv.Itoa(n)
+		start := time.Now()
+		exitCode, _ := runOutputBudgetRun(t, scriptPath, 20, 40, 2048, 65536, 16777216, command)
+		elapsed := time.Since(start)
+		if exitCode != 0 {
+			t.Fatalf("seq 1 %d through the runner exited %d, want 0", n, exitCode)
+		}
+		return elapsed
+	}
+
+	// Warm the page cache and the bash/awk binaries so the first measurement
+	// is not paying for them alone.
+	measure(small)
+
+	smallDur := measure(small)
+	largeDur := measure(large)
+
+	// A generous multiple: the honest signal here is 10x-versus-1x, and a
+	// threshold of 4 leaves ample room for scheduler noise on a loaded CI box
+	// while still failing loudly if the per-line work comes back.
+	const maxRatio = 4
+	floor := 50 * time.Millisecond
+	baseline := smallDur
+	if baseline < floor {
+		baseline = floor
+	}
+	if largeDur > time.Duration(maxRatio)*baseline {
+		t.Errorf(
+			"reducing %d lines took %v but %d lines took %v (>%dx): "+
+				"the reduction is scaling with the line count again",
+			small, smallDur, large, largeDur, maxRatio,
+		)
 	}
 }

@@ -20,6 +20,15 @@ set -u
 # disagree with head -c's own byte semantics.
 export LC_ALL=C
 
+# The inline per-line truncation marker, split into its two literal halves so
+# that the bash path and the awk passes further down build the identical text
+# from ONE definition instead of each restating it. Keep in shape with
+# inlineMarkerTemplate in internal/apps/baseapp/outputrules.go — that
+# constant's length is what sizes inlineMarkerReserve, and this is the text
+# that has to fit inside it.
+readonly DEVGETA_OB_TRUNC_PREFIX=' [devgeta: truncated, '
+readonly DEVGETA_OB_TRUNC_SUFFIX=' bytes omitted]'
+
 devgeta_ob_run_unwrapped() {
 	bash -c "$1"
 	exit $?
@@ -126,93 +135,111 @@ devgeta_ob_marker() {
 	printf '[devgeta: %s — full output: %s]\n' "$joined" "$full_path"
 }
 
+# devgeta_ob_truncate_line applies the per-line content limit, returning the
+# result in REPLY. Deliberately not a $(...) call: command substitution forks
+# a subshell per line, which is fine for a handful and unusable for the tens
+# of thousands a real test run produces (measured: 50k lines took over two
+# minutes that way).
+devgeta_ob_truncate_line() {
+	local line="$1" limit="$2"
+	local len=${#line}
+	if [ "$len" -gt "$limit" ]; then
+		REPLY="${line:0:limit}${DEVGETA_OB_TRUNC_PREFIX}$((len - limit))${DEVGETA_OB_TRUNC_SUFFIX}"
+	else
+		REPLY="$line"
+	fi
+}
+
+# The awk fragment that applies the same truncation as the function above,
+# leaving the result in `t`. Shared verbatim by the three awk passes so the
+# rendered text can never diverge between them or from the bash path.
+readonly DEVGETA_OB_AWK_TRUNCATE='
+	n = length($0)
+	t = (n > lim) ? substr($0, 1, lim) pre (n - lim) suf : $0
+'
+
 # devgeta_ob_emit_replay implements the reduction pipeline (guide §6) against
 # the bytes captured so far (never including the capture notice, which is
 # appended to the file only after this runs) and writes the replay to stdout.
+#
+# The capture file is bounded at 16 MiB but nothing bounds its LINE count, so
+# nothing here may be proportional to it. Reading the whole file into a bash
+# array cost 3.8s on a 200k-line capture against 0.3s unwrapped — paid on the
+# critical path of every matched command, to save tokens on output the user
+# was already waiting for. Instead the reduction reads only the head_n and
+# tail_n lines it can actually emit, and derives the omitted middle by
+# subtracting their byte totals from the file's own size. Both reads are
+# bounded by the rule's line budgets, so the cost is flat in the input size.
 devgeta_ob_emit_replay() {
 	local capture_file="$1" head_n="$2" tail_n="$3" line_content_limit="$4"
 	local max_total_bytes="$5" capture_capped="$6"
 
-	local -a lines=()
-	local had_trailing_newline=1
-	if [ -s "$capture_file" ]; then
-		local last_byte
-		last_byte=$(tail -c1 "$capture_file")
-		if [ -n "$last_byte" ]; then
+	local total_bytes had_trailing_newline=1 total_lines=0
+	total_bytes=$(wc -c <"$capture_file")
+	total_bytes="${total_bytes//[[:space:]]/}"
+	if [ "$total_bytes" -gt 0 ]; then
+		# $(...) strips the trailing newline, so a non-empty result here means
+		# the last byte was something else — i.e. no trailing newline.
+		if [ -n "$(tail -c1 "$capture_file")" ]; then
 			had_trailing_newline=0
 		fi
-	fi
-	mapfile -t lines <"$capture_file"
-
-	# Step 1: per-line truncation. A no-op for every line that already fits.
-	# Deliberately not a per-line call through $(...): that forks a subshell
-	# for every line, which is fine for a handful of lines and unusable for
-	# the tens of thousands a real test run can produce (measured: 50k lines
-	# took over two minutes). Inlined here so the common case - a line under
-	# the limit - is a single array append with no subprocess at all.
-	#
-	# Keep the marker text below identical in shape to inlineMarkerTemplate
-	# in internal/apps/baseapp/outputrules.go - that constant's length is
-	# what sizes inlineMarkerReserve, and this is the text that must fit
-	# inside it.
-	local -a step1=()
-	local i
-	for ((i = 0; i < ${#lines[@]}; i++)); do
-		local line="${lines[$i]}"
-		local len=${#line}
-		if [ "$len" -gt "$line_content_limit" ]; then
-			local kept="${line:0:line_content_limit}"
-			local omitted=$((len - line_content_limit))
-			step1+=("${kept} [devgeta: truncated, ${omitted} bytes omitted]")
-		else
-			step1+=("$line")
+		total_lines=$(wc -l <"$capture_file")
+		total_lines="${total_lines//[[:space:]]/}"
+		# wc -l counts newlines; a final line without one is still a line.
+		if [ "$had_trailing_newline" -eq 0 ]; then
+			total_lines=$((total_lines + 1))
 		fi
-	done
+	fi
 
-	local total_lines=${#step1[@]}
-
-	# Step 2: head/tail selection by line count.
-	local -a result=()
+	local -a head_src=() tail_src=()
 	local omitted_lines=0 omitted_bytes=0
 
 	if [ "$total_lines" -gt $((head_n + tail_n)) ]; then
 		omitted_lines=$((total_lines - head_n - tail_n))
-		local mid_start=$head_n
-		local mid_end=$((total_lines - tail_n)) # exclusive
-		for ((i = mid_start; i < mid_end; i++)); do
-			omitted_bytes=$((omitted_bytes + ${#lines[$i]} + 1))
-		done
-		for ((i = 0; i < head_n; i++)); do
-			result+=("${step1[$i]}")
-		done
-		for ((i = mid_end; i < total_lines; i++)); do
-			result+=("${step1[$i]}")
-		done
+		mapfile -t head_src < <(head -n "$head_n" "$capture_file")
+		mapfile -t tail_src < <(tail -n "$tail_n" "$capture_file")
+
+		# Byte accounting by subtraction, on the ORIGINAL (untruncated) lines,
+		# matching what the omitted-middle marker has always reported. Every
+		# head line ends in a newline (none of them is the file's last line);
+		# the tail's last line does only if the capture itself did.
+		local l head_bytes=0 tail_bytes=0
+		for l in "${head_src[@]}"; do head_bytes=$((head_bytes + ${#l} + 1)); done
+		for l in "${tail_src[@]}"; do tail_bytes=$((tail_bytes + ${#l} + 1)); done
+		if [ "$had_trailing_newline" -eq 0 ]; then
+			tail_bytes=$((tail_bytes - 1))
+		fi
+		omitted_bytes=$((total_bytes - head_bytes - tail_bytes))
 	else
-		result=("${step1[@]}")
+		# At most head_n + tail_n lines, so reading them all is bounded by the
+		# rule's own line budgets rather than by the size of the capture. A
+		# single enormous line lands here too, and per-line truncation is what
+		# bounds it.
+		mapfile -t head_src <"$capture_file"
 	fi
+
+	# Step 1: per-line truncation, applied only to the lines that survive.
+	local -a trunc_head=() trunc_tail=()
+	local l
+	for l in "${head_src[@]}"; do
+		devgeta_ob_truncate_line "$l" "$line_content_limit"
+		trunc_head+=("$REPLY")
+	done
+	for l in "${tail_src[@]}"; do
+		devgeta_ob_truncate_line "$l" "$line_content_limit"
+		trunc_tail+=("$REPLY")
+	done
 
 	local full_path="$capture_file"
 	local marker
 	marker=$(devgeta_ob_marker "$omitted_lines" "$omitted_bytes" "$full_path" "$capture_capped")
 
-	# Assemble the candidate replay: head lines, marker (if this step
-	# produced one), tail lines - or, if nothing was omitted at this step,
-	# every line in `result` followed by the marker only if it exists
-	# (the capture-cap-only case).
-	local -a assembled_lines=()
-	if [ "$omitted_lines" -gt 0 ] || [ "$omitted_bytes" -gt 0 ]; then
-		for ((i = 0; i < head_n && i < ${#result[@]}; i++)); do
-			assembled_lines+=("${result[$i]}")
-		done
-		[ -n "$marker" ] && assembled_lines+=("$marker")
-		for ((i = head_n; i < ${#result[@]}; i++)); do
-			assembled_lines+=("${result[$i]}")
-		done
-	else
-		assembled_lines=("${result[@]}")
-		[ -n "$marker" ] && assembled_lines+=("$marker")
-	fi
+	# Assemble the candidate replay: head lines, marker (if this step produced
+	# one), tail lines — or, when nothing was omitted, every line followed by
+	# the marker only if one exists at all (the capture-cap-only case).
+	local -a assembled_lines=("${trunc_head[@]}")
+	[ -n "$marker" ] && assembled_lines+=("$marker")
+	assembled_lines+=("${trunc_tail[@]}")
 
 	# A trailing newline is added unless this is genuinely the untouched
 	# passthrough case (nothing omitted, no marker at all) and the original
@@ -239,7 +266,8 @@ devgeta_ob_emit_replay() {
 
 	# Step 3: byte refill. Discard the line/marker-based candidate and
 	# rebuild from fixed byte budgets, taking whole lines greedily.
-	devgeta_ob_byte_refill "$max_total_bytes" "$full_path" "$capture_capped" "${step1[@]}"
+	devgeta_ob_byte_refill "$max_total_bytes" "$full_path" "$capture_capped" \
+		"$capture_file" "$line_content_limit" "$total_lines"
 }
 
 # devgeta_ob_render_lines joins an array of lines with "\n" and prints the
@@ -263,21 +291,96 @@ devgeta_ob_render_lines() {
 	printf '%s' "$out"
 }
 
+# devgeta_ob_middle_bytes sums the post-truncation size (plus one newline
+# each) of the 1-based line range [from, to] of capture_file.
+#
+# Streamed through awk because the omitted middle is the one span whose length
+# really is proportional to the input — it is by definition the part NOT being
+# emitted, so walking it in bash would reintroduce exactly the per-line cost
+# the rest of this script now avoids. awk reads it in C and stops at `to`.
+devgeta_ob_middle_bytes() {
+	local capture_file="$1" limit="$2" from="$3" to="$4"
+	awk -v lim="$limit" -v pre="$DEVGETA_OB_TRUNC_PREFIX" -v suf="$DEVGETA_OB_TRUNC_SUFFIX" \
+		-v from="$from" -v to="$to" "
+		NR < from { next }
+		NR > to   { exit }
+		{
+			$DEVGETA_OB_AWK_TRUNCATE
+			total += length(t) + 1
+		}
+		END { printf \"%d\", total + 0 }
+	" "$capture_file"
+}
+
+# devgeta_ob_take_head emits the truncated lines from line `from` onward whose
+# cumulative rendered size stays within budget, stopping before the first line
+# that would exceed it.
+#
+# The selection runs in awk rather than bash because it must be bounded by the
+# BYTE budget, not by a line count. A line-count window cannot do that: the
+# budget admits either many short lines or a few long ones, so any line bound
+# loose enough to be correct for short lines (budget+1 of them) reads
+# gigabytes when the lines are long. Selecting by bytes is bounded by
+# construction — the output is at most `budget` plus one line.
+devgeta_ob_take_head() {
+	local capture_file="$1" limit="$2" budget="$3" from="$4"
+	awk -v lim="$limit" -v pre="$DEVGETA_OB_TRUNC_PREFIX" -v suf="$DEVGETA_OB_TRUNC_SUFFIX" \
+		-v budget="$budget" -v from="$from" "
+		NR < from { next }
+		{
+			$DEVGETA_OB_AWK_TRUNCATE
+			b = length(t) + 1
+			if (used + b > budget) exit
+			used += b
+			print t
+		}
+	" "$capture_file"
+}
+
+# devgeta_ob_take_tail emits the longest run of truncated lines ending at the
+# last line (and starting no earlier than `from`) whose cumulative rendered
+# size stays within budget — the same set the equivalent backwards greedy walk
+# selects, since adding lines from the end only ever increases the total.
+#
+# Held as a sliding window so memory stays bounded by the budget plus one line
+# no matter how many lines the capture has. A single line larger than the
+# whole budget evicts itself and yields nothing, which is the documented
+# outcome (guide §6 step 3), not an error.
+devgeta_ob_take_tail() {
+	local capture_file="$1" limit="$2" budget="$3" from="$4"
+	awk -v lim="$limit" -v pre="$DEVGETA_OB_TRUNC_PREFIX" -v suf="$DEVGETA_OB_TRUNC_SUFFIX" \
+		-v budget="$budget" -v from="$from" "
+		BEGIN { first = 1; last = 0; used = 0 }
+		NR < from { next }
+		{
+			$DEVGETA_OB_AWK_TRUNCATE
+			last++
+			buf[last] = t
+			size[last] = length(t) + 1
+			used += size[last]
+			while (used > budget && first <= last) {
+				used -= size[first]
+				delete buf[first]
+				delete size[first]
+				first++
+			}
+		}
+		END { for (i = first; i <= last; i++) print buf[i] }
+	" "$capture_file"
+}
+
 # devgeta_ob_byte_refill rebuilds the replay from fixed byte budgets
 # (guide §6 step 3): contentBudget = maxTotalBytes - len(finalMarker) - 1,
 # split 1:3 head-to-tail, taking whole lines greedily from each end.
 devgeta_ob_byte_refill() {
 	local max_total_bytes="$1" full_path="$2" capture_capped="$3"
-	shift 3
-	local -a all=("$@")
-	local total=${#all[@]}
+	local capture_file="$4" line_content_limit="$5" total="$6"
 
 	# The marker's own text depends only on omitted counts and the path,
 	# none of which changes as budgets are computed, so it can be measured
 	# once up front here (unlike the head/tail step, its omitted counts are
 	# not yet known - resolved with a placeholder pass below).
-	local head_kept=0 head_bytes=0
-	local tail_kept=0 tail_bytes=0
+	local head_kept=0 tail_kept=0
 	local content_budget
 
 	# Two-pass: first with a marker sized for "all bytes omitted" (the
@@ -299,49 +402,32 @@ devgeta_ob_byte_refill() {
 	# the first candidate is too big is a legitimate outcome, not a bug: the
 	# alternative (always keep at least one) is exactly what let a single
 	# huge line blow through the budget it was supposed to be bounded by.
-	local -a head_lines=()
-	local i=0
-	while [ "$i" -lt "$total" ]; do
-		local l="${all[$i]}"
-		local candidate_bytes=$((head_bytes + ${#l} + 1))
-		if [ "$candidate_bytes" -gt "$head_budget" ]; then
-			break
-		fi
-		head_lines+=("$l")
-		head_bytes=$candidate_bytes
-		head_kept=$((head_kept + 1))
-		i=$((i + 1))
-	done
+	# Both selections are byte-bounded in awk, so what comes back into bash is
+	# never larger than the budget plus one line — independent of how many
+	# lines the capture holds or how long any of them is.
+	local -a head_lines=() tail_lines=()
+	mapfile -t head_lines < <(
+		devgeta_ob_take_head "$capture_file" "$line_content_limit" "$head_budget" 1
+	)
+	head_kept=${#head_lines[@]}
 
-	local -a tail_lines=()
-	local j=$((total - 1))
-	while [ "$j" -ge "$i" ]; do
-		local l="${all[$j]}"
-		local candidate_bytes=$((tail_bytes + ${#l} + 1))
-		if [ "$candidate_bytes" -gt "$tail_budget" ]; then
-			break
-		fi
-		tail_lines=("$l" "${tail_lines[@]}")
-		tail_bytes=$candidate_bytes
-		tail_kept=$((tail_kept + 1))
-		j=$((j - 1))
-	done
+	# The tail starts after whatever the head already claimed, which is what
+	# keeps the two from overlapping on a short capture.
+	mapfile -t tail_lines < <(
+		devgeta_ob_take_tail "$capture_file" "$line_content_limit" "$tail_budget" \
+			$((head_kept + 1))
+	)
+	tail_kept=${#tail_lines[@]}
 
 	local omitted_lines=$((total - head_kept - tail_kept))
 	local omitted_bytes=0
-	local k
-	for ((k = i; k <= j; k++)); do
-		omitted_bytes=$((omitted_bytes + ${#all[$k]} + 1))
-	done
+	if [ "$omitted_lines" -gt 0 ]; then
+		omitted_bytes=$(devgeta_ob_middle_bytes "$capture_file" "$line_content_limit" \
+			$((head_kept + 1)) $((total - tail_kept)))
+	fi
 
 	local marker
 	marker=$(devgeta_ob_marker "$omitted_lines" "$omitted_bytes" "$full_path" "$capture_capped")
-
-	if [ "$omitted_lines" -le 0 ] && [ -z "$marker" ]; then
-		devgeta_ob_render_lines "${all[@]}"
-		printf '\n'
-		return 0
-	fi
 
 	local -a assembled=("${head_lines[@]}")
 	[ -n "$marker" ] && assembled+=("$marker")

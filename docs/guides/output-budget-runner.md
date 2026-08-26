@@ -523,6 +523,44 @@ pathological line; `maxTotalBytes` is what makes the feature a budget. Two greed
 loops over fixed integer budgets is arithmetic and line accumulation, so it is
 trivially identical in bash and JS — no dialect risk.
 
+### 6.1 No step may cost more than the output it emits
+
+**The reduction runs on the critical path of every matched command, so nothing
+in it may be proportional to the size of the capture.** The capture is bounded
+at 16 MiB; its _line count_ is bounded by nothing at all. An implementation
+that reads the whole capture into memory to pick 60 lines out of it spends the
+user's seconds to save their tokens — on output they were already waiting for.
+
+This is not hypothetical. The first implementation did exactly that (`mapfile`
+of the whole file, then several full array copies), and it measured:
+
+| Capture             | Unwrapped | Wrapped (naive) | Wrapped (bounded) |
+| ------------------- | --------- | --------------- | ----------------- |
+| 200,000 lines       | 0.30s     | 3.8s            | 0.31s             |
+| 524,288 lines       | —         | 12.0s           | 0.29s             |
+| 300k × 1.5 KB lines | 0.49s     | 16.3s           | 1.5s              |
+
+The rule that keeps this bounded: **every span the reduction materialises must
+be bounded by a budget, never by the input.** Concretely —
+
+- Steps 1 and 2 touch only the `head` + `tail` lines that can actually be
+  emitted; the omitted middle's byte count comes from subtracting their totals
+  from the file's own size, never from walking it.
+- Step 3 must select by **bytes, not by a line count**. A line-count window
+  cannot bound this: the same budget admits either many short lines or a few
+  long ones, so any line bound loose enough to be correct for short lines reads
+  gigabytes when the lines are long. (This is a real trap — a first attempt at
+  the fix used `budget + 1` lines, which is a correct _line_ bound and still
+  read the entire capture back in on the long-line case above.)
+- The one span that genuinely is proportional to the input — the omitted middle,
+  when step 3 needs its exact post-truncation size — is streamed in `awk` and
+  never enters the shell.
+
+A conformance test pins the _shape_ rather than a duration, which is too
+machine-dependent to assert: reducing 500k lines must cost about what reducing
+50k does. The naive implementation shows up as a ~8x ratio, the bounded one as
+~1.3x.
+
 **Markers count against the budgets, because they are bytes the agent receives.**
 Stating a cap and then appending to the result is the same class of error as
 counting lines and calling it a byte bound — the number is real, it just is not
