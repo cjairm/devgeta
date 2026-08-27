@@ -545,3 +545,86 @@ func TestRelease_MessageIsPassedVerbatim(t *testing.T) {
 		}
 	}
 }
+
+// --- The publish half: .github/workflows/release.yml ---
+
+// readReleaseWorkflow returns the release workflow's text. The two tests below
+// are the only structural check on the half of a release this package cannot
+// reach: `devgeta task release` writes the annotation, and the workflow turns
+// that annotation into the GitHub release body. Everything they assert has
+// already shipped wrong once.
+func readReleaseWorkflow(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", ".github", "workflows", "release.yml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("failed to read %s: %v", path, err)
+	}
+	return string(data)
+}
+
+// TestReleaseWorkflow_RefusesALightweightTag pins the fix from commit dd6503a.
+// actions/checkout re-fetches the tag being built as a raw commit SHA, leaving a
+// lightweight tag whose %(contents) is the COMMIT's message — so reading it does
+// not fail, it silently returns the wrong text. Three releases published that
+// way before anyone noticed, because a squashed release commit carries the same
+// message as its tag. The re-fetch alone is not enough: without the object-type
+// check, any future path that leaves a lightweight tag publishes the wrong body
+// again with a green job.
+func TestReleaseWorkflow_RefusesALightweightTag(t *testing.T) {
+	wf := readReleaseWorkflow(t)
+
+	if !strings.Contains(wf, `git fetch --force origin "refs/tags/${VERSION}:refs/tags/${VERSION}"`) {
+		t.Error(
+			"the workflow no longer re-fetches the annotated tag before reading it; " +
+				"actions/checkout overwrites it with a lightweight tag, whose contents " +
+				"are the commit message rather than the release notes",
+		)
+	}
+	if !strings.Contains(wf, `git cat-file -t "refs/tags/${VERSION}"`) {
+		t.Error(
+			"the workflow no longer verifies that the ref is an annotated tag object. " +
+				"Reading a lightweight tag returns the wrong text instead of erroring, " +
+				"so this check is what turns a silent wrong-body release into a failed job",
+		)
+	}
+}
+
+// TestReleaseWorkflow_ReassertsTheBodyFromTheTag guards the repair path.
+// softprops/action-gh-release sets `body` only on a release it CREATES; when a
+// release object for the tag already exists it uploads the assets and leaves the
+// old body alone. docs/guides/releasing.md's own retry advice produces exactly
+// that state, since deleting a tag does not delete its release — which is how
+// v1.22.0's page kept a wrong body even after a corrected run read the right
+// annotation. The unconditional `gh release edit` is what makes a retry
+// self-healing instead of needing a human to spot it.
+//
+// What this cannot check: that the edit actually succeeds on GitHub, or that the
+// preserved tail is the right tail. Only a real release exercises those.
+func TestReleaseWorkflow_ReassertsTheBodyFromTheTag(t *testing.T) {
+	wf := readReleaseWorkflow(t)
+
+	const edit = `gh release edit "$VERSION" --notes-file release-body.txt`
+	editAt := strings.Index(wf, edit)
+	if editAt < 0 {
+		t.Fatalf(
+			"the workflow no longer re-asserts the release body from the tag (%q). "+
+				"Without it, a release object that already exists keeps whatever body "+
+				"it was first created with, however wrong",
+			edit,
+		)
+	}
+
+	// Order is load bearing: re-asserting before the release exists would edit
+	// nothing, so this must follow the step that creates it.
+	createAt := strings.Index(wf, "softprops/action-gh-release")
+	if createAt < 0 {
+		t.Fatal("expected the release-creating action in the workflow")
+	}
+	if editAt < createAt {
+		t.Error(
+			"the body re-assertion must run AFTER the release is created — editing a " +
+				"release that does not exist yet cannot repair anything",
+		)
+	}
+}

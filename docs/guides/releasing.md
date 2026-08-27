@@ -273,6 +273,27 @@ If the GitHub Actions workflow fails:
    gh release delete <tag> --yes
    ```
 
+   **A leftover release keeps its original body, even after a corrected run.**
+   `softprops/action-gh-release` sets the body only on a release it creates; on
+   one that already exists it uploads the assets and leaves the body as it was.
+   That is why v1.22.0's page still showed a commit message after the annotation
+   fix landed and the tag was re-pushed — the workflow read the right notes and
+   had nowhere to put them. The workflow now re-asserts the body from the tag
+   with `gh release edit` after publishing, so a retry repairs the page by
+   itself. It is a no-op on the normal path.
+
+   To fix a page whose body is already wrong, without re-releasing anything —
+   bodies stay editable even though tags do not:
+
+   ```bash
+   git tag -l --format='%(contents)' v0.2.0 \
+     | sed '/^Co-Authored-By:/d' > /tmp/body.txt
+   gh release edit v0.2.0 --notes-file /tmp/body.txt
+   ```
+
+   Re-append the `**Full Changelog**` line if the page had one; GitHub does not
+   regenerate it on an edit.
+
 ### Release Not Appearing
 
 If the release doesn't appear on GitHub:

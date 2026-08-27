@@ -139,3 +139,36 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # The step above only sets `body` on a release it CREATES. When a release
+      # object for this tag already exists, it uploads the assets and leaves the
+      # old body untouched — and the documented retry path in
+      # docs/guides/releasing.md produces exactly that state, because deleting a
+      # tag to retry does not delete its release. v1.22.0 shipped that way: the
+      # pre-fix workflow published the commit message, the tag was deleted and
+      # re-pushed, and the corrected run read the right annotation and then
+      # published nothing with it, because the release already existed.
+      #
+      # So re-assert the body from the tag unconditionally. On the normal path
+      # this rewrites the same bytes and changes nothing; on a retry it repairs
+      # the page instead of requiring someone to notice and fix it by hand.
+      - name: Re-assert the release body from the tag
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          NOTES: ${{ steps.tag_notes.outputs.NOTES }}
+        run: |
+          # Keep whatever GitHub generated (its "What's Changed" list and the
+          # "Full Changelog" compare link) rather than regenerating it: those
+          # headings are the only part of the body this workflow does not own.
+          # `.` stands in for the apostrophe in "What's" so the awk program can
+          # stay single-quoted.
+          TAIL="$(gh release view "$VERSION" --json body --jq '.body' \
+            | awk '/^\*\*Full Changelog\*\*:/ || /^## What.s Changed/ {found=1} found {print}')"
+
+          printf '%s\n' "$NOTES" > release-body.txt
+          if [ -n "$TAIL" ]; then
+            printf '\n%s\n' "$TAIL" >> release-body.txt
+          fi
+
+          gh release edit "$VERSION" --notes-file release-body.txt
