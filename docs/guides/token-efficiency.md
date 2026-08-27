@@ -50,6 +50,12 @@ capable agent already infers from the codebase, and that call is yours to
 make per-repo, not devgeta's to make for you. What the report gives you is the
 number to act on, instead of a vague "this file feels big."
 
+The `/context-report` agent command is the judgment pass on top of that number:
+it runs the report, reads only the largest layers it names, and comes back with
+specific trim candidates, what it thinks must stay, and a check on whether the
+output-budget hook below is on. It recommends and never edits — deciding what
+this repo actually needs restated is still yours.
+
 ## 3. The output-budget hook: caps verbose command output at write time
 
 Off by default. Turn it on with:
@@ -119,6 +125,18 @@ ending, not a longer session and not an automatically-captured memory
 (ADR-0032 rejected both). Nothing here calls a model: `--write` stores
 whatever text it's given, and deciding what's worth carrying forward is a
 skill's job, composed on top of this command, not something baked into it.
+
+Two shipped agent commands are that composition, one per direction:
+
+- `/save-context` — distills the session into a note and writes it. It reads
+  the existing note first, because `--write` replaces rather than appends.
+- `/load-context` — reads the note back, checks it against the tree when HEAD
+  has moved since it was written, and reports where the branch stands without
+  starting the work.
+
+Both live in `configs/shared/commands/` and ship to Claude Code and OpenCode
+alike. Using them is optional — `dg task handoff` is the whole mechanism, and
+the commands only supply the judgment about what to put in it.
 
 The note is capped at 8 KiB, rendered — a write that would exceed it is
 refused outright, never silently truncated, and the previous note is left
