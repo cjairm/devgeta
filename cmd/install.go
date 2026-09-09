@@ -128,6 +128,15 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Authenticate once for the whole run, before anything that needs root.
+	// It has to happen before the package manager step specifically: on macOS
+	// Homebrew's installer invalidates the sudo credential on exit unless it
+	// finds one already active, so priming afterwards would leave every cask
+	// that follows prompting again. See commands.SudoSession.
+	sudoSession := commands.NewSudoSession(commands.NewBaseCommand())
+	sudoSession.Start()
+	defer sudoSession.Stop()
+
 	utils.PrintInfo("Installing package manager...")
 	if err := osCmd.MaybeInstallPackageManager(); err != nil {
 		return err
