@@ -32,7 +32,7 @@ devgeta/
 │   │   ├── languages/      # Runtime management via Mise
 │   │   ├── databases/      # Database systems
 │   │   └── worktree/       # Git worktree management
-│   ├── apps/               # Individual app implementations (19 apps)
+│   ├── apps/               # Individual app implementations (21 apps)
 │   ├── commands/           # Platform-specific installers (Darwin, Debian)
 │   ├── config/             # State management
 │   └── tui/                # Interactive UI components
@@ -84,15 +84,41 @@ dg install --only neovim --only docker    # neovim (terminal) + docker (desktop)
 - `InstallDevTools` and `InstallCoreLibs` are skipped (user asked for a specific app, not a full setup)
 - Fonts installation is also skipped in the desktop coordinator
 
-**Individually targetable apps** (registry-managed, 19 apps):
+**Individually targetable apps** (registry-managed, 21 apps):
 
-| Coordinator | Apps                                                                         |
-| ----------- | ---------------------------------------------------------------------------- |
-| terminal    | claude, fastfetch, git, lazydocker, lazygit, mise, neovim, opencode, tmux    |
-| desktop     | aerospace, alacritty, brave, docker, flameshot, gimp, i3, raycast, ulauncher |
-| ai-tools    | rtk                                                                          |
+| Coordinator | Apps                                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------- |
+| terminal    | claude, fastfetch, git, lazydocker, lazygit, mise, neovim, opencode, tmux                     |
+| desktop     | aerospace, alacritty, brave, docker, flameshot, ghostty, gimp, i3, raycast, shottr, ulauncher |
+| ai-tools    | rtk                                                                                           |
 
-**Note on alacritty:** `alacritty` has `KindTerminal` in the registry but is installed by the desktop coordinator. Use `--only alacritty` (not `--only terminal`) to target it specifically.
+**Note on alacritty and ghostty:** both have `KindTerminal` in the registry
+but are installed by the desktop coordinator. Use `--only alacritty` or
+`--only ghostty` (not `--only terminal`) to target one specifically.
+
+**Terminal and screenshot tool selection (ADR-0037):** `dg install` no longer
+installs a fixed terminal emulator and screenshot tool. Instead, for each of
+the two groups — {`alacritty`, `ghostty`} and {`flameshot`, `shottr`} — it
+filters the group down to whichever candidates the platform's own package
+manager can actually install, then:
+
+- **0 available:** warns and skips the group; nothing is installed for it,
+  and this is never reported as an install failure.
+- **1 available:** installs it silently — no prompt. This is every platform
+  today: macOS resolves to `ghostty` + `shottr` (Homebrew disabled the
+  `alacritty` and `flameshot` casks on 2026-09-01 — permanent, not an outage),
+  Debian 12 resolves to `alacritty` + `flameshot` (no Linux build of either
+  `ghostty` or `shottr` exists in its apt repos yet).
+- **2 available:** prompts once per group (e.g. Ubuntu 26.04, where apt
+  carries both terminals) and installs the chosen one.
+
+`--only <name>` or `--skip <name>` on a specific app in either group narrows
+the group to that one name **before** availability is checked, bypassing the
+prompt even when the named app turns out unavailable on this platform — it is
+then skipped with the same "not available" warning as the 0-available case
+above, never surfaced as a failure. See
+`internal/tooling/desktop/candidates.go` (the filter + chooser) and
+`internal/tooling/desktop/desktop.go`'s `chooseTerminal`/`chooseScreenshot`.
 
 **Not individually targetable** (no registry entry):
 
@@ -132,17 +158,18 @@ dg install --only neovim --only docker    # neovim (terminal) + docker (desktop)
 
 **Desktop Applications** (category-level selection)
 
-_macOS_:
+_macOS_ (resolves to `ghostty` + `shottr` today — see the terminal/screenshot
+selection note above):
 
 - Docker Desktop
-- Alacritty terminal
+- Ghostty terminal
 - Brave browser
 - Aerospace window manager
 - Raycast launcher
 - GIMP
-- Flameshot
+- Shottr
 
-_Linux (Debian/Ubuntu)_:
+_Linux (Debian/Ubuntu)_ (resolves to `alacritty` + `flameshot` today):
 
 - Docker Desktop
 - Alacritty terminal
@@ -181,6 +208,7 @@ _Linux (Debian/Ubuntu)_:
 - `neovim/init.lua` — Neovim configuration
 - `tmux/.tmux.conf` — Tmux configuration
 - `alacritty/alacritty.toml` — Terminal emulator config
+- `ghostty/config` — Terminal emulator config (Ghostty's alternative to Alacritty)
 - `git/.gitconfig` — Git configuration (extends user's existing config)
 - Platform-specific: `i3/config` (Linux), `aerospace/aerospace.toml` (macOS)
 
@@ -215,7 +243,7 @@ dg configure <app> [--force] [--only=<parts>]
 
 **Behavior**:
 
-- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `raycast`, `rtk`, `tmux`, `ulauncher`.
+- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `raycast`, `rtk`, `shottr`, `tmux`, `ulauncher`.
 - Apps that have no configuration to deploy (e.g., `brave`) return `ErrConfigureNotSupported` — the command prints an info message and exits zero.
 - Unknown app names print a sorted list of supported apps and exit non-zero.
 - Unknown `--only` values list the app's valid parts and exit non-zero; `--only` without `--force` is an error; apps without parts reject `--only`.

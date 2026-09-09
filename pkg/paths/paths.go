@@ -210,11 +210,13 @@ var Paths = struct {
 			Devgeta   string
 			Fastfetch string
 			Fonts     string
+			Ghostty   string
 			Git       string
 			I3        string
 			Neovim    string
 			OpenCode  string
 			Shared    string
+			Terminal  string
 			Templates string
 			Themes    string
 			Tmux      string
@@ -237,6 +239,7 @@ var Paths = struct {
 		Devgeta   string
 		Fastfetch string
 		Fonts     string
+		Ghostty   string
 		Git       string
 		I3        string
 		Nvim      string
@@ -268,11 +271,13 @@ var Paths = struct {
 			Devgeta   string
 			Fastfetch string
 			Fonts     string
+			Ghostty   string
 			Git       string
 			I3        string
 			Neovim    string
 			OpenCode  string
 			Shared    string
+			Terminal  string
 			Templates string
 			Themes    string
 			Tmux      string
@@ -292,11 +297,13 @@ var Paths = struct {
 			Devgeta   string
 			Fastfetch string
 			Fonts     string
+			Ghostty   string
 			Git       string
 			I3        string
 			Neovim    string
 			OpenCode  string
 			Shared    string
+			Terminal  string
 			Templates string
 			Themes    string
 			Tmux      string
@@ -307,11 +314,13 @@ var Paths = struct {
 			Devgeta:   GetAppDir(constants.App.Dir.Configs, constants.DevgetaApp),
 			Fastfetch: GetAppDir(constants.App.Dir.Configs, constants.Fastfetch),
 			Fonts:     GetAppDir(constants.App.Dir.Configs, constants.Fonts),
+			Ghostty:   GetAppDir(constants.App.Dir.Configs, constants.Ghostty),
 			Git:       GetAppDir(constants.App.Dir.Configs, constants.Git),
 			I3:        GetAppDir(constants.App.Dir.Configs, constants.I3),
 			Neovim:    GetAppDir(constants.App.Dir.Configs, constants.Neovim),
 			OpenCode:  GetAppDir(constants.App.Dir.Configs, constants.OpenCode),
 			Shared:    GetAppDir(constants.App.Dir.Configs, constants.Shared),
+			Terminal:  GetAppDir(constants.App.Dir.Configs, constants.Terminal),
 			Templates: GetAppDir(constants.App.Dir.Configs, constants.Templates),
 			Themes:    GetAppDir(constants.App.Dir.Configs, constants.Themes),
 			Tmux:      GetAppDir(constants.App.Dir.Configs, constants.Tmux),
@@ -340,6 +349,7 @@ var Paths = struct {
 		Devgeta   string
 		Fastfetch string
 		Fonts     string
+		Ghostty   string
 		Git       string
 		I3        string
 		Nvim      string
@@ -354,6 +364,7 @@ var Paths = struct {
 		Devgeta:   GetConfigDir(constants.DevgetaApp),
 		Fastfetch: GetConfigDir(constants.Fastfetch),
 		Fonts:     GetConfigDir(constants.Fonts),
+		Ghostty:   GetConfigDir(constants.Ghostty),
 		Git:       GetConfigDir(constants.Git),
 		I3:        GetConfigDir(constants.I3),
 		Nvim:      GetConfigDir(constants.Nvim),

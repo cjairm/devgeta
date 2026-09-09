@@ -6,14 +6,15 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
 )
 
 func init() { testutil.InitLogger() }
 
 var expectedApps = []string{
 	"aerospace", "alacritty", "brave", "claude", "devgeta", "docker",
-	"fastfetch", "flameshot", "gimp", "git", "i3", "lazydocker",
-	"lazygit", "mise", "neovim", "opencode", "raycast", "rtk", "tmux", "ulauncher",
+	"fastfetch", "flameshot", "ghostty", "gimp", "git", "i3", "lazydocker",
+	"lazygit", "mise", "neovim", "opencode", "raycast", "rtk", "shottr", "tmux", "ulauncher",
 }
 
 func TestGetApp_KnownApp(t *testing.T) {
@@ -59,6 +60,7 @@ func TestGetAppsByKind_Terminal(t *testing.T) {
 		"alacritty",
 		"claude",
 		"fastfetch",
+		"ghostty",
 		"git",
 		"lazydocker",
 		"lazygit",
@@ -100,6 +102,7 @@ func TestGetAppsByKind_Desktop(t *testing.T) {
 		"gimp",
 		"i3",
 		"raycast",
+		"shottr",
 		"ulauncher",
 	}
 	if len(names) != len(expected) {
@@ -211,5 +214,21 @@ func TestNames_ContainsAllApps(t *testing.T) {
 		if !nameSet[expected] {
 			t.Errorf("Names() missing %q", expected)
 		}
+	}
+}
+
+// TestMeta_GhosttyTracksBothItemTypes documents why ghostty carries
+// AltItemType: MaybeInstall* stores it as a "desktop_app" on macOS (a cask)
+// but as a "package" on Linux (an apt package) — see ghostty.go's
+// Install/SoftInstall. cmd/uninstall.go's tracked-by-devgeta check must
+// recognize either, or a Linux-installed ghostty is reported as "not
+// installed by devgeta" and dg uninstall ghostty silently does nothing.
+func TestMeta_GhosttyTracksBothItemTypes(t *testing.T) {
+	meta := Meta[constants.Ghostty]
+	if meta.ItemType != "desktop_app" {
+		t.Errorf("expected ghostty ItemType %q, got %q", "desktop_app", meta.ItemType)
+	}
+	if meta.AltItemType != "package" {
+		t.Errorf("expected ghostty AltItemType %q, got %q", "package", meta.AltItemType)
 	}
 }

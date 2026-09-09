@@ -14,6 +14,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/docker"
 	"github.com/cjairm/devgeta/internal/apps/fastfetch"
 	"github.com/cjairm/devgeta/internal/apps/flameshot"
+	"github.com/cjairm/devgeta/internal/apps/ghostty"
 	"github.com/cjairm/devgeta/internal/apps/gimp"
 	"github.com/cjairm/devgeta/internal/apps/git"
 	"github.com/cjairm/devgeta/internal/apps/i3"
@@ -24,6 +25,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/apps/raycast"
 	"github.com/cjairm/devgeta/internal/apps/rtk"
+	"github.com/cjairm/devgeta/internal/apps/shottr"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/apps/ulauncher"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -32,20 +34,32 @@ import (
 // AppMeta holds metadata for uninstall orchestration.
 // ItemType must match what MaybeInstall* stored in global_config.yaml.
 type AppMeta struct {
-	Coordinator     string // "terminal" | "desktop" | "ai-tools" | ""
-	ItemType        string // "package" | "desktop_app" — must match actual tracking
+	Coordinator string // "terminal" | "desktop" | "ai-tools" | ""
+	ItemType    string // "package" | "desktop_app" — must match actual tracking
+	// AltItemType is set only for an app whose ItemType varies by platform
+	// (ghostty: a macOS cask tracks as "desktop_app", a Linux apt package as
+	// "package" — see ghostty.go). cmd/uninstall.go's tracked-by-devgeta
+	// check accepts either, so an app installed under the other platform's
+	// item type is still recognized. Empty for every app with one fixed
+	// ItemType.
+	AltItemType     string
 	HasShellFeature bool
 }
 
 // Meta maps every registered app name to its uninstall metadata.
 var Meta = map[string]AppMeta{
-	constants.Aerospace:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.Alacritty:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.Brave:      {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.Claude:     {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
-	constants.Docker:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.Fastfetch:  {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
-	constants.Flameshot:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Aerospace: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Alacritty: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Brave:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Claude:    {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
+	constants.Docker:    {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Fastfetch: {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
+	constants.Flameshot: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Ghostty: {
+		Coordinator: "desktop",
+		ItemType:    "desktop_app",
+		AltItemType: "package",
+	},
 	constants.Gimp:       {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Git:        {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
 	constants.I3:         {Coordinator: "desktop", ItemType: "package", HasShellFeature: false},
@@ -56,6 +70,7 @@ var Meta = map[string]AppMeta{
 	constants.OpenCode:   {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Raycast:    {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Rtk:        {Coordinator: "ai-tools", ItemType: "package", HasShellFeature: false},
+	constants.Shottr:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Tmux:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Ulauncher:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.DevgetaApp: {Coordinator: "", ItemType: "", HasShellFeature: false},
@@ -111,6 +126,7 @@ var factories = map[string]func() apps.App{
 	constants.Docker:     func() apps.App { return docker.New() },
 	constants.Fastfetch:  func() apps.App { return fastfetch.New() },
 	constants.Flameshot:  func() apps.App { return flameshot.New() },
+	constants.Ghostty:    func() apps.App { return ghostty.New() },
 	constants.Gimp:       func() apps.App { return gimp.New() },
 	constants.Git:        func() apps.App { return git.New() },
 	constants.I3:         func() apps.App { return i3.New() },
@@ -121,6 +137,7 @@ var factories = map[string]func() apps.App{
 	constants.OpenCode:   func() apps.App { return opencode.New() },
 	constants.Raycast:    func() apps.App { return raycast.New() },
 	constants.Rtk:        func() apps.App { return rtk.New() },
+	constants.Shottr:     func() apps.App { return shottr.New() },
 	constants.Tmux:       func() apps.App { return tmux.New() },
 	constants.Ulauncher:  func() apps.App { return ulauncher.New() },
 }

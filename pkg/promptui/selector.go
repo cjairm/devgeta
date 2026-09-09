@@ -53,7 +53,8 @@ func MultiSelect(label string, options []string) ([]string, error) {
 		case "All":
 			selectedOptions = append(
 				selectedOptions,
-				availableOptions[3:]...)
+				availableOptions[3:]...,
+			)
 			return selectedOptions, nil
 		case "None":
 			return []string{}, nil
@@ -68,6 +69,22 @@ func MultiSelect(label string, options []string) ([]string, error) {
 			availableOptions = removeItem(availableOptions, result)
 		}
 	}
+}
+
+// Select prompts the user to pick exactly one of options, returning their
+// choice. Unlike MultiSelect it carries none of the "All"/"None"/"Done"
+// bookkeeping — callers that need to skip the prompt entirely (e.g. when only
+// one option is actually available) decide that themselves before calling
+// this, the same way DisplayInstructions leaves its own I/O untested here:
+// both are thin wrappers over the real interactive promptui.Select/Prompt,
+// which needs a live TTY and isn't meaningfully unit-testable.
+func Select(label string, options []string) (string, error) {
+	prompt := promptui.Select{
+		Label: label,
+		Items: options,
+	}
+	_, result, err := prompt.Run()
+	return result, err
 }
 
 func DisplayInstructions(promptLabel string, instructions string, isConfirm bool) error {

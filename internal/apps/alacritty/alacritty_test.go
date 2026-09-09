@@ -42,7 +42,11 @@ func TestInstall(t *testing.T) {
 		t.Fatalf("Install error: %v", err)
 	}
 	if mockApp.Cmd.InstalledDesktopApp != constants.Alacritty {
-		t.Fatalf("expected InstallDesktopApp(%s), got %q", constants.Alacritty, mockApp.Cmd.InstalledDesktopApp)
+		t.Fatalf(
+			"expected InstallDesktopApp(%s), got %q",
+			constants.Alacritty,
+			mockApp.Cmd.InstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -77,7 +81,11 @@ func TestSoftInstall(t *testing.T) {
 		t.Fatalf("SoftInstall error: %v", err)
 	}
 	if mockApp.Cmd.MaybeInstalledDesktop != constants.Alacritty {
-		t.Fatalf("expected MaybeInstallDesktopApp(%s), got %q", constants.Alacritty, mockApp.Cmd.MaybeInstalledDesktop)
+		t.Fatalf(
+			"expected MaybeInstallDesktopApp(%s), got %q",
+			constants.Alacritty,
+			mockApp.Cmd.MaybeInstalledDesktop,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -98,7 +106,11 @@ func TestUninstall(t *testing.T) {
 		t.Fatalf("Uninstall error: %v", err)
 	}
 	if tc.MockApp.Cmd.UninstalledDesktopApp != constants.Alacritty {
-		t.Errorf("expected UninstallDesktopApp(%s), got %q", constants.Alacritty, tc.MockApp.Cmd.UninstalledDesktopApp)
+		t.Errorf(
+			"expected UninstallDesktopApp(%s), got %q",
+			constants.Alacritty,
+			tc.MockApp.Cmd.UninstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -125,7 +137,7 @@ func TestForceConfigure(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 
 	tmplDir := filepath.Join(tc.AppDir, "alacritty")
-	if err := os.MkdirAll(tmplDir, 0755); err != nil {
+	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -146,31 +158,40 @@ background = "0x282828"
 {{end}}
 `
 	tmplPath := filepath.Join(tmplDir, "alacritty.toml.tmpl")
-	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0644); err != nil {
+	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	// starter.sh lives under the shared terminal configs dir, not alacritty's
+	// own — see paths.Paths.App.Configs.Terminal.
+	terminalDir := filepath.Join(tc.AppDir, "terminal")
+	if err := os.MkdirAll(terminalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	starterContent := "#!/bin/bash\nzsh"
-	starterPath := filepath.Join(tmplDir, "starter.sh")
-	if err := os.WriteFile(starterPath, []byte(starterContent), 0755); err != nil {
+	starterPath := filepath.Join(terminalDir, "starter.sh")
+	if err := os.WriteFile(starterPath, []byte(starterContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	destDir := filepath.Join(tc.ConfigDir, "alacritty")
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	oldAppConfig := paths.Paths.App.Configs.Alacritty
+	oldAppTerminal := paths.Paths.App.Configs.Terminal
 	oldLocalConfig := paths.Paths.Config.Alacritty
 	oldConfigRoot := paths.Paths.Config.Root
 
 	paths.Paths.App.Configs.Alacritty = tmplDir
+	paths.Paths.App.Configs.Terminal = terminalDir
 	paths.Paths.Config.Alacritty = destDir
 	paths.Paths.Config.Root = tc.ConfigDir
 
 	t.Cleanup(func() {
 		paths.Paths.App.Configs.Alacritty = oldAppConfig
+		paths.Paths.App.Configs.Terminal = oldAppTerminal
 		paths.Paths.Config.Alacritty = oldLocalConfig
 		paths.Paths.Config.Root = oldConfigRoot
 	})
@@ -212,7 +233,7 @@ func TestSoftConfigure(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 
 	tmplDir := filepath.Join(tc.AppDir, "alacritty")
-	if err := os.MkdirAll(tmplDir, 0755); err != nil {
+	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -233,31 +254,38 @@ background = "0x1e1e1e"
 {{end}}
 `
 	tmplPath := filepath.Join(tmplDir, "alacritty.toml.tmpl")
-	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0644); err != nil {
+	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
+	terminalDir := filepath.Join(tc.AppDir, "terminal")
+	if err := os.MkdirAll(terminalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	starterContent := "#!/bin/bash\nzsh"
-	starterPath := filepath.Join(tmplDir, "starter.sh")
-	if err := os.WriteFile(starterPath, []byte(starterContent), 0755); err != nil {
+	starterPath := filepath.Join(terminalDir, "starter.sh")
+	if err := os.WriteFile(starterPath, []byte(starterContent), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	destDir := filepath.Join(tc.ConfigDir, "alacritty")
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	oldAppConfig := paths.Paths.App.Configs.Alacritty
+	oldAppTerminal := paths.Paths.App.Configs.Terminal
 	oldLocalConfig := paths.Paths.Config.Alacritty
 	oldConfigRoot := paths.Paths.Config.Root
 
 	paths.Paths.App.Configs.Alacritty = tmplDir
+	paths.Paths.App.Configs.Terminal = terminalDir
 	paths.Paths.Config.Alacritty = destDir
 	paths.Paths.Config.Root = tc.ConfigDir
 
 	t.Cleanup(func() {
 		paths.Paths.App.Configs.Alacritty = oldAppConfig
+		paths.Paths.App.Configs.Terminal = oldAppTerminal
 		paths.Paths.Config.Alacritty = oldLocalConfig
 		paths.Paths.Config.Root = oldConfigRoot
 	})
@@ -288,7 +316,7 @@ background = "0x1e1e1e"
 	}
 
 	modifiedContent := "[window]\nopacity = 0.5\noption_as_alt = \"none\"\n"
-	if err := os.WriteFile(configPath, []byte(modifiedContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(modifiedContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -301,7 +329,11 @@ background = "0x1e1e1e"
 		t.Fatalf("failed to read config file: %v", err)
 	}
 	if string(finalContent) != modifiedContent {
-		t.Fatalf("SoftConfigure should not overwrite existing config: expected %q, got %q", modifiedContent, string(finalContent))
+		t.Fatalf(
+			"SoftConfigure should not overwrite existing config: expected %q, got %q",
+			modifiedContent,
+			string(finalContent),
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)

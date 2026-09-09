@@ -48,9 +48,11 @@ var appToCoordinator = map[string]string{
 	"brave":      "desktop",
 	"docker":     "desktop",
 	"flameshot":  "desktop",
+	"ghostty":    "desktop",
 	"gimp":       "desktop",
 	"i3":         "desktop",
 	"raycast":    "desktop",
+	"shottr":     "desktop",
 	"ulauncher":  "desktop",
 	"devgeta":    "",
 }

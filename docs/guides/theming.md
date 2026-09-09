@@ -1,9 +1,10 @@
 # Theming & Visual Consistency
 
-Devgeta installs a _coordinated_ terminal environment. Alacritty (the terminal),
-tmux (the multiplexer), Neovim (the editor), and the AI-coder configs (OpenCode,
-Claude) are meant to look like **one cohesive setup**, not four tools that
-happen to be installed together.
+Devgeta installs a _coordinated_ terminal environment. The terminal emulator
+(Alacritty or Ghostty — the user picks one, see ADR-0037), tmux (the
+multiplexer), Neovim (the editor), and the AI-coder configs (OpenCode, Claude)
+are meant to look like **one cohesive setup**, not several tools that happen
+to be installed together.
 
 This guide is the source of truth for how the visual layer is wired, what the
 shared conventions are, and **the rule you must follow when changing any color
@@ -13,8 +14,15 @@ or theme behavior.**
 
 ## The rule
 
-> **When you change a color, font, or theme behavior in one of {alacritty, tmux,
-> neovim, opencode, claude}, check the others and update them to match.**
+> **When you change a color, font, or theme behavior in one of {alacritty,
+> ghostty, tmux, neovim, opencode, claude}, check the others and update them to
+> match.**
+>
+> Alacritty and Ghostty are two configs for the same rule, not one: since the
+> user only ever has one of them installed (the terminal chooser in
+> `internal/tooling/desktop/candidates.go`), it is easy to change one template
+> and forget the other exists. Update both on every visual change regardless
+> of which one you're testing against.
 
 These configs share a palette and a transparency convention. A change to one
 that isn't mirrored in the others creates visible drift — mismatched accent
@@ -28,6 +36,7 @@ of the UI is translucent, etc. Treat the visual layer as a single surface.
 | Config        | File                                       | Theming mechanism                                                                                                                                        |
 | ------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Alacritty** | `configs/alacritty/alacritty.toml.tmpl`    | Templated — `{{if eq .Theme "default"}}`                                                                                                                 |
+| **Ghostty**   | `configs/ghostty/ghostty.conf.tmpl`        | Templated — `{{if eq .Theme "default"}}`                                                                                                                 |
 | **OpenCode**  | `configs/opencode/opencode.json.tmpl`      | Templated — `"theme": "{{ .Theme }}"`                                                                                                                    |
 | **Neovim**    | `configs/neovim/init.lua` → `themes/*.lua` | Hardcoded — loads `themes/gruvbox.lua`                                                                                                                   |
 | **tmux**      | `configs/tmux/tmux.conf.tmpl`              | Hardcoded — static color block (the file also renders one unrelated setting, `worktree.notify_sound`, via `text/template`; theming stays a static block) |
@@ -41,11 +50,13 @@ the shipped file.
 
 - `internal/config/fromFile.go` defines `CurrentTheme string \`yaml:"current_theme"\``
   in the global config.
-- **However, `current_theme` is not read anywhere yet.** Both
-  `internal/apps/alacritty/alacritty.go` and `internal/apps/opencode/opencode.go`
-  hardcode `theme := "default"` before generating their templates. The
-  templating machinery exists, but the theme is effectively **pinned to
-  `"default"`** across the board.
+- **However, `current_theme` is not read anywhere yet.**
+  `internal/apps/alacritty/alacritty.go`, `internal/apps/ghostty/ghostty.go`,
+  and `internal/apps/opencode/opencode.go` all hardcode `theme := "default"`
+  before generating their templates. The templating machinery exists, but the
+  theme is effectively **pinned to `"default"`** across the board — this is
+  deliberate for Ghostty specifically (its built-in `theme` option is not
+  used, so it can't drift from tmux/Neovim; see ADR-0037's cycle notes).
 - So today there is exactly one theme: **Gruvbox dark**. Multi-theme switching
   is plumbed but not finished — see "Known gaps" below.
 
@@ -57,23 +68,25 @@ Everything defaults to **Gruvbox dark** on a `#282828` background. Two important
 caveats:
 
 1. **There are two Gruvbox variants in play.** tmux and Neovim use _classic_
-   Gruvbox; Alacritty's `default` colors are _Gruvbox Material_. They share the
-   background but their accent colors differ (see the table). This is a known
-   inconsistency, not an intentional design.
+   Gruvbox; Alacritty's and Ghostty's `default` colors are _Gruvbox Material_
+   (Ghostty's `palette = N=#RRGGBB` entries mirror Alacritty's
+   `colors.normal`/`colors.bright` values exactly). They share the background
+   but their accent colors differ from tmux/nvim (see the table). This is a
+   known inconsistency, not an intentional design.
 2. The background `#282828` is the one value that **is** consistent everywhere —
    keep it that way.
 
-| Role          | Classic Gruvbox (tmux, nvim) | Gruvbox Material (alacritty) |
-| ------------- | ---------------------------- | ---------------------------- |
-| Background    | `#282828`                    | `#282828`                    |
-| Foreground    | `#ebdbb2`                    | `#d4be98`                    |
-| Red           | `#fb4934`                    | `#ea6962`                    |
-| Green         | `#b8bb26`                    | `#a9b665`                    |
-| Yellow        | `#fabd2f`                    | `#d8a657`                    |
-| Blue          | `#83a598`                    | `#7daea3`                    |
-| Magenta       | `#d3869b`                    | `#d3869b`                    |
-| Cyan          | `#8ec07c` / `#89b482`        | `#89b482`                    |
-| Orange/accent | `#fe8019`                    | `#e78a4e`                    |
+| Role          | Classic Gruvbox (tmux, nvim) | Gruvbox Material (alacritty, ghostty) |
+| ------------- | ---------------------------- | ------------------------------------- |
+| Background    | `#282828`                    | `#282828`                             |
+| Foreground    | `#ebdbb2`                    | `#d4be98`                             |
+| Red           | `#fb4934`                    | `#ea6962`                             |
+| Green         | `#b8bb26`                    | `#a9b665`                             |
+| Yellow        | `#fabd2f`                    | `#d8a657`                             |
+| Blue          | `#83a598`                    | `#7daea3`                             |
+| Magenta       | `#d3869b`                    | `#d3869b`                             |
+| Cyan          | `#8ec07c` / `#89b482`        | `#89b482`                             |
+| Orange/accent | `#fe8019`                    | `#e78a4e`                             |
 
 When adding new colored UI (a tmux status segment, a border, an nvim highlight),
 pull from the matching column rather than inventing a new hue.
@@ -83,8 +96,11 @@ pull from the matching column rather than inventing a new hue.
 ## Transparency is part of the theme
 
 Alacritty ships with `opacity = 0.8` and `blur = true`
-(`configs/alacritty/alacritty.toml.tmpl`). To preserve that translucency, the
-configs layered on top must **not paint solid backgrounds**:
+(`configs/alacritty/alacritty.toml.tmpl`). Ghostty ships the same values under
+its own key names, `background-opacity = 0.8` and `background-blur = true`
+(`configs/ghostty/ghostty.conf.tmpl`) — see the parity rule at the top of this
+guide. To preserve that translucency, the configs layered on top must **not
+paint solid backgrounds**:
 
 - **Neovim** forces a transparent background regardless of colorscheme via
   `configs/neovim/lua/devgeta/transparent.lua` (re-applied on every
@@ -101,7 +117,7 @@ configs layered on top must **not paint solid backgrounds**:
   set-window-option -g pane-border-indicators arrows    # arrows at active pane
   ```
 
-**Rule:** any background styling that defeats Alacritty's opacity is a
+**Rule:** any background styling that defeats the terminal's opacity is a
 regression. If you need to emphasize a region, do it with foreground color,
 borders, or bold — never an opaque fill.
 
@@ -109,10 +125,12 @@ borders, or bold — never an opaque fill.
 
 ## Fonts
 
-The default font is **MesloLGLDZ Nerd Font** (`alacritty.toml.tmpl`, gated on
-`{{if eq .Font "default"}}`). Nerd Font glyphs are assumed by the prompt
+The default font is **MesloLGLDZ Nerd Font** — `alacritty.toml.tmpl`'s
+`font.normal`/`bold`/`italic` and `ghostty.conf.tmpl`'s
+`font-family`/`font-family-bold`/`font-family-italic` all name it, gated on
+`{{if eq .Font "default"}}`. Nerd Font glyphs are assumed by the prompt
 (powerlevel10k), tmux status, and editor UI. If you change the font, keep it a
-Nerd Font or the icons break across all three.
+Nerd Font or the icons break across the board.
 
 ---
 
@@ -123,10 +141,11 @@ These are documented honestly so contributors don't mistake them for intent:
 1. **`current_theme` is dead config.** It exists in the global config but no app
    reads it. Wiring it through to the `.Theme` template value (and to the
    hardcoded tmux/nvim configs) would make theme switching real.
-2. **tmux and nvim are hardcoded**, while alacritty and opencode are templated.
-   A single theme switch can't currently affect all four.
+2. **tmux and nvim are hardcoded**, while alacritty, ghostty and opencode are
+   templated. A single theme switch can't currently affect all of them.
 3. **Palette mismatch.** Classic Gruvbox (tmux/nvim) vs. Gruvbox Material
-   (alacritty). Picking one variant everywhere would make accents line up.
+   (alacritty, ghostty). Picking one variant everywhere would make accents
+   line up.
 4. **An unused `tokyonight.lua`** sits in `configs/neovim/lua/devgeta/themes/`.
    It's the seed of a second theme but nothing selects it.
 

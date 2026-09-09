@@ -9,10 +9,12 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/docker"
 	"github.com/cjairm/devgeta/internal/apps/flameshot"
 	"github.com/cjairm/devgeta/internal/apps/fonts"
+	"github.com/cjairm/devgeta/internal/apps/ghostty"
 	"github.com/cjairm/devgeta/internal/apps/gimp"
 	"github.com/cjairm/devgeta/internal/apps/handy"
 	"github.com/cjairm/devgeta/internal/apps/i3"
 	"github.com/cjairm/devgeta/internal/apps/raycast"
+	"github.com/cjairm/devgeta/internal/apps/shottr"
 	"github.com/cjairm/devgeta/internal/apps/ulauncher"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -32,6 +34,34 @@ type namedInstaller struct {
 	app  softInstaller
 }
 
+// terminalInstaller is the subset of apps.App the terminal chooser needs:
+// install, then configure — exactly what InstallAlacritty did for the single
+// hardcoded terminal before this group existed.
+type terminalInstaller interface {
+	SoftInstall() error
+	SoftConfigure() error
+}
+
+// terminalCandidateEntry pairs a name with its terminalInstaller and an
+// availability predicate — the terminal group's namedInstaller, extended
+// with what chooseOne needs to decide whether to prompt at all.
+type terminalCandidateEntry struct {
+	name      string
+	app       terminalInstaller
+	available func() bool
+}
+
+// screenshotCandidateEntry is the screenshot group's namedInstaller,
+// extended the same way terminalCandidateEntry extends the terminal group's:
+// with the availability predicate chooseOne needs. Screenshot tools only
+// need SoftInstall (the cross-platform apps loop never calls SoftConfigure
+// on them), so it reuses softInstaller rather than terminalInstaller.
+type screenshotCandidateEntry struct {
+	name      string
+	app       softInstaller
+	available func() bool
+}
+
 type Desktop struct {
 	Cmd  cmd.Command
 	Base cmd.BaseCommand
@@ -39,6 +69,12 @@ type Desktop struct {
 	crossPlatformAppsOverride []namedInstaller
 	// launcherOverride replaces the platform-specific launcher (raycast/ulauncher) when non-nil (tests).
 	launcherOverride *namedInstaller
+	// terminalCandidatesOverride replaces the default terminal candidate group when non-nil (tests).
+	terminalCandidatesOverride []terminalCandidateEntry
+	// screenshotCandidatesOverride replaces the default screenshot candidate group when non-nil (tests).
+	screenshotCandidatesOverride []screenshotCandidateEntry
+	// selectOverride replaces promptui.Select when non-nil (tests) — see chooseTerminal/chooseScreenshot.
+	selectOverride func(label string, options []string) (string, error)
 }
 
 func New() *Desktop {
@@ -55,9 +91,141 @@ func (d *Desktop) getCrossPlatformApps() []namedInstaller {
 		{constants.Docker, docker.New()},
 		{constants.Gimp, gimp.New()},
 		{constants.Brave, brave.New()},
-		{constants.Flameshot, flameshot.New()},
 		{constants.Handy, handy.New()},
 	}
+}
+
+// getScreenshotCandidates returns the screenshot group's candidate list:
+// flameshot and shottr, each paired with a predicate answering whether it
+// can actually be installed on this platform (see candidates.go).
+func (d *Desktop) getScreenshotCandidates() []screenshotCandidateEntry {
+	if d.screenshotCandidatesOverride != nil {
+		return d.screenshotCandidatesOverride
+	}
+	base := &d.Base
+	isMac := d.Base.IsMac()
+	return []screenshotCandidateEntry{
+		{
+			name: constants.Flameshot,
+			app:  flameshot.New(),
+			available: func() bool {
+				return platformAvailable(base, isMac, constants.Flameshot)
+			},
+		},
+		{
+			name: constants.Shottr,
+			app:  shottr.New(),
+			available: func() bool {
+				return platformAvailable(base, isMac, constants.Shottr)
+			},
+		},
+	}
+}
+
+// chooseScreenshot mirrors chooseTerminal: it narrows the screenshot group by
+// appFilter/skipFilter first, so naming one with --only bypasses the prompt
+// and picks that one even if it turns out unavailable, then resolves the
+// remaining candidates via chooseOne.
+func (d *Desktop) chooseScreenshot(appFilter, skipFilter map[string]bool) (softInstaller, string) {
+	all := d.getScreenshotCandidates()
+	filtered := make([]screenshotCandidateEntry, 0, len(all))
+	for _, c := range all {
+		if shouldInstallApp(c.name, appFilter, skipFilter) {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, ""
+	}
+
+	candidates := make([]candidate, len(filtered))
+	for i, c := range filtered {
+		candidates[i] = candidate{name: c.name, available: c.available}
+	}
+
+	selectFn := d.selectOverride
+	if selectFn == nil {
+		selectFn = promptui.Select
+	}
+
+	chosenName, ok := chooseOne("Choose a screenshot tool", candidates, selectFn)
+	if !ok {
+		return nil, ""
+	}
+	for _, c := range filtered {
+		if c.name == chosenName {
+			return c.app, c.name
+		}
+	}
+	return nil, ""
+}
+
+// getTerminalCandidates returns the terminal group's candidate list:
+// alacritty and ghostty, each paired with a predicate answering whether it
+// can actually be installed on this platform (see candidates.go).
+func (d *Desktop) getTerminalCandidates() []terminalCandidateEntry {
+	if d.terminalCandidatesOverride != nil {
+		return d.terminalCandidatesOverride
+	}
+	base := &d.Base
+	isMac := d.Base.IsMac()
+	return []terminalCandidateEntry{
+		{
+			name: constants.Alacritty,
+			app:  alacritty.New(),
+			available: func() bool {
+				return platformAvailable(base, isMac, constants.Alacritty)
+			},
+		},
+		{
+			name: constants.Ghostty,
+			app:  ghostty.New(),
+			available: func() bool {
+				return platformAvailable(base, isMac, constants.Ghostty)
+			},
+		},
+	}
+}
+
+// chooseTerminal narrows the terminal group by appFilter/skipFilter first —
+// so naming one with --only bypasses the prompt and picks that one even if
+// it turns out unavailable, rather than falling through to the other — then
+// resolves the remaining candidates via chooseOne. Returns (nil, "") when
+// nothing in the (possibly filtered) group is available.
+func (d *Desktop) chooseTerminal(
+	appFilter, skipFilter map[string]bool,
+) (terminalInstaller, string) {
+	all := d.getTerminalCandidates()
+	filtered := make([]terminalCandidateEntry, 0, len(all))
+	for _, c := range all {
+		if shouldInstallApp(c.name, appFilter, skipFilter) {
+			filtered = append(filtered, c)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, ""
+	}
+
+	candidates := make([]candidate, len(filtered))
+	for i, c := range filtered {
+		candidates[i] = candidate{name: c.name, available: c.available}
+	}
+
+	selectFn := d.selectOverride
+	if selectFn == nil {
+		selectFn = promptui.Select
+	}
+
+	chosenName, ok := chooseOne("Choose a terminal emulator", candidates, selectFn)
+	if !ok {
+		return nil, ""
+	}
+	for _, c := range filtered {
+		if c.name == chosenName {
+			return c.app, c.name
+		}
+	}
+	return nil, ""
 }
 
 // shouldInstallApp returns true when an app should run given the active filters.
@@ -76,9 +244,9 @@ func shouldInstallApp(name string, appFilter, skipFilter map[string]bool) bool {
 // appFilter: when non-empty, only those apps are installed (fonts skipped).
 // skipFilter: those apps are always skipped regardless of appFilter.
 func (d *Desktop) InstallAndConfigure(appFilter, skipFilter map[string]bool) error {
-	if shouldInstallApp(constants.Alacritty, appFilter, skipFilter) {
-		err := d.InstallAlacritty()
-		displayMessage(err, constants.Alacritty)
+	if app, name := d.chooseTerminal(appFilter, skipFilter); app != nil {
+		err := installTerminal(app)
+		displayMessage(err, name)
 	}
 
 	// Platform-specific window managers
@@ -125,6 +293,13 @@ func (d *Desktop) InstallDesktopAppsWithoutConfiguration(appFilter, skipFilter m
 		}
 	}
 
+	// Screenshot tool: chosen from {flameshot, shottr} by platform availability.
+	if app, name := d.chooseScreenshot(appFilter, skipFilter); app != nil {
+		if err := app.SoftInstall(); err != nil {
+			displayMessage(err, name)
+		}
+	}
+
 	// Platform-specific launchers
 	if d.launcherOverride != nil {
 		entry := d.launcherOverride
@@ -150,17 +325,14 @@ func (d *Desktop) InstallDesktopAppsWithoutConfiguration(appFilter, skipFilter m
 	}
 }
 
-func (d *Desktop) InstallAlacritty() error {
-	a := alacritty.New()
-	err := a.SoftInstall()
-	if err != nil {
+// installTerminal runs the two-step lifecycle every terminal candidate
+// needs: install, then configure — what InstallAlacritty did before the
+// terminal group existed.
+func installTerminal(app terminalInstaller) error {
+	if err := app.SoftInstall(); err != nil {
 		return err
 	}
-	err = a.SoftConfigure()
-	if err != nil {
-		return err
-	}
-	return nil
+	return app.SoftConfigure()
 }
 
 func (d *Desktop) InstallAerospace() error {

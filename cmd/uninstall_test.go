@@ -83,7 +83,7 @@ shell:
   eza: false
   bat: false
 `, pkgLines)
-	if err := os.WriteFile(configPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
 }
@@ -270,6 +270,30 @@ func TestUninstall_ShellFeatureMessage(t *testing.T) {
 	}
 }
 
+// TestUninstall_GhosttyTrackedAsPackage covers registry.Meta's AltItemType:
+// ghostty's MaybeInstall* tracks it under "package" on Linux rather than
+// "desktop_app" (its default ItemType, matching the macOS cask). Without
+// consulting AltItemType, this would report "not installed by devgeta" and
+// silently skip Uninstall.
+func TestUninstall_GhosttyTrackedAsPackage(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	configWithPackages(t, tc.ConfigPath, []string{constants.Ghostty})
+
+	mock := &mockUninstallApp{name: constants.Ghostty}
+	restore := setupUninstallSeam(t, mock)
+	defer restore()
+
+	err := runUninstall(uninstallCmd, []string{constants.Ghostty})
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if !mock.uninstallCalled {
+		t.Error("expected Uninstall to be called for ghostty tracked as a package")
+	}
+}
+
 func TestUninstall_DesktopApp(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
@@ -297,7 +321,7 @@ already_installed:
 shell:
   mise: false
 `, constants.Gimp)
-	if err := os.WriteFile(tc.ConfigPath, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(tc.ConfigPath, []byte(content), 0o644); err != nil {
 		t.Fatalf("failed to write config: %v", err)
 	}
 
@@ -319,7 +343,9 @@ func TestUninstall_TemplatesDir(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
 
-	if _, err := os.Stat(filepath.Join(tc.TemplatesDir, constants.App.Template.ShellConfig)); err != nil {
+	if _, err := os.Stat(
+		filepath.Join(tc.TemplatesDir, constants.App.Template.ShellConfig),
+	); err != nil {
 		t.Fatalf("expected shell template to exist: %v", err)
 	}
 }

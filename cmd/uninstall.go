@@ -80,7 +80,11 @@ func runUninstall(_ *cobra.Command, args []string) error {
 	for _, name := range targets {
 		meta := registry.Meta[name]
 
-		if !gc.IsInstalledByDevgeta(name, meta.ItemType) {
+		installedByDevgeta := gc.IsInstalledByDevgeta(name, meta.ItemType)
+		if !installedByDevgeta && meta.AltItemType != "" {
+			installedByDevgeta = gc.IsInstalledByDevgeta(name, meta.AltItemType)
+		}
+		if !installedByDevgeta {
 			logger.L().Infow("skipping: not installed by devgeta", "app", name)
 			utils.PrintInfo(fmt.Sprintf("skipping %s: not installed by devgeta", name))
 			continue

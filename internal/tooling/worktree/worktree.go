@@ -37,7 +37,7 @@ const (
 
 	// fallbackSession is the always-available session the attached client is
 	// moved to before its current session is killed. It matches the session
-	// name created by configs/alacritty/starter.sh on terminal startup and is
+	// name created by configs/terminal/starter.sh on terminal startup and is
 	// created on demand when missing. It is never killed itself.
 	fallbackSession = "misc"
 

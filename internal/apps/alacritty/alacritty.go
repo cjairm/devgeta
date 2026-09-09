@@ -72,7 +72,7 @@ func (a *Alacritty) ForceConfigure() error {
 		return fmt.Errorf("failed to generate alacritty configuration: %w", err)
 	}
 	if err := files.CopyFile(
-		filepath.Join(paths.Paths.App.Configs.Alacritty, "starter.sh"),
+		filepath.Join(paths.Paths.App.Configs.Terminal, "starter.sh"),
 		filepath.Join(paths.Paths.Config.Alacritty, "starter.sh"),
 	); err != nil {
 		return fmt.Errorf("failed to copy alacritty starter script: %w", err)

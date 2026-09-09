@@ -117,6 +117,7 @@ const (
 	Fzf                = "fzf"
 	Gcc                = "gcc"
 	Gdbm               = "gdbm"
+	Ghostty            = "ghostty"
 	Gimp               = "gimp"
 	Git                = "git"
 	GithubCli          = "gh"
@@ -142,6 +143,7 @@ const (
 	Readline           = "readline"
 	Ripgrep            = "rg"
 	Rtk                = "rtk"
+	Shottr             = "shottr"
 	Syntaxhighlighting = "zsh-syntax-highlighting"
 	Tldr               = "tldr"
 	Tmux               = "tmux"
@@ -163,6 +165,7 @@ const (
 
 	// Other available folders for installation
 	Fonts     = "fonts"
+	Terminal  = "terminal"
 	Themes    = "themes"
 	Templates = "templates"
 
