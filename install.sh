@@ -316,28 +316,81 @@ esac
 # Add to PATH and create alias if not already present
 PATH_EXPORT="export PATH=\"\$HOME/.local/bin:\$PATH\""
 ALIAS_EXPORT="alias dg='devgeta'"
-SOURCE_CONFIG="source $HOME/.local/share/devgeta/devgeta.zsh"
+# devgeta.zsh does not exist yet — `dg install` generates it. Sourcing it
+# unconditionally means every shell opened between this installer and a
+# finished `dg install` starts with a "no such file or directory" error, so
+# guard it. $HOME stays unexpanded (single quotes) so the line survives the
+# config file being copied to another machine or user.
+DEVGETA_SHELL_CONFIG='$HOME/.local/share/devgeta/devgeta.zsh'
+
+# write_devgeta_block prints the block this installer adds to a shell config.
+# One definition, used by both the append and the create path below.
+# An `if` rather than `[ -f … ] && …` on purpose: the one-liner form leaves a
+# non-zero status behind when the file is absent, which prompts that show the
+# last exit code report as an error in the user's first prompt.
+write_devgeta_block() {
+	echo "# Added by devgeta installer"
+	echo "$PATH_EXPORT"
+	echo "$ALIAS_EXPORT"
+	echo "if [ -f \"$DEVGETA_SHELL_CONFIG\" ]; then"
+	echo "	. \"$DEVGETA_SHELL_CONFIG\""
+	echo "fi"
+}
+
+# Repair a config written by an earlier installer, which sourced devgeta.zsh
+# with no existence check. Those shells error on every startup until
+# `dg install` finishes, and re-running this installer would not fix it: the
+# "already configured" branch below leaves the file untouched. Only the two
+# exact lines that installer could have written are replaced, so a line the
+# user wrote or edited themselves is left alone. cat-over-the-file rather than
+# mv keeps the config's original permissions and inode.
+repair_unguarded_source_line() {
+	local config_file old_literal old_expanded tmp_file
+	config_file="$1"
+	old_literal='source $HOME/.local/share/devgeta/devgeta.zsh'
+	old_expanded="source $HOME/.local/share/devgeta/devgeta.zsh"
+
+	if ! grep -qxF "$old_literal" "$config_file" 2>/dev/null &&
+		! grep -qxF "$old_expanded" "$config_file" 2>/dev/null; then
+		return 0
+	fi
+
+	tmp_file="$(mktemp)" || return 0
+	# The replacement is printed line by line rather than passed in as one
+	# multi-line -v value: BSD awk (the awk on every macOS) rejects a literal
+	# newline inside -v with "newline in string" and writes nothing.
+	if awk -v old1="$old_literal" -v old2="$old_expanded" -v path="$DEVGETA_SHELL_CONFIG" \
+		'$0 == old1 || $0 == old2 {
+			print "if [ -f \"" path "\" ]; then"
+			print "\t. \"" path "\""
+			print "fi"
+			next
+		}
+		{ print }' \
+		"$config_file" >"$tmp_file" && cat "$tmp_file" >"$config_file"; then
+		print_info "Guarded the devgeta source line in $config_file"
+	else
+		print_error "Could not update $config_file; leaving it unchanged"
+	fi
+	rm -f "$tmp_file"
+}
 
 if [ -f "$SHELL_CONFIG" ]; then
+	repair_unguarded_source_line "$SHELL_CONFIG"
+
 	# Check if devgeta installer block already exists
 	if grep -qF "# Added by devgeta installer" "$SHELL_CONFIG" 2>/dev/null; then
 		print_info "devgeta already configured in $SHELL_CONFIG"
 	else
 		print_info "Adding devgeta configuration to $SHELL_CONFIG"
 		echo "" >>"$SHELL_CONFIG"
-		echo "# Added by devgeta installer" >>"$SHELL_CONFIG"
-		echo "$PATH_EXPORT" >>"$SHELL_CONFIG"
-		echo "$ALIAS_EXPORT" >>"$SHELL_CONFIG"
-		echo "$SOURCE_CONFIG" >>"$SHELL_CONFIG"
+		write_devgeta_block >>"$SHELL_CONFIG"
 		print_success "Updated $SHELL_CONFIG"
 	fi
 else
 	# Create shell config if it doesn't exist
 	print_info "Creating $SHELL_CONFIG"
-	echo "# Added by devgeta installer" >"$SHELL_CONFIG"
-	echo "$PATH_EXPORT" >>"$SHELL_CONFIG"
-	echo "$ALIAS_EXPORT" >>"$SHELL_CONFIG"
-	echo "$SOURCE_CONFIG" >>"$SHELL_CONFIG"
+	write_devgeta_block >"$SHELL_CONFIG"
 	print_success "Created $SHELL_CONFIG with devgeta configuration"
 fi
 

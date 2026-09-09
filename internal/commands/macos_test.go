@@ -55,12 +55,20 @@ func setFakePATH(t *testing.T, dir string) {
 func writeFakeBrew(t *testing.T, exitCode int) string {
 	t.Helper()
 	dir := t.TempDir()
+	writeFakeBrewAt(t, dir, exitCode)
+	return dir
+}
+
+// writeFakeBrewAt is writeFakeBrew into a caller-chosen directory, for the
+// tests in homebrew_install_test.go that need `brew` to appear somewhere
+// specific — under a stubbed Homebrew prefix rather than on PATH.
+func writeFakeBrewAt(t *testing.T, dir string, exitCode int) {
+	t.Helper()
 	script := filepath.Join(dir, "brew")
 	body := fmt.Sprintf("#!/bin/sh\nexit %d\n", exitCode)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatalf("failed to write fake brew: %v", err)
 	}
-	return dir
 }
 
 func TestMacOSCommand_IsPackageInstalled_CachesListing(t *testing.T) {

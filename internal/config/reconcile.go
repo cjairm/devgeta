@@ -42,7 +42,7 @@ func pluginDetectors() []shellPluginDetector {
 	homeDir, _ := os.UserHomeDir()
 
 	// Homebrew prefixes (Apple Silicon + Intel)
-	brewPrefixes := []string{"/opt/homebrew", "/usr/local"}
+	brewPrefixes := constants.HomebrewPrefixes
 
 	autosuggestionsPaths := []string{
 		"/usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh",

@@ -2,7 +2,9 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -100,7 +102,51 @@ func (m *MacOSCommand) InstallDesktopApp(packageName string) error {
 	return nil
 }
 
+// HomebrewPrefixes is where addHomebrewToPath looks for a `brew` that is
+// installed but not on PATH. Exported and a variable for the same reason
+// CommandFn is: tests point it at a temp directory instead of the real
+// /opt/homebrew, which exists on most macOS dev machines.
+var HomebrewPrefixes = constants.HomebrewPrefixes
+
+// addHomebrewToPath makes an installed Homebrew reachable from this process,
+// reporting whether `brew` resolves afterwards.
+//
+// Homebrew installs into /opt/homebrew (Apple Silicon) or /usr/local (Intel)
+// and leaves putting that directory on PATH to the user's shell profile —
+// advice its installer prints at the end and that only the *next* shell acts
+// on. devgeta never re-reads a profile mid-run, so on a fresh machine every
+// `brew` call after the install would fail with exit 127 exactly as it did
+// before Homebrew existed. Prepending the directory here is what lets
+// `dg install` keep going in the same run that installed the package manager.
+func addHomebrewToPath() bool {
+	if _, err := LookPathFn("brew"); err == nil {
+		return true
+	}
+	for _, prefix := range HomebrewPrefixes {
+		binDir := filepath.Join(prefix, "bin")
+		info, err := os.Stat(filepath.Join(binDir, "brew"))
+		if err != nil || info.IsDir() {
+			continue
+		}
+		newPath := binDir + string(os.PathListSeparator) + os.Getenv("PATH")
+		if err := os.Setenv("PATH", newPath); err != nil {
+			logger.L().Debugw("could not add Homebrew to PATH", "dir", binDir, "error", err)
+			continue
+		}
+		logger.L().Debugw("added Homebrew to this run's PATH", "dir", binDir)
+		return true
+	}
+	return false
+}
+
 func (m *MacOSCommand) IsPackageManagerInstalled() bool {
+	// Do the PATH repair before the probe, not only after an install: a
+	// Homebrew that this process cannot see is indistinguishable from a
+	// missing one here, and answering "missing" sends `dg install` off to
+	// re-run the installer over a working Homebrew.
+	if !addHomebrewToPath() {
+		return false
+	}
 	logger.L().Debug("executing: brew --version")
 	err := exec.Command("brew", "--version").Run()
 	return err == nil
@@ -114,21 +160,54 @@ func (m *MacOSCommand) MaybeInstallPackageManager() error {
 	return m.InstallPackageManager()
 }
 
+// homebrewInstallURL is Homebrew's official installer script.
+const homebrewInstallURL = "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+
+// homebrewInstallScript is the shell devgeta runs to install Homebrew.
+//
+// Homebrew documents the one-liner `/bin/bash -c "$(curl -fsSL <url>)"`, and
+// both halves of that — the command substitution and the quotes keeping its
+// output a single word — are the work of the shell you type it into. devgeta
+// has no such shell: ExecCommand runs /bin/bash directly, so handing
+// `$(curl …)` over as the -c argument made *that* bash expand the
+// substitution itself, split the downloaded script on whitespace, and try to
+// execute its shebang line as a command:
+//
+//	/bin/bash: #!/bin/bash: No such file or directory   (exit 127)
+//
+// The outer shell below is the one the documented recipe assumes. It also
+// turns a failed or empty download into an error: an empty substitution runs
+// an empty script and exits 0, which would have reported Homebrew installed
+// and then failed on the next `brew` call instead.
+const homebrewInstallScript = `set -u
+script="$(curl -fsSL ` + homebrewInstallURL + `)" || exit 1
+if [ -z "$script" ]; then
+  echo "downloaded an empty installer from ` + homebrewInstallURL + `" >&2
+  exit 1
+fi
+exec /bin/bash -c "$script"`
+
 func (m *MacOSCommand) InstallPackageManager() error {
-	logger.L().
-		Debug("executing: /bin/bash -c $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)")
+	logger.L().Debugw("installing Homebrew", "url", homebrewInstallURL)
 	cmd := CommandParams{
 		PreExecMsg:  "Installing Homebrew",
 		PostExecMsg: "Homebrew installed ✔",
 		IsSudo:      false,
 		Command:     "/bin/bash",
-		Args: []string{
-			"-c",
-			"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)",
-		},
+		Args:        []string{"-c", homebrewInstallScript},
+		// Homebrew's installer is interactive: it lists what it will do, waits
+		// for RETURN, and asks for a sudo password. Without streaming, all of
+		// that goes to the debug log and the user watches a silent hang.
+		Stream: true,
 	}
 	if _, _, err := m.ExecCommand(cmd); err != nil {
 		return fmt.Errorf("failed to install Homebrew: %w", err)
+	}
+	if !addHomebrewToPath() {
+		return fmt.Errorf(
+			"homebrew installer finished but no `brew` command was found under %s — open a new terminal and run `dg install` again",
+			strings.Join(HomebrewPrefixes, " or "),
+		)
 	}
 	return nil
 }

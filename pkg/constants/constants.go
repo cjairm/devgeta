@@ -10,6 +10,12 @@ const (
 	Bold   = "\033[1m"
 )
 
+// HomebrewPrefixes are the two prefixes Homebrew installs itself into on
+// macOS: /opt/homebrew on Apple Silicon, /usr/local on Intel. Anything that
+// has to locate Homebrew's own files without asking `brew` — because `brew`
+// may not be on PATH yet, or at all — checks both, in this order.
+var HomebrewPrefixes = []string{"/opt/homebrew", "/usr/local"}
+
 type OsVersion struct {
 	Number int
 	Name   string

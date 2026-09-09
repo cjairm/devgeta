@@ -192,6 +192,17 @@ func TestIsPackagePresent_CommandError(t *testing.T) {
 }
 
 func TestIsFontPresent(t *testing.T) {
+	// The subtests below swap the package-level LookPathFn/CommandFn seams.
+	// Restore them here rather than leaving the last swap in place: these are
+	// process-wide, so a leaked "nothing is on PATH" stub silently answers for
+	// every later test in the package that resolves a binary.
+	originalLookPath := commands.LookPathFn
+	originalCommand := commands.CommandFn
+	t.Cleanup(func() {
+		commands.LookPathFn = originalLookPath
+		commands.CommandFn = originalCommand
+	})
+
 	t.Run("Linux: fc-list detects font", func(t *testing.T) {
 		b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
 		// Only works if `fc-list` and the font actually exist in system
