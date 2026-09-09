@@ -38,11 +38,11 @@ func TestNameAndKind(t *testing.T) {
 	}
 }
 
-var expectedPackageName = fmt.Sprintf(
-	"jesseduffield/%s/%s",
-	constants.LazyDocker,
-	constants.LazyDocker,
-)
+// expectedPackageName is the homebrew-core formula, not the author's tap.
+// Homebrew now refuses to load a formula from an untrusted third-party tap
+// without an explicit `brew trust`, and homebrew-core carries lazydocker — see
+// packageName's comment in lazydocker.go.
+var expectedPackageName = constants.LazyDocker
 
 func TestInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()

@@ -17,6 +17,15 @@ type MockCommand struct {
 	FontURL               string
 	FontName              string
 
+	// Aliases recorded alongside the names above. The mock answers
+	// MaybeInstall* directly instead of going through
+	// BaseCommand.MaybeInstall, so without these an app test cannot see the
+	// second argument at all — which is how a swapped name and alias reached
+	// a release with `brew install --cask AeroSpace` in it and every app test
+	// still green. Empty when the caller passed no alias.
+	MaybeInstalledAlias        string
+	MaybeInstalledDesktopAlias string
+
 	// Error fields to simulate various failure scenarios
 	InstallError        error
 	UninstallError      error
@@ -73,6 +82,7 @@ func (m *MockCommand) UninstallDesktopApp(pkg string) error {
 
 func (m *MockCommand) MaybeInstallPackage(pkg string, alias ...string) error {
 	m.MaybeInstalled = pkg
+	m.MaybeInstalledAlias = firstAlias(alias)
 	m.MaybeInstalledPkgs = append(m.MaybeInstalledPkgs, pkg)
 	if m.MaybeInstallErrors != nil {
 		if err, ok := m.MaybeInstallErrors[pkg]; ok {
@@ -89,7 +99,17 @@ func (m *MockCommand) InstallDesktopApp(packageName string) error {
 
 func (m *MockCommand) MaybeInstallDesktopApp(desktopAppName string, alias ...string) error {
 	m.MaybeInstalledDesktop = desktopAppName
+	m.MaybeInstalledDesktopAlias = firstAlias(alias)
 	return m.DesktopInstallError
+}
+
+// firstAlias mirrors how BaseCommand.MaybeInstall reads the variadic alias:
+// the first non-empty element, or "" when none was passed.
+func firstAlias(alias []string) string {
+	if len(alias) > 0 {
+		return alias[0]
+	}
+	return ""
 }
 
 func (m *MockCommand) MaybeInstallFont(url, fontName string, runCache bool, alias ...string) error {
@@ -152,6 +172,8 @@ func (m *MockCommand) Reset() {
 	m.MaybeInstalled = ""
 	m.InstalledDesktopApp = ""
 	m.MaybeInstalledDesktop = ""
+	m.MaybeInstalledAlias = ""
+	m.MaybeInstalledDesktopAlias = ""
 	m.FontURL = ""
 	m.FontName = ""
 

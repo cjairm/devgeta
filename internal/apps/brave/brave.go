@@ -29,18 +29,18 @@ func New() *Brave {
 }
 
 func (b *Brave) Install() error {
-	return b.Cmd.InstallDesktopApp(fmt.Sprintf("%s-browser", constants.Brave))
+	return b.Cmd.InstallDesktopApp(constants.BraveBrowser)
 }
 
 func (b *Brave) ForceInstall() error {
 	return baseapp.Reinstall(b.Install, b.Uninstall)
 }
 
+// SoftInstall installs the cask under its Homebrew name, "brave-browser",
+// while checking for and tracking it as constants.Brave — the key Uninstall
+// and ForceConfigure use.
 func (b *Brave) SoftInstall() error {
-	return b.Cmd.MaybeInstallDesktopApp(
-		fmt.Sprintf("%s-browser", constants.Brave),
-		constants.Brave,
-	)
+	return b.Cmd.MaybeInstallDesktopApp(constants.BraveBrowser, constants.Brave)
 }
 
 func (b *Brave) ForceConfigure() error {

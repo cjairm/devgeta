@@ -45,7 +45,10 @@ func TestInstall(t *testing.T) {
 	}
 
 	if mockApp.Cmd.InstalledDesktopApp != "brave-browser" {
-		t.Errorf("Expected InstalledDesktopApp to be 'brave-browser', got '%s'", mockApp.Cmd.InstalledDesktopApp)
+		t.Errorf(
+			"Expected InstalledDesktopApp to be 'brave-browser', got '%s'",
+			mockApp.Cmd.InstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -63,7 +66,10 @@ func TestForceInstall(t *testing.T) {
 		t.Fatalf("ForceInstall() should succeed even when uninstall is not supported: %v", err)
 	}
 	if tc.MockApp.Cmd.InstalledDesktopApp != "brave-browser" {
-		t.Errorf("expected Install to be called, got InstalledDesktopApp=%q", tc.MockApp.Cmd.InstalledDesktopApp)
+		t.Errorf(
+			"expected Install to be called, got InstalledDesktopApp=%q",
+			tc.MockApp.Cmd.InstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -83,7 +89,19 @@ func TestSoftInstall(t *testing.T) {
 		}
 
 		if mockApp.Cmd.MaybeInstalledDesktop != "brave-browser" {
-			t.Errorf("Expected MaybeInstalledDesktop to be 'brave-browser', got '%s'", mockApp.Cmd.MaybeInstalledDesktop)
+			t.Errorf(
+				"Expected MaybeInstalledDesktop to be 'brave-browser', got '%s'",
+				mockApp.Cmd.MaybeInstalledDesktop,
+			)
+		}
+		// The alias is the key MaybeInstall checks and records under, and it
+		// has to match the one Uninstall removes.
+		if mockApp.Cmd.MaybeInstalledDesktopAlias != constants.Brave {
+			t.Errorf(
+				"Expected the alias to be %q, got %q",
+				constants.Brave,
+				mockApp.Cmd.MaybeInstalledDesktopAlias,
+			)
 		}
 
 		testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -138,7 +156,11 @@ func TestUninstall(t *testing.T) {
 			t.Fatalf("Uninstall() failed: %v", err)
 		}
 		if tc.MockApp.Cmd.UninstalledDesktopApp != constants.BraveBrowser {
-			t.Errorf("expected UninstalledDesktopApp=%q, got %q", constants.BraveBrowser, tc.MockApp.Cmd.UninstalledDesktopApp)
+			t.Errorf(
+				"expected UninstalledDesktopApp=%q, got %q",
+				constants.BraveBrowser,
+				tc.MockApp.Cmd.UninstalledDesktopApp,
+			)
 		}
 		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	})

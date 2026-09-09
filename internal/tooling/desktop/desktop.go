@@ -206,7 +206,8 @@ func (d *Desktop) DisplayPrivacyInstructions() error {
 
 func displayMessage(err error, desktopAppName string, displayOnlyErrors ...bool) {
 	if err != nil {
-		logger.L().Errorw("Error installing ", "desktop_app", desktopAppName, "error", err)
+		logger.L().
+			Errorw("Error installing desktop app", "desktop_app", desktopAppName, "error", err)
 		utils.PrintWarning(
 			fmt.Sprintf(
 				"Install (%s) errored... To halt the installation, press ctrl+c or use --debug flag to see more details",
@@ -214,7 +215,9 @@ func displayMessage(err error, desktopAppName string, displayOnlyErrors ...bool)
 			),
 		)
 	} else {
-		if displayOnlyErrors != nil && displayOnlyErrors[0] == true {
+		// len, not a nil check: a caller passing an empty slice explicitly
+		// would index out of range on the nil check alone.
+		if len(displayOnlyErrors) > 0 && displayOnlyErrors[0] {
 			return
 		}
 		msg := fmt.Sprintf("Installing %s (if no previously installed)...", desktopAppName)

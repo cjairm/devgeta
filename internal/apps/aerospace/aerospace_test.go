@@ -41,7 +41,10 @@ func TestInstall(t *testing.T) {
 		t.Fatalf("Install error: %v", err)
 	}
 	if mockApp.Cmd.InstalledDesktopApp != "nikitabobko/tap/aerospace" {
-		t.Fatalf("expected InstallDesktopApp(nikitabobko/tap/aerospace), got %q", mockApp.Cmd.InstalledDesktopApp)
+		t.Fatalf(
+			"expected InstallDesktopApp(nikitabobko/tap/aerospace), got %q",
+			mockApp.Cmd.InstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -76,7 +79,21 @@ func TestSoftInstall(t *testing.T) {
 		t.Fatalf("SoftInstall error: %v", err)
 	}
 	if mockApp.Cmd.MaybeInstalledDesktop != "nikitabobko/tap/aerospace" {
-		t.Fatalf("expected MaybeInstallDesktopApp(nikitabobko/tap/aerospace), got %q", mockApp.Cmd.MaybeInstalledDesktop)
+		t.Fatalf(
+			"expected MaybeInstallDesktopApp(nikitabobko/tap/aerospace), got %q",
+			mockApp.Cmd.MaybeInstalledDesktop,
+		)
+	}
+	// The alias is what MaybeInstall checks for and records, so it has to be
+	// the constant Uninstall and ForceConfigure use — not the tap-qualified
+	// name Homebrew needs, and not "AeroSpace", which was passed here while
+	// MaybeInstall installed the alias rather than the name.
+	if mockApp.Cmd.MaybeInstalledDesktopAlias != constants.Aerospace {
+		t.Fatalf(
+			"expected the alias to be %q so the install is tracked under the same key Uninstall removes, got %q",
+			constants.Aerospace,
+			mockApp.Cmd.MaybeInstalledDesktopAlias,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -97,7 +114,10 @@ func TestUninstall(t *testing.T) {
 		t.Fatalf("Uninstall error: %v", err)
 	}
 	if tc.MockApp.Cmd.UninstalledDesktopApp != "nikitabobko/tap/aerospace" {
-		t.Errorf("expected UninstallDesktopApp(nikitabobko/tap/aerospace), got %q", tc.MockApp.Cmd.UninstalledDesktopApp)
+		t.Errorf(
+			"expected UninstallDesktopApp(nikitabobko/tap/aerospace), got %q",
+			tc.MockApp.Cmd.UninstalledDesktopApp,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -126,7 +146,7 @@ func TestForceConfigure(t *testing.T) {
 	src := filepath.Join(tc.AppDir, "aerospace")
 	dst := filepath.Join(tc.ConfigDir, "aerospace")
 
-	if err := os.MkdirAll(src, 0755); err != nil {
+	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -137,7 +157,11 @@ func TestForceConfigure(t *testing.T) {
 	})
 
 	originalContent := "[workspace]\nkey = \"value\""
-	if err := os.WriteFile(filepath.Join(src, "aerospace.toml"), []byte(originalContent), 0644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(src, "aerospace.toml"),
+		[]byte(originalContent),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -171,7 +195,7 @@ func TestSoftConfigure(t *testing.T) {
 	src := filepath.Join(tc.AppDir, "aerospace")
 	dst := filepath.Join(tc.ConfigDir, "aerospace")
 
-	if err := os.MkdirAll(src, 0755); err != nil {
+	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -182,7 +206,11 @@ func TestSoftConfigure(t *testing.T) {
 	})
 
 	originalContent := "[workspace]\nkey = \"value\""
-	if err := os.WriteFile(filepath.Join(src, "aerospace.toml"), []byte(originalContent), 0644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(src, "aerospace.toml"),
+		[]byte(originalContent),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -198,7 +226,7 @@ func TestSoftConfigure(t *testing.T) {
 	}
 
 	modifiedContent := "[workspace]\nkey = \"modified\""
-	if err := os.WriteFile(check, []byte(modifiedContent), 0644); err != nil {
+	if err := os.WriteFile(check, []byte(modifiedContent), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

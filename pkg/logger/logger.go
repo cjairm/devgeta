@@ -27,6 +27,20 @@ func Init(verbose bool) {
 	log = zapLogger.Sugar()
 }
 
+// SetForTest swaps the global logger and returns a function that puts the
+// previous one back, so a test can assert on what was logged and at which
+// level. Pair it with zaptest/observer.
+//
+// Level is not cosmetic here: an operator reads a `dg install` run by its
+// error lines, and a routine outcome logged as an error reads as a broken
+// install. That distinction is worth a test, and a test cannot see it without
+// a seam — see internal/commands' TestExecCommandLogsMissingBinaryAtDebug.
+func SetForTest(l *zap.SugaredLogger) func() {
+	previous := log
+	log = l
+	return func() { log = previous }
+}
+
 // L returns the global logger instance
 func L() *zap.SugaredLogger {
 	if log == nil {

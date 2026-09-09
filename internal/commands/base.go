@@ -393,7 +393,25 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 
 	// Start command
 	if err := execCommand.Start(); err != nil {
-		logger.L().Errorf("failed to start command: %v", err)
+		// "not on PATH" is an answer, not a fault. Every "is X already
+		// installed?" probe in this codebase asks by running X's own version
+		// command (see languages.isLanguageInstalledOnSystem and
+		// databases.isDatabaseInstalledOnSystem), so on a machine without X
+		// the expected outcome lands right here. Logging it at error level
+		// put ten of one fresh-machine `dg install`'s twenty-six reported
+		// failures into the list — bun, deno, elixir, erl, rustc, php,
+		// mongod, mysql, psql, redis-server — none of which was a failure of
+		// anything.
+		//
+		// The error is returned unchanged either way, so a caller that did
+		// need the binary still reports it on its own terms. Any other start
+		// failure — a file that exists but is not executable, a bad working
+		// directory — stays loud, because nothing expects those.
+		if errors.Is(err, exec.ErrNotFound) {
+			logger.L().Debugw("command not found on PATH", "command", command, "error", err)
+		} else {
+			logger.L().Errorf("failed to start command: %v", err)
+		}
 		return "", "", err
 	}
 
@@ -592,6 +610,15 @@ func commandTimeoutContext(timeout time.Duration) (context.Context, context.Canc
 	return context.WithTimeout(root, timeout)
 }
 
+// MaybeInstall installs itemName unless it is already present or already
+// tracked in the global config.
+//
+// itemName is the package-manager identifier — the string handed to brew or
+// apt. alias, when a first non-empty element is given, is the short name
+// devgeta knows the item by: it is what the installed check is run against and
+// what the global config records, so an app whose upstream package name
+// differs from its own constant ends up tracked under the constant. Pass an
+// alias only when those two names genuinely differ.
 func (b *BaseCommand) MaybeInstall(
 	itemName string,
 	alias []string,
@@ -602,43 +629,67 @@ func (b *BaseCommand) MaybeInstall(
 ) error {
 	var isInstalled bool
 	var err error
+
+	// The two names an item can have, and which half of this function uses
+	// each one.
+	//
+	// pkgToInstall is what the package manager is handed. It can be a name
+	// only the package manager understands: a fully qualified cask in a
+	// third-party tap ("nikitabobko/tap/aerospace"), or a package whose
+	// upstream name is not what anyone calls the app ("brave-browser").
+	//
+	// localName is what everything else uses — the installed check and the
+	// global-config tracking key — and is the short name the rest of devgeta
+	// already knows the app by ("aerospace", "brave"), so that a later
+	// Uninstall's RemoveFromInstalled(constants.X) finds the entry this
+	// install wrote.
+	//
+	// They were the other way round until a fresh-machine install failed on
+	// them: alias[0] replaced itemName outright, so devgeta ran
+	// `brew install --cask brave` and `brew install --cask AeroSpace`, and
+	// Homebrew answered "No Cask with this name exists" for both. The app
+	// modules were passing the right names all along; this function was
+	// installing the wrong one of the pair. Nothing caught it because
+	// MockCommand answers MaybeInstall* directly and never reaches here — see
+	// TestMaybeInstall_AliasInstallsItemNameAndTracksAlias.
 	pkgToInstall := itemName
-	if len(alias) > 0 {
-		pkgToInstall = alias[0]
+	localName := itemName
+	if len(alias) > 0 && alias[0] != "" {
+		localName = alias[0]
 	}
 
 	globalConfig := &config.GlobalConfig{}
 	if err := globalConfig.Load(); err != nil {
 		// HACK: If global config doesn't exist and we're trying to install git,
 		// we can assume it's a fresh install and create the global config
-		if pkgToInstall == constants.Git {
+		if localName == constants.Git {
 			globalConfig.Create()
 		} else {
 			logger.L().Errorw("Could not load global config", "error", err)
 			return err
 		}
 	} else {
-		if globalConfig.IsInstalledByDevgeta(pkgToInstall, itemType) {
+		if globalConfig.IsInstalledByDevgeta(localName, itemType) {
 			logger.L().
-				Debugw("Item already tracked as installed by devgeta", "item", pkgToInstall, "type", itemType)
+				Debugw("Item already tracked as installed by devgeta", "item", localName, "type", itemType)
 			return nil
 		}
-		if globalConfig.IsAlreadyInstalled(pkgToInstall, itemType) {
+		if globalConfig.IsAlreadyInstalled(localName, itemType) {
 			logger.L().
-				Debugw("Item is already installed, skipping", "item", pkgToInstall, "type", itemType)
+				Debugw("Item is already installed, skipping", "item", localName, "type", itemType)
 			return nil
 		}
 	}
 
-	isInstalled, err = checkInstalled(pkgToInstall)
+	isInstalled, err = checkInstalled(localName)
 	if err != nil {
 		return err
 	}
 
 	if isInstalled {
 		logger.L().
-			Debugw("Item is already installed, marking as such in global config", "item", pkgToInstall, "type", itemType)
-		globalConfig.AddToAlreadyInstalled(pkgToInstall, itemType)
+			Debugw("Item is already installed, marking as such in global config", "item", localName, "type", itemType)
+		globalConfig.AddToAlreadyInstalled(localName, itemType)
 		globalConfig.Save()
 		return nil
 	}
@@ -651,13 +702,13 @@ func (b *BaseCommand) MaybeInstall(
 	}
 
 	if installErr == nil {
-		globalConfig.AddToInstalled(pkgToInstall, itemType)
+		globalConfig.AddToInstalled(localName, itemType)
 		if err := globalConfig.Save(); err != nil {
 			logger.L().Errorw("Failed to update global config after installation", "error", err)
 		}
 	} else {
 		logger.L().
-			Warnw("Installation failed", "item", pkgToInstall, "type", itemType, "error", installErr)
+			Warnw("Installation failed", "item", localName, "type", itemType, "error", installErr)
 	}
 
 	return installErr

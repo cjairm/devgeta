@@ -298,6 +298,7 @@ func TestIsFontPresent(t *testing.T) {
 type MockInstaller struct {
 	InstallCalled bool
 	InstalledItem string
+	CheckedItem   string
 	ShouldFail    bool
 }
 
@@ -311,6 +312,7 @@ func (m *MockInstaller) Install(item string) error {
 }
 
 func (m *MockInstaller) Check(item string) (bool, error) {
+	m.CheckedItem = item
 	// Default: item not installed
 	return false, nil
 }
@@ -404,6 +406,95 @@ func TestMaybeInstall_ItemNotInstalled_InstallsSuccessfully(t *testing.T) {
 	if len(updatedConfig.Installed.Packages) != 1 ||
 		updatedConfig.Installed.Packages[0] != "test-package" {
 		t.Errorf("Expected 'test-package' to be added to installed config")
+	}
+}
+
+// TestMaybeInstall_AliasInstallsItemNameAndTracksAlias pins the split between
+// the two names MaybeInstall takes, because getting it backwards is exactly
+// what broke a fresh-machine install: the package manager must be handed
+// itemName, while the installed check and the global config must both use the
+// alias.
+//
+// This has to be tested here rather than in the app packages. MockCommand
+// records MaybeInstallDesktopApp's first argument and returns, so
+// aerospace_test and brave_test asserted the right cask name all along and
+// still passed while `brew install --cask AeroSpace` was what actually ran.
+func TestMaybeInstall_AliasInstallsItemNameAndTracksAlias(t *testing.T) {
+	testConfig := &config.GlobalConfig{
+		Installed:        config.InstalledConfig{Packages: []string{}},
+		AlreadyInstalled: config.AlreadyInstalledConfig{Packages: []string{}},
+	}
+	cleanup := setupMaybeInstallTest(t, testConfig)
+	defer cleanup()
+
+	b := commands.NewBaseCommandCustom(FakePlatform{Mac: true})
+	mockInstaller := &MockInstaller{}
+
+	err := b.MaybeInstall(
+		"nikitabobko/tap/aerospace",
+		[]string{"aerospace"},
+		mockInstaller.Check,
+		mockInstaller.Install,
+		nil,
+		"desktop_app",
+	)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	if mockInstaller.InstalledItem != "nikitabobko/tap/aerospace" {
+		t.Errorf(
+			"Expected the package manager to be handed 'nikitabobko/tap/aerospace', got '%s'",
+			mockInstaller.InstalledItem,
+		)
+	}
+	if mockInstaller.CheckedItem != "aerospace" {
+		t.Errorf(
+			"Expected the installed check to run against the alias 'aerospace', got '%s'",
+			mockInstaller.CheckedItem,
+		)
+	}
+
+	var updatedConfig config.GlobalConfig
+	if err := updatedConfig.Load(); err != nil {
+		t.Fatalf("Failed to reload config: %v", err)
+	}
+	if len(updatedConfig.Installed.DesktopApps) != 1 ||
+		updatedConfig.Installed.DesktopApps[0] != "aerospace" {
+		t.Errorf(
+			"Expected the global config to track the alias 'aerospace', got %v",
+			updatedConfig.Installed.DesktopApps,
+		)
+	}
+}
+
+// TestMaybeInstall_AliasSkipsWhenAliasAlreadyTracked covers the other end of
+// the same contract: a later run must recognize the entry the install above
+// wrote, which it can only do if the lookup uses the alias too.
+func TestMaybeInstall_AliasSkipsWhenAliasAlreadyTracked(t *testing.T) {
+	testConfig := &config.GlobalConfig{
+		Installed:        config.InstalledConfig{DesktopApps: []string{"aerospace"}},
+		AlreadyInstalled: config.AlreadyInstalledConfig{},
+	}
+	cleanup := setupMaybeInstallTest(t, testConfig)
+	defer cleanup()
+
+	b := commands.NewBaseCommandCustom(FakePlatform{Mac: true})
+	mockInstaller := &MockInstaller{}
+
+	err := b.MaybeInstall(
+		"nikitabobko/tap/aerospace",
+		[]string{"aerospace"},
+		mockInstaller.Check,
+		mockInstaller.Install,
+		nil,
+		"desktop_app",
+	)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+	if mockInstaller.InstallCalled {
+		t.Error("Expected install NOT to be called for an item already tracked under its alias")
 	}
 }
 

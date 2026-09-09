@@ -26,6 +26,12 @@ import (
 
 var _ apps.App = (*Aerospace)(nil)
 
+// aerospaceCask is the fully qualified cask name. AeroSpace ships from the
+// author's own tap rather than homebrew-cask, and Homebrew only auto-taps when
+// the name carries the tap — a bare "aerospace" gets "No Cask with this name
+// exists".
+const aerospaceCask = "nikitabobko/tap/aerospace"
+
 type Aerospace struct {
 	Cmd  cmd.Command
 	Base cmd.BaseCommandExecutor
@@ -41,11 +47,15 @@ func New() *Aerospace {
 }
 
 func (a *Aerospace) Install() error {
-	return a.Cmd.InstallDesktopApp("nikitabobko/tap/aerospace")
+	return a.Cmd.InstallDesktopApp(aerospaceCask)
 }
 
+// SoftInstall installs the cask by its fully qualified tap name — AeroSpace is
+// not in homebrew-cask — while checking for and tracking it as
+// constants.Aerospace, which is both the cask's own token in
+// `brew list --cask` and the key Uninstall and ForceConfigure use.
 func (a *Aerospace) SoftInstall() error {
-	return a.Cmd.MaybeInstallDesktopApp("nikitabobko/tap/aerospace", "AeroSpace")
+	return a.Cmd.MaybeInstallDesktopApp(aerospaceCask, constants.Aerospace)
 }
 
 func (a *Aerospace) ForceInstall() error {
@@ -57,7 +67,7 @@ func (a *Aerospace) Uninstall() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	if err := a.Cmd.UninstallDesktopApp("nikitabobko/tap/aerospace"); err != nil {
+	if err := a.Cmd.UninstallDesktopApp(aerospaceCask); err != nil {
 		return fmt.Errorf("failed to uninstall aerospace: %w", err)
 	}
 	_ = os.RemoveAll(paths.Paths.Config.Aerospace)

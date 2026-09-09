@@ -50,7 +50,19 @@ func (ld *LazyDocker) getVersion(owner, repo string) (string, error) {
 	return gh.FetchLatestRelease(owner, repo)
 }
 
-var packageName = fmt.Sprintf("jesseduffield/%s/%s", constants.LazyDocker, constants.LazyDocker)
+// packageName is the Homebrew formula. It used to be the author's tap,
+// "jesseduffield/lazydocker/lazydocker", which is no longer the right place to
+// get it from: homebrew-core carries lazydocker, and Homebrew now refuses to
+// load a formula from an untrusted third-party tap without an explicit
+// `brew trust` — so the tap name turned Install and ForceInstall into a hard
+// failure and a prompt no unattended install can answer.
+//
+// SoftInstall was reaching homebrew-core anyway, but only by accident: it
+// passed the tap name and constants.LazyDocker as an alias, and MaybeInstall
+// used to install the alias instead of the name. Fixing that (see
+// BaseCommand.MaybeInstall) would have pointed SoftInstall back at the tap,
+// so the tap goes away here instead.
+var packageName = constants.LazyDocker
 
 func New() *LazyDocker {
 	osCmd := cmd.NewCommand()
@@ -67,7 +79,7 @@ func (ld *LazyDocker) Install() error {
 
 func (ld *LazyDocker) SoftInstall() error {
 	if ld.Base.IsMac() {
-		return ld.Cmd.MaybeInstallPackage(packageName, constants.LazyDocker)
+		return ld.Cmd.MaybeInstallPackage(packageName)
 	}
 	// On Debian: lazydocker is not in apt — skip if already in PATH, otherwise install from GitHub
 	if _, err := cmd.LookPathFn(constants.LazyDocker); err == nil {
