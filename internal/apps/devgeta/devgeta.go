@@ -148,16 +148,20 @@ func (dg *Devgeta) InstallIfStale() error {
 	return dg.Install()
 }
 
+// SoftInstall publishes the embedded configs unless the tree already on disk
+// belongs to this exact build.
+//
+// The check is the build stamp, not merely "a configs directory exists".
+// installDevgeta calls this at the top of every `dg install`, so an
+// existence-only check left an upgraded binary using the previous build's
+// tree indefinitely: every template the new version shipped was simply
+// absent, and the app that needed one failed with "no such file or directory"
+// naming the old stamped directory — which is how a v1.25.1 binary went
+// looking for configs/ghostty/ inside configs-v1.23.0-909ed80. That is the
+// same staleness InstallIfStale was added to solve for `dg configure`, so
+// both entry points now answer it the same way.
 func (dg *Devgeta) SoftInstall() error {
-	configsDir := pointerPath()
-
-	// Check if configs/ subdirectory exists and is non-empty
-	if files.DirAlreadyExist(configsDir) && !files.IsDirEmpty(configsDir) {
-		logger.L().Infow("Devgeta configs already installed", "path", configsDir)
-		return nil
-	}
-
-	return dg.Install()
+	return dg.InstallIfStale()
 }
 
 func (dg *Devgeta) ForceInstall() error {

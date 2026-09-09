@@ -169,43 +169,29 @@ func TestSoftInstall_DirectoryDoesNotExist(t *testing.T) {
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
 }
 
-func TestSoftInstall_DirectoryExistsWithFiles(t *testing.T) {
-	tempDir := t.TempDir()
-	appDir := filepath.Join(tempDir, "devgeta")
-	configsDir := filepath.Join(appDir, "configs")
+// TestSoftInstall_MigratesALegacyDirectory covers the pre-pointer shape: a
+// real `configs` directory rather than a symlink to a stamped extract.
+//
+// This used to assert the opposite — that any non-empty configs directory was
+// left completely alone — which is what let an upgraded binary keep serving
+// an older build's templates. A legacy directory is migrated to the stamped
+// layout instead, exactly as Install (and `dg configure`, via InstallIfStale)
+// has always done with one; the superseded tree is deliberately not served
+// afterwards.
+func TestSoftInstall_MigratesALegacyDirectory(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.0.0", "aaaaaaa")
 
-	// Create existing configs directory with a file
-	if err := os.MkdirAll(configsDir, 0o755); err != nil {
-		t.Fatalf("Failed to create configs dir: %v", err)
-	}
-	testFile := filepath.Join(configsDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("content"), 0o644); err != nil {
-		t.Fatalf("Failed to create test file: %v", err)
-	}
+	seedLegacyTree(t, pointerPath())
 
-	oldAppDir := paths.Paths.App.Root
-	paths.Paths.App.Root = appDir
-	t.Cleanup(func() {
-		paths.Paths.App.Root = oldAppDir
-	})
-
-	mockApp := testutil.NewMockApp()
-	dg := &Devgeta{
-		Base:            mockApp.Base,
-		ExtractEmbedded: mockExtractor,
-	}
-
-	err := dg.SoftInstall()
-	if err != nil {
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: mockExtractor}
+	if err := dg.SoftInstall(); err != nil {
 		t.Fatalf("SoftInstall() failed: %v", err)
 	}
+	assertMigrated(t, "configs-v1.0.0-aaaaaaa")
 
-	// Verify existing file was preserved (extraction not called)
-	if _, err := os.Stat(testFile); os.IsNotExist(err) {
-		t.Fatal("Expected existing file to be preserved")
-	}
-
-	testutil.VerifyNoRealCommands(t, mockApp.Base)
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
 func TestUninstall_RemovesConfigsDirectory(t *testing.T) {

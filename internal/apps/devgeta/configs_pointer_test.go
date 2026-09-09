@@ -780,6 +780,58 @@ func TestInstallIfStale_ReExtractsWhenTheStampChanges(t *testing.T) {
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
+// TestSoftInstall_ReExtractsWhenTheStampChanges is the `dg install` half of
+// TestInstallIfStale_ReExtractsWhenTheStampChanges. installDevgeta calls
+// SoftInstall, so an existence-only check there means a user who upgrades the
+// binary and runs `dg install` keeps the previous build's extracted tree
+// forever: every template the new version added is simply absent, and the app
+// that needs one fails with "no such file or directory" pointing into the old
+// stamped directory.
+func TestSoftInstall_ReExtractsWhenTheStampChanges(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.0.0", "aaaaaaa")
+
+	var runs int32
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: countingExtractor(&runs)}
+	if err := dg.SoftInstall(); err != nil {
+		t.Fatalf("SoftInstall() failed: %v", err)
+	}
+
+	setBuildStamp(t, "v2.0.0", "bbbbbbb")
+	if err := dg.SoftInstall(); err != nil {
+		t.Fatalf("SoftInstall() after the upgrade failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&runs); got != 2 {
+		t.Errorf("expected an upgrade to re-extract, got %d extracts total", got)
+	}
+	assertPointsAt(t, "configs-v2.0.0-bbbbbbb")
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// TestSoftInstall_SkipsWhenTheStampMatches pins the other half: a repeated
+// `dg install` on one build must not rewrite the tree.
+func TestSoftInstall_SkipsWhenTheStampMatches(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.0.0", "aaaaaaa")
+
+	var runs int32
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: countingExtractor(&runs)}
+	for i := 0; i < 3; i++ {
+		if err := dg.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall() failed: %v", err)
+		}
+	}
+	if got := atomic.LoadInt32(&runs); got != 1 {
+		t.Errorf("expected repeated calls on one build to extract once, got %d", got)
+	}
+	assertPointsAt(t, "configs-v1.0.0-aaaaaaa")
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
 func TestInstallIfStale_ReExtractsWhenTheTargetIsMissing(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
