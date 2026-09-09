@@ -71,11 +71,19 @@ func (a *Alacritty) ForceConfigure() error {
 	}); err != nil {
 		return fmt.Errorf("failed to generate alacritty configuration: %w", err)
 	}
+	starterDst := filepath.Join(paths.Paths.Config.Alacritty, "starter.sh")
 	if err := files.CopyFile(
 		filepath.Join(paths.Paths.App.Configs.Terminal, "starter.sh"),
-		filepath.Join(paths.Paths.Config.Alacritty, "starter.sh"),
+		starterDst,
 	); err != nil {
 		return fmt.Errorf("failed to copy alacritty starter script: %w", err)
+	}
+	// [terminal.shell] program in the template execs this script. Both the
+	// embedded-config extractor and files.CopyFile write 0644, so it has to be
+	// made executable here or Alacritty cannot launch it and comes up without
+	// tmux. See files.CopyFile's doc for the established pattern.
+	if err := os.Chmod(starterDst, 0o755); err != nil {
+		return fmt.Errorf("failed to make alacritty starter script executable: %w", err)
 	}
 	gc.AddToInstalled(constants.Alacritty, "desktop_app")
 	if err := gc.Save(); err != nil {
@@ -84,16 +92,22 @@ func (a *Alacritty) ForceConfigure() error {
 	return nil
 }
 
+// SoftConfigure deploys the config only when there isn't one already, so a
+// hand-edited config is never overwritten.
+//
+// The guard is the config file itself, not the global config's installed
+// tracking. Tracking is set by SoftInstall moments earlier — the desktop
+// coordinator runs SoftInstall then SoftConfigure back to back — so reading it
+// here would mean the config is never written on the one run that installed
+// Alacritty, leaving a fresh install with default colors, no transparency and
+// no tmux. This matches aerospace, tmux and neovim, which have always guarded
+// on their own config file.
 func (a *Alacritty) SoftConfigure() error {
-	gc := &config.GlobalConfig{}
-	if err := gc.Create(); err != nil {
-		return fmt.Errorf("failed to create global config: %w", err)
-	}
-	if err := gc.Load(); err != nil {
-		return fmt.Errorf("failed to load global config: %w", err)
-	}
-	if gc.IsAlreadyInstalled(constants.Alacritty, "desktop_app") ||
-		gc.IsInstalledByDevgeta(constants.Alacritty, "desktop_app") {
+	configFilePath := filepath.Join(
+		paths.Paths.Config.Alacritty,
+		fmt.Sprintf("%s.toml", constants.Alacritty),
+	)
+	if files.FileAlreadyExist(configFilePath) {
 		return nil
 	}
 	if err := a.ForceConfigure(); err != nil {
