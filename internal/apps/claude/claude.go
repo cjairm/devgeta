@@ -158,6 +158,7 @@ func (c *Claude) ForceConfigure() error {
 		"agent-config-guard.sh",
 		"agent-state.sh",
 		"output-budget.sh",
+		"rtk-shim.sh",
 	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(

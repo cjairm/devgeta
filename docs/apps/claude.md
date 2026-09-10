@@ -12,20 +12,21 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 
 `ForceConfigure` copies the following into `~/.claude/`:
 
-| Source                                     | Destination                           | Notes                                        |
-| ------------------------------------------ | ------------------------------------- | -------------------------------------------- |
-| `configs/claude/settings.json.tmpl`        | `~/.claude/settings.json`             | rendered template: theme, permissions, hooks |
-| `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                 |
-| `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                 |
-| `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                 |
-| `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                 |
-| `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                 |
-| `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                 |
-| `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                 |
-| `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below    |
-| `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly       |
-| `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                              |
-| `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                         |
+| Source                                     | Destination                           | Notes                                                                             |
+| ------------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------- |
+| `configs/claude/settings.json.tmpl`        | `~/.claude/settings.json`             | rendered template: theme, permissions, hooks                                      |
+| `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                                                      |
+| `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                                                      |
+| `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                                                      |
+| `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                                                      |
+| `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                                                      |
+| `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                                                      |
+| `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                                                      |
+| `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below                                         |
+| `configs/claude/rtk-shim.sh`               | `~/.claude/rtk-shim.sh`               | `chmod 0755`; deployed always, hook entry gated on `integrations.rtk_claude_hook` |
+| `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly                                            |
+| `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
+| `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                                                              |
 
 `settings.json` is rendered from a template so tracked opt-ins survive a
 `--force` re-render: when `integrations.rtk_claude_hook` is set in
@@ -42,7 +43,11 @@ override the broad allow:
 
 - **allow** — `Bash(*)`, `Read`, `Edit`: day-to-day work never prompts.
 - **ask** — rare-but-legitimate commands (remote copies, force pushes, infra
-  applies) prompt instead of being blocked.
+  applies, and four `gh` writes — `pr merge`, `release delete`, `pr close`,
+  `issue delete`) prompt instead of being blocked. **Caveat, verified
+  2026-09-10:** on a machine with the rtk Claude Code integration enabled,
+  none of these reliably prompt for a command rtk rewrites — see "rtk
+  command-rewrite shim" below.
 - **deny** — never allowed: network exfiltration tools, credential file reads
   (SSH keys, cloud CLI configs, token files, shell history), privilege
   escalation, persistence mechanisms (crontab/launchctl), destructive disk ops,
@@ -473,6 +478,65 @@ rejection by a tool devgeta does not control. Unlike Claude Code, OpenCode's
 plugin hooks run in **sequence** and mutate a shared object, so a plugin
 registered after rtk's genuinely sees rtk's already-rewritten command — no
 equivalent race exists there.
+
+## rtk command-rewrite shim (PreToolUse hook)
+
+Opt-in, off by default. When `integrations.rtk_claude_hook` is set (via
+`dg configure claude --force --only=rtk`), `settings.json` registers
+`~/.claude/rtk-shim.sh` under its own `Bash` `PreToolUse` matcher, in place of
+running `rtk hook claude` directly. It pipes the hook payload straight to
+`rtk hook claude`, then re-emits the same JSON with the
+`permissionDecision`/`permissionDecisionReason` keys removed — `updatedInput`
+(rtk's command rewrite, the source of its token savings) passes through
+unchanged.
+
+**Why it exists:** rtk's own hook returns `permissionDecision: "allow"` for
+most `git`/`gh` families it rewrites (verified on rtk 0.43.0), and a
+`PreToolUse` hook's `allow` overrides both `ask` and `deny` — so with the raw
+hook wired in, rtk's own auto-allow list is the effective policy for those
+commands, not devgeta's `ask`/`deny` lists. See
+[ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md).
+
+**What it fixes, and what it does not — verified 2026-09-10.** The shim
+correctly removes rtk's own decision: with the shim in place, a real `deny`
+rule (`Bash(git status*)`) still fires even though rtk rewrote the command
+underneath it. But a **second, independent** bypass sits underneath that one
+and the shim cannot touch it: devgeta's baseline `"allow": ["Bash(*)"]` —
+present unconditionally, rtk or not — appears to be matched against the
+_rewritten_ command whenever _any_ `PreToolUse` hook returns `updatedInput`,
+and an allow match there beats an `ask`/`deny` rule that only matches the
+_original_ text. This reproduces with the shim's own rewrite, decision fully
+stripped, for both a real `deny` and a real `ask` rule. Practically: on a
+machine with this integration enabled, the four `gh` write gates above (and
+the pre-existing `gh api *` ask) do not reliably prompt for a command rtk
+rewrites. Full evidence, including the four-run A/B table that isolates this
+from the shim's own logic:
+[agent-permission-matching.md §6](../guides/agent-permission-matching.md),
+[ADR-0038's correction](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md#consequences).
+This is a Claude Code resolution-order behavior, not a bug in the shim or in
+rtk's JSON shape — no hook devgeta could write closes it, including
+`output-budget.sh` below, which rewrites commands for an unrelated reason and
+is a candidate for the same interaction (not measured).
+
+**Fail-open to silence**, matching the sibling hooks: the rtk binary missing
+from PATH, a non-zero exit from `rtk hook claude`, empty output, or output
+that isn't valid JSON all mean the shim emits nothing and the call proceeds
+through the normal permission flow unaffected.
+
+**Bypass:** export `DEVGETA_SKIP_RTK_SHIM=1` in the shell that launches this
+agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
+command — because the hook reads its own environment.
+
+**No OpenCode mirror.** rtk installs its own plugin file on the OpenCode side
+(`~/.config/opencode/plugins/rtk.ts`) and devgeta does not touch it
+(`internal/apps/opencode/opencode.go`). That plugin only rewrites commands —
+it never emits a permission decision there — but the rewrite alone is enough
+to defeat OpenCode's own `ask` rules too, by a related but distinct
+mechanism: OpenCode's permission engine matches against the _rewritten_
+command text, so a rewritten `gh pr merge …` no longer matches a
+`"gh pr merge *": "ask"` rule at all. Measured in
+`docs/plans/cycles/2026-09-10-gh-permission-granularity-probe-notes.md`
+("1c"). There is no devgeta-owned fix for this on either agent today.
 
 ## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
 

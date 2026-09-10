@@ -296,7 +296,7 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 			if !json.Valid(data) {
 				t.Fatalf("rendered settings.json is not valid JSON:\n%s", data)
 			}
-			gotRtk := strings.Contains(string(data), "rtk hook claude")
+			gotRtk := strings.Contains(string(data), "~/.claude/rtk-shim.sh")
 			if gotRtk != tt.wantRtk {
 				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
 			}
@@ -535,6 +535,13 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "rtk-shim.sh"),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json"),
 		[]byte(`{}`),
 		0o644,
@@ -605,8 +612,8 @@ func TestForceConfigure(t *testing.T) {
 	}
 
 	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
-	// suppression-guard.sh, agent-config-guard.sh, agent-state.sh, and
-	// output-budget.sh deployed and executable
+	// suppression-guard.sh, agent-config-guard.sh, agent-state.sh,
+	// output-budget.sh, and rtk-shim.sh deployed and executable
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
@@ -616,6 +623,7 @@ func TestForceConfigure(t *testing.T) {
 		"agent-config-guard.sh",
 		"agent-state.sh",
 		"output-budget.sh",
+		"rtk-shim.sh",
 	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
@@ -803,8 +811,8 @@ func TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks(t *testi
 			rendered,
 		)
 	}
-	if !strings.Contains(rendered, `"command": "rtk hook claude"`) {
-		t.Errorf("expected the rtk hook entry, got:\n%s", rendered)
+	if !strings.Contains(rendered, `"command": "~/.claude/rtk-shim.sh"`) {
+		t.Errorf("expected the rtk shim hook entry, got:\n%s", rendered)
 	}
 	if !strings.Contains(rendered, outputBudgetHookRegistration) {
 		t.Errorf("expected the output-budget hook entry, got:\n%s", rendered)

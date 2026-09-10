@@ -276,7 +276,49 @@ break the build. That is why it lives here.
 
 ---
 
-## 6. Probing this yourself
+## 6. `allow: ["Bash(*)"]` plus any rewriting hook beats `ask`/`deny` on Claude Code
+
+**Verified 2026-09-10**, while implementing the `gh` permission-granularity
+cycle (`docs/plans/cycles/2026-09-10-gh-permission-granularity-probe-notes.md`,
+"Step 6/11"). Devgeta's shipped Claude Code config carries `"allow":
+["Bash(*)"]` unconditionally (`configs/claude/settings.json.tmpl`) — a rule
+present whether or not any AI-coder integration is enabled. Whenever **any**
+`PreToolUse` hook returns `updatedInput` for a Bash command (a rewrite, with
+or without a `permissionDecision` alongside it), that broad allow rule
+appears to be matched against the _rewritten_ command, and an allow match
+there wins over an `ask`/`deny` rule that only matches the _original_ text.
+
+Four isolated `claude -p --setting-sources ''` runs against a scratch
+(non-git) directory, changing exactly one line between each pair:
+
+| `allow` present? | Hook rewriting the command? | Result                                      |
+| ---------------- | --------------------------- | ------------------------------------------- |
+| no               | yes                         | `ask`/`deny` fire correctly (original text) |
+| `["Bash(*)"]`    | **no**                      | `deny` fires correctly                      |
+| `["Bash(*)"]`    | **yes**                     | **bypassed** — the command actually runs    |
+
+Reproduced with a real `deny` (`Bash(git status*)`) and, separately, a real
+`ask` (`Bash(gh pr merge *)`) — same result both times. The hook used was
+`configs/claude/rtk-shim.sh`, whose entire job is to strip
+`permissionDecision`, so the decision field is not the deciding factor here;
+the rewrite alone is enough. `output-budget.sh` also rewrites
+`tool_input.command` via `updatedInput`, for an unrelated reason (capping
+output), and is therefore a candidate for the same bypass — not measured, a
+follow-up.
+
+**Practically:** on a machine with the rtk Claude Code integration enabled,
+no `ask`/`deny` rule reliably fires for a command rtk rewrites, regardless of
+what devgeta's own config says — including the four write gates
+(`gh pr merge *`, `gh release delete *`, `gh pr close *`, `gh issue delete
+*`) added for exactly this purpose (ADR-0038, ADR-0039). This is not a gap in
+those rules' wording; it reproduces identically with the sole difference
+being whether a hook rewrote the command at all. It is a Claude Code
+resolution-order behavior, not something a devgeta-owned hook can close —
+the same conclusion ADR-0038's correction reaches for the shim specifically.
+
+---
+
+## 7. Probing this yourself
 
 Do not infer behavior from what the agent says; read the log where there is one,
 and otherwise read the outcome — never the agent's own summary of the outcome.

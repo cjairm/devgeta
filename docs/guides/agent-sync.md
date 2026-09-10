@@ -13,15 +13,16 @@ deliberate.
 
 ## Where each concern lives
 
-| Concern                 | Claude Code                                                       | OpenCode                                                                   |
-| ----------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Permissions             | `configs/claude/settings.json.tmpl`                               | `configs/opencode/opencode.json.tmpl`                                      |
-| Formatting on save      | `configs/claude/format.sh`                                        | `formatter` block in `opencode.json.tmpl`                                  |
-| Command redirects       | `configs/claude/task-redirect.sh`                                 | `configs/opencode/plugin/task-redirect.js`                                 |
-| Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                        |
-| Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor |
-| Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                               |
-| Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                         |
+| Concern                 | Claude Code                                                       | OpenCode                                                                          |
+| ----------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Permissions             | `configs/claude/settings.json.tmpl`                               | `configs/opencode/opencode.json.tmpl`                                             |
+| Formatting on save      | `configs/claude/format.sh`                                        | `formatter` block in `opencode.json.tmpl`                                         |
+| Command redirects       | `configs/claude/task-redirect.sh`                                 | `configs/opencode/plugin/task-redirect.js`                                        |
+| Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                               |
+| Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor        |
+| Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                                      |
+| rtk hook wiring         | `configs/claude/rtk-shim.sh` (devgeta-owned)                      | rtk's own plugin (`~/.config/opencode/plugins/rtk.ts`) — devgeta never touches it |
+| Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                                |
 
 `configs/shared/skills/` is synced to both agents too, but it is **not** a place
 to put devgeta policy: those skills run in every user's other repositories, and
@@ -75,3 +76,12 @@ Deliberate — do not "fix" these by halves.
   via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
   return context, and OpenCode surfaces LSP diagnostics instead.
 - **`statusLine` has no OpenCode equivalent.**
+- **`rtk-shim.sh` has no OpenCode mirror, deliberately.** rtk installs its own
+  plugin file there (`~/.config/opencode/plugins/rtk.ts`), and devgeta
+  explicitly does not touch it (`internal/apps/opencode/opencode.go`). This
+  is not parity devgeta can close by writing a mirror: even a devgeta-owned
+  OpenCode plugin could only rewrite the same shared object rtk's plugin
+  reads, not intercept rtk's own file. See
+  [ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md)
+  and its 2026-09-10 correction for what this gap means in practice on both
+  agents.

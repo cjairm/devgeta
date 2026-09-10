@@ -57,3 +57,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0035](ADR-0035-an-issue-is-matched-by-number-never-by-a-branch-naming-scheme.md) — An issue is matched by number, never by a branch-naming scheme
 - [ADR-0036](ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present
 - [ADR-0037](ADR-0037-a-desktop-app-is-chosen-by-the-user-from-what-the-platform-can-install.md) — A desktop app is chosen by the user from what the platform can install
+- [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission
+- [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name

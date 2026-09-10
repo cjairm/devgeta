@@ -11,7 +11,11 @@
       "Bash(git push --force*)",
       "Bash(git push -f*)",
       "Bash(terraform apply *)",
-      "Bash(kubectl apply *)"
+      "Bash(kubectl apply *)",
+      "Bash(gh pr merge *)",
+      "Bash(gh release delete *)",
+      "Bash(gh pr close *)",
+      "Bash(gh issue delete *)"
     ],
     "deny": [
       "Bash(curl *)",
@@ -100,6 +104,7 @@
       "Edit(**/.claude/agent-config-guard.sh)",
       "Edit(**/.claude/agent-state.sh)",
       "Edit(**/.claude/output-budget.sh)",
+      "Edit(**/.claude/rtk-shim.sh)",
       "Edit(~/.claude/agents/**)",
       "Edit(**/.claude/agents/**)",
       "Edit(~/.claude/commands/**)",
@@ -162,7 +167,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "rtk hook claude"
+            "command": "~/.claude/rtk-shim.sh"
           }
         ]
       }{{end}}{{if .OutputBudgetEnabled}},

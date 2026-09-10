@@ -71,6 +71,10 @@
       "git push -f*": "ask",
       "terraform apply *": "ask",
       "kubectl apply *": "ask",
+      "gh pr merge *": "ask",
+      "gh release delete *": "ask",
+      "gh pr close *": "ask",
+      "gh issue delete *": "ask",
 
       "curl *": "deny",
       "wget *": "deny",
@@ -134,6 +138,7 @@
       "**/.claude/agent-config-guard.sh": "deny",
       "**/.claude/agent-state.sh": "deny",
       "**/.claude/output-budget.sh": "deny",
+      "**/.claude/rtk-shim.sh": "deny",
 
       "~/.claude/agents/**": "deny",
       "**/.claude/agents/**": "deny",

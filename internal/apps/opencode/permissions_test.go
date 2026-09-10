@@ -238,6 +238,74 @@ func TestEmbeddedConfigGuardsDangerousCommands(t *testing.T) {
 	}
 }
 
+// bashPatternMatches implements the trailing-`*` prefix match that is the
+// whole of Bash(...) / permission.bash matching for a pattern with no other
+// glob metacharacter — verified empirically for both agents: ADR-0038's probe
+// table for Claude Code, and this cycle's step 1 probe-notes for OpenCode
+// (e.g. `action.pattern="gh pr merge *"` matching `gh pr merge 12 --squash`,
+// logged verbatim by `--print-logs --log-level DEBUG`). A pattern ending in
+// "*" matches iff the command starts with the literal text before it; a
+// pattern with no "*" must equal the command exactly.
+func bashPatternMatches(pattern, command string) bool {
+	prefix, hasStar := strings.CutSuffix(pattern, "*")
+	if hasStar {
+		return strings.HasPrefix(command, prefix)
+	}
+	return pattern == command
+}
+
+// TestGhWriteGatesResolve pins the four write gates this cycle adds
+// (docs/plans/cycles/2026-09-10-gh-permission-granularity.md step 7): each
+// must actually match a representative real invocation of the command it
+// names, in both configs — string presence alone (TestEmbeddedConfigGuardsDangerousCommands's
+// style) proves the pattern exists, not that it matches anything
+// (docs/guides/agent-permission-matching.md is the whole reason that
+// distinction gets its own test here). Also confirms none of the four is
+// shadowed by the existing `gh repo delete *` deny: Claude Code resolves
+// deny -> ask -> allow with no specificity tiebreak, so a broader deny
+// landing first would silently swallow a narrower ask.
+func TestGhWriteGatesResolve(t *testing.T) {
+	cases := []struct {
+		pattern string
+		command string
+	}{
+		{"gh pr merge *", "gh pr merge 12 --squash"},
+		{"gh release delete *", "gh release delete v1.0.0"},
+		{"gh pr close *", "gh pr close 5"},
+		{"gh issue delete *", "gh issue delete 5"},
+	}
+
+	claudeBash := claudePermissions(t)["bash"]
+	openCodeBash := make(map[string]string)
+	for _, p := range permissionBlocks(t)["bash"] {
+		openCodeBash[p[0]] = p[1]
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.pattern, func(t *testing.T) {
+			if !bashPatternMatches(tc.pattern, tc.command) {
+				t.Fatalf(
+					"pattern %q does not match its own target command %q — the matcher or the pattern is wrong",
+					tc.pattern,
+					tc.command,
+				)
+			}
+			if got := claudeBash[tc.pattern]; got != "ask" {
+				t.Errorf("Claude Code: permission.bash[%q] = %q, want \"ask\"", tc.pattern, got)
+			}
+			if got := openCodeBash[tc.pattern]; got != "ask" {
+				t.Errorf("OpenCode: permission.bash[%q] = %q, want \"ask\"", tc.pattern, got)
+			}
+			if bashPatternMatches("gh repo delete *", tc.command) {
+				t.Fatalf(
+					"command %q unexpectedly matches the unrelated \"gh repo delete *\" deny",
+					tc.command,
+				)
+			}
+		})
+	}
+}
+
 // TestGlobalClaudeFloorLeavesMemoryWritable is the regression guard for the
 // bug that made Claude Code's local memory unusable: a blanket
 // `Edit(~/.claude/**)` deny in the settings floor also covered
