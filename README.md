@@ -227,6 +227,14 @@ dg install --skip databases,desktop
     - `dg task pr-review-target [--pr N]` - Immutable review target for a PR: merge-base/head SHAs, PR-scoped journal key, and the noise-filtered changed-file list (fetches `refs/pull/<n>/head` read-only; fails rather than review a stale ref). The working tree is untouched, but the fetch leaves two refs — `refs/devgeta/pr/<n>/head` and `.../base` — in the repo for later review steps to read; they are reused per PR, and `git update-ref -d` removes them
     - `dg task pr-review-state [--pr N]` - Whether a PR wants a review from you right now, as three lines: `pr:` (`open | draft | merged | closed`), `requested:` (is the authenticated user in the PR's review requests) and `my-review:` (`approved | changes-requested | commented | none`). A state read of GitHub's own fields, so it never goes stale
     - `dg task current-pr` / `current-repo` - Resolve the current branch's PR number / `owner/name`
+- `dg archive <source> <destination-dir>` - Pack a folder onto an external drive for a machine move (one-shot, not an incremental backup); skips only what's proven regenerable (`node_modules`, virtualenvs, build caches — never by name alone), then verifies the archive against the source
+  - `--dry-run` - Scan and print the report without writing anything
+  - `--gzip` - Write `.tar.gz` instead of the default `.tar.zst`
+  - `--no-skip` - Disable every skip rule; archive everything
+  - `--no-verify` - Skip the post-write verification pass
+  - `--mac-metadata` - Include extended attributes as pax records (macOS only)
+  - `--yes` - Skip the confirmation prompt
+  - `dg archive verify <archive-file>` - Re-check an archive against its manifest
 - `dg --version` - Show version information
 - `dg --help` - Show help message
 

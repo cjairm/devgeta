@@ -59,3 +59,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0037](ADR-0037-a-desktop-app-is-chosen-by-the-user-from-what-the-platform-can-install.md) — A desktop app is chosen by the user from what the platform can install
 - [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission
 - [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name
+- [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
+- [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable

@@ -150,6 +150,24 @@ devgeta_ob_truncate_line() {
 	fi
 }
 
+# devgeta_ob_read_lines reads stdin into the global array DEVGETA_OB_LINES, one
+# element per line, keeping a final line that has no trailing newline. It
+# stands in for `mapfile -t`, which /bin/bash 3.2 does not have — and 3.2 is
+# what `#!/usr/bin/env bash` finds on a stock Mac. Like REPLY above, the result
+# is returned in a global because bash 3.2 has no namerefs. Every caller feeds
+# it a span already bounded by a rule's budgets, so the per-line loop is cheap.
+#
+# Empty arrays are expanded as ${a[@]+"${a[@]}"} throughout this script:
+# before bash 4.4, a plain "${a[@]}" on an empty array is an unbound-variable
+# error under set -u.
+devgeta_ob_read_lines() {
+	DEVGETA_OB_LINES=()
+	local l
+	while IFS= read -r l || [ -n "$l" ]; do
+		DEVGETA_OB_LINES+=("$l")
+	done
+}
+
 # The awk fragment that applies the same truncation as the function above,
 # leaving the result in `t`. Shared verbatim by the three awk passes so the
 # rendered text can never diverge between them or from the bash path.
@@ -189,6 +207,10 @@ devgeta_ob_emit_replay() {
 		if [ "$had_trailing_newline" -eq 0 ]; then
 			total_lines=$((total_lines + 1))
 		fi
+	else
+		# An empty capture has no final newline to preserve. Left at 1, the
+		# replay would print a lone "\n" the command never produced.
+		had_trailing_newline=0
 	fi
 
 	local -a head_src=() tail_src=()
@@ -196,16 +218,18 @@ devgeta_ob_emit_replay() {
 
 	if [ "$total_lines" -gt $((head_n + tail_n)) ]; then
 		omitted_lines=$((total_lines - head_n - tail_n))
-		mapfile -t head_src < <(head -n "$head_n" "$capture_file")
-		mapfile -t tail_src < <(tail -n "$tail_n" "$capture_file")
+		devgeta_ob_read_lines < <(head -n "$head_n" "$capture_file")
+		head_src=(${DEVGETA_OB_LINES[@]+"${DEVGETA_OB_LINES[@]}"})
+		devgeta_ob_read_lines < <(tail -n "$tail_n" "$capture_file")
+		tail_src=(${DEVGETA_OB_LINES[@]+"${DEVGETA_OB_LINES[@]}"})
 
 		# Byte accounting by subtraction, on the ORIGINAL (untruncated) lines,
 		# matching what the omitted-middle marker has always reported. Every
 		# head line ends in a newline (none of them is the file's last line);
 		# the tail's last line does only if the capture itself did.
 		local l head_bytes=0 tail_bytes=0
-		for l in "${head_src[@]}"; do head_bytes=$((head_bytes + ${#l} + 1)); done
-		for l in "${tail_src[@]}"; do tail_bytes=$((tail_bytes + ${#l} + 1)); done
+		for l in ${head_src[@]+"${head_src[@]}"}; do head_bytes=$((head_bytes + ${#l} + 1)); done
+		for l in ${tail_src[@]+"${tail_src[@]}"}; do tail_bytes=$((tail_bytes + ${#l} + 1)); done
 		if [ "$had_trailing_newline" -eq 0 ]; then
 			tail_bytes=$((tail_bytes - 1))
 		fi
@@ -215,17 +239,18 @@ devgeta_ob_emit_replay() {
 		# rule's own line budgets rather than by the size of the capture. A
 		# single enormous line lands here too, and per-line truncation is what
 		# bounds it.
-		mapfile -t head_src <"$capture_file"
+		devgeta_ob_read_lines <"$capture_file"
+		head_src=(${DEVGETA_OB_LINES[@]+"${DEVGETA_OB_LINES[@]}"})
 	fi
 
 	# Step 1: per-line truncation, applied only to the lines that survive.
 	local -a trunc_head=() trunc_tail=()
 	local l
-	for l in "${head_src[@]}"; do
+	for l in ${head_src[@]+"${head_src[@]}"}; do
 		devgeta_ob_truncate_line "$l" "$line_content_limit"
 		trunc_head+=("$REPLY")
 	done
-	for l in "${tail_src[@]}"; do
+	for l in ${tail_src[@]+"${tail_src[@]}"}; do
 		devgeta_ob_truncate_line "$l" "$line_content_limit"
 		trunc_tail+=("$REPLY")
 	done
@@ -237,9 +262,9 @@ devgeta_ob_emit_replay() {
 	# Assemble the candidate replay: head lines, marker (if this step produced
 	# one), tail lines — or, when nothing was omitted, every line followed by
 	# the marker only if one exists at all (the capture-cap-only case).
-	local -a assembled_lines=("${trunc_head[@]}")
+	local -a assembled_lines=(${trunc_head[@]+"${trunc_head[@]}"})
 	[ -n "$marker" ] && assembled_lines+=("$marker")
-	assembled_lines+=("${trunc_tail[@]}")
+	assembled_lines+=(${trunc_tail[@]+"${trunc_tail[@]}"})
 
 	# A trailing newline is added unless this is genuinely the untouched
 	# passthrough case (nothing omitted, no marker at all) and the original
@@ -252,7 +277,7 @@ devgeta_ob_emit_replay() {
 	fi
 
 	local candidate
-	candidate=$(devgeta_ob_render_lines "${assembled_lines[@]}")
+	candidate=$(devgeta_ob_render_lines ${assembled_lines[@]+"${assembled_lines[@]}"})
 	local candidate_bytes=${#candidate}
 	if [ "$add_trailing_newline" -eq 1 ]; then
 		candidate_bytes=$((candidate_bytes + 1))
@@ -406,17 +431,19 @@ devgeta_ob_byte_refill() {
 	# never larger than the budget plus one line — independent of how many
 	# lines the capture holds or how long any of them is.
 	local -a head_lines=() tail_lines=()
-	mapfile -t head_lines < <(
+	devgeta_ob_read_lines < <(
 		devgeta_ob_take_head "$capture_file" "$line_content_limit" "$head_budget" 1
 	)
+	head_lines=(${DEVGETA_OB_LINES[@]+"${DEVGETA_OB_LINES[@]}"})
 	head_kept=${#head_lines[@]}
 
 	# The tail starts after whatever the head already claimed, which is what
 	# keeps the two from overlapping on a short capture.
-	mapfile -t tail_lines < <(
+	devgeta_ob_read_lines < <(
 		devgeta_ob_take_tail "$capture_file" "$line_content_limit" "$tail_budget" \
 			$((head_kept + 1))
 	)
+	tail_lines=(${DEVGETA_OB_LINES[@]+"${DEVGETA_OB_LINES[@]}"})
 	tail_kept=${#tail_lines[@]}
 
 	local omitted_lines=$((total - head_kept - tail_kept))
@@ -429,10 +456,10 @@ devgeta_ob_byte_refill() {
 	local marker
 	marker=$(devgeta_ob_marker "$omitted_lines" "$omitted_bytes" "$full_path" "$capture_capped")
 
-	local -a assembled=("${head_lines[@]}")
+	local -a assembled=(${head_lines[@]+"${head_lines[@]}"})
 	[ -n "$marker" ] && assembled+=("$marker")
-	assembled+=("${tail_lines[@]}")
-	devgeta_ob_render_lines "${assembled[@]}"
+	assembled+=(${tail_lines[@]+"${tail_lines[@]}"})
+	devgeta_ob_render_lines ${assembled[@]+"${assembled[@]}"}
 	printf '\n'
 }
 

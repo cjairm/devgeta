@@ -391,3 +391,123 @@ func TestOutputBudgetRun_CostDoesNotScaleWithTheNumberOfCapturedLines(t *testing
 		)
 	}
 }
+
+// TestOutputBudgetRun_WorksUnderBash3 runs the runner under a real bash 3 —
+// what `#!/usr/bin/env bash` resolves to on a stock Mac — whatever bash happens
+// to be first on this machine's PATH. The rest of this file goes through the
+// shebang, so it only exercised bash 3.2 by accident of the environment: the
+// runner shipped `mapfile` (bash 4) and an empty-array expansion that `set -u`
+// rejects before bash 4.4, and every wrapped command exited 1 with no output.
+// Skipped where no bash 3 exists (Linux), where the static guard
+// TestEmbeddedShellScriptsAvoidBash4OnlySyntax still applies.
+func TestOutputBudgetRun_WorksUnderBash3(t *testing.T) {
+	const bash3 = "/bin/bash"
+	major, err := exec.Command(bash3, "-c", "echo ${BASH_VERSINFO[0]}").Output()
+	if err != nil || strings.TrimSpace(string(major)) != "3" {
+		t.Skipf("%s is not bash 3 (got %q, err %v)", bash3, strings.TrimSpace(string(major)), err)
+	}
+	scriptPath := writeOutputBudgetRunScript(t)
+
+	cases := []struct {
+		name                             string
+		head, tail, line, total, capture int
+		command                          string
+		wantExit                         int
+		check                            func(t *testing.T, stdout string)
+	}{
+		{
+			name: "under the cap passes output and exit status through",
+			head: 10, tail: 10, line: 500, total: 4000, capture: 4000,
+			command:  `printf 'a\nb\n'; exit 3`,
+			wantExit: 3,
+			check: func(t *testing.T, stdout string) {
+				if stdout != "a\nb\n" {
+					t.Errorf("stdout = %q, want %q", stdout, "a\nb\n")
+				}
+			},
+		},
+		{
+			name: "no output at all",
+			head: 10, tail: 10, line: 500, total: 4000, capture: 4000,
+			command:  `true`,
+			wantExit: 0,
+			check: func(t *testing.T, stdout string) {
+				if stdout != "" {
+					t.Errorf("stdout = %q, want empty", stdout)
+				}
+			},
+		},
+		{
+			name: "head and tail reduction",
+			head: 3, tail: 3, line: 500, total: 100000, capture: 100000,
+			command:  `for i in $(seq 1 20); do echo "line$i"; done`,
+			wantExit: 0,
+			check: func(t *testing.T, stdout string) {
+				for _, want := range []string{"line1\n", "line20", "omitted"} {
+					if !strings.Contains(stdout, want) {
+						t.Errorf("stdout missing %q:\n%s", want, stdout)
+					}
+				}
+				if strings.Contains(stdout, "line10\n") {
+					t.Errorf("expected line10 omitted:\n%s", stdout)
+				}
+			},
+		},
+		{
+			name: "byte refill",
+			head: 30, tail: 120, line: 2048, total: 4096, capture: 5000000,
+			command:  `for i in $(seq 1 25); do printf 'L%d:' "$i"; printf 'y%.0s' $(seq 1 290); printf '\n'; done`,
+			wantExit: 0,
+			check: func(t *testing.T, stdout string) {
+				if len(stdout) > 4096 {
+					t.Errorf("stdout is %d bytes, want <= 4096", len(stdout))
+				}
+				if !strings.Contains(stdout, "L1:") || !strings.Contains(stdout, "omitted") {
+					t.Errorf("expected head content and a marker, got:\n%s", stdout)
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := exec.Command(
+				bash3, scriptPath,
+				strconv.Itoa(tc.head), strconv.Itoa(tc.tail), strconv.Itoa(tc.line),
+				strconv.Itoa(tc.total), strconv.Itoa(tc.capture),
+				tc.command,
+			)
+			var stdoutBuf, stderrBuf bytes.Buffer
+			cmd.Stdout = &stdoutBuf
+			cmd.Stderr = &stderrBuf
+			exitCode := 0
+			if runErr := cmd.Run(); runErr != nil {
+				var exitErr *exec.ExitError
+				if !isExitError(runErr, &exitErr) {
+					t.Fatalf("failed to run under %s: %v", bash3, runErr)
+				}
+				exitCode = exitErr.ExitCode()
+			}
+			if exitCode != tc.wantExit {
+				t.Errorf("exit code = %d, want %d; stderr:\n%s", exitCode, tc.wantExit, stderrBuf.String())
+			}
+			tc.check(t, stdoutBuf.String())
+		})
+	}
+}
+
+// TestOutputBudgetRun_NoOutputReplaysNothing is the under-the-cap clause of the
+// contract (guide §3) at its edge: output is byte-identical to running the
+// command unwrapped, so a command that prints nothing must replay nothing. An
+// empty capture has no final newline to preserve, and treating it as if it did
+// prints a lone "\n" the command never produced.
+func TestOutputBudgetRun_NoOutputReplaysNothing(t *testing.T) {
+	scriptPath := writeOutputBudgetRunScript(t)
+	exitCode, stdout := runOutputBudgetRun(t, scriptPath, 10, 10, 500, 4000, 4000, "true")
+	if exitCode != 0 {
+		t.Errorf("exit code = %d, want 0", exitCode)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty (byte-identical to the unwrapped command)", stdout)
+	}
+}

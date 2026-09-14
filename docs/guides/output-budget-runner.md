@@ -848,7 +848,16 @@ These are the contract's own tests. Both suites — Go in the root package
 
 - a **failing** command wrapped by the runner still exits non-zero (the regression
   that makes this feature dangerous if wrong — write it first)
-- output under the cap is byte-identical to running unwrapped
+- output under the cap is byte-identical to running unwrapped, including a
+  command that prints nothing: an empty capture replays nothing, not a newline
+- the runner behaves identically under `/bin/bash` 3.2, which is what
+  `#!/usr/bin/env bash` resolves to on a stock Mac. No bash 4+ builtins
+  (`mapfile` shipped once and made every wrapped command exit 1 with no
+  output), and every array that can be empty is expanded as
+  `${a[@]+"${a[@]}"}`, since `set -u` rejects a plain `"${a[@]}"` on an empty
+  array before bash 4.4. `TestEmbeddedShellScriptsAvoidBash4OnlySyntax` checks
+  the syntax on every machine; `TestOutputBudgetRun_WorksUnderBash3` runs the
+  script under a real bash 3 wherever one exists
 - a compound command (`a && b`, `a; b`, `a | b`, `a || b`) is **not rewritten at
   all**, even when one of its segments matches a rule (§2.4), and the hook
   emits **no `permissionDecision`** on any path

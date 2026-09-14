@@ -892,7 +892,7 @@ so `dg wt list` and worktrees created here are the same population, never two pa
 trackers):
 
 | Subcommand        | Args / Flags                                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `worktree-start`  | `<name>`, `--base <ref>`                           | Refuse on a dirty tree, fetch origin, then create a worktree + branch at `dg wt`'s shared location. Without `--base`, the branch is based on the freshly-fetched default branch (reusing the same local/remote-branch-reuse logic as `dg wt create`); with `--base`, the branch starts fresh from exactly that ref. Prints `Created worktree <path> (branch <name>, base <ref>)`.                                                                                                                                                                                                                                                                                                                                                                      |
 | `worktree-finish` | `[name]`, `--merge\|--discard\|--check`, `--force` | Tear down a worktree via merge, discard, or a read-only check — exactly one of `--merge`, `--discard`, or `--check` is required. Target resolution is deterministic: an explicit `name` wins; otherwise the current directory resolves to the linked worktree it's inside; otherwise the command errors and lists the worktrees it found — it never guesses from a main checkout. `--merge` refuses on a dirty worktree, refuses when the main checkout isn't on the default branch, refuses when the main checkout is dirty (any uncommitted changes there, not just paths overlapping the merge), refuses when the branch's review journal has an open, non-stale finding (settle it with `devgeta task review-note --settle --id <id> --as answered | rejected | fixed --note "<text>"`), and refuses when the divergence probe itself can't be answered (an unanswerable `git merge-base --is-ancestor`, e.g. no local branch by the default branch's name) — then rebases onto the default branch if diverged, fast-forward-merges from the main checkout, and removes the worktree and deletes the branch (safe only once the fast-forward landed the branch's commits). `--discard`refuses on a dirty worktree unless`--force`, then removes the worktree and deletes the branch unconditionally. Does not run a build or test suite — verification is the caller's responsibility. `--check`reports the same readiness`--merge`would act on, without acting: no fetch, no ref moved, and no mutation — except that a`git merge-tree`conflict prediction can write unreferenced objects to the object database, advisory-only and does not block. Prints dirty state, ahead/behind and rebase need, predicted merge conflicts, open review-journal findings, and changed docs' status markers, ending in a`ready: yes`or`ready: no — <reason>`line naming the first blocking refusal above (in the same order`--merge` checks them); exits non-zero when not ready. |
 
@@ -1077,6 +1077,7 @@ files:
 The two fetched refs — `refs/devgeta/pr/<n>/head` and `.../base` — **stay in the
 repository** after the command exits. That is the one durable trace it leaves,
 and it is deliberate: later steps of the same review read them (`git show
+
 <head>:<path>`), and holding the refs pins those objects against a `git gc` that
 runs while reviewers are still working. They are keyed by PR number, so a
 re-review of the same PR reuses them and the count tracks distinct PRs reviewed,
@@ -1613,6 +1614,93 @@ dge() {
 ```
 
 Agents should prefer `dg task` directly; humans can use either `dg task` or `dge`.
+
+#### `dg archive`
+
+Packs a folder onto an external drive for a machine move — a one-shot archive,
+not an incremental backup (`dg backup` stays reserved for devgeta config
+snapshots; restic/borg do incremental backups well). Written entirely in Go
+(`archive/tar` + `klauspost/compress/zstd`), not by shelling out to `tar` — see
+[ADR-0040](decisions/ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md).
+
+```
+dg archive <source> <destination-dir> [--dry-run] [--gzip] [--no-skip] [--no-verify] [--mac-metadata] [--yes]
+dg archive verify <archive-file>
+```
+
+**Flags**:
+
+- `--dry-run` — Scan and print the report (kept size/count, each skip with its
+  rule and size, unreadable/special/iCloud-only files, Windows-incompatible
+  names) without writing anything.
+- `--gzip` — Write `.tar.gz` instead of the default `.tar.zst`. zstd is faster
+  and passes incompressible data (photos, video) through cheaply; gzip exists
+  for zero-install restores on Windows' command-line `tar`, which may lack zstd
+  support.
+- `--no-skip` — Disable every skip rule; archive everything.
+- `--no-verify` — Skip the post-write verification pass (on by default).
+- `--mac-metadata` — Include each file's extended attributes as
+  `SCHILY.xattr.<name>` pax records (read by GNU tar and libarchive/bsdtar),
+  instead of leaving them out. macOS only — errors immediately on Linux.
+- `--yes` — Skip the confirmation prompt.
+
+**Behavior**:
+
+- Skips only what [ADR-0041](decisions/ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md)
+  proves is regenerable: a `CACHEDIR.TAG` with the exact standard signature, a
+  `pyvenv.cfg` virtualenv, or a named folder (`node_modules`, `target`,
+  `vendor`, `Pods`, `.gradle`, `.dart_tool`, `_build`/`deps`, `.zig-cache`,
+  `.tox`, `.terraform`, …) next to the manifest file that proves a tool
+  generates it — never by name alone. `.git`, `build`, `dist`, `out`,
+  `coverage`, and `bin` are never skipped.
+- Refuses before writing anything (nothing created) when: the source isn't a
+  directory or the destination isn't an existing directory; the destination is
+  nested inside the source; the final archive name already exists (a stale
+  `.partial` from a crashed run is overwritten instead); the destination
+  filesystem is FAT (4 GiB file-size limit — reformat as exFAT); or the scan
+  finds unreadable files or iCloud-only placeholders (fix permissions, or
+  download them in Finder, then re-run).
+- Warns and continues, archiving unchanged, for: names that would fail to
+  extract on Windows (renaming would alter the user's files); special files
+  (sockets, FIFOs, devices — skipped and listed); and files whose size or mtime
+  changed between the scan and the write, or that vanished — the manifest
+  hashes only what was actually archived.
+- Writes three files to `<destination-dir>`: `<source-basename>-<YYYY-MM-DD>.tar.zst`
+  (or `.tar.gz`), a `sha256sum`-format checksum manifest
+  (`<name>.sha256`, GNU-escaped for any path with a backslash or newline —
+  checkable with `shasum -a 256 -c` without devgeta), and a skip report
+  (`<name>.skipped.txt`). All three are written to `.partial` files, fsynced,
+  and renamed into place together; any failure mid-write deletes every
+  `.partial` file and leaves no incomplete final-named file.
+- Verifies by default: re-reads the archive from the destination, hashes every
+  regular-file entry against the manifest (same set of paths, same hashes),
+  and writes `<name>.tar.zst.sha256` holding the hash of the archive file
+  itself.
+- Confirms interactively (unless `--yes`) after printing the scan summary;
+  refuses outright without `--yes` when stdin/stdout isn't a TTY.
+
+**Examples**:
+
+```
+dg archive ~/Documents /Volumes/SSD
+dg archive ~/Documents /Volumes/SSD --dry-run
+dg archive ~/Documents /Volumes/SSD --gzip --yes
+dg archive verify /Volumes/SSD/Documents-2026-09-13.tar.zst
+```
+
+**Restore** (no devgeta involved — a plain `tar` on macOS, Linux, or Windows):
+
+```
+tar --zstd -xf Documents-2026-09-13.tar.zst      # or: zstd -d file.tar.zst -c | tar -x
+tar -xzf Documents-2026-09-13.tar.gz              # with --gzip
+```
+
+**Out of scope**: extraction/restore (plain `tar -xf` is the restore path),
+incremental or deduplicated backups, encryption (use an encrypted volume, or
+`age`/`gpg` the file afterward), splitting output into chunks, user-supplied
+`--exclude` patterns, and downloading iCloud placeholder files for the user.
+See the [2026-09-13-dg-archive cycle doc](plans/cycles/2026-09-13-dg-archive.md)
+for the full design and research behind the format choices.
 
 ---
 

@@ -248,3 +248,70 @@ func TestEmbeddedConfigsNameNoPersonalCheckoutPaths(t *testing.T) {
 		t.Fatalf("failed to walk embedded configs: %v", err)
 	}
 }
+
+// Embedded shell scripts start with `#!/usr/bin/env bash`, and on a stock Mac
+// that resolves to /bin/bash 3.2 — Apple never shipped a newer one. A bash 4+
+// builtin there is not a style problem: `mapfile` made the output-budget runner
+// exit 1 with no output for every wrapped command, hiding both the command's
+// output and its real exit status. The existing behavior tests only notice when
+// the machine running them happens to have bash 3.2 first on PATH, so this
+// guard checks the syntax itself, on every machine.
+//
+// Empty-array expansion under `set -u` (`"${arr[@]}"` is "unbound" before bash
+// 4.4) is the other 3.2 trap, but it is only wrong when the array can be empty,
+// which syntax cannot tell; TestOutputBudgetRun_WorksUnderBash3 covers it by
+// running the script under a real bash 3.
+func TestEmbeddedShellScriptsAvoidBash4OnlySyntax(t *testing.T) {
+	banned := []struct {
+		pattern *regexp.Regexp
+		what    string
+	}{
+		{regexp.MustCompile(`\b(?:mapfile|readarray)\b`), "mapfile/readarray (bash 4)"},
+		{
+			regexp.MustCompile(`\b(?:declare|local|typeset)\s+-[A-Za-z]*[An][A-Za-z]*\b`),
+			"associative arrays or namerefs (bash 4 / 4.3)",
+		},
+		{
+			regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?(?:,,?|\^\^?|@[QEPAaKk])\}`),
+			"case-modification or @ transformation expansion (bash 4 / 4.4)",
+		},
+		{regexp.MustCompile(`\bwait\s+-n\b`), "wait -n (bash 4.3)"},
+		{regexp.MustCompile(`\$EPOCH(?:REAL)?TIME\b`), "$EPOCHSECONDS/$EPOCHREALTIME (bash 5)"},
+		{regexp.MustCompile(`\bcoproc\b`), "coproc (bash 4)"},
+		{regexp.MustCompile(`\[\[\s+-v\s`), "[[ -v ]] (bash 4.2)"},
+		{regexp.MustCompile(`\|&|&>>`), "|& or &>> (bash 4)"},
+	}
+
+	err := fs.WalkDir(ConfigsFS, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".sh") {
+			return nil
+		}
+		data, err := fs.ReadFile(ConfigsFS, path)
+		if err != nil {
+			return err
+		}
+		for lineNo, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#") {
+				continue
+			}
+			for _, b := range banned {
+				if b.pattern.MatchString(line) {
+					t.Errorf(
+						"%s:%d uses %s, which /bin/bash 3.2 on macOS does not have: %s",
+						path,
+						lineNo+1,
+						b.what,
+						strings.TrimSpace(line),
+					)
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("failed to walk embedded configs: %v", err)
+	}
+}

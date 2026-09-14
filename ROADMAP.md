@@ -34,6 +34,13 @@ The following commands are planned but not yet implemented:
 
 ### Backup & Recovery
 
+Shipped: `dg archive <source> <destination-dir>` — a one-shot archive of a
+folder (typically `~/Documents`) onto an external drive for a machine move,
+not an incremental backup. See [docs/spec.md](docs/spec.md#dg-archive) and the
+[2026-09-13-dg-archive cycle doc](docs/plans/cycles/2026-09-13-dg-archive.md).
+`dg backup` below is a separate, still-planned command reserved for snapshots
+of devgeta's own _configuration_ state, not a user's files.
+
 - **`dg backup [name]`** — Backup current configurations
   - Create snapshots of current installation state
   - Enable rollback workflows

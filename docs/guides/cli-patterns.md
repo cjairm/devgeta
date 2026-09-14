@@ -446,18 +446,19 @@ func TestInstallCommand(t *testing.T) {
 
 ## Planned Commands Quick Reference
 
-| Command                         | Pattern                 | Status        |
-| ------------------------------- | ----------------------- | ------------- |
-| `dg install`                    | Flags + categories      | ✓ Implemented |
-| `dg configure [app] --force`    | Single arg + bool flag  | Planned       |
-| `dg uninstall [app] --category` | Single arg + flag       | Planned       |
-| `dg list / installed`           | No args                 | Planned       |
-| `dg update [app]`               | Single arg              | Planned       |
-| `dg check-updates`              | No args                 | Planned       |
-| `dg change --theme --font`      | Multiple flags          | Planned       |
-| `dg backup [name]`              | Single arg              | Planned       |
-| `dg restore [backup]`           | Single arg              | Planned       |
-| `dg worktree create [name]`     | Hierarchical subcommand | ✓ Implemented |
+| Command                         | Pattern                                                 | Status        |
+| ------------------------------- | ------------------------------------------------------- | ------------- |
+| `dg install`                    | Flags + categories                                      | ✓ Implemented |
+| `dg configure [app] --force`    | Single arg + bool flag                                  | Planned       |
+| `dg uninstall [app] --category` | Single arg + flag                                       | Planned       |
+| `dg list / installed`           | No args                                                 | Planned       |
+| `dg update [app]`               | Single arg                                              | Planned       |
+| `dg check-updates`              | No args                                                 | Planned       |
+| `dg change --theme --font`      | Multiple flags                                          | Planned       |
+| `dg backup [name]`              | Single arg                                              | Planned       |
+| `dg restore [backup]`           | Single arg                                              | Planned       |
+| `dg worktree create [name]`     | Hierarchical subcommand                                 | ✓ Implemented |
+| `dg archive <source> <dest>`    | Two args + bool flags, hierarchical `verify` subcommand | ✓ Implemented |
 
 ---
 

@@ -11,11 +11,54 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-08-07
+**Last updated:** 2026-09-14
 
 ---
 
 ## Recent changes
+
+- The output-budget runner works on a stock Mac again (2026-09-14).
+  `output-budget-run.sh` starts with `#!/usr/bin/env bash`, which on a Mac
+  without Homebrew bash is `/bin/bash` 3.2, and since v1.23.0 it used
+  `mapfile` (bash 4) plus plain `"${arr[@]}"` on arrays that can be empty,
+  which `set -u` rejects before bash 4.4. With `integrations.output_budget`
+  on, every wrapped command exited 1 with no output, hiding both its output
+  and its real exit status. Lines are now read with a `while read` helper and
+  empty arrays are expanded as `${a[@]+"${a[@]}"}`. The behavior tests only
+  caught this because the machine running them had no newer bash on PATH, so
+  two guards back it now: `TestEmbeddedShellScriptsAvoidBash4OnlySyntax` bans
+  bash-4-only syntax in every embedded `.sh`, and
+  `TestOutputBudgetRun_WorksUnderBash3` runs the runner under a real
+  `/bin/bash` 3 wherever one exists. The new test also caught a smaller,
+  older contract violation: a command with no output replayed a lone newline
+  instead of nothing.
+
+- `dg archive <source> <destination-dir>` packs a folder onto an external
+  drive for a machine move (2026-09-13) — a one-shot archive, not an
+  incremental backup (`dg backup` stays reserved for devgeta's own config
+  snapshots). Written entirely in Go (`archive/tar` +
+  `github.com/klauspost/compress/zstd`), not by shelling out to `tar`: no
+  external binary to install on a fresh Mac, one code path on both supported
+  platforms, and each file is hashed while it is copied into the archive so
+  the checksum manifest costs no extra read of the source. See
+  [ADR-0040](decisions/ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md).
+  Skips only what's _proven_ regenerable — a `CACHEDIR.TAG` with the exact
+  standard signature, a `pyvenv.cfg` virtualenv, or a named folder
+  (`node_modules`, `target`, `vendor`, …) next to the manifest file that
+  proves a tool generates it, never by folder name or `.gitignore` alone,
+  so a `.env` file or a Go project's committed `vendor/` is never silently
+  dropped. See
+  [ADR-0041](decisions/ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md).
+  Refuses to write anything if the scan finds unreadable files or
+  undownloaded iCloud placeholders — hours into a large archive is the wrong
+  time to discover a permission problem — and every output (archive,
+  `sha256sum`-format manifest, skip report) is written to a `.partial` file
+  and only renamed into place once all three have synced, so a failed run
+  never leaves a file that looks complete but isn't. Verifies by default by
+  re-reading the archive from the destination and hashing every entry against
+  the manifest. Full design, the tar/zstd/Windows-naming research behind it,
+  and the manual cross-OS extraction checklist:
+  [2026-09-13-dg-archive cycle doc](plans/cycles/2026-09-13-dg-archive.md).
 
 - A long `--prompt` no longer gets silently dropped by `dg wt create`
   (2026-08-07). Every pane's command was typed into the pane with
