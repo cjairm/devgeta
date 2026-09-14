@@ -1,7 +1,7 @@
 # ADR-0044 — A theme declares a wallpaper; it never ships one
 
 **Date:** 2026-09-14
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

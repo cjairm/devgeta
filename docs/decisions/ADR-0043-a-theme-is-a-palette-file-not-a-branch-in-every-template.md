@@ -1,7 +1,7 @@
 # ADR-0043 — A theme is a palette file, not a branch in every template
 
 **Date:** 2026-09-14
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
