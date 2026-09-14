@@ -62,3 +62,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
 - [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable
 - [ADR-0042](ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md) — An archive refuses on proof and warns on prediction
+- [ADR-0043](ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md) — A theme is a palette file, not a branch in every template
+- [ADR-0044](ADR-0044-a-theme-declares-a-wallpaper-it-never-ships-one.md) — A theme declares a wallpaper; it never ships one
