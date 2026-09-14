@@ -15,6 +15,16 @@ func IsFATFilesystem(path string) (bool, error) {
 	return unix.ByteSliceToString(stat.Fstypename[:]) == "msdos", nil
 }
 
+// FreeBytes reports how many bytes an unprivileged process can still write to
+// the filesystem holding path.
+func FreeBytes(path string) (int64, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return int64(stat.Bavail) * int64(stat.Bsize), nil
+}
+
 // isDataless reports whether path is an iCloud "Optimize Mac Storage"
 // placeholder whose content is not actually present on disk.
 func isDataless(path string) (bool, error) {

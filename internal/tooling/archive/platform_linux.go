@@ -23,6 +23,16 @@ func IsFATFilesystem(path string) (bool, error) {
 	return int64(stat.Type) == msdosSuperMagic, nil
 }
 
+// FreeBytes reports how many bytes an unprivileged process can still write to
+// the filesystem holding path.
+func FreeBytes(path string) (int64, error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return 0, err
+	}
+	return int64(stat.Bavail) * stat.Bsize, nil
+}
+
 // isDataless always reports false: Linux has no iCloud-style dataless
 // placeholder files.
 func isDataless(path string) (bool, error) {

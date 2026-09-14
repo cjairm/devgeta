@@ -227,7 +227,7 @@ dg install --skip databases,desktop
     - `dg task pr-review-target [--pr N]` - Immutable review target for a PR: merge-base/head SHAs, PR-scoped journal key, and the noise-filtered changed-file list (fetches `refs/pull/<n>/head` read-only; fails rather than review a stale ref). The working tree is untouched, but the fetch leaves two refs — `refs/devgeta/pr/<n>/head` and `.../base` — in the repo for later review steps to read; they are reused per PR, and `git update-ref -d` removes them
     - `dg task pr-review-state [--pr N]` - Whether a PR wants a review from you right now, as three lines: `pr:` (`open | draft | merged | closed`), `requested:` (is the authenticated user in the PR's review requests) and `my-review:` (`approved | changes-requested | commented | none`). A state read of GitHub's own fields, so it never goes stale
     - `dg task current-pr` / `current-repo` - Resolve the current branch's PR number / `owner/name`
-- `dg archive <source> <destination-dir>` - Pack a folder onto an external drive for a machine move (one-shot, not an incremental backup); skips only what's proven regenerable (`node_modules`, virtualenvs, build caches — never by name alone), then verifies the archive against the source
+- `dg archive <source> <destination-dir>` - Pack a folder onto an external drive for a machine move (one-shot, not an incremental backup); skips only what's proven regenerable (`node_modules`, virtualenvs, build caches — never by name alone), then verifies the archive against the source. Shows a live progress bar with the rate and time remaining for both the write and the verify. Reads the source only, and refuses to start if any file it would write is already on the drive — it never overwrites or deletes anything there
   - `--dry-run` - Scan and print the report without writing anything
   - `--gzip` - Write `.tar.gz` instead of the default `.tar.zst`
   - `--no-skip` - Disable every skip rule; archive everything
@@ -235,6 +235,7 @@ dg install --skip databases,desktop
   - `--mac-metadata` - Include extended attributes as pax records (macOS only)
   - `--yes` - Skip the confirmation prompt
   - `dg archive verify <archive-file>` - Re-check an archive against its manifest
+  - Decompress with a plain `tar`, no devgeta needed — always into a directory of its own, since a bare `tar -xf` unpacks into the current one: `mkdir -p NAME && tar --zstd -xf NAME.tar.zst -C NAME` (use `tar -xzf` for a `--gzip` archive). List without extracting with `tar --zstd -tf NAME.tar.zst`; check it with `shasum -a 256 -c NAME.tar.zst.sha256`. Full command reference in [docs/spec.md](docs/spec.md#dg-archive)
 - `dg --version` - Show version information
 - `dg --help` - Show help message
 

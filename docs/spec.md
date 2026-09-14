@@ -891,9 +891,9 @@ same base path `dg wt` uses, `~/.local/share/devgeta/worktrees/<repo-slug>/<flat
 so `dg wt list` and worktrees created here are the same population, never two parallel
 trackers):
 
-| Subcommand        | Args / Flags                                       | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Subcommand | Args / Flags | Description |
 | ----------------- | -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `worktree-start`  | `<name>`, `--base <ref>`                           | Refuse on a dirty tree, fetch origin, then create a worktree + branch at `dg wt`'s shared location. Without `--base`, the branch is based on the freshly-fetched default branch (reusing the same local/remote-branch-reuse logic as `dg wt create`); with `--base`, the branch starts fresh from exactly that ref. Prints `Created worktree <path> (branch <name>, base <ref>)`.                                                                                                                                                                                                                                                                                                                                                                      |
+| `worktree-start` | `<name>`, `--base <ref>` | Refuse on a dirty tree, fetch origin, then create a worktree + branch at `dg wt`'s shared location. Without `--base`, the branch is based on the freshly-fetched default branch (reusing the same local/remote-branch-reuse logic as `dg wt create`); with `--base`, the branch starts fresh from exactly that ref. Prints `Created worktree <path> (branch <name>, base <ref>)`. |
 | `worktree-finish` | `[name]`, `--merge\|--discard\|--check`, `--force` | Tear down a worktree via merge, discard, or a read-only check — exactly one of `--merge`, `--discard`, or `--check` is required. Target resolution is deterministic: an explicit `name` wins; otherwise the current directory resolves to the linked worktree it's inside; otherwise the command errors and lists the worktrees it found — it never guesses from a main checkout. `--merge` refuses on a dirty worktree, refuses when the main checkout isn't on the default branch, refuses when the main checkout is dirty (any uncommitted changes there, not just paths overlapping the merge), refuses when the branch's review journal has an open, non-stale finding (settle it with `devgeta task review-note --settle --id <id> --as answered | rejected | fixed --note "<text>"`), and refuses when the divergence probe itself can't be answered (an unanswerable `git merge-base --is-ancestor`, e.g. no local branch by the default branch's name) — then rebases onto the default branch if diverged, fast-forward-merges from the main checkout, and removes the worktree and deletes the branch (safe only once the fast-forward landed the branch's commits). `--discard`refuses on a dirty worktree unless`--force`, then removes the worktree and deletes the branch unconditionally. Does not run a build or test suite — verification is the caller's responsibility. `--check`reports the same readiness`--merge`would act on, without acting: no fetch, no ref moved, and no mutation — except that a`git merge-tree`conflict prediction can write unreferenced objects to the object database, advisory-only and does not block. Prints dirty state, ahead/behind and rebase need, predicted merge conflicts, open review-journal findings, and changed docs' status markers, ending in a`ready: yes`or`ready: no — <reason>`line naming the first blocking refusal above (in the same order`--merge` checks them); exits non-zero when not ready. |
 
 **Issue surface subcommand** (orient on a tracked issue in one call — see
@@ -1655,16 +1655,25 @@ dg archive verify <archive-file>
   `coverage`, and `bin` are never skipped.
 - Refuses before writing anything (nothing created) when: the source isn't a
   directory or the destination isn't an existing directory; the destination is
-  nested inside the source; the final archive name already exists (a stale
-  `.partial` from a crashed run is overwritten instead); the destination
-  filesystem is FAT (4 GiB file-size limit — reformat as exFAT); or the scan
-  finds unreadable files or iCloud-only placeholders (fix permissions, or
-  download them in Finder, then re-run).
+  nested inside the source; **any** of the four files a run writes already
+  exists — the archive, the manifest, the skip report, or the archive checksum
+  (a stale `.partial` from a crashed run is overwritten instead); the
+  destination filesystem is FAT (4 GiB file-size limit — reformat as exFAT); or
+  the scan finds unreadable files or iCloud-only placeholders (fix permissions,
+  or download them in Finder, then re-run).
+- Never deletes or modifies anything else on the destination. The source is
+  only ever opened for reading. The sole removal a run performs is of the
+  `.partial` files it created itself, and only when it fails. Why the
+  overwrite check refuses but the free-space check only warns:
+  [ADR-0042](decisions/ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md).
 - Warns and continues, archiving unchanged, for: names that would fail to
   extract on Windows (renaming would alter the user's files); special files
-  (sockets, FIFOs, devices — skipped and listed); and files whose size or mtime
+  (sockets, FIFOs, devices — skipped and listed); files whose size or mtime
   changed between the scan and the write, or that vanished — the manifest
-  hashes only what was actually archived.
+  hashes only what was actually archived; and a destination with less free
+  space than the source's uncompressed size (a warning, not a refusal —
+  compression usually covers the gap, and running out mid-write discards the
+  run without touching anything already on the drive).
 - Writes three files to `<destination-dir>`: `<source-basename>-<YYYY-MM-DD>.tar.zst`
   (or `.tar.gz`), a `sha256sum`-format checksum manifest
   (`<name>.sha256`, GNU-escaped for any path with a backslash or newline —
@@ -1678,6 +1687,14 @@ dg archive verify <archive-file>
   itself.
 - Confirms interactively (unless `--yes`) after printing the scan summary;
   refuses outright without `--yes` when stdin/stdout isn't a TTY.
+- Reports progress for both long phases — the write, measured against the
+  scanned byte total, and the verify, measured against the archive's size on
+  disk. Each shows a bar, percent, bytes done over total, the current rate,
+  and the estimated time left, finishing with a one-line summary. Progress
+  draws to **stderr**, so a redirected stdout stays clean: an attached terminal
+  gets one line redrawn four times a second; a pipe or log gets a plain line
+  every 30 seconds. Measuring adds no extra read of the data — the counter is
+  one atomic add per buffer on a stream both phases already read.
 
 **Examples**:
 
@@ -1688,12 +1705,49 @@ dg archive ~/Documents /Volumes/SSD --gzip --yes
 dg archive verify /Volumes/SSD/Documents-2026-09-13.tar.zst
 ```
 
-**Restore** (no devgeta involved — a plain `tar` on macOS, Linux, or Windows):
+**Compress**:
 
+```bash
+dg archive ~/Documents /Volumes/SSD                 # .tar.zst, verified after writing
+dg archive ~/Documents /Volumes/SSD --dry-run       # scan and report, write nothing
+dg archive ~/Documents /Volumes/SSD --gzip          # .tar.gz for a zero-install Windows restore
+dg archive ~/Documents /Volumes/SSD --yes           # skip the confirmation prompt
+dg archive verify /Volumes/SSD/Documents-2026-09-13.tar.zst   # re-check an existing archive
 ```
-tar --zstd -xf Documents-2026-09-13.tar.zst      # or: zstd -d file.tar.zst -c | tar -x
-tar -xzf Documents-2026-09-13.tar.gz              # with --gzip
+
+**Decompress** — no devgeta involved, a plain `tar` on macOS, Linux, or
+Windows. macOS ships bsdtar/libarchive and Debian/Ubuntu ship GNU tar; both
+read `--zstd` natively, so nothing needs installing:
+
+```bash
+# Extract into a directory of its own — the form dg archive prints, and the
+# one to prefer. A bare `tar -xf` unpacks into the CURRENT directory, which
+# for a whole home folder means hundreds of entries landing on top of
+# whatever you were standing in. `-C` also fails if the directory does not
+# already exist, hence the mkdir.
+mkdir -p Documents-2026-09-13 && tar --zstd -xf Documents-2026-09-13.tar.zst -C Documents-2026-09-13
+
+tar -xzf Documents-2026-09-13.tar.gz -C somewhere   # a --gzip archive
+zstd -d Documents-2026-09-13.tar.zst -c | tar -x -C somewhere  # if tar lacks --zstd
 ```
+
+**Inspect and check** — also without devgeta. The two `.sha256` files are
+plain `sha256sum` format, so `shasum -a 256 -c` reads them directly:
+
+```bash
+tar --zstd -tf Documents-2026-09-13.tar.zst                # list entries without extracting
+tar --zstd -xf Documents-2026-09-13.tar.zst some/one/file  # pull out a single path
+shasum -a 256 -c Documents-2026-09-13.tar.zst.sha256       # the archive file itself is intact
+cd ~/restored && shasum -a 256 -c /path/to/Documents-2026-09-13.sha256  # every extracted file is intact
+```
+
+The last one is the strongest check available without devgeta: it hashes every
+extracted file against the manifest written at archive time. `dg archive verify`
+does the same plus confirms the archive and manifest list the same set of paths.
+
+On **Windows**, File Explorer opens `.tar.zst` since Windows 11 23H2. The
+bundled `tar.exe` may not, which is what `--gzip` is for — `tar -xzf` works
+there with nothing installed.
 
 **Out of scope**: extraction/restore (plain `tar -xf` is the restore path),
 incremental or deduplicated backups, encryption (use an encrypted volume, or

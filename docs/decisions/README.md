@@ -61,3 +61,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name
 - [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
 - [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable
+- [ADR-0042](ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md) — An archive refuses on proof and warns on prediction
