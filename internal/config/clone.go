@@ -39,9 +39,11 @@ func cloneGlobalConfig(src *GlobalConfig) *GlobalConfig {
 	dst.FailedInstallations = cloneFailedInstallations(src.FailedInstallations)
 	dst.Worktree = cloneWorktreeConfig(src.Worktree)
 	dst.Review = cloneReviewConfig(src.Review)
-	// AppPath, ConfigPath, CurrentFont, CurrentTheme, Shell, and Integrations
-	// are strings/bools (or structs made only of those), so the `dst := *src`
-	// copy above already gives them independent storage - nothing else to do.
+	dst.Wallpapers = cloneStringMap(src.Wallpapers)
+	// AppPath, ConfigPath, CurrentFont, CurrentTheme, PendingTheme, Shell, and
+	// Integrations are strings/bools (or structs made only of those), so the
+	// `dst := *src` copy above already gives them independent storage -
+	// nothing else to do.
 
 	return &dst
 }

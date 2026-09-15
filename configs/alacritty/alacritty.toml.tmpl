@@ -26,29 +26,29 @@ bold = { family = "MesloLGLDZ Nerd Font Mono", style = "Bold" }
 italic = { family = "MesloLGLDZ Nerd Font Mono", style = "Italic" }
 {{end}}
 
-{{if eq .Theme "default"}}
+
 [colors]
 [colors.primary]
-background = "0x282828"
-foreground = "0xd4be98"
+background = "{{.Colors.Background}}"
+foreground = "{{.Colors.Foreground}}"
 
 [colors.normal]
-black = "0x63605e"
-red = "0xea6962"
-green = "0xa9b665"
-yellow = "0xd8a657"
-blue = "0x7daea3"
-magenta = "0xd3869b"
-cyan = "0x89b482"
-white = "0xd4be98"
+black = "{{.Colors.Black}}"
+red = "{{.Colors.Red}}"
+green = "{{.Colors.Green}}"
+yellow = "{{.Colors.Yellow}}"
+blue = "{{.Colors.Blue}}"
+magenta = "{{.Colors.Magenta}}"
+cyan = "{{.Colors.Cyan}}"
+white = "{{.Colors.Foreground}}"
 
 [colors.bright]
-black = "0x63605e"
-red = "0xea6962"
-green = "0xa9b665"
-yellow = "0xd8a657"
-blue = "0x7daea3"
-magenta = "0xd3869b"
-cyan = "0x89b482"
-white = "0xd4be98"
-{{end}}
+black = "{{.Colors.Black}}"
+red = "{{.Colors.Red}}"
+green = "{{.Colors.Green}}"
+yellow = "{{.Colors.Yellow}}"
+blue = "{{.Colors.Blue}}"
+magenta = "{{.Colors.Magenta}}"
+cyan = "{{.Colors.Cyan}}"
+white = "{{.Colors.Foreground}}"
+

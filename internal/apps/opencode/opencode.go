@@ -23,6 +23,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/rtk"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -31,6 +32,7 @@ import (
 var (
 	_ apps.App                 = (*OpenCode)(nil)
 	_ apps.SelectiveConfigurer = (*OpenCode)(nil)
+	_ apps.ThemedConfigurer    = (*OpenCode)(nil)
 )
 
 const DEFAULT_THEME_NAME = "default"
@@ -81,7 +83,21 @@ func (o *OpenCode) Uninstall() error {
 	return gc.Save()
 }
 
+// ForceConfigure resolves the theme for current_theme (falling back to
+// theme.DefaultThemeName when it is empty) and renders with it. `dg theme
+// set` does not go through here: it resolves the target theme itself and
+// calls ForceConfigureTheme directly, because current_theme is deliberately
+// not written yet at that point (docs/plans/cycles/2026-09-14-dg-theme.md
+// Step 5) - reading it here would render the theme being replaced.
 func (o *OpenCode) ForceConfigure() error {
+	def, err := theme.CurrentDefinition()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current theme: %w", err)
+	}
+	return o.ForceConfigureTheme(def)
+}
+
+func (o *OpenCode) ForceConfigureTheme(def theme.Definition) error {
 	if err := os.RemoveAll(paths.Paths.Config.OpenCode); err != nil {
 		return err
 	}
@@ -97,7 +113,10 @@ func (o *OpenCode) ForceConfigure() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	theme := DEFAULT_THEME_NAME
+	palette, err := def.PaletteFor(o.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
+	}
 	configFilePath := filepath.Join(
 		paths.Paths.Config.OpenCode,
 		fmt.Sprintf("%s.json", constants.OpenCode),
@@ -106,21 +125,21 @@ func (o *OpenCode) ForceConfigure() error {
 		paths.Paths.App.Configs.OpenCode,
 		fmt.Sprintf("%s.json.tmpl", constants.OpenCode),
 	)
-	if theme == DEFAULT_THEME_NAME {
-		themesDir := filepath.Join(paths.Paths.Config.OpenCode, "themes")
-		if err := os.MkdirAll(themesDir, 0o755); err != nil {
-			return fmt.Errorf("failed to create themes directory: %w", err)
-		}
-		if err := files.CopyFile(
-			filepath.Join(
-				paths.Paths.App.Configs.OpenCode,
-				"themes",
-				fmt.Sprintf("%s.json", DEFAULT_THEME_NAME),
-			),
-			filepath.Join(themesDir, fmt.Sprintf("%s.json", DEFAULT_THEME_NAME)),
-		); err != nil {
-			return fmt.Errorf("failed to copy opencode config theme: %w", err)
-		}
+	// The theme's raw-color block is templated (ADR-0043); the rest of the
+	// role-mapping JSON stays static and hand-maintained. The destination
+	// file is named after the theme itself, because that is the name
+	// opencode.json's "theme" field references below - one template renders
+	// whichever theme is current.
+	themesDir := filepath.Join(paths.Paths.Config.OpenCode, "themes")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create themes directory: %w", err)
+	}
+	if err := files.GenerateFromTemplate(
+		filepath.Join(paths.Paths.App.Configs.OpenCode, "themes", "default.json.tmpl"),
+		filepath.Join(themesDir, def.Name+".json"),
+		map[string]any{"Palette": palette},
+	); err != nil {
+		return fmt.Errorf("failed to render opencode theme: %w", err)
 	}
 	scratchDir, err := paths.EnsureScratchDir()
 	if err != nil {
@@ -138,7 +157,7 @@ func (o *OpenCode) ForceConfigure() error {
 	}
 
 	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
-		"Theme":          theme,
+		"Theme":          def.Name,
 		"ScratchDirGlob": string(scratchDirGlobJSON),
 	}); err != nil {
 		return fmt.Errorf("failed to generate opencode configuration: %w", err)

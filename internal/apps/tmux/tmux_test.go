@@ -11,6 +11,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -19,6 +20,77 @@ import (
 func init() {
 	// Initialize logger for tests
 	testutil.InitLogger()
+}
+
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under a fresh temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its palette through
+// theme.CurrentFor, which loads and validates a whole theme file - so even a
+// single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, hex string) {
+	t.Helper()
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
 }
 
 func TestNew(t *testing.T) {
@@ -245,6 +317,7 @@ func TestForceConfigure(t *testing.T) {
 	oldHome := paths.Paths.Home.Root
 	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 	paths.Paths.Home.Root = destDir
+	setupThemeFixture(t, "#282828")
 
 	// Create source tmux.conf file (without leading dot in source)
 	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
@@ -284,6 +357,89 @@ func TestForceConfigure(t *testing.T) {
 
 	if !strings.Contains(string(shellContent), "# Tmux enabled") {
 		t.Error("Expected shell config to contain Tmux feature")
+	}
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
+// the palette through theme.CurrentFor rather than a hardcoded value: with
+// current_theme set to a fixture theme whose colors are distinguishable from
+// "default", the rendered config must show that fixture's color.
+func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	testutil.IsolateXDGDirs(t)
+	t.Setenv("TMUX", "")
+
+	sourceDir := filepath.Join(tc.AppDir, "tmux")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	destDir := tc.ConfigDir
+
+	oldTmux := paths.Paths.App.Configs.Tmux
+	t.Cleanup(func() { paths.Paths.App.Configs.Tmux = oldTmux })
+	paths.Paths.App.Configs.Tmux = sourceDir
+
+	oldHome := paths.Paths.Home.Root
+	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
+	paths.Paths.Home.Root = destDir
+
+	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
+	tmplContent := "set-option -g status-style fg={{.Palette.Yellow}}\n"
+	if err := os.WriteFile(sourceConfig, []byte(tmplContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	writeThemeFixture(t, themesDir, "custom", "#abcdef", "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.CurrentTheme = "custom"
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &tmux.Tmux{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure returned error: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(destDir, ".tmux.conf"))
+	if err != nil {
+		t.Fatalf("failed to read destination config: %v", err)
+	}
+	if !strings.Contains(string(content), "#abcdef") {
+		t.Errorf(
+			"expected rendered config to use current_theme %q's color (#abcdef), got:\n%s",
+			"custom",
+			content,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -358,6 +514,7 @@ shell:
 			oldHome := paths.Paths.Home.Root
 			t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 			paths.Paths.Home.Root = destDir
+			setupThemeFixture(t, "#282828")
 
 			// Real template action, the same one shipped in
 			// configs/tmux/tmux.conf.tmpl.
@@ -417,6 +574,7 @@ func TestForceConfigureReloadsInsideTmux(t *testing.T) {
 	oldHome := paths.Paths.Home.Root
 	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 	paths.Paths.Home.Root = tc.ConfigDir
+	setupThemeFixture(t, "#282828")
 
 	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
 	if err := os.WriteFile(sourceConfig, []byte("# test"), 0o600); err != nil {
@@ -468,6 +626,7 @@ func TestSoftConfigure(t *testing.T) {
 		oldHome := paths.Paths.Home.Root
 		t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 		paths.Paths.Home.Root = destDir
+		setupThemeFixture(t, "#282828")
 
 		// Create source tmux.conf file (without leading dot in source)
 		sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
@@ -2371,7 +2530,6 @@ func TestSwitchToPane(t *testing.T) {
 		if lastArg != "%12" {
 			t.Errorf("select-pane target = %q, want %%12", lastArg)
 		}
-
 	})
 
 	t.Run("stops before select-window when switch-client fails", func(t *testing.T) {
@@ -2385,7 +2543,6 @@ func TestSwitchToPane(t *testing.T) {
 		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
 			t.Fatalf("expected 1 call (switch-client only), got %d", calls)
 		}
-
 	})
 
 	t.Run("stops before select-pane when select-window fails", func(t *testing.T) {
@@ -2402,116 +2559,148 @@ func TestSwitchToPane(t *testing.T) {
 		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 2 {
 			t.Fatalf("expected 2 calls (switch-client + select-window), got %d", calls)
 		}
-
 	})
 }
 
 func TestClearAgentStateForPane(t *testing.T) {
-	t.Run("clears only the target pane and writes the sibling's state to the mirror", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResults(
-			// scan: target %1 is blocked, sibling %2 (same session+window) is idle
-			commands.ExecCommandResult(
-				"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
-				"",
-				nil,
-			),
-			// clear %1: succeeds
-			commands.ExecCommandResult("", "", nil),
-			// mirror write: succeeds
-			commands.ExecCommandResult("", "", nil),
-		)
-		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	t.Run(
+		"clears only the target pane and writes the sibling's state to the mirror",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResults(
+				// scan: target %1 is blocked, sibling %2 (same session+window) is idle
+				commands.ExecCommandResult(
+					"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
+					"",
+					nil,
+				),
+				// clear %1: succeeds
+				commands.ExecCommandResult("", "", nil),
+				// mirror write: succeeds
+				commands.ExecCommandResult("", "", nil),
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-		if err := app.ClearAgentStateForPane("%1"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
+			if err := app.ClearAgentStateForPane("%1"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-		calls := mockApp.Base.ExecCommandCalls
-		if len(calls) != 3 {
-			t.Fatalf("expected 3 calls (scan + pane clear + mirror write), got %d: %+v", len(calls), calls)
-		}
-		clearArgs := []string{"set-option", "-p", "-u", "-t", "%1", "@dg_agent_state"}
-		if !slices.Equal(calls[1].Args, clearArgs) {
-			t.Errorf("clear call args = %v, want %v", calls[1].Args, clearArgs)
-		}
-		// The remaining pane (%2, idle) is what's left wanting attention once
-		// %1 is cleared - the mirror must report that, not %1's own old value.
-		mirrorArgs := []string{"set-option", "-w", "-t", "%1", "@dg_window_agent_state", "idle"}
-		if !slices.Equal(calls[2].Args, mirrorArgs) {
-			t.Errorf("mirror call args = %v, want %v", calls[2].Args, mirrorArgs)
-		}
+			calls := mockApp.Base.ExecCommandCalls
+			if len(calls) != 3 {
+				t.Fatalf(
+					"expected 3 calls (scan + pane clear + mirror write), got %d: %+v",
+					len(calls),
+					calls,
+				)
+			}
+			clearArgs := []string{"set-option", "-p", "-u", "-t", "%1", "@dg_agent_state"}
+			if !slices.Equal(calls[1].Args, clearArgs) {
+				t.Errorf("clear call args = %v, want %v", calls[1].Args, clearArgs)
+			}
+			// The remaining pane (%2, idle) is what's left wanting attention once
+			// %1 is cleared - the mirror must report that, not %1's own old value.
+			mirrorArgs := []string{"set-option", "-w", "-t", "%1", "@dg_window_agent_state", "idle"}
+			if !slices.Equal(calls[2].Args, mirrorArgs) {
+				t.Errorf("mirror call args = %v, want %v", calls[2].Args, mirrorArgs)
+			}
+		},
+	)
 
-	})
+	t.Run(
+		"failed pane clear keeps the target's own state in the mirror, not the sibling's",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResults(
+				// scan: target %1 is blocked, sibling %2 (same session+window) is idle
+				commands.ExecCommandResult(
+					"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
+					"",
+					nil,
+				),
+				// clear %1: fails (e.g. pane closed between scan and clear)
+				commands.ExecCommandResult("", "error", errors.New("pane closed")),
+				// mirror write: succeeds
+				commands.ExecCommandResult("", "", nil),
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	t.Run("failed pane clear keeps the target's own state in the mirror, not the sibling's", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResults(
-			// scan: target %1 is blocked, sibling %2 (same session+window) is idle
-			commands.ExecCommandResult(
-				"s\twin\t%1\t0\tclaude\tblocked\ns\twin\t%2\t1\tclaude\tidle\n",
-				"",
-				nil,
-			),
-			// clear %1: fails (e.g. pane closed between scan and clear)
-			commands.ExecCommandResult("", "error", errors.New("pane closed")),
-			// mirror write: succeeds
-			commands.ExecCommandResult("", "", nil),
-		)
-		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			err := app.ClearAgentStateForPane("%1")
+			if err == nil {
+				t.Fatal("expected the failed clear's error to be returned")
+			}
 
-		err := app.ClearAgentStateForPane("%1")
-		if err == nil {
-			t.Fatal("expected the failed clear's error to be returned")
-		}
+			calls := mockApp.Base.ExecCommandCalls
+			if len(calls) != 3 {
+				t.Fatalf(
+					"expected 3 calls (scan + failed pane clear + mirror write), got %d: %+v",
+					len(calls),
+					calls,
+				)
+			}
+			// %1's pre-clear "blocked" outranks %2's "idle" (ADR-0005), so the
+			// mirror must still say blocked - not idle, which is what a wrongly
+			// dropped %1 would produce.
+			mirrorArgs := []string{
+				"set-option",
+				"-w",
+				"-t",
+				"%1",
+				"@dg_window_agent_state",
+				"blocked",
+			}
+			if !slices.Equal(calls[2].Args, mirrorArgs) {
+				t.Errorf(
+					"mirror call args = %v, want %v (target's own pre-clear state)",
+					calls[2].Args,
+					mirrorArgs,
+				)
+			}
+		},
+	)
 
-		calls := mockApp.Base.ExecCommandCalls
-		if len(calls) != 3 {
-			t.Fatalf("expected 3 calls (scan + failed pane clear + mirror write), got %d: %+v", len(calls), calls)
-		}
-		// %1's pre-clear "blocked" outranks %2's "idle" (ADR-0005), so the
-		// mirror must still say blocked - not idle, which is what a wrongly
-		// dropped %1 would produce.
-		mirrorArgs := []string{"set-option", "-w", "-t", "%1", "@dg_window_agent_state", "blocked"}
-		if !slices.Equal(calls[2].Args, mirrorArgs) {
-			t.Errorf("mirror call args = %v, want %v (target's own pre-clear state)", calls[2].Args, mirrorArgs)
-		}
+	t.Run(
+		"a same-named window in another session is excluded from the aggregate",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResults(
+				// scan: target %1 is the only pane in s1:win; %2 is a blocked pane
+				// in a *different* session's window that happens to share the name "win".
+				commands.ExecCommandResult(
+					"s1\twin\t%1\t0\tclaude\tidle\ns2\twin\t%2\t0\tclaude\tblocked\n",
+					"",
+					nil,
+				),
+				// clear %1: succeeds
+				commands.ExecCommandResult("", "", nil),
+				// mirror unset: succeeds
+				commands.ExecCommandResult("", "", nil),
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	})
+			if err := app.ClearAgentStateForPane("%1"); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
-	t.Run("a same-named window in another session is excluded from the aggregate", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResults(
-			// scan: target %1 is the only pane in s1:win; %2 is a blocked pane
-			// in a *different* session's window that happens to share the name "win".
-			commands.ExecCommandResult(
-				"s1\twin\t%1\t0\tclaude\tidle\ns2\twin\t%2\t0\tclaude\tblocked\n",
-				"",
-				nil,
-			),
-			// clear %1: succeeds
-			commands.ExecCommandResult("", "", nil),
-			// mirror unset: succeeds
-			commands.ExecCommandResult("", "", nil),
-		)
-		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-		if err := app.ClearAgentStateForPane("%1"); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-
-		calls := mockApp.Base.ExecCommandCalls
-		if len(calls) != 3 {
-			t.Fatalf("expected 3 calls (scan + pane clear + mirror unset), got %d: %+v", len(calls), calls)
-		}
-		// s1:win has nothing left once %1 is cleared - the foreign s2:win
-		// pane's "blocked" must not leak into this aggregate and pin the flag.
-		mirrorArgs := []string{"set-option", "-w", "-u", "-t", "%1", "@dg_window_agent_state"}
-		if !slices.Equal(calls[2].Args, mirrorArgs) {
-			t.Errorf("mirror call args = %v, want %v (unset, foreign session excluded)", calls[2].Args, mirrorArgs)
-		}
-
-	})
+			calls := mockApp.Base.ExecCommandCalls
+			if len(calls) != 3 {
+				t.Fatalf(
+					"expected 3 calls (scan + pane clear + mirror unset), got %d: %+v",
+					len(calls),
+					calls,
+				)
+			}
+			// s1:win has nothing left once %1 is cleared - the foreign s2:win
+			// pane's "blocked" must not leak into this aggregate and pin the flag.
+			mirrorArgs := []string{"set-option", "-w", "-u", "-t", "%1", "@dg_window_agent_state"}
+			if !slices.Equal(calls[2].Args, mirrorArgs) {
+				t.Errorf(
+					"mirror call args = %v, want %v (unset, foreign session excluded)",
+					calls[2].Args,
+					mirrorArgs,
+				)
+			}
+		},
+	)
 
 	t.Run("busy sibling never sets the mirror - it unsets instead", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
@@ -2533,9 +2722,12 @@ func TestClearAgentStateForPane(t *testing.T) {
 		calls := mockApp.Base.ExecCommandCalls
 		mirrorArgs := []string{"set-option", "-w", "-u", "-t", "%1", "@dg_window_agent_state"}
 		if !slices.Equal(calls[2].Args, mirrorArgs) {
-			t.Errorf("mirror call args = %v, want %v (busy never written to mirror, per ADR-0005)", calls[2].Args, mirrorArgs)
+			t.Errorf(
+				"mirror call args = %v, want %v (busy never written to mirror, per ADR-0005)",
+				calls[2].Args,
+				mirrorArgs,
+			)
 		}
-
 	})
 
 	t.Run("pane not found in the scan is a silent no-op", func(t *testing.T) {
@@ -2553,6 +2745,5 @@ func TestClearAgentStateForPane(t *testing.T) {
 		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
 			t.Fatalf("expected 1 call (scan only), got %d", calls)
 		}
-
 	})
 }

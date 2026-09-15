@@ -1,0 +1,68 @@
+# [devgeta]
+#
+# The `default` theme: today's colors, recorded verbatim so wiring
+# `current_theme` through is a visually null change. See
+# docs/decisions/ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md
+# for the role names, the two-group split, and why `terminal:` exists.
+#
+# `colors:` is classic Gruvbox (tmux, Neovim, OpenCode, Claude, i3).
+# `terminal:` is Gruvbox Material (Alacritty, Ghostty).
+
+neovim_module: gruvbox
+
+# Ships alongside this file under configs/themes/wallpapers/ and is resolved
+# relative to the extracted configs tree, so it is present on every machine
+# devgeta installs on. `dg theme set-wallpaper` overrides it per machine.
+wallpaper: wallpapers/default.jpg
+
+colors:
+  background_hard: "#1d2021"
+  background: "#282828"
+  background_element: "#3c3836"
+  background_subtle: "#504945"
+  border: "#665c54"
+  foreground: "#ebdbb2"
+  foreground_muted: "#a89984"
+  foreground_dim: "#928374"
+  foreground_subtle: "#7c6f64"
+  red: "#fb4934"
+  green: "#b8bb26"
+  yellow: "#fabd2f"
+  blue: "#83a598"
+  purple: "#d3869b"
+  aqua: "#8ec07c"
+  orange: "#fe8019"
+  red_dim: "#cc241d"
+  green_dim: "#98971a"
+  yellow_dim: "#d79921"
+  blue_dim: "#458588"
+  purple_dim: "#b16286"
+  aqua_dim: "#689d6a"
+  diff_added_background: "#32361a"
+  diff_removed_background: "#3c1f1e"
+
+terminal:
+  background_hard: "#1d2021"
+  background: "#282828"
+  background_element: "#32302f"
+  background_subtle: "#45403d"
+  border: "#63605e"
+  foreground: "#d4be98"
+  foreground_muted: "#a89984"
+  foreground_dim: "#928374"
+  foreground_subtle: "#7c6f64"
+  red: "#ea6962"
+  green: "#a9b665"
+  yellow: "#d8a657"
+  blue: "#7daea3"
+  purple: "#d3869b"
+  aqua: "#89b482"
+  orange: "#e78a4e"
+  red_dim: "#cc241d"
+  green_dim: "#98971a"
+  yellow_dim: "#d79921"
+  blue_dim: "#458588"
+  purple_dim: "#b16286"
+  aqua_dim: "#689d6a"
+  diff_added_background: "#32361a"
+  diff_removed_background: "#3c1f1e"

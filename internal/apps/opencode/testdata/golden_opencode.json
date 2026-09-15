@@ -1,0 +1,237 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "theme": "default",
+  "agent": {
+    "build": {
+      "color": "#fe8019"
+    },
+    "plan": {
+      "color": "#d3869b"
+    },
+    "code-reviewer": {
+      "description": "Reviews code for best practices and potential issues",
+      "color": "#8ec07c"
+    }
+  },
+  "permission": {
+    "read": {
+      "*": "allow",
+
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "*.env": "deny",
+      "**/envs/*.js": "deny",
+      "./secrets/**": "deny",
+
+      "*.pem": "deny",
+      "*.key": "deny",
+
+      "~/.ssh/**": "deny",
+      "**/.ssh/**": "deny",
+      "**/id_rsa": "deny",
+      "**/id_ed25519": "deny",
+      "**/id_ecdsa": "deny",
+
+      "~/.aws/**": "deny",
+      "**/.aws/**": "deny",
+      "~/.kube/**": "deny",
+      "**/.kube/**": "deny",
+      "~/.config/gcloud/**": "deny",
+      "**/.config/gcloud/**": "deny",
+      "~/.azure/**": "deny",
+      "**/.azure/**": "deny",
+
+      "~/.npmrc": "deny",
+      "**/.npmrc": "deny",
+      "~/.pypirc": "deny",
+      "**/.pypirc": "deny",
+      "~/.netrc": "deny",
+      "**/.netrc": "deny",
+      "~/.git-credentials": "deny",
+      "**/.git-credentials": "deny",
+      "~/.docker/config.json": "deny",
+      "**/.docker/config.json": "deny",
+      "~/.pgpass": "deny",
+      "**/.pgpass": "deny",
+
+      "~/.zsh_history": "deny",
+      "**/.zsh_history": "deny",
+      "~/.bash_history": "deny",
+      "**/.bash_history": "deny"
+    },
+
+    "bash": {
+      "*": "allow",
+
+      "ssh *": "ask",
+      "scp *": "ask",
+      "rsync *": "ask",
+      "gh api *": "ask",
+      "git push --force*": "ask",
+      "git push -f*": "ask",
+      "terraform apply *": "ask",
+      "kubectl apply *": "ask",
+      "gh pr merge *": "ask",
+      "gh release delete *": "ask",
+      "gh pr close *": "ask",
+      "gh issue delete *": "ask",
+
+      "curl *": "deny",
+      "wget *": "deny",
+      "nc *": "deny",
+      "ncat *": "deny",
+      "netcat *": "deny",
+
+      "osascript *": "deny",
+      "security *": "deny",
+      "eval *": "deny",
+      "crontab *": "deny",
+      "launchctl *": "deny",
+      "systemctl enable *": "deny",
+
+      "dd *": "deny",
+      "mkfs*": "deny",
+      "shred *": "deny",
+      "rm -rf *": "deny",
+
+      "sudo *": "deny",
+      "su *": "deny",
+
+      "kubectl delete *": "deny",
+      "aws *": "deny",
+      "gcloud *": "deny",
+      "az *": "deny",
+
+      "gh repo delete *": "deny",
+      "gh gist create *": "deny",
+
+      "python3 -c *": "deny",
+      "python -c *": "deny",
+      "node -e *": "deny",
+      "node --eval *": "deny",
+      "ruby -e *": "deny",
+      "perl -e *": "deny",
+      "php -r *": "deny"
+    },
+
+    "edit": {
+      "*": "allow",
+
+      ".git/**": "deny",
+      "**/.claude/settings.json": "deny",
+      "**/.claude/settings.local.json": "deny",
+      "**/.claude/hooks/**": "deny",
+      "**/.opencode/opencode.json": "deny",
+      "**/.opencode/plugin/**": "deny",
+      "**/.mcp.json": "deny",
+      "~/.claude/*.json": "deny",
+      "~/.claude/*.sh": "deny",
+      "~/.claude/*.md": "deny",
+
+      "**/.claude/CLAUDE.md": "deny",
+      "**/.claude/RTK.md": "deny",
+      "**/.claude/statusline.sh": "deny",
+      "**/.claude/format.sh": "deny",
+      "**/.claude/task-redirect.sh": "deny",
+      "**/.claude/secret-guard.sh": "deny",
+      "**/.claude/suppression-guard.sh": "deny",
+      "**/.claude/agent-config-guard.sh": "deny",
+      "**/.claude/agent-state.sh": "deny",
+      "**/.claude/output-budget.sh": "deny",
+      "**/.claude/rtk-shim.sh": "deny",
+
+      "~/.claude/agents/**": "deny",
+      "**/.claude/agents/**": "deny",
+      "~/.claude/commands/**": "deny",
+      "**/.claude/commands/**": "deny",
+      "~/.claude/skills/**": "deny",
+      "**/.claude/skills/**": "deny",
+      "~/.claude/plugins/**": "deny",
+      "**/.claude/plugins/**": "deny",
+      "~/.claude/hooks/**": "deny",
+      "~/.claude/lib/**": "deny",
+      "**/.claude/lib/**": "deny",
+      "~/.config/opencode/**": "deny",
+      "**/.config/opencode/**": "deny",
+
+      "~/.zshrc": "deny",
+      "**/.zshrc": "deny",
+      "~/.bashrc": "deny",
+      "**/.bashrc": "deny",
+      "~/.profile": "deny",
+      "**/.profile": "deny"
+    },
+
+    "external_directory": {
+      "/tmp/placeholder-scratch/**": "allow"
+    }
+  },
+  "formatter": {
+    "devgeta-js": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; export ESLINT_D_PPID=0 ESLINT_D_IDLE=15; [ -x \"$M/eslint_d\" ] && \"$M/eslint_d\" \"$FILE\" --fix >/dev/null 2>&1; [ -x \"$M/prettier\" ] && \"$M/prettier\" \"$FILE\" --write >/dev/null 2>&1; true"
+      ],
+      "extensions": [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"]
+    },
+    "devgeta-prettier": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/prettier\" ] && \"$M/prettier\" \"$FILE\" --write >/dev/null 2>&1; true"
+      ],
+      "extensions": [
+        ".json",
+        ".css",
+        ".scss",
+        ".less",
+        ".yaml",
+        ".yml",
+        ".md",
+        ".markdown",
+        ".html"
+      ]
+    },
+    "devgeta-python": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/isort\" ] && \"$M/isort\" \"$FILE\" >/dev/null 2>&1; [ -x \"$M/black\" ] && \"$M/black\" \"$FILE\" >/dev/null 2>&1; true"
+      ],
+      "extensions": [".py"]
+    },
+    "devgeta-go": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/goimports\" ] && \"$M/goimports\" -w \"$FILE\" >/dev/null 2>&1; [ -x \"$M/gofumpt\" ] && \"$M/gofumpt\" -w \"$FILE\" >/dev/null 2>&1; [ -x \"$M/golines\" ] && \"$M/golines\" -w \"$FILE\" >/dev/null 2>&1; true"
+      ],
+      "extensions": [".go"]
+    },
+    "devgeta-lua": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/stylua\" ] && \"$M/stylua\" \"$FILE\" >/dev/null 2>&1; true"
+      ],
+      "extensions": [".lua"]
+    },
+    "devgeta-shell": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/shfmt\" ] && \"$M/shfmt\" -w \"$FILE\" >/dev/null 2>&1; true"
+      ],
+      "extensions": [".sh", ".bash"]
+    },
+    "devgeta-clang": {
+      "command": [
+        "sh",
+        "-c",
+        "M=\"$HOME/.local/share/nvim/mason/bin\"; [ -x \"$M/clang-format\" ] && \"$M/clang-format\" -i \"$FILE\" >/dev/null 2>&1; true"
+      ],
+      "extensions": [".c", ".h", ".cpp", ".hpp"]
+    }
+  }
+}

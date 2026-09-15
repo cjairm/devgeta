@@ -1756,6 +1756,52 @@ incremental or deduplicated backups, encryption (use an encrypted volume, or
 See the [2026-09-13-dg-archive cycle doc](plans/cycles/2026-09-13-dg-archive.md)
 for the full design and research behind the format choices.
 
+#### `dg theme`
+
+Shows, lists, or switches the active theme across every themed surface
+(Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, i3). See
+[docs/guides/theming.md](guides/theming.md) and
+[docs/decisions/ADR-0043](decisions/ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md)
+for the palette design this command drives.
+
+```
+dg theme                # show the current theme and what's available
+dg theme list            # list available themes
+dg theme set <name>      # switch every installed themed app to <name>
+```
+
+**Behavior**:
+
+- `dg theme set <name>` is transactional: `<name>` is loaded and validated
+  (every palette role present and parseable, `neovim_module` resolved against
+  the shipped and deployed Neovim trees) before anything is written. Apps not
+  installed on this machine are skipped with a printed reason and are left
+  untouched.
+- Every manifest path a themed app is about to overwrite is backed up first
+  (renamed aside, or marked absent if it doesn't exist yet). If any app fails
+  to configure, or if the final commit itself fails, every backed-up path is
+  restored and `current_theme` is left exactly as it was — a switch never
+  half-applies.
+- `current_theme` is written last, together with clearing the in-progress
+  marker, in one atomic config write — nothing on disk names the new theme
+  until every app has already succeeded.
+- A crashed switch's leftover backups are swept automatically on the next
+  `dg theme set`, `dg configure`, or `dg install`, before any of those do
+  their own filesystem work.
+- `current_theme` is **not** a `dg config` key — `dg config get/set/unset
+current_theme` is refused as an unknown setting, the same treatment
+  `integrations.rtk_claude_hook` gets, because a bare `set` there would
+  desync the recorded name from what the machine is actually configured with.
+
+**Examples**:
+
+```
+dg theme
+dg theme list
+dg theme set tokyonight
+dg theme set default
+```
+
 ---
 
 ## Behavior & Edge Cases

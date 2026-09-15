@@ -49,14 +49,14 @@ Available Commands:
   check-updates  See if any managed apps have updates
   backup         Create a backup of your current Devgeta-managed environment
   restore        Restore a previous backup configuration
-  change         Change font or theme (--theme=..., --font=...)
+  theme          Show, list, or switch the active theme (dg theme set <name>)
   version        Print the version number of devgeta
 
 Examples:
   dg install
   dg uninstall --font=my-font --app=aerospace
   dg re-configure --app=neovim
-  dg change --theme=tokyonight --font=JetBrainsMono
+  dg theme set tokyonight
   dg backup --output=~/dg_backup.json
 `,
 }

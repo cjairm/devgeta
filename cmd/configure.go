@@ -73,6 +73,17 @@ func init() {
 }
 
 func runConfigure(cmd *cobra.Command, args []string) error {
+	// Sweep for a crashed `dg theme set`'s leftover backups before writing
+	// anything: otherwise a --force here can write a fresh config while its
+	// .dg-theme-backup sibling still sits beside it, and a later `dg theme
+	// set` would restore that stale backup right back over this run's work
+	// (cycle doc Step 5).
+	if msg, err := recoverInterruptedFn(); err != nil {
+		return fmt.Errorf("failed to recover an interrupted theme switch: %w", err)
+	} else if msg != "" {
+		utils.PrintInfo(msg)
+	}
+
 	appName := args[0]
 
 	// Re-extract embedded configs so templates always match the running binary.

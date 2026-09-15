@@ -13,6 +13,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -20,6 +21,95 @@ import (
 
 func init() {
 	testutil.InitLogger()
+}
+
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under a fresh temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its theme through
+// theme.CurrentDefinition, which loads and validates a whole theme file - so
+// even a single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, hex string) {
+	t.Helper()
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+}
+
+// writeOpenCodeThemeTemplateFixture writes the minimal default.json.tmpl the
+// real configs/opencode/themes/default.json.tmpl provides, into appConfigDir
+// (a themes/ subdirectory is created).
+func writeOpenCodeThemeTemplateFixture(t *testing.T, appConfigDir, content string) {
+	t.Helper()
+	dir := filepath.Join(appConfigDir, "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "default.json.tmpl"),
+		[]byte(content),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestForceConfigureParts(t *testing.T) {
@@ -255,11 +345,11 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		themeContent := `{"name": "Devgeta Gruvbox", "type": "dark"}`
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
-		if err := os.WriteFile(themeSourcePath, []byte(themeContent), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeOpenCodeThemeTemplateFixture(
+			t,
+			appConfigDir,
+			`{"name": "Devgeta Gruvbox", "foreground": "{{.Palette.Foreground}}"}`,
+		)
 
 		pluginDir := filepath.Join(appConfigDir, "plugin")
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
@@ -283,6 +373,7 @@ func TestForceConfigure(t *testing.T) {
 		oldConfigOpenCode := paths.Paths.Config.OpenCode
 		t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
 		paths.Paths.Config.OpenCode = userConfigDir
+		setupThemeFixture(t, "#ebdbb2")
 
 		app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
@@ -318,6 +409,9 @@ func TestForceConfigure(t *testing.T) {
 		}
 		if !strings.Contains(string(themeContentRead), "Devgeta Gruvbox") {
 			t.Error("Expected theme file to contain Gruvbox theme")
+		}
+		if !strings.Contains(string(themeContentRead), "#ebdbb2") {
+			t.Error("Expected theme file to be rendered with the current theme's palette")
 		}
 
 		// task-redirect.js plugin deployed
@@ -355,7 +449,7 @@ func TestForceConfigure(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -370,6 +464,7 @@ func TestForceConfigure(t *testing.T) {
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -396,6 +491,109 @@ func TestForceConfigure(t *testing.T) {
 
 		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	})
+}
+
+// TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
+// the theme through theme.CurrentDefinition rather than a hardcoded name:
+// with current_theme set to a fixture theme whose colors are distinguishable
+// from "default", both opencode.json's "theme" field and the rendered
+// themes/<name>.json must reflect it.
+func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+
+	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"foreground": "{{.Palette.Foreground}}"}`)
+
+	pluginDir := filepath.Join(appConfigDir, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	writeThemeFixture(t, themesDir, "custom", "#abcdef", "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.CurrentTheme = "custom"
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	configContent, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("failed to read opencode.json: %v", err)
+	}
+	if !strings.Contains(string(configContent), `"theme": "custom"`) {
+		t.Errorf("expected opencode.json to name the current theme, got: %s", configContent)
+	}
+
+	themePath := filepath.Join(userConfigDir, "themes", "custom.json")
+	themeContent, err := os.ReadFile(themePath)
+	if err != nil {
+		t.Fatalf("expected theme file at %s: %v", themePath, err)
+	}
+	if !strings.Contains(string(themeContent), "#abcdef") {
+		t.Errorf(
+			"expected rendered theme file to use current_theme %q's color (#abcdef), got:\n%s",
+			"custom",
+			themeContent,
+		)
+	}
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
 func TestSoftConfigure(t *testing.T) {
@@ -460,13 +658,14 @@ func TestSoftConfigure(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -532,13 +731,14 @@ shell:
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -847,7 +1047,7 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "themes", "default.json"),
+		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
 		[]byte(`{}`),
 		0o644,
 	); err != nil {
@@ -860,6 +1060,7 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 
 	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
+	setupThemeFixture(t, "#282828")
 
 	oldAppConfigsOpenCode := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigsOpenCode })

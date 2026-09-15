@@ -27,10 +27,18 @@ The following commands are planned but not yet implemented:
 
 ### Customization
 
-- **`dg change --theme=[options] --font=[options]`** — Modify environment
-  - Change terminal theme (with background image updates)
-  - Change font selection
-  - Persist selections in global config
+Shipped: `dg theme` / `dg theme list` / `dg theme set <name>` — switches
+Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude and i3 to a named theme
+together, transactionally (a failure rolls the whole machine back), skipping
+apps that aren't installed. `current_theme` persists the selection in the
+global config. See
+[docs/guides/theming.md](docs/guides/theming.md) and
+[docs/plans/cycles/2026-09-14-dg-theme.md](docs/plans/cycles/2026-09-14-dg-theme.md).
+
+Wallpaper switching (`dg theme set-wallpaper <path>`) and font switching
+(`current_font`, `.Font`) remain planned — the same dead-config shape theme
+switching just closed, deferred as separate work to keep this change's blast
+radius reviewable.
 
 ### Backup & Recovery
 

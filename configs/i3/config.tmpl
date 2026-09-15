@@ -1,0 +1,195 @@
+# i3 config file (v4) - Devgeta Development Environment
+# Docs: https://i3wm.org/docs/userguide.html
+
+# Set mod key to Windows/Super key
+set $mod Mod4
+
+# Font for window titles and bar
+font pango:JetBrains Mono 10
+
+# Use Mouse+$mod to drag floating windows
+floating_modifier $mod
+
+# Start a terminal (alacritty if installed, otherwise i3-sensible-terminal)
+bindsym $mod+Return exec alacritty || i3-sensible-terminal
+
+# Kill focused window
+bindsym $mod+Shift+q kill
+
+# Start application launcher (rofi or dmenu)
+bindsym $mod+d exec --no-startup-id rofi -show drun || dmenu_run
+
+# Vim-style window navigation
+bindsym $mod+h focus left
+bindsym $mod+j focus down
+bindsym $mod+k focus up
+bindsym $mod+l focus right
+
+# Alternative: arrow keys
+bindsym $mod+Left focus left
+bindsym $mod+Down focus down
+bindsym $mod+Up focus up
+bindsym $mod+Right focus right
+
+# Vim-style window movement
+bindsym $mod+Shift+h move left
+bindsym $mod+Shift+j move down
+bindsym $mod+Shift+k move up
+bindsym $mod+Shift+l move right
+
+# Alternative: arrow keys
+bindsym $mod+Shift+Left move left
+bindsym $mod+Shift+Down move down
+bindsym $mod+Shift+Up move up
+bindsym $mod+Shift+Right move right
+
+# Split orientation
+bindsym $mod+v split h
+bindsym $mod+s split v
+
+# Fullscreen toggle
+bindsym $mod+f fullscreen toggle
+
+# Change container layout
+bindsym $mod+e layout toggle split
+bindsym $mod+w layout tabbed
+bindsym $mod+t layout stacking
+
+# Toggle tiling / floating
+bindsym $mod+Shift+space floating toggle
+
+# Change focus between tiling / floating windows
+bindsym $mod+space focus mode_toggle
+
+# Focus parent/child container
+bindsym $mod+a focus parent
+bindsym $mod+z focus child
+
+# Workspace names
+set $ws1 "1"
+set $ws2 "2"
+set $ws3 "3"
+set $ws4 "4"
+set $ws5 "5"
+set $ws6 "6"
+set $ws7 "7"
+set $ws8 "8"
+set $ws9 "9"
+set $ws10 "10"
+
+# Switch to workspace
+bindsym $mod+1 workspace $ws1
+bindsym $mod+2 workspace $ws2
+bindsym $mod+3 workspace $ws3
+bindsym $mod+4 workspace $ws4
+bindsym $mod+5 workspace $ws5
+bindsym $mod+6 workspace $ws6
+bindsym $mod+7 workspace $ws7
+bindsym $mod+8 workspace $ws8
+bindsym $mod+9 workspace $ws9
+bindsym $mod+0 workspace $ws10
+
+# Move container to workspace
+bindsym $mod+Shift+1 move container to workspace $ws1
+bindsym $mod+Shift+2 move container to workspace $ws2
+bindsym $mod+Shift+3 move container to workspace $ws3
+bindsym $mod+Shift+4 move container to workspace $ws4
+bindsym $mod+Shift+5 move container to workspace $ws5
+bindsym $mod+Shift+6 move container to workspace $ws6
+bindsym $mod+Shift+7 move container to workspace $ws7
+bindsym $mod+Shift+8 move container to workspace $ws8
+bindsym $mod+Shift+9 move container to workspace $ws9
+bindsym $mod+Shift+0 move container to workspace $ws10
+
+# Reload configuration
+bindsym $mod+Shift+r reload
+
+# Restart i3 inplace (preserves layout/session)
+bindsym $mod+Shift+c restart
+
+# Exit i3 (logs out of X session)
+bindsym $mod+Shift+e exec "i3-nagbar -t warning -m 'Do you want to exit i3?' -B 'Yes' 'i3-msg exit'"
+
+# Resize mode
+mode "resize" {
+    # Vim-style resize keys
+    bindsym h resize shrink width 10 px or 10 ppt
+    bindsym j resize grow height 10 px or 10 ppt
+    bindsym k resize shrink height 10 px or 10 ppt
+    bindsym l resize grow width 10 px or 10 ppt
+
+    # Arrow keys
+    bindsym Left resize shrink width 10 px or 10 ppt
+    bindsym Down resize grow height 10 px or 10 ppt
+    bindsym Up resize shrink height 10 px or 10 ppt
+    bindsym Right resize grow width 10 px or 10 ppt
+
+    # Exit resize mode
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+    bindsym $mod+r mode "default"
+}
+
+bindsym $mod+r mode "resize"
+
+# i3 gaps (merged into i3 4.22+)
+gaps inner 10
+gaps outer 5
+
+# Smart gaps (no gaps when only one window)
+smart_gaps on
+
+# Smart borders (no border when only one window)
+smart_borders on
+
+# Window borders
+default_border pixel 2
+default_floating_border pixel 2
+
+# Hide edge borders
+hide_edge_borders smart
+
+# Color scheme (Gruvbox-inspired)
+set $bg     {{.Palette.Background}}
+set $fg     {{.Palette.Foreground}}
+set $red    {{.Palette.RedDim}}
+set $green  {{.Palette.GreenDim}}
+set $yellow {{.Palette.YellowDim}}
+set $blue   {{.Palette.BlueDim}}
+set $purple {{.Palette.PurpleDim}}
+set $aqua   {{.Palette.AquaDim}}
+set $gray   {{.Palette.ForegroundMuted}}
+set $darkgray {{.Palette.BackgroundHard}}
+
+# Window colors
+#                       border    background text    indicator child_border
+client.focused          $blue     $blue      $bg     $purple   $blue
+client.focused_inactive $darkgray $darkgray  $fg     $purple   $darkgray
+client.unfocused        $darkgray $darkgray  $gray   $purple   $darkgray
+client.urgent           $red      $red       $bg     $red      $red
+client.placeholder      $darkgray $bg        $fg     $darkgray $darkgray
+client.background       $bg
+
+# Status bar
+bar {
+    status_command i3status
+    position top
+    
+    colors {
+        background $bg
+        statusline $fg
+        separator  $gray
+
+        #                   border    background text
+        focused_workspace   $blue     $blue      $bg
+        active_workspace    $darkgray $darkgray  $fg
+        inactive_workspace  $darkgray $darkgray  $gray
+        urgent_workspace    $red      $red       $bg
+        binding_mode        $yellow   $yellow    $bg
+    }
+}
+
+# Autostart applications
+exec --no-startup-id nm-applet
+exec --no-startup-id blueman-applet
+# exec --no-startup-id picom -b  # Compositor for transparency/effects

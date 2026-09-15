@@ -15,6 +15,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -24,7 +25,10 @@ import (
 // `config`, with no extension, inside its config directory.
 const ghosttyConfigFileName = "config"
 
-var _ apps.App = (*Ghostty)(nil)
+var (
+	_ apps.App              = (*Ghostty)(nil)
+	_ apps.ThemedConfigurer = (*Ghostty)(nil)
+)
 
 type Ghostty struct {
 	Cmd  cmd.Command
@@ -71,7 +75,25 @@ func (g *Ghostty) itemType() string {
 	return "package"
 }
 
+// ForceConfigure resolves the theme for current_theme (falling back to
+// theme.DefaultThemeName when it is empty) and renders with it. `dg theme
+// set` does not go through here: it resolves the target theme itself and
+// calls ForceConfigureTheme directly, because current_theme is deliberately
+// not written yet at that point (docs/plans/cycles/2026-09-14-dg-theme.md
+// Step 5) - reading it here would render the theme being replaced.
 func (g *Ghostty) ForceConfigure() error {
+	def, err := theme.CurrentDefinition()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current theme: %w", err)
+	}
+	return g.ForceConfigureTheme(def)
+}
+
+func (g *Ghostty) ForceConfigureTheme(def theme.Definition) error {
+	p, err := def.PaletteFor(g.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
+	}
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
 		return fmt.Errorf("failed to create global config: %w", err)
@@ -80,13 +102,12 @@ func (g *Ghostty) ForceConfigure() error {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
 	font := "default"
-	theme := "default"
 	configFilePath := filepath.Join(paths.Paths.Config.Ghostty, ghosttyConfigFileName)
 	tmplPath := filepath.Join(paths.Paths.App.Configs.Ghostty, "ghostty.conf.tmpl")
-	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
+	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]any{
 		"Font":       font,
-		"Theme":      theme,
 		"ConfigPath": paths.Paths.Config.Root,
+		"Palette":    p,
 	}); err != nil {
 		return fmt.Errorf("failed to generate ghostty configuration: %w", err)
 	}

@@ -23,6 +23,17 @@ const globalConfigLockFile = "global_config.lock"
 // to keep the timeout test fast; production code never changes it.
 var lockAcquireTimeout = 10 * time.Second
 
+// SetLockAcquireTimeoutForTest overrides lockAcquireTimeout for tests
+// outside this package that need Update's lock acquisition to fail fast
+// (e.g. simulating a wedged holder to exercise a caller's own rollback),
+// without waiting out the real 10s production timeout. Returns a func that
+// restores the previous value; callers must invoke it via t.Cleanup.
+func SetLockAcquireTimeoutForTest(d time.Duration) func() {
+	orig := lockAcquireTimeout
+	lockAcquireTimeout = d
+	return func() { lockAcquireTimeout = orig }
+}
+
 func getGlobalConfigLockFilePath() string {
 	return filepath.Join(filepath.Dir(GlobalConfigFilePath()), globalConfigLockFile)
 }

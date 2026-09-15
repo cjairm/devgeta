@@ -296,18 +296,44 @@ func CanonicalRepoPath(path string) string {
 }
 
 type GlobalConfig struct {
-	AppPath             string                 `yaml:"app_path"`
-	ConfigPath          string                 `yaml:"config_path"`
-	AlreadyInstalled    AlreadyInstalledConfig `yaml:"already_installed"`
-	CurrentFont         string                 `yaml:"current_font"`
-	CurrentTheme        string                 `yaml:"current_theme"`
-	Installed           InstalledConfig        `yaml:"installed"`
-	Shortcuts           map[string]string      `yaml:"shortcuts"`
-	Shell               ShellFeatures          `yaml:"shell"`
-	FailedInstallations []FailedInstallation   `yaml:"failed_installations,omitempty"`
-	Worktree            WorktreeConfig         `yaml:"worktree"`
-	Integrations        IntegrationsConfig     `yaml:"integrations,omitempty"`
-	Review              ReviewConfig           `yaml:"review,omitempty"`
+	AppPath          string                 `yaml:"app_path"`
+	ConfigPath       string                 `yaml:"config_path"`
+	AlreadyInstalled AlreadyInstalledConfig `yaml:"already_installed"`
+	CurrentFont      string                 `yaml:"current_font"`
+	// CurrentTheme is deploy state, not a preference: it names the theme every
+	// themed app's config was last rendered with, and a bare `dg config set`
+	// would persist a selection with no palette validation, no app reconfigure,
+	// and no rollback — the exact failure `dg theme set`'s transaction exists to
+	// prevent (docs/plans/cycles/2026-09-14-dg-theme.md Step 5). It is
+	// therefore not registered in cmd/config_settings.go; `dg theme set
+	// <name>` is its only write path, and `dg theme` is the read path.
+	CurrentTheme string `yaml:"current_theme"`
+	// PendingTheme records that a `dg theme set` switch is in progress: set
+	// before the first per-app backup is taken and cleared in the same
+	// config.Update call that commits CurrentTheme, so a crash between the two
+	// leaves at most one of them set. RecoverInterrupted uses it to tell a
+	// crashed-before-commit attempt (restore backups) from a crashed-during-
+	// cleanup one (delete them) — see the cycle doc's Step 5. Like
+	// CurrentTheme, it is transaction state, not a preference, and is not a
+	// cmd/config_settings.go key.
+	PendingTheme string `yaml:"pending_theme,omitempty"`
+	// Wallpapers maps a theme name to the content-addressed path of the
+	// image `dg theme set-wallpaper` copied for it, under
+	// ~/.config/devgeta/wallpapers/ (ADR-0044 point 3). It lives here, not
+	// in the theme's own YAML file, because configs/themes/*.yaml is
+	// embedded and ExtractEmbeddedConfigs overwrites it unconditionally on
+	// every install and binary upgrade — a path written there would be
+	// silently erased on the next upgrade. `dg theme set` applies
+	// Wallpapers[<name>] when present and otherwise leaves the desktop
+	// untouched; it never clears a wallpaper set outside devgeta.
+	Wallpapers          map[string]string    `yaml:"wallpapers,omitempty"`
+	Installed           InstalledConfig      `yaml:"installed"`
+	Shortcuts           map[string]string    `yaml:"shortcuts"`
+	Shell               ShellFeatures        `yaml:"shell"`
+	FailedInstallations []FailedInstallation `yaml:"failed_installations,omitempty"`
+	Worktree            WorktreeConfig       `yaml:"worktree"`
+	Integrations        IntegrationsConfig   `yaml:"integrations,omitempty"`
+	Review              ReviewConfig         `yaml:"review,omitempty"`
 }
 
 // GlobalConfigFilePath returns the absolute path of the global config file

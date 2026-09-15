@@ -1,5 +1,7 @@
 package apps
 
+import "github.com/cjairm/devgeta/internal/theme"
+
 // AppKind classifies what kind of application an app is.
 type AppKind int
 
@@ -46,6 +48,35 @@ type SelectiveConfigurer interface {
 	// ForceConfigureParts overwrites only the named parts, leaving all other
 	// configuration in place.
 	ForceConfigureParts(parts []string) error
+}
+
+// ThemedConfigurer is implemented by the seven apps with a theme surface
+// (Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, i3). It exists because
+// ForceConfigure() takes no arguments and resolves its theme from
+// current_theme, which `dg theme set` deliberately has not written yet when
+// it needs to render the *target* theme — see
+// docs/plans/cycles/2026-09-14-dg-theme.md's Step 5. `dg theme set` resolves
+// the requested theme itself and calls ForceConfigureTheme directly with the
+// already-loaded Definition; an app's own ForceConfigure calls it too, via
+// theme.CurrentDefinition(), so there is exactly one configure body per app.
+//
+// The argument is the full Definition, not just a Palette: every app calls
+// def.PaletteFor(a.Name()) to get its own color group (PaletteFor stays the
+// only place a group is chosen — no app or template picks colors: vs
+// terminal: itself), but OpenCode and Claude also need def.Name (their
+// rendered theme file's name and their config's "theme" field) and Neovim
+// needs def.NeovimModule (its generated shim) — neither of which a flat
+// Palette carries.
+type ThemedConfigurer interface {
+	ForceConfigureTheme(def theme.Definition) error
+}
+
+// LiveThemeApplier is implemented by a themed app that can push a theme into
+// an already-running process — tmux's `source-file` into a live session is
+// the only case today. `dg theme set` calls it only after its transaction has
+// committed, because a live push cannot be rolled back (cycle doc Step 5).
+type LiveThemeApplier interface {
+	ApplyLiveTheme() error
 }
 
 // FontInstaller is the contract for the Fonts module, which installs named fonts

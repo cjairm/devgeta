@@ -111,6 +111,14 @@ func init() {
 }
 
 func run(cmd *cobra.Command, args []string) error {
+	// Sweep for a crashed `dg theme set`'s leftover backups before any
+	// category's SoftConfigure writes onto the same paths (cycle doc Step 5).
+	if msg, err := recoverInterruptedFn(); err != nil {
+		return fmt.Errorf("failed to recover an interrupted theme switch: %w", err)
+	} else if msg != "" {
+		utils.PrintInfo(msg)
+	}
+
 	cfg, err := parseInstallFlags(only, skip)
 	if err != nil {
 		return err

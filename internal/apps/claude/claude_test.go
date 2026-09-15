@@ -23,6 +23,77 @@ func init() {
 	testutil.InitLogger()
 }
 
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under a fresh temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its theme through
+// theme.CurrentDefinition, which loads and validates a whole theme file - so
+// even a single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, hex string) {
+	t.Helper()
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+}
+
 func TestNew(t *testing.T) {
 	app := New()
 	if app == nil {
@@ -542,8 +613,8 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "themes", "default.json"),
-		[]byte(`{}`),
+		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
+		[]byte(`{"foreground": "{{.Palette.Foreground}}"}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -595,6 +666,7 @@ func TestForceConfigure(t *testing.T) {
 	oldConfigClaude := paths.Paths.Config.Claude
 	t.Cleanup(func() { paths.Paths.Config.Claude = oldConfigClaude })
 	paths.Paths.Config.Claude = userConfigDir
+	setupThemeFixture(t, "#ebdbb2")
 
 	app := &Claude{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
@@ -634,9 +706,16 @@ func TestForceConfigure(t *testing.T) {
 		}
 	}
 
-	// themes deployed
-	if _, err := os.Stat(filepath.Join(userConfigDir, "themes")); err != nil {
-		t.Errorf("Expected themes dir: %v", err)
+	// theme rendered from the palette, named after the current theme
+	themeContent, err := os.ReadFile(filepath.Join(userConfigDir, "themes", "default.json"))
+	if err != nil {
+		t.Errorf("Expected rendered theme file: %v", err)
+	}
+	if !strings.Contains(string(themeContent), "#ebdbb2") {
+		t.Errorf(
+			"expected rendered theme to use the current theme's palette, got: %s",
+			themeContent,
+		)
 	}
 
 	// hook lib (sourced by task-redirect.sh/secret-guard.sh/suppression-guard.sh) deployed

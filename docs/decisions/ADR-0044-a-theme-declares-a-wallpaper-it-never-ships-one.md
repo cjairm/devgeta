@@ -1,7 +1,68 @@
 # ADR-0044 — A theme declares a wallpaper; it never ships one
 
 **Date:** 2026-09-14
-**Status:** ACCEPTED
+**Status:** ACCEPTED — amended 2026-09-14: point 1 ("the image never ships")
+is **reversed**; everything else stands. See "Amendment" immediately below
+before reading the rest of this document.
+
+---
+
+## Amendment (2026-09-14): shipped wallpapers, by allowlist
+
+**What changed.** The maintainer decided the wallpapers must ship in the
+repository, so that installing devgeta on any machine brings them along
+without a second step. That reverses point 1 of the Decision below. Points
+2–6 are unchanged and still govern.
+
+**What ships now.** Two files, and only these:
+
+```
+configs/themes/wallpapers/default.jpg      → configs/themes/default.yaml
+configs/themes/wallpapers/tokyonight.jpg   → configs/themes/tokyonight.yaml
+```
+
+Each theme names its own with a **relative** `wallpaper:` key, resolved by
+`internal/theme.Load` against `paths.Paths.App.Configs.Themes` — the
+extracted-configs tree — so the path is correct on whatever machine
+`ExtractEmbeddedConfigs` just wrote it to. An **absolute** `wallpaper:` value
+still means "an image on this machine" and is left untouched, so a user
+pointing a theme at their own file is unaffected.
+
+**The guard is narrowed, not removed.** Point 2's no-image-bytes test
+becomes an allowlist (`shippedWallpapers` in `theme_guards_test.go`):
+
+- An image under `configs/` that is **not** on the allowlist still fails the
+  build — the case the original guard was actually catching (a screenshot or
+  logo landing next to a config) is unchanged.
+- An allowlist entry must exist, and must live under
+  `configs/themes/wallpapers/`, so the exception cannot spread to other
+  directories or rot into a permission granted to nothing.
+- A theme declaring a relative `wallpaper:` that is not shipped fails the
+  build too, rather than warning into a log at runtime on every machine.
+
+**What this costs, recorded plainly so nobody has to rediscover it.** The
+Context below argues against shipping on two grounds. Both were raised with
+the maintainer and accepted:
+
+1. **Copyright.** `default.jpg` is Dragon Ball artwork (Toei/Shueisha) and
+   `tokyonight.jpg` came from a wallpaper aggregator; neither is the
+   project's to license. `github.com/cjairm/devgeta` is public, and these
+   bytes are now in every release binary and in every clone. The exposure is
+   a DMCA takedown against the repo or a release. If that matters later, the
+   fix is to replace both files with images the project owns or that carry a
+   permissive licence — the mechanism does not change, only the two files on
+   the allowlist do.
+2. **Principle 8** (CLAUDE.md, "everything general, never bespoke"). The
+   _mechanism_ is general — any theme may ship a wallpaper next to it, and
+   any user may override it per machine with `dg theme set-wallpaper`. The
+   _two specific images_ are an opinionated default, the same category as
+   the Gruvbox palette and the Nerd Font choice, and they are what every
+   installer gets until they change it.
+
+**Also note:** ~1.7 MB is added to every release binary (about 21 MB → 23 MB),
+per platform.
+
+---
 
 ## Context
 
@@ -84,11 +145,21 @@ there.
 
 **A theme file may _declare_ a wallpaper. devgeta ships no image bytes, ever.**
 
+> ⚠️ **The sentence above and points 1–2 below were reversed by the 2026-09-14
+> amendment at the top of this file.** devgeta now ships two wallpapers, by
+> allowlist, and the shipped themes do declare one. Points 3–6 still stand as
+> written. The original reasoning is kept below because it is the record of
+> what the trade actually costs — not because it is still the rule.
+
 1. **`configs/themes/<name>.yaml` gets an optional `wallpaper:` key holding a
    path.** Absent or empty means _leave the desktop alone_. `default.yaml`
    ships with no wallpaper, so a fresh install never touches a user's desktop.
+   _(Amended: both shipped themes now declare one, relative to the extracted
+   configs tree.)_
 
-2. **Nothing under `configs/` is ever an image.** No raster asset enters the
+2. **Nothing under `configs/` is ever an image.** _(Amended: an allowlist of
+   exactly two wallpapers may be; everything else still may not.)_ No raster
+   asset enters the
    embedded tree. This is enforced by a test against `ConfigsFS`, not by a
    comment — §4 requires that a class of mistake be made structurally
    impossible rather than documented — and the test checks **bytes, not
@@ -140,8 +211,12 @@ there.
      the cleanup of orphaned copies are specified in the cycle doc's Step 9.
    - `wallpaper:` in a theme file keeps the meaning point 1 gives it — a
      _declared default_ a theme author may ship as a path — and is consulted
-     only when `wallpapers[<name>]` has no entry. `default.yaml` ships none, so
-     a fresh install still never touches a desktop.
+     only when `wallpapers[<name>]` has no entry. ~~`default.yaml` ships none, so
+     a fresh install still never touches a desktop.~~ _(Amended: both shipped
+     themes declare one, so a fresh install **does** set a wallpaper on the
+     first `dg theme set`. A user who wants their own overrides it with
+     `dg theme set-wallpaper`, which takes precedence over the declared
+     default.)_
    - `dg theme set-wallpaper` with no theme set writes under the fallback name
      `default`, the same name the palette loader falls back to, so the two
      cannot disagree about which theme is current.

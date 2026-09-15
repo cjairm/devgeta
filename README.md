@@ -236,6 +236,9 @@ dg install --skip databases,desktop
   - `--yes` - Skip the confirmation prompt
   - `dg archive verify <archive-file>` - Re-check an archive against its manifest
   - Decompress with a plain `tar`, no devgeta needed — always into a directory of its own, since a bare `tar -xf` unpacks into the current one: `mkdir -p NAME && tar --zstd -xf NAME.tar.zst -C NAME` (use `tar -xzf` for a `--gzip` archive). List without extracting with `tar --zstd -tf NAME.tar.zst`; check it with `shasum -a 256 -c NAME.tar.zst.sha256`. Full command reference in [docs/spec.md](docs/spec.md#dg-archive)
+- `dg theme` - Show, list, or switch the active theme across Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, and i3 together
+  - `dg theme list` - List available themes
+  - `dg theme set <name>` - Switch every installed themed app to `<name>`, transactionally — validates first, rolls the whole machine back on any failure, and skips apps that aren't installed. See [docs/guides/theming.md](docs/guides/theming.md)
 - `dg --version` - Show version information
 - `dg --help` - Show help message
 
