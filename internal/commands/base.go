@@ -39,7 +39,6 @@ type BaseCommandExecutor interface {
 
 	// Shell configuration
 	Setup(line string) error
-	MaybeSetup(line, toSearch string) error
 	MaybeSetupInFile(line, toSearch, filePath string) error
 
 	// System checks
@@ -180,15 +179,18 @@ func (b *BaseCommand) Setup(line string) error {
 	return files.AddLineToFile(line, paths.Files.ShellConfig)
 }
 
-func (b *BaseCommand) MaybeSetup(line, toSearch string) error {
-	return b.MaybeSetupInFile(line, toSearch, paths.Files.ShellConfig)
-}
-
-// MaybeSetupInFile is MaybeSetup generalized to an arbitrary file, so callers
-// that need to wire a line into a shell startup file other than
-// paths.Files.ShellConfig (e.g. ~/.zshenv) don't need a second code path.
-// The target file is allowed not to exist yet: a missing file has never had
-// the line added, so it's treated as "not set up" and gets created.
+// MaybeSetupInFile wires a line into a shell startup file unless toSearch
+// already appears in it. The target file is allowed not to exist yet: a missing
+// file has never had the line added, so it's treated as "not set up" and gets
+// created.
+//
+// toSearch is a plain substring, so this only dedupes against a line spelled
+// the way the caller expects. That is fine for a file only devgeta writes (e.g.
+// ~/.zshenv), and NOT fine for the user's shell config, where install.sh writes
+// a source line too and spells the path differently — deduping devgeta.zsh this
+// way is what produced the doubled shell startup that
+// internal/apps/devgeta/shell_source_line.go now exists to prevent. Reach for
+// that approach, not a cleverer needle, for anything with a second writer.
 func (b *BaseCommand) MaybeSetupInFile(line, toSearch, filePath string) error {
 	isAlreadySetup, err := files.ContentExistsInFile(filePath, toSearch)
 	if err != nil {

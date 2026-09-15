@@ -96,7 +96,6 @@ alias ff="fzf --preview 'bat --style=numbers --color=always {}'"
 
 # quick edits
 alias edit-zsh="nvim ~/.zshrc"
-alias edit-ohmyzsh="nvim ~/.oh-my-zsh"
 alias edit-tmux="nvim ~/.tmux.conf"
 alias edit-nvim="nvim ~/.config/nvim/init.lua"
 
@@ -143,8 +142,12 @@ alias tmclear="clear && tmux clear-history && clear"
 tmn() {
     local session_name="$1"
     local path="${2:-$HOME}"
-    /usr/local/bin/tmux new-session -d -s "$session_name" -c "$path"
-    /usr/local/bin/tmux switch-client -t "$session_name"
+    # tmux by name, resolved through PATH. An absolute path here has to pick a
+    # Homebrew prefix, and whichever one it picks is wrong on half the machines
+    # devgeta supports (/opt/homebrew on Apple Silicon, /usr/local on Intel,
+    # /usr/bin on Debian).
+    tmux new-session -d -s "$session_name" -c "$path"
+    tmux switch-client -t "$session_name"
 }
 {{end}}
 

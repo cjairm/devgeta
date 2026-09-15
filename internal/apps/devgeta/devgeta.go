@@ -256,9 +256,8 @@ func (dg *Devgeta) ForceConfigure() error {
 	if err := gc.RegenerateShellConfig(); err != nil {
 		return fmt.Errorf("failed to create global config file: %w", err)
 	}
-	devgetaConfigLine := fmt.Sprintf(`source "%s"`, getZshConfigPath())
-	if err := dg.Base.MaybeSetup(devgetaConfigLine, getZshConfigPath()); err != nil {
-		return err
+	if err := ensureShellConfigSourcesDevgeta(); err != nil {
+		return fmt.Errorf("failed to wire devgeta.zsh into %s: %w", paths.Files.ShellConfig, err)
 	}
 	if err := dg.setupZshenv(); err != nil {
 		return fmt.Errorf("failed to wire PATH self-repair into ~/.zshenv: %w", err)
@@ -273,6 +272,14 @@ func (dg *Devgeta) SoftConfigure() error {
 	// wiring on a plain `dg configure`, not just a fresh `--force` one.
 	if err := dg.setupZshenv(); err != nil {
 		return fmt.Errorf("failed to wire PATH self-repair into ~/.zshenv: %w", err)
+	}
+	// Likewise, and for the same reason: a machine installed before the
+	// duplicate-source-line fix has the redundant line on disk already, and
+	// `dg configure` with no --force is what most people will run after
+	// upgrading. Repairing only under --force would leave them paying the
+	// doubled shell startup indefinitely.
+	if err := ensureShellConfigSourcesDevgeta(); err != nil {
+		return fmt.Errorf("failed to wire devgeta.zsh into %s: %w", paths.Files.ShellConfig, err)
 	}
 	if !files.FileAlreadyExist(getGlobalConfigPath()) ||
 		!files.FileAlreadyExist(getZshConfigPath()) {
