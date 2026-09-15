@@ -11,11 +11,29 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-14
+**Last updated:** 2026-09-15
 
 ---
 
 ## Recent changes
+
+- An alias can go missing from a working install, and now devgeta says so
+  (2026-09-15). Two unrelated causes with one symptom. `alias cat="bat"` was
+  written inside the template's `{{if .Eza}}` block, so `cat` tracked eza
+  instead of bat — lost on a machine with bat and no eza, and pointing at a
+  missing binary on a machine with eza and no bat. Separately, a shell config
+  that loads anything _after_ `devgeta.zsh` gives that file the last word:
+  oh-my-zsh's `lib/theme-and-appearance.zsh` runs a plain `alias ls='ls -G'`
+  which does not preserve an existing alias, so a devgeta block above it loses
+  `ls` to plain `/bin/ls` with no error anywhere, while the same block appended
+  at the end keeps eza. `dg configure` now reports that ordering and names the
+  lines, but deliberately does not move anything: the shell config belongs to
+  the user, and a dotfiles or provisioning tool that generates it would undo
+  the move on its next run. Only a line devgeta itself wrote is ever removed
+  from that file. eza and bat were also registered as apps — they implemented
+  the whole contract but were missing `Name()`/`Kind()`, so `dg configure eza`
+  answered "unknown app" and a wrong shell-feature flag could only be repaired
+  by a full `dg install`.
 
 - The output-budget runner works on a stock Mac again (2026-09-14).
   `output-budget-run.sh` starts with `#!/usr/bin/env bash`, which on a Mac

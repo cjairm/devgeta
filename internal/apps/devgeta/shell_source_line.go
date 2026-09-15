@@ -34,6 +34,7 @@ import (
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 // sourceStatementSuffix is the trailing path fragment that every spelling of
@@ -55,6 +56,76 @@ func ownSourceLine() string {
 	return fmt.Sprintf(`source "%s"`, getZshConfigPath())
 }
 
+// sourceStatementsAfterDevgeta returns, in file order, the source statements a
+// shell config runs AFTER it has loaded devgeta.zsh.
+//
+// Wiring devgeta.zsh in exactly once is not enough on its own: a shell config
+// is read top to bottom and the last definition wins, so a file sourced after
+// devgeta.zsh replaces whatever devgeta defined. oh-my-zsh is the case that
+// found this - its lib/theme-and-appearance.zsh runs a plain
+// `alias ls='ls -G'`, which does not preserve an existing alias - so a devgeta
+// block sitting above it loses `ls` with no error anywhere, while the same
+// block appended at the end (where install.sh puts it) keeps eza.
+//
+// Nothing here is specific to oh-my-zsh: any file loaded later can redefine
+// anything, so the report is about ordering, not about a particular tool.
+func sourceStatementsAfterDevgeta(lines []string, suffix string) []string {
+	var following []string
+	loaded := false
+	for _, line := range lines {
+		if isDevgetaSourceStatement(line, suffix) {
+			loaded = true
+			continue
+		}
+		if loaded && isSourceStatement(line) {
+			following = append(following, strings.TrimSpace(line))
+		}
+	}
+	return following
+}
+
+// shellConfigOrderWarning renders what the user is told when something loads
+// after devgeta.zsh, and returns "" when nothing does.
+//
+// It names the offending lines and the file to edit: a warning that reports
+// only that "something" overrides devgeta leaves the user no better off, since
+// the whole failure mode is that nothing errors and the cause is invisible.
+func shellConfigOrderWarning(shellConfig string, following []string) string {
+	if len(following) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s loads devgeta.zsh, then sources more files:\n", shellConfig)
+	for _, line := range following {
+		fmt.Fprintf(&b, "    %s\n", line)
+	}
+	b.WriteString(
+		"The last definition wins, so anything those files define replaces devgeta's -\n" +
+			"which is how `ls` stops being eza, with no error to point at.\n",
+	)
+	fmt.Fprintf(&b, "Move devgeta's source line to the end of %s to keep them.", shellConfig)
+	return b.String()
+}
+
+// isSourceStatement reports whether a shell config line actually loads another
+// file - a `source` or `.` command, not a mention of one. A commented line
+// runs nothing, and the command is matched as a whitespace-delimited field
+// rather than a line prefix so a guarded one-liner
+// (`[ -f "X" ] && source "X"`) counts too.
+func isSourceStatement(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		return false
+	}
+	for _, field := range strings.Fields(trimmed) {
+		if field == "source" || field == "." {
+			return true
+		}
+	}
+	return false
+}
+
 // isDevgetaSourceStatement reports whether a shell config line actually loads
 // devgeta.zsh.
 //
@@ -67,24 +138,8 @@ func ownSourceLine() string {
 //     path, but only the `.` on the next line loads it. Counting mentions here
 //     would report a correctly wired config as a duplicate and start deleting
 //     from it.
-//
-// The `source`/`.` check looks for the command as a whitespace-delimited field
-// rather than as a line prefix, so a guarded one-liner
-// (`[ -f "X" ] && source "X"`) is recognised too.
 func isDevgetaSourceStatement(line, suffix string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-		return false
-	}
-	if !strings.Contains(trimmed, suffix) {
-		return false
-	}
-	for _, field := range strings.Fields(trimmed) {
-		if field == "source" || field == "." {
-			return true
-		}
-	}
-	return false
+	return isSourceStatement(line) && strings.Contains(line, suffix)
 }
 
 // ensureShellConfigSourcesDevgeta makes the user's shell config load
@@ -136,8 +191,11 @@ func ensureShellConfigSourcesDevgeta() error {
 
 	switch statements {
 	case 0:
+		// Appended, so devgeta.zsh is now the last thing loaded and nothing
+		// can be overriding it - no ordering check needed on this path.
 		return files.AddLineToFile(ownLine, shellConfig)
 	case 1:
+		warnIfSomethingLoadsAfterDevgeta(shellConfig, lines, suffix)
 		return nil
 	}
 
@@ -161,10 +219,39 @@ func ensureShellConfigSourcesDevgeta() error {
 			"file", shellConfig,
 			"statements", statements,
 		)
+		warnIfSomethingLoadsAfterDevgeta(shellConfig, lines, suffix)
 		return nil
 	}
 
-	return overwriteInPlace(shellConfig, strings.Join(kept, "\n"))
+	if err := overwriteInPlace(shellConfig, strings.Join(kept, "\n")); err != nil {
+		return err
+	}
+	// Checked against what was actually written, not what was read: the line
+	// this run removed could itself have been the last source statement.
+	warnIfSomethingLoadsAfterDevgeta(shellConfig, kept, suffix)
+	return nil
+}
+
+// warnIfSomethingLoadsAfterDevgeta tells the user when their shell config loads
+// another file after devgeta.zsh, and does nothing else about it.
+//
+// Deliberately a report rather than a repair. Moving the block would be a
+// silent rewrite of a file the user owns, the ordering may well be intentional,
+// and on a config generated by a dotfiles tool or a provisioning role the move
+// would be undone on the next run anyway - leaving devgeta to "fix" it again
+// forever. Only a line devgeta itself wrote is ever removed from that file.
+func warnIfSomethingLoadsAfterDevgeta(shellConfig string, lines []string, suffix string) {
+	following := sourceStatementsAfterDevgeta(lines, suffix)
+	warning := shellConfigOrderWarning(shellConfig, following)
+	if warning == "" {
+		return
+	}
+	logger.L().Warnw(
+		"Shell config loads another file after devgeta.zsh",
+		"file", shellConfig,
+		"following", following,
+	)
+	utils.PrintWarning(warning)
 }
 
 // overwriteInPlace rewrites filePath with content, keeping the file's mode and

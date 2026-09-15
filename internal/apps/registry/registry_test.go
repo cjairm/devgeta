@@ -12,8 +12,8 @@ import (
 func init() { testutil.InitLogger() }
 
 var expectedApps = []string{
-	"aerospace", "alacritty", "brave", "claude", "devgeta", "docker",
-	"fastfetch", "flameshot", "ghostty", "gimp", "git", "i3", "lazydocker",
+	"aerospace", "alacritty", "bat", "brave", "claude", "devgeta", "docker",
+	"eza", "fastfetch", "flameshot", "ghostty", "gimp", "git", "i3", "lazydocker",
 	"lazygit", "mise", "neovim", "opencode", "raycast", "rtk", "shottr", "tmux", "ulauncher",
 }
 
@@ -58,7 +58,9 @@ func TestGetAppsByKind_Terminal(t *testing.T) {
 	names := GetAppsByKind(apps.KindTerminal)
 	expected := []string{
 		"alacritty",
+		"bat",
 		"claude",
+		"eza",
 		"fastfetch",
 		"ghostty",
 		"git",
@@ -230,5 +232,38 @@ func TestMeta_GhosttyTracksBothItemTypes(t *testing.T) {
 	}
 	if meta.AltItemType != "package" {
 		t.Errorf("expected ghostty AltItemType %q, got %q", "package", meta.AltItemType)
+	}
+}
+
+// TestGetApp_EzaAndBatAreConfigurableOnTheirOwn: eza and bat implement the full
+// App contract but were never registered, so `dg configure eza --force` failed
+// with "unknown app". That left their shell features - the {{if .Eza}} and
+// {{if .Bat}} blocks that carry `ls`, `lt` and `cat` - repairable only by a
+// full `dg install`, which reinstalls every terminal tool to fix one flag in
+// global_config.yaml.
+func TestGetApp_EzaAndBatAreConfigurableOnTheirOwn(t *testing.T) {
+	for _, name := range []string{constants.Bat, constants.Eza} {
+		t.Run(name, func(t *testing.T) {
+			app, err := GetApp(name)
+			if err != nil {
+				t.Fatalf("GetApp(%q) failed: %v", name, err)
+			}
+			if got := app.Name(); got != name {
+				t.Errorf("Name() is %q, want %q", got, name)
+			}
+			if got := app.Kind(); got != apps.KindTerminal {
+				t.Errorf("Kind() is %v, want KindTerminal", got)
+			}
+			meta, ok := Meta[name]
+			if !ok {
+				t.Fatalf("Meta has no entry for %q", name)
+			}
+			// The flag in global_config.yaml is the whole point of registering
+			// these two: without it, `dg uninstall` would not clear the shell
+			// feature and the alias would outlive the tool.
+			if !meta.HasShellFeature {
+				t.Errorf("Meta[%q].HasShellFeature is false, want true", name)
+			}
+		})
 	}
 }

@@ -271,3 +271,70 @@ func aliasLinesFor(rendered, alias string) []string {
 	}
 	return found
 }
+
+// TestShellConfigAliasesAreGatedOnTheirOwnToolsFeature pins each alias to the
+// shell feature of the tool the alias actually runs.
+//
+// `alias cat="bat"` shipped inside the {{if .Eza}} block, so `cat` tracked eza
+// instead of bat: a machine with bat and no eza silently lost it, and a machine
+// with eza and no bat got a `cat` pointing at a binary that isn't installed.
+// The feature flags exist precisely so a generated devgeta.zsh only aliases
+// what is there, and an alias gated on a DIFFERENT tool's flag defeats that
+// while still looking correct in the template.
+//
+// Each case is checked in both directions - present with the flag on, absent
+// with it off - because "absent when off" alone would also pass if the alias
+// were dropped from the template altogether.
+func TestShellConfigAliasesAreGatedOnTheirOwnToolsFeature(t *testing.T) {
+	cases := []struct {
+		alias   string
+		feature string // the ShellFeatures field the alias must be gated on
+	}{
+		{alias: "ls", feature: "Eza"},
+		{alias: "lt", feature: "Eza"},
+		{alias: "cat", feature: "Bat"},
+		{alias: "cd", feature: "Zoxide"},
+		{alias: "mx", feature: "Mise"},
+	}
+
+	enabled := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+	for _, tc := range cases {
+		t.Run(tc.alias, func(t *testing.T) {
+			if len(aliasLinesFor(enabled, tc.alias)) == 0 {
+				t.Fatalf(
+					"`alias %s` does not render with every feature enabled; the case list is stale",
+					tc.alias,
+				)
+			}
+			withoutTool := renderEmbeddedShellConfig(t, shellFeaturesWithout(t, tc.feature))
+			if lines := aliasLinesFor(withoutTool, tc.alias); len(lines) > 0 {
+				t.Errorf(
+					"`alias %s` still renders with %s disabled: %q\nGate it on {{if .%s}} - the flag of the tool it runs.",
+					tc.alias,
+					tc.feature,
+					lines,
+					tc.feature,
+				)
+			}
+		})
+	}
+}
+
+// shellFeaturesWithout returns every shell feature enabled except the named
+// one. The field is located by name and the lookup is fatal when it misses, so
+// a renamed or misspelled feature fails loudly instead of quietly rendering
+// with everything on and passing.
+func shellFeaturesWithout(t *testing.T, feature string) config.ShellFeatures {
+	t.Helper()
+
+	features := allShellFeaturesEnabled()
+	field := reflect.ValueOf(&features).Elem().FieldByName(feature)
+	if !field.IsValid() {
+		t.Fatalf("config.ShellFeatures has no field %q", feature)
+	}
+	if field.Kind() != reflect.Bool {
+		t.Fatalf("config.ShellFeatures field %q is %s, want bool", feature, field.Kind())
+	}
+	field.SetBool(false)
+	return features
+}

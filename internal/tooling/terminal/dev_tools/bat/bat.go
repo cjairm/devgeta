@@ -23,6 +23,8 @@ package bat
 import (
 	"fmt"
 
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -39,6 +41,12 @@ func New() *Bat {
 	return &Bat{Cmd: osCmd, Base: baseCmd}
 }
 
+var _ apps.App = (*Bat)(nil)
+
+func (b *Bat) Name() string { return constants.Bat }
+
+func (b *Bat) Kind() apps.AppKind { return apps.KindTerminal }
+
 func (b *Bat) Install() error {
 	return b.Cmd.InstallPackage(constants.Bat)
 }
@@ -48,15 +56,11 @@ func (b *Bat) SoftInstall() error {
 }
 
 func (b *Bat) ForceInstall() error {
-	err := b.Uninstall()
-	if err != nil {
-		return fmt.Errorf("failed to uninstall bat: %w", err)
-	}
-	return b.Install()
+	return baseapp.Reinstall(b.Install, b.Uninstall)
 }
 
 func (b *Bat) Uninstall() error {
-	return fmt.Errorf("bat uninstall not supported through devgeta")
+	return fmt.Errorf("%w for bat", apps.ErrUninstallNotSupported)
 }
 
 func (b *Bat) ForceConfigure() error {
@@ -98,5 +102,5 @@ func (b *Bat) ExecuteCommand(args ...string) error {
 }
 
 func (b *Bat) Update() error {
-	return fmt.Errorf("bat update not implemented through devgeta")
+	return fmt.Errorf("%w for bat", apps.ErrUpdateNotSupported)
 }

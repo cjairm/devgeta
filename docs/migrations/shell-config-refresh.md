@@ -52,6 +52,34 @@ first — but `devgeta` also re-checks the `source` line and `~/.zshenv`.)
 Upgrade devgeta first. `dg configure` reads the template out of the binary that
 runs it, so an old binary redeploys the old alias.
 
+## If `ls` is not eza at all
+
+A different problem with the same symptom. Check what `ls` actually is:
+
+```bash
+zsh -ic 'alias ls; alias lt; alias cat'
+```
+
+If `lt` is eza and `cat` is bat but `ls` is something else — `ls -G`, or
+`ls --color=tty` — then `devgeta.zsh` loaded fine and something loaded _after_
+it took `ls` back. A shell config is read top to bottom and the last definition
+wins, so any file sourced after `devgeta.zsh` replaces what devgeta defined.
+oh-my-zsh is the common case: its `lib/theme-and-appearance.zsh` runs a plain
+`alias ls='ls -G'` that does not preserve an existing alias.
+
+Fix it by moving devgeta's block to the end of your shell config, after
+everything else is sourced:
+
+```bash
+grep -n "devgeta" ~/.zshrc
+```
+
+Move the `if [ -f ".../devgeta.zsh" ]; then` block (or the bare
+`source ".../devgeta.zsh"` line) below the line that sources oh-my-zsh, then
+open a new shell. `dg configure` warns when it sees this, but it will not move
+the line for you — that file is yours, and a dotfiles or provisioning tool that
+generates it would put the line back on its next run anyway.
+
 ## If you edited `devgeta.zsh` by hand
 
 `--force` overwrites it. The file is generated (`DO NOT EDIT MANUALLY` at the
