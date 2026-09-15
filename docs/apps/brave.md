@@ -42,21 +42,30 @@ real sizes on your machine, so you never have to take this table's word for it.
 | `bookmarks`          | Your bookmarks                                          | **on**  |
 | `preferences`        | Settings, including which extensions you have installed | **on**  |
 | `tabs`               | Your open tabs                                          | **on**  |
-| `extension-settings` | Each extension's own data, so they don't arrive reset   | **on**  |
+| `extension-settings` | Each extension's own data, incl. password-manager state | off     |
 | `extensions`         | The extension payloads themselves (~200M)               | off     |
 | `history`            | Your browsing history (~95M)                            | off     |
 
 Narrow a run with `--group`:
 
 ```bash
-dg export brave /Volumes/SSD --group extensions,history   # take the opt-in ones too
+dg export brave /Volumes/SSD --group extension-settings   # take extension data too
 dg import brave BUNDLE --group bookmarks                  # restore only bookmarks
 ```
 
+**`extension-settings` is off** because that directory is where extensions keep
+their own private data — a password manager's session state lives there. The
+denylist can police Chromium's own credential stores by name, but
+`Local Extension Settings/<id>/` is an opaque database whose contents the
+extension decides, so no rule can look inside it. Leaving it off means your
+extensions arrive reset to defaults and you sign in once, which is what a
+password manager expects on a new device. Turn it on with
+`--group extension-settings` if you want that data to move.
+
 **`extensions` is off** because Brave re-downloads extension payloads from the
-store the first time you launch it, which is the better path anyway — your
-extension _settings_ and the extension list still come across without it. Turn it
-on for a machine that will be offline.
+store the first time you launch it, which is the better path anyway — the
+extension list still comes across in `preferences`. Turn it on for a machine
+that will be offline.
 
 **`history` is off** because moving your browsing record is a decision you make,
 not a default you discover. Open tabs are **on** by the opposite reasoning: they

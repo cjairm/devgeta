@@ -30,7 +30,7 @@ func TestStateGroupsMatchTheADR(t *testing.T) {
 		{
 			Name:    "extension-settings",
 			Paths:   []string{"Extension State", "Local Extension Settings"},
-			Default: true,
+			Default: false,
 		},
 		{Name: "extensions", Paths: []string{"Extensions"}, Default: false},
 		{Name: "history", Paths: []string{"History"}, Default: false},

@@ -56,8 +56,8 @@ func (b *Brave) StateGroups() []apps.StateGroup {
 		{
 			Name:    "extension-settings",
 			Paths:   []string{"Extension State", "Local Extension Settings"},
-			Default: true,
-			Why:     "Per-extension data. Without it the extensions arrive reset to defaults.",
+			Default: false,
+			Why:     "Per-extension private data, including password managers' session state. Off by default; the denylist cannot see inside it.",
 		},
 		{
 			Name:    "extensions",

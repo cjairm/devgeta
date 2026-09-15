@@ -1759,7 +1759,7 @@ for the full design and research behind the format choices.
 #### `dg export` / `dg import`
 
 Moves the state a user accumulated _inside_ an app — bookmarks, open tabs,
-extension settings — from one machine to another. `dg install` installs the app
+settings — from one machine to another. `dg install` installs the app
 and `dg configure` applies devgeta's own config to it; neither carries this, and
 before these commands it was hand-copied from memory on every hardware change.
 

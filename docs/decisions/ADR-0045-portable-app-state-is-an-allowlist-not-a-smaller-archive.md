@@ -1,7 +1,7 @@
 # ADR-0045 — Portable app state is an allowlist, not a smaller archive
 
 **Date:** 2026-09-15
-**Status:** ACCEPTED
+**Status:** ACCEPTED — amended 2026-09-15, see [Amendment](#amendment--2026-09-15-extension-settings-is-opt-in-not-default-on)
 
 ## Context
 
@@ -126,7 +126,7 @@ ADR, not an implementation choice.
 | `bookmarks`          | `Bookmarks`                                     | on      | Plain JSON, stable across versions. The thing a user most expects to survive a machine move.                            |
 | `preferences`        | `Preferences`                                   | on      | Settings, including the extension list. Chromium ignores keys it does not know, so a newer Brave drops a few.           |
 | `tabs`               | `Sessions/`                                     | on      | The work in progress, which is the point of a machine move. State the user is looking at now, not a record of the past. |
-| `extension-settings` | `Extension State/`, `Local Extension Settings/` | on      | 12M of per-extension data. Without it the extensions arrive on the new machine reset to defaults.                       |
+| `extension-settings` | `Extension State/`, `Local Extension Settings/` | off     | 12M of per-extension private data, including password managers' session state. Opt-in — see the [Amendment](#amendment--2026-09-15-extension-settings-is-opt-in-not-default-on). |
 | `extensions`         | `Extensions/`                                   | off     | 207M of payload the store re-downloads on first launch. Turned on for a machine that will be offline.                   |
 | `history`            | `History`                                       | off     | 95M, and the user's browsing record. Moving it is a decision they make, not a default they discover.                    |
 
@@ -137,6 +137,40 @@ themselves on the new machine — the regenerable rule above.
 `Login Data`, `Cookies`, `Web Data`, `Secure Preferences` and `Local State` are not
 omissions but denials: they are on the denylist, so no group may ever name them and
 no bundle may restore them.
+
+## Amendment — 2026-09-15: `extension-settings` is opt-in, not default-on
+
+**What changed:** `extension-settings` moved from default-on to default-off. A
+plain `dg export brave` now carries `bookmarks`, `preferences` and `tabs`.
+`--group extension-settings` opts back in.
+
+**Why:** the denylist is what makes "a credential can never move" a property of
+the code rather than of care. It works by matching path elements, so it can
+police Chromium's own stores — `Login Data`, `Cookies`, `Web Data` — by name.
+It cannot see inside `Local Extension Settings/<id>/`, which is an opaque
+LevelDB whose contents are decided by the extension, not by Chromium. A
+password manager keeps its extension session there. On a real profile that
+directory held six extensions, 1Password among them.
+
+That is a gap in the guarantee, not a bug in the list: no pattern can police a
+format devgeta does not parse. Default-on meant the safest-sounding invocation
+was the one that moved the most credential-adjacent bytes, and the original row
+never weighed that — it weighed 12M and convenience.
+
+**What it costs:** extensions arrive on the new machine reset to defaults. The
+`Consequences` note below already called that the better path for `Extensions/`,
+and the same reasoning applies here: Brave re-downloads the payloads on first
+launch and the user signs in once, which is what a password manager expects on
+a new device anyway. The extension *list* still moves in `Preferences`.
+
+**What was considered and rejected:** making `preferences` opt-in too, on the
+grounds that it carries the extension list. It does, and an imported
+`Preferences` can have its extension entries rejected because Chromium
+cross-checks them against HMACs in `Secure Preferences`, which is denylisted and
+never moves. But with `extension-settings` off that rejection is benign — it
+resets extensions that are reinstalling from the store regardless — and the cost
+is every setting the user asked to move. The gap it would close is one the
+amendment above already closes.
 
 ## Consequences
 
