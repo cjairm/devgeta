@@ -310,6 +310,10 @@ func archiveOutputPaths(destDir, name, ext string) []string {
 // than just the archive matters because the write phase renames its
 // .partial files into place unconditionally: a leftover manifest or skip
 // report from an earlier run would otherwise be replaced without a word.
+//
+// `dg export` shares this check, since it writes the same four files
+// through the same writer — which is why the refusal names devgeta's rule
+// rather than one of the two commands.
 func refuseIfAnyOutputExists(destDir, name, ext string) error {
 	var existing []string
 	for _, path := range archiveOutputPaths(destDir, name, ext) {
@@ -328,7 +332,7 @@ func refuseIfAnyOutputExists(destDir, name, ext string) error {
 	}
 	return fmt.Errorf(
 		"%s already has %d %s from an earlier run:\n  %s\n"+
-			"dg archive never overwrites — remove them, or archive to a different destination",
+			"devgeta never overwrites on the destination — remove them, or write to a different destination",
 		destDir,
 		len(existing),
 		noun,

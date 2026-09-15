@@ -236,6 +236,13 @@ dg install --skip databases,desktop
   - `--yes` - Skip the confirmation prompt
   - `dg archive verify <archive-file>` - Re-check an archive against its manifest
   - Decompress with a plain `tar`, no devgeta needed — always into a directory of its own, since a bare `tar -xf` unpacks into the current one: `mkdir -p NAME && tar --zstd -xf NAME.tar.zst -C NAME` (use `tar -xzf` for a `--gzip` archive). List without extracting with `tar --zstd -tf NAME.tar.zst`; check it with `shasum -a 256 -c NAME.tar.zst.sha256`. Full command reference in [docs/spec.md](docs/spec.md#dg-archive)
+- `dg export <app> <destination-dir>` - Pack the state you accumulated _inside_ an app — bookmarks, open tabs, extension settings — into one verified bundle for a machine move, then restore it with `dg import`. This is an **allowlist**: only what the app's adapter names ever moves, so passwords, cookies, autofill and anything bound to this machine are never included at any flag. Not a backup of the app's folder — a measured Brave profile is 3.8G of which ~22M is worth moving, so use `dg archive` if you want the folder itself
+  - `--dry-run` - Print every group with its paths, its size and whether it's on, and write nothing (no destination directory needed)
+  - `--group a,b` - Export only these groups; the default is every group that's on
+  - `--profile "Default,Profile 1"` - Export only these profiles; the default is all of them
+  - `dg import <app> <bundle-file>` - Restore a bundle on the new machine. Everything it would replace is renamed aside first, so a failure partway leaves the profile exactly as it was and an unwanted restore can be undone by hand; `--force` is required if the profile already has state
+  - Both directions refuse while the app is running — its state is SQLite and LevelDB, and a copy taken from under a live process arrives corrupt. Quit it first
+  - The bundle is a plain `.tar.zst` with a `.sha256` beside it, readable without devgeta: `tar --zstd -tf NAME.tar.zst`. Brave is the only app with an adapter today — [docs/apps/brave.md](docs/apps/brave.md) says exactly what moves and what does not. Full command reference in [docs/spec.md](docs/spec.md#dg-export--dg-import)
 - `dg theme` - Show, list, or switch the active theme across Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, and i3 together
   - `dg theme list` - List available themes
   - `dg theme set <name>` - Switch every installed themed app to `<name>`, transactionally — validates first, rolls the whole machine back on any failure, and skips apps that aren't installed. See [docs/guides/theming.md](docs/guides/theming.md)

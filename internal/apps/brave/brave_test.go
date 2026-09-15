@@ -23,6 +23,12 @@ func TestNew(t *testing.T) {
 	if brave.Cmd == nil {
 		t.Error("Expected Cmd to be initialized")
 	}
+
+	// Base is what state.go picks the platform's data directory with, and
+	// what the running check executes through.
+	if brave.Base == nil {
+		t.Error("Expected Base to be initialized")
+	}
 }
 
 func TestNameAndKind(t *testing.T) {

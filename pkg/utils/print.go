@@ -3,10 +3,8 @@ package utils
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/cjairm/devgeta/pkg/constants"
-	"github.com/spf13/cobra"
 )
 
 var Logger io.Writer = io.Discard
@@ -47,11 +45,4 @@ func Print(msg, custom string) {
 			fmt.Printf("%s%s%s\n", custom, msg, constants.Reset)
 		}
 	}
-}
-
-func PrompCustomHelp(cmd *cobra.Command, args []string) {
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Usage:\n  %s\n\n", cmd.Use))
-	sb.WriteString(cmd.Long + "\n\n")
-	PrintBold(sb.String())
 }

@@ -64,3 +64,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0042](ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md) — An archive refuses on proof and warns on prediction
 - [ADR-0043](ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md) — A theme is a palette file, not a branch in every template
 - [ADR-0044](ADR-0044-a-theme-declares-a-wallpaper-it-never-ships-one.md) — A theme declares a wallpaper; it never ships one
+- [ADR-0045](ADR-0045-portable-app-state-is-an-allowlist-not-a-smaller-archive.md) — Portable app state is an allowlist, not a smaller archive

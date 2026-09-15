@@ -14,22 +14,32 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// standardHelpFunc restores standard Cobra help for a command subtree (used
-// by both taskCmd and configCmd - see cmd/config.go). The root sets a
-// branded help func (utils.PrompCustomHelp) that prints only Use+Long and is
-// inherited by children — which hides subcommands and flags. Agents
-// re-reading `dg task --help`/`dg config --help` (or a `<sub> --help`) need
-// the full listing, so this renders the long/short description followed by
-// the default usage block (Available Commands, Flags, Examples).
+// standardHelpFunc renders the long (or short) description followed by Cobra's
+// default usage block - Available Commands, Flags, Examples. The root sets it
+// for the whole tree (cmd/root.go), so every command's help lists its real
+// subcommands and flags.
+//
+// It exists as a named function because the root previously printed only
+// Use+Long, which hid subcommands and flags everywhere and forced taskCmd and
+// configCmd to opt out of it one subtree at a time. Keeping one help function
+// for the whole tree is what stops a command from being left out of a listing
+// by hand.
+//
+// It writes to OutOrStdout, not through cmd.Print, because cmd.Print resolves
+// to OutOrStderr and so falls back to *stderr* when nothing has called SetOut.
+// Cobra's own help function uses OutOrStdout; matching it is what keeps
+// `dg --help | grep export` and `dg task --help > notes.txt` working. Asking
+// for help is not an error, so it does not belong on the error stream.
 func standardHelpFunc(cmd *cobra.Command, args []string) {
+	out := cmd.OutOrStdout()
 	if cmd.Long != "" {
-		cmd.Println(cmd.Long)
-		cmd.Println()
+		fmt.Fprintln(out, cmd.Long)
+		fmt.Fprintln(out)
 	} else if cmd.Short != "" {
-		cmd.Println(cmd.Short)
-		cmd.Println()
+		fmt.Fprintln(out, cmd.Short)
+		fmt.Fprintln(out)
 	}
-	cmd.Print(cmd.UsageString())
+	fmt.Fprint(out, cmd.UsageString())
 }
 
 // taskRunner is the interface used by task subcommands, enabling injection in tests.
@@ -862,10 +872,6 @@ parses nothing for that shape.`,
 
 func init() {
 	rootCmd.AddCommand(taskCmd)
-	// Standard Cobra help for the whole task subtree (overrides the branded
-	// root help func, which children would otherwise inherit and which hides
-	// subcommands/flags). Children inherit this from taskCmd.
-	taskCmd.SetHelpFunc(standardHelpFunc)
 	taskCmd.AddCommand(taskRefreshBranchCmd)
 	taskCmd.AddCommand(taskResetMainBranchCmd)
 	taskCmd.AddCommand(taskDeleteBranchCmd)

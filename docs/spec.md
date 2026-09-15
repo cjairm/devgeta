@@ -1756,6 +1756,131 @@ incremental or deduplicated backups, encryption (use an encrypted volume, or
 See the [2026-09-13-dg-archive cycle doc](plans/cycles/2026-09-13-dg-archive.md)
 for the full design and research behind the format choices.
 
+#### `dg export` / `dg import`
+
+Moves the state a user accumulated _inside_ an app — bookmarks, open tabs,
+extension settings — from one machine to another. `dg install` installs the app
+and `dg configure` applies devgeta's own config to it; neither carries this, and
+before these commands it was hand-copied from memory on every hardware change.
+
+This is **not** `dg archive` pointed at an app's folder, and the difference is
+the whole design. `dg archive` skips only what is proven regenerable and keeps
+everything else ([ADR-0041](decisions/ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md)),
+which is right for a documents folder where a wrongly skipped file is
+unrecoverable. An app's data directory inverts that: a measured Brave profile is
+3.8G of which about 22M is worth moving, and a faithful copy also reinstates
+files that are meaningless or harmful on the destination — `Secure Preferences`
+carries HMACs bound to the machine that wrote it, `Login Data` and `Cookies` are
+encrypted against the local keychain, `Local State` holds that machine's
+encryption key. So these commands are an **allowlist**: nothing moves unless an
+app's adapter names it.
+[ADR-0045](decisions/ADR-0045-portable-app-state-is-an-allowlist-not-a-smaller-archive.md)
+records the decision; `dg archive` is unchanged and the two commands are allowed
+to disagree.
+
+```
+dg export <app> [destination-dir] [--dry-run] [--group a,b] [--profile "Default,Profile 1"]
+dg import <app> <bundle-file> [--force] [--group a,b] [--profile "Default,Profile 1"]
+```
+
+**The unit is a named state group**, not a path list: a group is a name, its
+paths, whether it is on by default, and a one-line reason. `dg export brave
+--dry-run` prints every group with its paths, its size and whether it is on — the
+groups that are OFF included, since "what did not move" is the half of the answer
+no other output gives. A dry run needs no destination directory.
+
+**What can never be in a group.** Credential and machine-bound files are on a
+denylist: `Login Data*`, `Cookies*`, `Web Data*`, `Secure Preferences`,
+`Local State`, `Affiliation Database*` and the `Network/` directory. No adapter
+may name one — a test checks every registered adapter, so a future adapter that
+does fails the build — and no bundle may restore one. Matching is per path
+element and case-insensitive, because the filesystems this runs on are.
+
+**Both directions refuse while the app is running.** `Sessions/`, `History` and
+`Local Extension Settings/` are SQLite and LevelDB; copied out from under a live
+process they are corrupt on arrival. The refusal names the app and says to quit
+it — a running process is proof, not a guess
+([ADR-0042](decisions/ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md)).
+
+**The bundle** is `<app>-state-<YYYY-MM-DD>.tar.zst` plus a `.sha256` manifest,
+written by the same writer and checked by the same verifier `dg archive` uses,
+so it is an ordinary tar a machine with no devgeta can open:
+
+```
+tar --zstd -tf brave-state-2026-09-15.tar.zst          # list without extracting
+shasum -a 256 -c brave-state-2026-09-15.tar.zst.sha256 # the bundle file is intact
+```
+
+Inside, every member sits under its profile's key — `Default/Bookmarks`,
+`Profile 1/Bookmarks` — which is what lets one bundle hold several profiles that
+all use the same file names. Export refuses before writing if any file it would
+produce is already on the drive; it never overwrites.
+
+**Export flags**:
+
+- `--dry-run` — Print the report and write nothing. No destination directory
+  needed.
+- `--group a,b` — Export only these groups. The default is every group that is on.
+- `--profile "Default,Profile 1"` — Export only these profiles. The default is
+  all of them; an unknown key is an error that lists the real ones.
+
+**Import flags**:
+
+- `--force` — Replace state that is already there. Without it, an import into a
+  profile that has state refuses and names the paths.
+- `--group a,b` — Restore only these groups. The default is **every group the
+  bundle carries, including ones that are off by default on the way out** — the
+  export already decided what was worth carrying, so a bundle written with
+  `--group history` restores its history rather than silently dropping it. A real
+  group the bundle does not carry is a refusal naming it, not a quieter import.
+- `--profile "Default,Profile 1"` — Restore only these profiles. A profile the
+  bundle holds that this machine does not have is a refusal, not a directory
+  devgeta creates: an app's profile registry is its own (for Brave it is
+  `Local State`, which is denied), so a profile directory the app was never told
+  about is one it never shows.
+
+**What the import checks, in order.** Each step exists to fail before the one
+after it can do damage:
+
+1. **The app is not running.**
+2. **The bundle is named for this app.** Every Chromium browser uses the same
+   profile file names, so a Chrome bundle passes every path rule Brave applies
+   and would restore cleanly into the wrong browser. The check is the bundle's
+   base name, and it runs before anything reads its bytes. A name is not proof —
+   a hand-built tar under the right name still passes — but it stops the
+   realistic accident of two bundles on one drive and the wrong path typed.
+3. **The `.sha256` manifest travelled with the bundle**, and the bundle's
+   directory is writable (verification writes the bundle's own checksum beside
+   it, which fails on a write-protected USB drive for a reason that has nothing
+   to do with the bundle). Neither check is skippable.
+4. **The bundle matches its manifest**, so a damaged transfer refuses before
+   anything good is overwritten.
+5. **Every member is valid.** The allowlist bound what devgeta packed, not what
+   the tar in front of us contains, so each member must be a regular file or a
+   directory (any symlink or hard-link member rejects the bundle — a link written
+   early redirects a later, perfectly relative member outside the root), have a
+   relative `..`-free path, start with one profile key, fall under one of the
+   adapter's group paths, and match nothing on the denylist. One bad member
+   rejects the whole bundle: a bundle carrying something it should not is not one
+   to trust the rest of.
+6. **`--force`**, if any selected path already exists.
+
+**All or nothing.** Every path the import will write is renamed aside to a
+`.dg-import-backup` sibling _before the first one is written_, so a failure on
+the fourth of seven files restores all of them and the profile is exactly as it
+was. On success the backups stay and the command prints where they are, so an
+unwanted import can be undone by hand; a path the profile did not have before is
+simply left in place, with no marker, since there is nothing to put back.
+
+**Out of scope**: a sync or daemon mode (this is an explicit two-command move;
+Brave Sync already occupies that space), credentials and cookies at any opt-in
+level, recovering automatically from a crash _between_ the first and last write
+(the by-hand undo is the one documented backup suffix), and Windows. Brave is
+the only adapter today — see [docs/apps/brave.md](apps/brave.md) for exactly what
+moves and what does not. An app with no adapter is not an error the user can
+spell their way out of, so `dg export <app>` says so and names the apps that have
+one.
+
 #### `dg theme`
 
 Shows, lists, or switches the active theme across every themed surface

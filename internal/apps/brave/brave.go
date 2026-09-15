@@ -18,14 +18,15 @@ import (
 var _ apps.App = (*Brave)(nil)
 
 type Brave struct {
-	Cmd cmd.Command
+	Cmd  cmd.Command
+	Base cmd.BaseCommandExecutor
 }
 
 func (b *Brave) Name() string       { return constants.Brave }
 func (b *Brave) Kind() apps.AppKind { return apps.KindDesktop }
 
 func New() *Brave {
-	return &Brave{Cmd: cmd.NewCommand()}
+	return &Brave{Cmd: cmd.NewCommand(), Base: cmd.NewBaseCommand()}
 }
 
 func (b *Brave) Install() error {

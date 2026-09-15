@@ -79,6 +79,63 @@ type LiveThemeApplier interface {
 	ApplyLiveTheme() error
 }
 
+// StateGroup is one named, separately-selectable slice of an app's own state:
+// the unit `dg export` and `dg import` move, and the unit `--group` names
+// (ADR-0045). Paths are relative to a profile root, so one group definition
+// covers every profile the app has.
+//
+// A group is deliberately four fields and not a bare path list. Default
+// answers "does this move unless the user says otherwise", which ADR-0045
+// only allows for state that is version-stable and machine-independent; Why
+// is the one-line reason `--dry-run` prints beside the group, so what moves
+// is checkable before anything is written.
+type StateGroup struct {
+	// Name is what --group matches, lowercase and hyphenated ("bookmarks",
+	// "extension-settings").
+	Name string
+	// Paths are relative to a profile root, forward-slash separated. A path
+	// may be a single file ("Bookmarks") or a directory ("Sessions").
+	Paths []string
+	// Default reports whether the group is exported unless --group narrows
+	// the run. It has no say on the way in: an import restores every group
+	// the bundle carries, because the export already made that decision.
+	Default bool
+	// Why is the one-line reason shown by --dry-run.
+	Why string
+}
+
+// StatePorter is the optional interface an app implements to make its own
+// accumulated state portable — `dg export <app>` and `dg import <app>`.
+// It is optional for the same reason ThemedConfigurer is: most apps have no
+// state worth moving, and the ones that do need a hand-researched allowlist
+// that cannot be derived from the filesystem (ADR-0045). An app that does not
+// implement it is simply not exportable, and the command says so and names
+// the apps that are.
+//
+// What an adapter names is an allowlist: nothing it does not name ever moves.
+// A group may never name a credential or machine-bound file — that is not a
+// convention but a test, internal/tooling/appstate's denylist check, which
+// runs against every registered adapter.
+type StatePorter interface {
+	// StateRoots maps a profile key to that profile's absolute root
+	// directory. An app with a single profile returns one entry.
+	//
+	// Every root MUST be a direct child of one shared base directory. That
+	// base is what the bundle is written relative to, and the key is the
+	// bundle's top-level directory — which is the only thing keeping two
+	// profiles' identically-named files (every Chromium profile has a
+	// "Bookmarks") from colliding into one tar member.
+	StateRoots() (map[string]string, error)
+
+	// StateGroups returns the adapter's whole allowlist, in a fixed order.
+	StateGroups() []StateGroup
+
+	// IsRunning reports whether the app is running right now. Both
+	// directions refuse while it is: this state is SQLite and LevelDB, which
+	// copied out from under a live process arrives corrupt (ADR-0045).
+	IsRunning() (bool, error)
+}
+
 // FontInstaller is the contract for the Fonts module, which installs named fonts
 // rather than a single application.
 type FontInstaller interface {

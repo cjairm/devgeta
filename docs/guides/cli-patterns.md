@@ -229,7 +229,7 @@ Examples:
   dg worktree create feature-x       # Create worktree + window
   dg wt c feature-x                  # Same, using short form
   dg wt l                            # List all worktrees
-  dg wt ui                           # Open TUI dashboard`,
+  dg ws                              # Open the workspace TUI dashboard`,
 }
 
 func init() {
@@ -444,21 +444,30 @@ func TestInstallCommand(t *testing.T) {
 
 ---
 
-## Planned Commands Quick Reference
+## Command Quick Reference
 
-| Command                         | Pattern                                                 | Status        |
-| ------------------------------- | ------------------------------------------------------- | ------------- |
-| `dg install`                    | Flags + categories                                      | ✓ Implemented |
-| `dg configure [app] --force`    | Single arg + bool flag                                  | Planned       |
-| `dg uninstall [app] --category` | Single arg + flag                                       | Planned       |
-| `dg list / installed`           | No args                                                 | Planned       |
-| `dg update [app]`               | Single arg                                              | Planned       |
-| `dg check-updates`              | No args                                                 | Planned       |
-| `dg change --theme --font`      | Multiple flags                                          | Planned       |
-| `dg backup [name]`              | Single arg                                              | Planned       |
-| `dg restore [backup]`           | Single arg                                              | Planned       |
-| `dg worktree create [name]`     | Hierarchical subcommand                                 | ✓ Implemented |
-| `dg archive <source> <dest>`    | Two args + bool flags, hierarchical `verify` subcommand | ✓ Implemented |
+Every row below is checked against the registered command tree; `dg --help`
+renders that same tree, so this table cannot quietly disagree with the binary.
+Planned commands are deliberately *not* listed here - they live in
+[ROADMAP.md](../../ROADMAP.md), so that a reader of this guide never mistakes
+an intention for an interface.
+
+| Command                             | Pattern                                                 |
+| ----------------------------------- | ------------------------------------------------------- |
+| `dg install`                        | Flags only (`--only`, `--skip`), no args                |
+| `dg configure <app> --force`        | Single arg + bool flag, `--only` gated behind `--force` |
+| `dg uninstall <app\|category>`      | One arg that accepts either kind of name                |
+| `dg list` (alias `installed`)       | No args, `--category` / `--plain` filters               |
+| `dg theme set <name>`               | Hierarchical subcommand + arg                           |
+| `dg export <app> [dest]`            | Required arg + optional arg + `--dry-run`               |
+| `dg import <app> <bundle>`          | Two required args                                       |
+| `dg archive <source> <dest>`        | Two args, hierarchical `verify` subcommand              |
+| `dg worktree create <name>`         | Hierarchical subcommand, aliases `wt` / `c` / `new`     |
+| `dg config set <key> <value...>`    | Hierarchical subcommand, variadic trailing arg          |
+| `dg task <verb>`                    | Large flat subcommand surface, alias `t`                |
+| `dg ws` (alias `workspace`)         | No args, opens a TUI                                    |
+| `dg version`                        | No args                                                 |
+| `dg completion <shell>`             | Single arg from a fixed set                             |
 
 ---
 

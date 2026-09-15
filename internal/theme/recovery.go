@@ -2,22 +2,30 @@ package theme
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
-// backupSuffix and absentSuffix mark, as a sibling of the shadowed path, the
-// two ways `dg theme set`'s transaction can leave a manifest entry mid-flight
-// (cycle doc Step 5): a rename-aside of what was there, or (for a path that
-// did not exist yet) a marker recording that "restore" means "delete".
+// themeSuffixes marks, as a sibling of the shadowed path, the two ways `dg
+// theme set`'s transaction can leave a manifest entry mid-flight (cycle doc
+// 2026-09-14-dg-theme.md Step 5): a rename-aside of what was there, or (for
+// a path that did not exist yet) a marker recording that "restore" means
+// "delete".
+//
+// The mechanism itself is pkg/files — `dg import` needs the same primitives
+// under its own suffixes, so they take the pair as a parameter and exist
+// once. What stays here is the suffixes themselves, which are what makes a
+// leftover on disk recognizable as an interrupted theme switch.
 const (
 	backupSuffix = ".dg-theme-backup"
 	absentSuffix = ".dg-theme-absent"
 )
+
+var themeSuffixes = files.BackupSuffixes{Backup: backupSuffix, Absent: absentSuffix}
 
 // ManifestEntry pairs a themed app with the exact filesystem paths its
 // ForceConfigureTheme writes - not "its config directory", which for most of
@@ -57,81 +65,21 @@ func Manifest() []ManifestEntry {
 	}
 }
 
-// BackupPath renames p aside to p+backupSuffix, or — when p does not
-// exist yet — creates a p+absentSuffix marker, since a rename-aside cannot
-// record "there was nothing here." Both siblings sit next to p, keeping the
-// backup on the same filesystem (a collection point under a different mount
-// would make the rename an EXDEV copy, which is not atomic).
-func BackupPath(p string) error {
-	if _, err := os.Lstat(p); err != nil {
-		if os.IsNotExist(err) {
-			// The parent tree may not exist yet on a machine where this
-			// surface has never been configured (e.g. no ~/.config/nvim/lua
-			// at all) - the marker still has to land next to where p would
-			// be, so the directory is created rather than treated as a
-			// second "nothing here" case.
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				return err
-			}
-			return os.WriteFile(p+absentSuffix, nil, 0o644)
-		}
-		return err
-	}
-	return os.Rename(p, p+backupSuffix)
-}
+// BackupPath renames p aside under the theme suffixes, or — when p does not
+// exist yet — leaves an absent marker.
+func BackupPath(p string) error { return files.BackupPath(p, themeSuffixes) }
 
-// RestorePath undoes BackupPath: renames the backup back
-// over p, or removes p when an absent marker sits beside it instead. A path
-// with neither sibling is left untouched — nothing was ever backed up there.
-func RestorePath(p string) error {
-	backup := p + backupSuffix
-	absent := p + absentSuffix
-	if _, err := os.Lstat(backup); err == nil {
-		if err := os.RemoveAll(p); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-		return os.Rename(backup, p)
-	}
-	if _, err := os.Lstat(absent); err == nil {
-		if err := os.RemoveAll(p); err != nil {
-			return err
-		}
-		return os.Remove(absent)
-	}
-	return nil
-}
+// RestorePath undoes BackupPath.
+func RestorePath(p string) error { return files.RestorePath(p, themeSuffixes) }
 
-// DiscardBackup deletes p's backup/absent-marker siblings without
-// restoring them - the committed-switch case: current_theme already names
-// the new theme, so the old content the backup holds must never come back.
-func DiscardBackup(p string) error {
-	backup := p + backupSuffix
-	absent := p + absentSuffix
-	var firstErr error
-	if _, err := os.Lstat(backup); err == nil {
-		if err := os.RemoveAll(backup); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	if _, err := os.Lstat(absent); err == nil {
-		if err := os.Remove(absent); err != nil && firstErr == nil {
-			firstErr = err
-		}
-	}
-	return firstErr
-}
+// DiscardBackup deletes p's siblings without restoring them - the
+// committed-switch case: current_theme already names the new theme, so the
+// old content the backup holds must never come back.
+func DiscardBackup(p string) error { return files.DiscardBackup(p, themeSuffixes) }
 
 // HasBackup reports whether p has a backup or absent-marker sibling
 // on disk right now.
-func HasBackup(p string) bool {
-	if _, err := os.Lstat(p + backupSuffix); err == nil {
-		return true
-	}
-	if _, err := os.Lstat(p + absentSuffix); err == nil {
-		return true
-	}
-	return false
-}
+func HasBackup(p string) bool { return files.HasBackup(p, themeSuffixes) }
 
 // RecoverInterrupted sweeps the fixed Manifest for backups or absent markers
 // a crashed `dg theme set` left behind, and reports in one line what it did.
