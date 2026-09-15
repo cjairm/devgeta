@@ -10,6 +10,7 @@ upgrade cannot fix itself automatically.
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [v1-to-v2.md](v1-to-v2.md)                                 | You want to move existing worktrees between the shared root and an in-repo `.claude/worktrees/` folder (or back) after changing `worktree.location`. Check with `dg wt list` — empty, or already at the location you want, means nothing to do. |
 | [agent-permission-refresh.md](agent-permission-refresh.md) | You installed either agent before this release and want in-repo worktree edits unblocked and the `/tmp` scratch prompt gone. Check with the grep commands at the top of that guide.                                                             |
+| [shell-config-refresh.md](shell-config-refresh.md)         | `ls <path>` fails with `invalid value ... for '--icons [<WHEN>]'`. Your `devgeta.zsh` predates the fixed `ls` alias; an upgrade alone does not regenerate it. Check with the grep command at the top of that guide.                             |
 
 A guide appears in that table only once the change it describes has shipped.
 Drafts for unshipped changes stay out of it, so nobody follows steps that don't

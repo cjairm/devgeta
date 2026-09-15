@@ -122,7 +122,7 @@ alias n='nvim'
 export EDITOR="${EDITOR:-nvim}"
 export VISUAL="${VISUAL:-nvim}"
 {{if .Fzf}}
-alias ns="fd --type f --hidden --exclude .git | fzf-tmux -p  --reverse | xargs nvim"
+alias ns="fd --type=f --hidden --exclude .git | fzf-tmux -p  --reverse | xargs nvim"
 {{end}}
 {{end}}
 
@@ -167,9 +167,16 @@ alias cd="z"
 
 {{if .Eza}}
 # ---- Eza (better ls) ----
-alias ls='eza -lh --group-directories-first --icons'
+{{/*
+  eza's --icons takes an OPTIONAL value, so the bare form swallows whatever
+  comes next: `ls ~/foo` reaches eza as `--icons ~/foo` and dies with
+  "invalid value '<that path>' for '--icons [<WHEN>]'". Every value-taking
+  flag in an alias must be spelled with `=`, so nothing can be eaten from the
+  user's argument list. Enforced by TestShellConfigAliasesSpellOptionValues.
+*/ -}}
+alias ls='eza -lh --group-directories-first --icons=auto'
 alias lsa='ls -a'
-alias lt='eza --tree --level=2 --long --icons --git'
+alias lt='eza --tree --level=2 --long --icons=auto --git'
 alias lta='lt -a'
 {{end}}
 

@@ -15,7 +15,8 @@
 //   - eza -T - Tree view
 //   - eza -a - Show hidden files
 //   - eza --git - Show git status
-//   - eza --icons - Show file icons
+//   - eza --icons=auto - Show file icons (the value must be spelled with `=`;
+//     bare --icons consumes the next argument as its value)
 //   - eza -lah - Long format with hidden files and human-readable sizes
 
 package eza

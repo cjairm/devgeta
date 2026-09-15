@@ -91,3 +91,44 @@ func TestShellConfigDoesNotReferenceOhMyZsh(t *testing.T) {
 		}
 	}
 }
+
+// TestShellConfigAliasesSpellOptionValues pins every rendered alias against the
+// swallowed-argument bug: an option whose value is OPTIONAL takes the next argv
+// entry when it is written bare, so the user's first argument becomes the
+// option's value. `alias ls='eza ... --icons'` meant `ls ~/foo` reached eza as
+// `--icons ~/foo` and failed with "invalid value '/Users/you/foo' for '--icons
+// [<WHEN>]'" - plain `ls` worked, so the alias looked fine until someone passed
+// a path.
+//
+// The flags below are the value-taking options that appear in the shipped
+// aliases. Spelling the value with `=` is what makes the bug impossible: an
+// option that already has its value can never consume an argument. Adding a
+// value-taking flag to an alias means adding it here.
+func TestShellConfigAliasesSpellOptionValues(t *testing.T) {
+	valueTakingFlags := []string{
+		"--icons", // eza: --icons[=WHEN], the one that bit us
+		"--color", // eza/bat: --color[=WHEN]
+		"--level", // eza: --level=DEPTH
+		"--style", // bat: --style=COMPONENTS
+		"--type",  // fd: --type=FILETYPE
+	}
+
+	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+	for _, line := range strings.Split(rendered, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "alias ") {
+			continue
+		}
+		for _, flag := range valueTakingFlags {
+			for _, field := range strings.Fields(line) {
+				if strings.Trim(field, `'"`) == flag {
+					t.Errorf(
+						"alias line %q writes %s bare; spell it %s=<value> so it cannot "+
+							"consume the user's first argument",
+						line, flag, flag,
+					)
+				}
+			}
+		}
+	}
+}
