@@ -62,6 +62,11 @@ type ImportResult struct {
 	// Backups are the destination paths that now have a backup or absent
 	// marker beside them.
 	Backups []string
+	// CreatedProfiles are the profiles this import had to create because the
+	// bundle named them and the machine did not have them (ADR-0046). It is
+	// a change to the browser the user did not explicitly ask for, so the
+	// command layer reports it.
+	CreatedProfiles []string
 }
 
 // restoreTarget is one (profile, group, group path) the bundle carries. It
@@ -143,9 +148,22 @@ func Import(
 		return nil, err
 	}
 
+	// A bundle from another machine names profile directories that machine
+	// allocated. Chromium hands them out from a counter, so a directory like
+	// "Profile 5" cannot be produced on a fresh machine by any sequence of
+	// UI actions — refusing here would dead-end the case this feature exists
+	// for. An adapter that can register a profile creates the missing ones
+	// instead (ADR-0046); one that cannot leaves roots untouched and the
+	// refusal below still fires.
+	roots, created, registryBackups, err := ensureBundleProfiles(porter, bundlePath, targets, roots, sel.Profiles)
+	if err != nil {
+		return nil, withRollback(err, registryBackups)
+	}
+	sort.Strings(created)
+
 	profiles, err := selectBundleProfiles(porter.Name(), targets, roots, sel.Profiles)
 	if err != nil {
-		return nil, err
+		return nil, withRollback(err, registryBackups)
 	}
 	selectedGroups, err := selectBundleGroups(porter.Name(), groups, targets, sel.Groups)
 	if err != nil {
@@ -169,7 +187,11 @@ func Import(
 	// backed up before the first byte is written, so any failure can put
 	// all of them back — CLAUDE.md §4's complete-or-fully-rolled-back rule,
 	// which for a profile of many files is only satisfiable this way.
-	backedUp, err := backupAll(destPaths)
+	// The registry write already happened, and its backup leads the list so
+	// a rollback puts the profile list back along with the files.
+	backedUp := registryBackups
+	done, err := backupAll(destPaths)
+	backedUp = append(backedUp, done...)
 	if err != nil {
 		return nil, withRollback(err, backedUp)
 	}
@@ -187,10 +209,11 @@ func Import(
 	}
 
 	return &ImportResult{
-		Profiles: sortedSetKeys(profiles),
-		Groups:   sortedSetKeys(selectedGroups),
-		Files:    count,
-		Backups:  settleBackups(backedUp),
+		Profiles:        sortedSetKeys(profiles),
+		Groups:          sortedSetKeys(selectedGroups),
+		Files:           count,
+		Backups:         settleBackups(backedUp),
+		CreatedProfiles: created,
 	}, nil
 }
 
@@ -456,13 +479,34 @@ func selectBundleProfiles(
 		}
 	}
 	if len(missing) > 0 {
-		return nil, fmt.Errorf(
-			"%s has no profile %s on this machine\n"+
-				"create the profile in %s first, or pass --profile with the ones that exist",
-			app,
+		// Deliberately not "create the profile first". Chromium names a
+		// profile directory from a counter it keeps itself, so a user cannot
+		// produce "Profile 5" on a fresh machine at all — that advice sent
+		// people to a dead end (ADR-0046). What is actionable is restoring
+		// the profiles that do exist, so the message hands over that exact
+		// line.
+		var here []string
+		for key := range roots {
+			here = append(here, key)
+		}
+		sort.Strings(here)
+
+		usable := intersectSorted(sortedSetKeys(selected), here)
+		msg := fmt.Sprintf(
+			"the bundle has %s, which this machine does not have\n"+
+				"  in the bundle: %s\n"+
+				"  on this machine: %s",
 			quotedList(missing),
-			app,
+			strings.Join(sortedSetKeys(selected), ", "),
+			strings.Join(here, ", "),
 		)
+		if len(usable) > 0 {
+			msg += fmt.Sprintf(
+				"\n\nrestore the ones that exist with:\n  --profile %s",
+				strings.Join(usable, ","),
+			)
+		}
+		return nil, errors.New(msg)
 	}
 	return selected, nil
 }
@@ -703,4 +747,116 @@ func quotedList(items []string) string {
 		quoted = append(quoted, fmt.Sprintf("%q", item))
 	}
 	return strings.Join(quoted, ", ")
+}
+
+// ensureBundleProfiles creates and registers every profile the bundle names
+// that this machine lacks, and returns the refreshed roots together with the
+// registry paths it backed up first.
+//
+// It gives up quietly in three cases, each leaving the caller's existing
+// refusal to fire: an adapter with no registry, a bundle with no registry
+// sidecar beside it, and a profile the sidecar does not name. Creating a
+// profile devgeta cannot name would leave the user with an unlabelled
+// directory they did not ask for, which is worse than being told to narrow
+// the run.
+func ensureBundleProfiles(
+	porter Porter,
+	bundlePath string,
+	targets []restoreTarget,
+	roots map[string]string,
+	wanted []string,
+) (map[string]string, []string, []string, error) {
+	registrar, ok := porter.(apps.StateProfileRegistrar)
+	if !ok {
+		return roots, nil, nil, nil
+	}
+
+	missing := map[string]bool{}
+	for _, t := range targets {
+		if _, have := roots[t.Profile]; !have {
+			missing[t.Profile] = true
+		}
+	}
+	// --profile is a narrowing flag, so it narrows creation too: a run that
+	// names one profile must not quietly create the other two.
+	if len(wanted) > 0 {
+		asked := map[string]bool{}
+		for _, name := range wanted {
+			asked[name] = true
+		}
+		for key := range missing {
+			if !asked[key] {
+				delete(missing, key)
+			}
+		}
+	}
+	if len(missing) == 0 {
+		return roots, nil, nil, nil
+	}
+
+	registry, err := readRegistrySidecar(bundlePath)
+	if err != nil {
+		return roots, nil, nil, err
+	}
+	want := map[string]apps.StateProfileInfo{}
+	for key := range missing {
+		info, named := registry[key]
+		if !named {
+			return roots, nil, nil, nil
+		}
+		want[key] = info
+	}
+
+	// The registry is written before any state is, so it is backed up before
+	// any state is too — a failure anywhere below rolls the profile list back
+	// with the files.
+	backedUp, err := backupAll(registrar.RegistryPaths())
+	if err != nil {
+		return roots, nil, backedUp, err
+	}
+	created, err := registrar.EnsureProfiles(want)
+	if err != nil {
+		return roots, nil, backedUp, fmt.Errorf(
+			"creating the profiles %s does not have yet: %w", porter.Name(), err,
+		)
+	}
+
+	fresh, err := porter.StateRoots()
+	if err != nil {
+		return roots, created, backedUp, fmt.Errorf(
+			"re-reading %s's profiles after creating them: %w", porter.Name(), err,
+		)
+	}
+	return fresh, created, backedUp, nil
+}
+
+// readRegistrySidecar reads the profile names written beside the bundle. A
+// missing sidecar is not an error: it is an older bundle, or one copied
+// without its siblings, and the caller falls back to refusing a profile it
+// cannot name.
+func readRegistrySidecar(bundlePath string) (map[string]apps.StateProfileInfo, error) {
+	raw, err := os.ReadFile(RegistrySidecarPath(bundlePath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reading the profile registry beside the bundle: %w", err)
+	}
+	return DecodeRegistry(raw)
+}
+
+// intersectSorted returns the members of want that are also in have, keeping
+// want's order — the profiles a --profile line could actually name.
+func intersectSorted(want, have []string) []string {
+	present := map[string]bool{}
+	for _, h := range have {
+		present[h] = true
+	}
+	var out []string
+	for _, w := range want {
+		if present[w] {
+			out = append(out, w)
+		}
+	}
+	return out
 }

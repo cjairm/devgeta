@@ -7,8 +7,10 @@ package appstate
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/tooling/archive"
 )
 
@@ -36,6 +38,9 @@ type ExportResult struct {
 	BundlePath     string
 	ManifestPath   string
 	SkipReportPath string
+	// RegistryPath is the profile-name sidecar, empty when the adapter has
+	// no registry to report.
+	RegistryPath string
 	// ArchiveHashPath holds the bundle file's own checksum, written by the
 	// verify phase — a different file from the manifest, which lists the
 	// bundle's members. It is empty after WriteBundle alone, since nothing
@@ -127,12 +132,40 @@ func WriteBundle(
 		return nil, fmt.Errorf("writing the bundle: %w", err)
 	}
 
+	registryPath, err := writeRegistrySidecar(written.ArchivePath, plan.Registry)
+	if err != nil {
+		return nil, err
+	}
+
 	return &ExportResult{
 		BundlePath:     written.ArchivePath,
 		ManifestPath:   written.ManifestPath,
 		SkipReportPath: written.SkipReportPath,
+		RegistryPath:   registryPath,
 		Plan:           plan,
 	}, nil
+}
+
+// writeRegistrySidecar writes the profile names beside the bundle, and
+// returns where. An adapter with no registry writes no file and reports no
+// path — the import then falls back to refusing a profile it cannot create,
+// which is exactly the behaviour that predates ADR-0046.
+func writeRegistrySidecar(
+	bundlePath string,
+	registry map[string]apps.StateProfileInfo,
+) (string, error) {
+	if len(registry) == 0 {
+		return "", nil
+	}
+	encoded, err := EncodeRegistry(registry)
+	if err != nil {
+		return "", err
+	}
+	path := RegistrySidecarPath(bundlePath)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		return "", fmt.Errorf("writing the profile registry: %w", err)
+	}
+	return path, nil
 }
 
 // refuseIfRunning is the check both directions share. A running process is

@@ -152,6 +152,12 @@ func runExport(_ *cobra.Command, args []string) error {
 	stateLine(constants.Green, "wrote "+result.BundlePath)
 	stateLine(constants.Green, "wrote "+result.ManifestPath)
 	stateLine(constants.Green, "wrote "+result.SkipReportPath)
+	// The registry is what carries each profile's name to the new machine,
+	// so it has to travel with the bundle — naming it here is what tells the
+	// user there is a fourth file to copy (ADR-0046).
+	if result.RegistryPath != "" {
+		stateLine(constants.Green, "wrote "+result.RegistryPath)
+	}
 
 	// Verified through the same helper `dg archive` uses, which sizes its
 	// meter from the bundle on disk — this pass reads the compressed bytes

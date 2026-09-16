@@ -46,6 +46,25 @@ real sizes on your machine, so you never have to take this table's word for it.
 | `extensions`         | The extension payloads themselves (~200M)               | off     |
 | `history`            | Your browsing history (~95M)                            | off     |
 
+### Profiles
+
+An export writes a fourth file beside the bundle,
+`<name>.profiles.json`, holding each profile's directory, display name and
+avatar. **Copy the whole folder to the new machine, not just the `.tar.zst`** —
+the checksum manifest is already required, and this file is what lets your
+profiles arrive under their own names.
+
+With it, `dg import` creates the profiles the new machine does not have yet and
+registers them, so Brave opens showing "Jair - Employ" rather than "Person 2".
+This matters because Chromium names profile directories from a counter it keeps
+itself: if your old machine had `Profile 5`, there is no way to produce that
+directory on a fresh install by hand. A profile that already exists is never
+renamed — an import restores state into it and leaves its name alone.
+
+Without the sidecar the import falls back to refusing, and tells you which
+profiles the bundle holds, which this machine has, and the `--profile` line that
+restores the overlap.
+
 Narrow a run with `--group`:
 
 ```bash

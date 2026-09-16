@@ -99,6 +99,17 @@ func runImport(_ *cobra.Command, args []string) error {
 		pluralProfiles(result.Profiles),
 		strings.Join(result.Groups, ", "),
 	))
+	// Creating a profile is a change to the browser the user did not ask for
+	// in so many words — they asked for their state back. It is named here
+	// rather than left to be discovered at next launch (ADR-0046).
+	if len(result.CreatedProfiles) > 0 {
+		stateLine(constants.Blue, fmt.Sprintf(
+			"created %d profile(s) %s did not have yet: %s",
+			len(result.CreatedProfiles),
+			app,
+			strings.Join(result.CreatedProfiles, ", "),
+		))
+	}
 	// The backups are the only undo, and an undo nobody was told about is
 	// not one — so the suffix and a count are printed every run, not only
 	// when something went wrong (ADR-0045's recoverability promise).

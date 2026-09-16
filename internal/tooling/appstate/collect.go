@@ -77,6 +77,12 @@ type Plan struct {
 	// Scan holds only the selected groups' entries and their byte total.
 	Scan     *archive.ScanResult
 	Profiles []ProfileReport
+	// Registry is each selected profile's display name and avatar, when the
+	// adapter can report them. It is written beside the bundle rather than
+	// into it, because it describes the profile directories rather than
+	// living in one (ADR-0046). An adapter that is not a registrar leaves it
+	// empty, and the export writes no sidecar.
+	Registry map[string]apps.StateProfileInfo
 }
 
 // SelectedBytes is how many source bytes the plan would write.
@@ -159,7 +165,33 @@ func Collect(porter Porter, sel Selection) (*Plan, error) {
 		}
 		plan.Profiles = append(plan.Profiles, report)
 	}
+	plan.Registry, err = collectRegistry(porter, profileKeys)
+	if err != nil {
+		return nil, err
+	}
 	return plan, nil
+}
+
+// collectRegistry reads the display names of the profiles this run selected,
+// for adapters that have a registry to read. It is narrowed to the selected
+// keys on purpose: a sidecar naming profiles the bundle does not carry would
+// invite an import to create them empty.
+func collectRegistry(porter Porter, profileKeys []string) (map[string]apps.StateProfileInfo, error) {
+	registrar, ok := porter.(apps.StateProfileRegistrar)
+	if !ok {
+		return nil, nil
+	}
+	all, err := registrar.ReadProfileRegistry()
+	if err != nil {
+		return nil, fmt.Errorf("reading %s's profile names: %w", porter.Name(), err)
+	}
+	out := map[string]apps.StateProfileInfo{}
+	for _, key := range profileKeys {
+		if info, found := all[key]; found {
+			out[key] = info
+		}
+	}
+	return out, nil
 }
 
 // collectPath turns one allowlisted path into its bundle entries. rel is

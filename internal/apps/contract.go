@@ -136,6 +136,51 @@ type StatePorter interface {
 	IsRunning() (bool, error)
 }
 
+// StateProfileInfo is one profile's registration: the directory it lives in
+// and the two fields needed to show it to a user. Three fields and no more —
+// a registry entry is rebuilt from these, never transplanted, which is what
+// keeps ADR-0046's write out of the business of copying a machine-bound file.
+type StateProfileInfo struct {
+	// Dir is the profile's directory name, the same key StateRoots uses.
+	Dir string
+	// Name is the human-readable profile name ("Jair - Employ").
+	Name string
+	// Avatar is the app's own identifier for the profile picture. An app
+	// that has no such concept leaves it empty.
+	Avatar string
+}
+
+// StateProfileRegistrar is the optional interface an app implements when its
+// profiles are registered somewhere outside the profile directory itself —
+// Chromium keeps the list, the display names and the directory-name counter
+// in Local State, which the denylist forbids any bundle to carry (ADR-0046).
+//
+// It is optional for the same reason ThemedConfigurer is: an app with one
+// profile, or with profiles that are just directories, needs none of it. An
+// adapter that does not implement it keeps the old behaviour exactly — a
+// bundle naming a profile the machine lacks is refused, because devgeta has
+// no way to make that profile exist.
+type StateProfileRegistrar interface {
+	// ReadProfileRegistry returns every registered profile, keyed by
+	// directory. A machine where the app has never run returns an empty map
+	// rather than an error.
+	ReadProfileRegistry() (map[string]StateProfileInfo, error)
+
+	// EnsureProfiles creates and registers every profile in want that does
+	// not already exist, and returns the directories it created. An entry
+	// that is already registered is left exactly as it is: an import must
+	// never rename a profile the user already has.
+	//
+	// It is called only after the app has been confirmed not running, and
+	// only after the caller has backed up whatever the registration writes.
+	EnsureProfiles(want map[string]StateProfileInfo) ([]string, error)
+
+	// RegistryPaths are the absolute paths EnsureProfiles may write, so the
+	// caller can back them up before the first write and roll them back with
+	// everything else.
+	RegistryPaths() []string
+}
+
 // FontInstaller is the contract for the Fonts module, which installs named fonts
 // rather than a single application.
 type FontInstaller interface {
