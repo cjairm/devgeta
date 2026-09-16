@@ -2,6 +2,42 @@
 
 Installs and configures [OpenCode](https://opencode.ai/docs) — a terminal-based AI code editor.
 
+## Install channel
+
+devgeta runs opencode's official install script,
+`https://opencode.ai/install`, on both macOS and Linux — it is the only channel
+opencode supports. The script puts everything under `~/.opencode`, with the
+binary at `~/.opencode/bin/opencode`; that location is hardcoded upstream and
+has no override.
+
+Because nothing else adds that directory to your PATH, devgeta's generated
+`devgeta.zsh` prepends it. Everything else follows from the same path:
+
+- `dg install` skips opencode when `~/.opencode/bin/opencode` exists, or when
+  `opencode` already resolves on your PATH from somewhere else.
+- `dg uninstall opencode` removes `~/.opencode` and `~/.config/opencode`. No
+  package manager is involved, so on macOS a copy from an older
+  `brew install opencode` is left behind — see
+  [the migration note](../../../docs/migrations/opencode-install-channel.md).
+
+Why this channel, and the security trade it accepts:
+[ADR-0047](../../../docs/decisions/ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md).
+
+### Holding a version back
+
+devgeta installs whatever the script installs; it pins nothing, so a broken
+upstream release reaches you on the next `dg install`. opencode 1.18.30, for
+example, crashed while building its system prompt and turned every headless
+agent run into an opaque server error. Recovery is manual — re-run the script
+with a version you know works:
+
+```bash
+curl -fsSL https://opencode.ai/install | VERSION=1.18.20 bash
+```
+
+devgeta then leaves that binary alone, because it only installs when the binary
+is missing. Run the script without `VERSION=` to move back to the latest.
+
 ## After Installation
 
 **Start OpenCode:**

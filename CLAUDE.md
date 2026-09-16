@@ -86,18 +86,18 @@ Hard constraints that override all other considerations:
 
 ## 5. Tech stack
 
-| Layer                       | Technology                    | Notes                                                                                               |
-| --------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Language**                | Go 1.25+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                                   |
-| **Build System**            | Make                          | See Makefile for targets                                                                            |
-| **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                                |
-| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                              |
-| **Config Generation**       | Go `text/template` + `embed`  | Templates in `configs/` embedded at compile time                                                    |
-| **Package Manager**         | Homebrew (macOS), APT (Linux) | With package name translation (see `pkg/constants/package_mappings.go`)                             |
-| **Logging**                 | Custom (zap-like logger)      | Initialized with `logger.Init(verbose)`                                                             |
-| **Testing**                 | Go `testing` package          | Unit tests in `*_test.go` alongside code                                                            |
-| **Installation Strategies** | Strategy pattern              | In `internal/commands/debian_strategies.go` (AptStrategy, PPAStrategy, InstallScriptStrategy, etc.) |
-| **CI/CD**                   | GitHub Actions                | `.github/workflows/release.yml` builds multiplatform binaries on git tag                            |
+| Layer                       | Technology                    | Notes                                                                                          |
+| --------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Language**                | Go 1.25+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                              |
+| **Build System**            | Make                          | See Makefile for targets                                                                       |
+| **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                           |
+| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                         |
+| **Config Generation**       | Go `text/template` + `embed`  | Templates in `configs/` embedded at compile time                                               |
+| **Package Manager**         | Homebrew (macOS), APT (Linux) | With package name translation (see `pkg/constants/package_mappings.go`)                        |
+| **Logging**                 | Custom (zap-like logger)      | Initialized with `logger.Init(verbose)`                                                        |
+| **Testing**                 | Go `testing` package          | Unit tests in `*_test.go` alongside code                                                       |
+| **Installation Strategies** | Strategy pattern              | In `internal/commands/debian_strategies.go` (AptStrategy, PPAStrategy, NerdFontStrategy, etc.) |
+| **CI/CD**                   | GitHub Actions                | `.github/workflows/release.yml` builds multiplatform binaries on git tag                       |
 
 ---
 
@@ -458,7 +458,6 @@ See `docs/guides/cross-platform-installation.md` for full details.
 - `AptStrategy` — Standard apt install with automatic name translation
 - `PPAStrategy` — Personal Package Archives with GPG key configuration
 - `LaunchpadPPAStrategy` — Launchpad PPA via `add-apt-repository`
-- `InstallScriptStrategy` — Executable install scripts (`curl | sh`)
 - `NerdFontStrategy` — GitHub release downloads for fonts
 - `GitCloneStrategy` — Git repository cloning and setup
 

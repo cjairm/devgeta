@@ -67,12 +67,21 @@ func TestVerifySHA256(t *testing.T) {
 // TestRunInstallScript_StagedShape asserts the successful path calls curl
 // (download to a temp file, carrying InstallScriptDownloadTimeout) followed
 // by the interpreter (executing that file, carrying InstallScriptExecTimeout)
-// — the shape that replaces a raw `curl | sh` pipeline whose exit status was
+// — the shape that replaces a raw `curl | bash` pipeline whose exit status was
 // the interpreter's, not curl's.
+//
+// The interpreter here is `bash` because that is what both callers — claude
+// and opencode — pass: each script's shebang is `#!/usr/bin/env bash`, and on
+// Debian `sh` is dash (ADR-0047).
 func TestRunInstallScript_StagedShape(t *testing.T) {
 	base := NewMockBaseCommand()
 
-	if err := RunInstallScript(base, "opencode", "https://opencode.ai/install", "sh"); err != nil {
+	if err := RunInstallScript(
+		base,
+		"opencode",
+		"https://opencode.ai/install",
+		"bash",
+	); err != nil {
 		t.Fatalf("RunInstallScript error: %v", err)
 	}
 
@@ -96,8 +105,8 @@ func TestRunInstallScript_StagedShape(t *testing.T) {
 	}
 
 	execute := calls[1]
-	if execute.Command != "sh" {
-		t.Errorf("expected execute step command 'sh', got %q", execute.Command)
+	if execute.Command != "bash" {
+		t.Errorf("expected execute step command 'bash', got %q", execute.Command)
 	}
 	if execute.Timeout != InstallScriptExecTimeout {
 		t.Errorf(
@@ -125,7 +134,7 @@ func TestRunInstallScript_FailedDownloadBlocksInstall(t *testing.T) {
 		),
 	)
 
-	err := RunInstallScript(base, "opencode", "https://opencode.ai/install", "sh")
+	err := RunInstallScript(base, "opencode", "https://opencode.ai/install", "bash")
 	if err == nil {
 		t.Fatal("expected RunInstallScript to fail when the download step fails")
 	}
@@ -149,7 +158,7 @@ func TestRunInstallScript_FailedExecuteFailsInstall(t *testing.T) {
 		ExecCommandResult("", "install failed", errors.New("exit 1")), // execute fails
 	)
 
-	err := RunInstallScript(base, "opencode", "https://opencode.ai/install", "sh")
+	err := RunInstallScript(base, "opencode", "https://opencode.ai/install", "bash")
 	if err == nil {
 		t.Fatal("expected RunInstallScript to fail when the execute step fails")
 	}
@@ -159,47 +168,6 @@ func TestRunInstallScript_FailedExecuteFailsInstall(t *testing.T) {
 	if got := base.GetExecCommandCallCount(); got != 2 {
 		t.Errorf("expected both steps to run, got %d calls", got)
 	}
-}
-
-// TestInstallScriptStrategy_Install exercises the strategy wrapper end to
-// end: it is the first test for InstallScriptStrategy, which had none before
-// this step. A mocked 404 on the download step must fail the install rather
-// than being silently reported as a success.
-func TestInstallScriptStrategy_Install(t *testing.T) {
-	t.Run("success stages download then execute", func(t *testing.T) {
-		base := NewMockBaseCommand()
-		strategy := &InstallScriptStrategy{cmd: base, scriptURL: "https://opencode.ai/install"}
-
-		if err := strategy.Install("opencode"); err != nil {
-			t.Fatalf("Install error: %v", err)
-		}
-		if got := base.GetExecCommandCallCount(); got != 2 {
-			t.Fatalf("expected 2 ExecCommand calls, got %d", got)
-		}
-		last := base.GetLastExecCommandCall()
-		if last.Command != "sh" {
-			t.Errorf("expected execute step via 'sh', got %q", last.Command)
-		}
-	})
-
-	t.Run("404 on download blocks install", func(t *testing.T) {
-		base := NewMockBaseCommand()
-		base.SetExecCommandResults(
-			ExecCommandResult("", "404", errors.New("exit status 22")),
-		)
-		strategy := &InstallScriptStrategy{cmd: base, scriptURL: "https://opencode.ai/install"}
-
-		err := strategy.Install("opencode")
-		if err == nil {
-			t.Fatal("expected Install to fail when the download step returns a 404")
-		}
-		if got := base.GetExecCommandCallCount(); got != 1 {
-			t.Errorf(
-				"expected the execute step to be skipped after a failed download, got %d calls",
-				got,
-			)
-		}
-	})
 }
 
 // TestNerdFontStrategy_Install_RoutesExtractAndCacheThroughExecutor asserts

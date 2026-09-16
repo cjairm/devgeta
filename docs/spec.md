@@ -44,7 +44,7 @@ devgeta/
 **Key patterns:**
 
 - **Interface-based design** for cross-platform compatibility
-- **Strategy pattern** for installation (AptStrategy, PPAStrategy, InstallScriptStrategy, etc.)
+- **Strategy pattern** for installation (AptStrategy, PPAStrategy, NerdFontStrategy, etc.)
 - **Factory pattern** for platform detection
 - **Coordinator pattern** for category orchestration (see `internal/tooling/languages/` as reference)
 

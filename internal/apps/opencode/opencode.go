@@ -54,16 +54,56 @@ func New() *OpenCode {
 	return &OpenCode{Cmd: osCmd, Base: baseCmd}
 }
 
+// openCodeInstallScriptURL is opencode's official installer, and its only
+// supported install channel on either platform (ADR-0047).
+//
+// Install() stages it through cmd.RunInstallScript rather than a raw
+// `curl | bash` pipeline: the pipeline's exit status is bash's, not curl's, so
+// a 404 or a truncated download pipes an empty script into bash - which exits
+// 0 - and a broken download is reported as a successful install. It runs with
+// `bash`, never `sh`: the script's shebang is `#!/usr/bin/env bash`, and on
+// Debian `sh` is dash.
+const openCodeInstallScriptURL = "https://opencode.ai/install"
+
 func (o *OpenCode) Install() error {
-	return o.Cmd.InstallPackage(constants.OpenCode)
+	if err := cmd.RunInstallScript(
+		o.Base,
+		constants.OpenCode,
+		openCodeInstallScriptURL,
+		"bash",
+	); err != nil {
+		return fmt.Errorf("failed to install opencode: %w", err)
+	}
+	return nil
 }
 
 func (o *OpenCode) ForceInstall() error {
 	return baseapp.Reinstall(o.Install, o.Uninstall)
 }
 
+// installedBinary is the path the install script writes opencode to. Nothing
+// resolves it through PATH: that is the whole point of checking it (see
+// SoftInstall).
+func installedBinary() string {
+	return filepath.Join(paths.Paths.Home.OpenCode, "bin", constants.OpenCode)
+}
+
+// SoftInstall installs opencode only when it is not already there.
+//
+// The two checks are not redundant. A freshly installed ~/.opencode/bin is not
+// on the running process's PATH - nor on the user's, until they open a new
+// shell - so a PATH-only check re-runs the installer on every `dg install`,
+// which is the Debian idempotency defect ADR-0047 fixes. And a user who
+// already has opencode from elsewhere (npm, brew, their own build) keeps it:
+// devgeta does not lay a second copy over it.
 func (o *OpenCode) SoftInstall() error {
-	return o.Cmd.MaybeInstallPackage(constants.OpenCode)
+	if files.FileAlreadyExist(installedBinary()) {
+		return nil
+	}
+	if _, err := cmd.LookPathFn(constants.OpenCode); err == nil {
+		return nil
+	}
+	return o.Install()
 }
 
 func (o *OpenCode) Uninstall() error {
@@ -71,8 +111,18 @@ func (o *OpenCode) Uninstall() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	if err := o.Cmd.UninstallPackage(constants.OpenCode); err != nil {
-		return fmt.Errorf("failed to uninstall opencode: %w", err)
+	// Removing the prefix IS the uninstall - the script puts the binary and
+	// everything with it under ~/.opencode, and there is no package-manager
+	// entry to remove on either platform. os.RemoveAll rather than a shelled
+	// `rm -rf` so pkg/paths' test sandbox contains it, and because RemoveAll
+	// deletes a symlinked ~/.opencode itself rather than following it into
+	// whatever it points at.
+	if err := os.RemoveAll(paths.Paths.Home.OpenCode); err != nil {
+		return fmt.Errorf(
+			"failed to remove %s: %w",
+			paths.Paths.Home.OpenCode,
+			err,
+		)
 	}
 	_ = os.RemoveAll(paths.Paths.Config.OpenCode)
 	gc.DisableShellFeature(constants.OpenCode)

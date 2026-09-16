@@ -11,11 +11,29 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-15
+**Last updated:** 2026-09-16
 
 ---
 
 ## Recent changes
+
+- opencode installs the same way on both platforms (2026-09-16). opencode
+  1.18.30 crashed while building its system prompt, before any request reached a
+  model, which turned every `dg task review-run` reviewer into an opaque
+  `ERROR(Unexpected server error...)` — the cause was visible only in opencode's
+  own log. Recovery on macOS meant leaving devgeta's channel entirely, because
+  the Homebrew formula offers only `stable`: no pin, no downgrade. Investigating
+  that exposed three further defects on the Debian side, all of which a naive
+  macOS switch would have inherited — the install script ran under `sh` though
+  its shebang is bash (and on Debian `sh` is dash), the idempotency check asked
+  `dpkg -l` about a binary that is never in dpkg so every `dg install` re-ran
+  the installer, and uninstall ran `apt-get remove` against a file in
+  `~/.opencode`. Both platforms now run the official script with bash and key
+  detection, idempotency and uninstall on the binary it writes. devgeta owns the
+  `~/.opencode/bin` PATH entry because the script edits the user's own rc files,
+  which devgeta does not own and cannot keep consistent. Nothing is pinned; that
+  trade, and the cost of executing an unverified script from a moving branch
+  head, are recorded in ADR-0047.
 
 - An alias can go missing from a working install, and now devgeta says so
   (2026-09-15). Two unrelated causes with one symptom. `alias cat="bat"` was

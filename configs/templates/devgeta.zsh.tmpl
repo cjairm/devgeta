@@ -193,11 +193,19 @@ alias cat="bat"
   convenience rendering of it for the user to type. See ADR-0021. This comment
   is for whoever edits this template; it deliberately does not reach the
   generated devgeta.zsh.
+
+  OpenCodeBinDir is rendered the same way, from pkg/paths. opencode's official
+  install script puts its binary in a prefix nothing else adds to PATH, and it
+  edits the user's own rc files - which devgeta does not own and cannot keep
+  consistent - so devgeta owns the PATH entry here instead (ADR-0047). The
+  guard skips a directory that is already on PATH, because re-sourcing a shell
+  config would otherwise prepend another copy every time.
 */ -}}
 {{if or .Opencode .Claude}}
 # ---- AI coders ----
 {{- end}}
 {{- if .Opencode}}
+[[ ":$PATH:" == *":{{.OpenCodeBinDir}}:"* ]] || export PATH="{{.OpenCodeBinDir}}:$PATH"
 {{.OpenCodeAlias}}
 {{- end}}
 {{- if .Claude}}

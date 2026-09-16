@@ -688,11 +688,19 @@ func (gc *GlobalConfig) IsShellFeatureEnabled(featureName string) bool {
 // aliases at all (ADR-0021). devgeta.zsh's alias therefore stopped being the
 // definition of how devgeta launches a coder and became a rendering of it -
 // see pkg/constants.CoderLaunch, which is the one definition behind both.
+// OpenCodeBinDir is here for the same reason: opencode's install script puts
+// its binary in a prefix nothing else adds to PATH ($HOME/.opencode/bin,
+// hardcoded), and it edits the user's own rc files, which devgeta does not own
+// and cannot keep consistent - so devgeta puts the directory on PATH itself
+// (ADR-0047 decision 3). It renders from paths.Paths.Home.OpenCode, the same
+// value opencode's install, idempotency and uninstall checks read, rather than
+// a second spelling of it in the template.
 type ShellTemplateData struct {
 	ShellFeatures
 
-	OpenCodeAlias string
-	ClaudeAlias   string
+	OpenCodeAlias  string
+	OpenCodeBinDir string
+	ClaudeAlias    string
 }
 
 // NewShellTemplateData pairs a ShellFeatures value with the launch recipes'
@@ -701,9 +709,10 @@ type ShellTemplateData struct {
 // same path production uses instead of re-deriving the alias itself.
 func NewShellTemplateData(shell ShellFeatures) ShellTemplateData {
 	return ShellTemplateData{
-		ShellFeatures: shell,
-		OpenCodeAlias: constants.OpenCodeLaunch.AliasLine(),
-		ClaudeAlias:   constants.ClaudeLaunch.AliasLine(),
+		ShellFeatures:  shell,
+		OpenCodeAlias:  constants.OpenCodeLaunch.AliasLine(),
+		OpenCodeBinDir: filepath.Join(paths.Paths.Home.OpenCode, "bin"),
+		ClaudeAlias:    constants.ClaudeLaunch.AliasLine(),
 	}
 }
 

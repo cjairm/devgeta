@@ -109,13 +109,6 @@ func (d *DebianCommand) getInstallationStrategy(packageName string) Installation
 			installPath: filepath.Join(homeDir, "powerlevel10k"),
 		}
 
-	// Install script installations
-	case constants.OpenCode:
-		return &InstallScriptStrategy{
-			cmd:       d,
-			scriptURL: "https://opencode.ai/install",
-		}
-
 	// Default: use apt strategy (handles library mappings automatically)
 	default:
 		return &AptStrategy{cmd: d}

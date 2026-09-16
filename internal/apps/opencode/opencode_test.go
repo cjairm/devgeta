@@ -7,12 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -214,6 +216,47 @@ func TestNameAndKind(t *testing.T) {
 	}
 }
 
+// isolateOpenCodeInstallPrefix points paths.Paths.Home.OpenCode - the
+// directory the install script owns - at a fresh temp tree and restores the
+// original afterwards, so a test that creates or removes the installed binary
+// cannot touch the real one.
+func isolateOpenCodeInstallPrefix(t *testing.T) string {
+	t.Helper()
+	prefix := filepath.Join(t.TempDir(), ".opencode")
+	old := paths.Paths.Home.OpenCode
+	t.Cleanup(func() { paths.Paths.Home.OpenCode = old })
+	paths.Paths.Home.OpenCode = prefix
+	return prefix
+}
+
+// stubLookPath swaps the package-level PATH-lookup seam every app uses for
+// binary detection (commands.LookPathFn), so a test decides whether opencode
+// is on PATH instead of inheriting whatever the machine running the test has
+// installed.
+func stubLookPath(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	orig := commands.LookPathFn
+	t.Cleanup(func() { commands.LookPathFn = orig })
+	commands.LookPathFn = fn
+}
+
+// writeOpenCodeBinaryFixture creates the file the install script would leave
+// at <prefix>/bin/opencode.
+func writeOpenCodeBinaryFixture(t *testing.T, prefix string) {
+	t.Helper()
+	binDir := filepath.Join(prefix, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(binDir, constants.OpenCode),
+		[]byte("#!/bin/sh\n"),
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -221,21 +264,79 @@ func TestInstall(t *testing.T) {
 	if err := app.Install(); err != nil {
 		t.Fatalf("Install error: %v", err)
 	}
-	if mockApp.Cmd.InstalledPkg != constants.OpenCode {
-		t.Fatalf(
-			"expected InstallPackage(%s), got %q",
-			constants.OpenCode,
+
+	calls := mockApp.Base.ExecCommandCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+	}
+	download, execute := calls[0], calls[1]
+	if download.Command != "curl" {
+		t.Errorf("expected download step command 'curl', got %q", download.Command)
+	}
+	if !slices.Contains(download.Args, openCodeInstallScriptURL) {
+		t.Errorf(
+			"expected download step to fetch %q, got args %v",
+			openCodeInstallScriptURL, download.Args,
+		)
+	}
+	if download.Timeout == 0 {
+		t.Error("expected download step to carry a non-zero Timeout")
+	}
+	// The script's shebang is `#!/usr/bin/env bash` and it uses bash-only
+	// syntax. Running it with `sh` - dash on Debian - is the defect ADR-0047
+	// fixes, so the interpreter is part of the contract, not an incidental
+	// argument.
+	if execute.Command != "bash" {
+		t.Errorf("expected execute step command 'bash', got %q", execute.Command)
+	}
+	if execute.Timeout == 0 {
+		t.Error("expected execute step to carry a non-zero Timeout")
+	}
+
+	// No package manager is involved on either platform any more: brew on
+	// macOS offered no pin and no downgrade, and apt never had opencode at
+	// all (ADR-0047 decision 1).
+	if mockApp.Cmd.InstalledPkg != "" {
+		t.Errorf(
+			"expected no package-manager install, got InstallPackage(%q)",
 			mockApp.Cmd.InstalledPkg,
 		)
 	}
+}
 
-	testutil.VerifyNoRealCommands(t, mockApp.Base)
+// TestInstall_FailedDownloadBlocksInstall asserts a failed or truncated
+// download stops before the script ever runs, rather than being reported as a
+// successful install - the defect the staged shape replaces (`false | bash`
+// exits 0).
+func TestInstall_FailedDownloadBlocksInstall(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResults(
+		commands.ExecCommandResult("", "", fmt.Errorf("404 not found")),
+	)
+	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	err := app.Install()
+	if err == nil {
+		t.Fatal("expected Install to fail when the download step fails")
+	}
+	if !strings.Contains(err.Error(), "failed to download install script") {
+		t.Errorf("expected download-failure error, got: %v", err)
+	}
+	if got := mockApp.Base.GetExecCommandCallCount(); got != 1 {
+		t.Errorf(
+			"expected the execute step to be skipped after a failed download, got %d calls",
+			got,
+		)
+	}
 }
 
 func TestForceInstall(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
+
+	prefix := isolateOpenCodeInstallPrefix(t)
+	writeOpenCodeBinaryFixture(t, prefix)
 
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
 	oldOpenCodeDir := paths.Paths.Config.OpenCode
@@ -247,35 +348,114 @@ func TestForceInstall(t *testing.T) {
 	if err := app.ForceInstall(); err != nil {
 		t.Fatalf("ForceInstall() error: %v", err)
 	}
-	if tc.MockApp.Cmd.InstalledPkg != constants.OpenCode {
-		t.Errorf("expected Install to be called, got %q", tc.MockApp.Cmd.InstalledPkg)
-	}
 
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	// Uninstall removes the prefix with os.RemoveAll (no command at all),
+	// then Install stages the script: curl, then bash.
+	calls := tc.MockApp.Base.ExecCommandCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+	}
+	if calls[0].Command != "curl" {
+		t.Errorf("expected download step 'curl', got %q", calls[0].Command)
+	}
+	if calls[1].Command != "bash" {
+		t.Errorf("expected install script executed via 'bash', got %q", calls[1].Command)
+	}
+	if tc.MockApp.Cmd.InstalledPkg != "" || tc.MockApp.Cmd.UninstalledPkg != "" {
+		t.Errorf(
+			"expected no package-manager calls, got install=%q uninstall=%q",
+			tc.MockApp.Cmd.InstalledPkg, tc.MockApp.Cmd.UninstalledPkg,
+		)
+	}
 }
 
 func TestSoftInstall(t *testing.T) {
-	mockApp := testutil.NewMockApp()
-	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	// The prefix check is not a duplicate of the PATH lookup: a fresh
+	// install's ~/.opencode/bin is not on the running process's PATH (nor on
+	// the user's, until they open a new shell), so a PATH-only check would
+	// re-run the installer on every `dg install` - the Debian idempotency
+	// defect in ADR-0047.
+	t.Run("skips when the script's own binary is present, even off PATH", func(t *testing.T) {
+		prefix := isolateOpenCodeInstallPrefix(t)
+		writeOpenCodeBinaryFixture(t, prefix)
+		stubLookPath(t, func(string) (string, error) {
+			return "", fmt.Errorf("not found")
+		})
 
-	if err := app.SoftInstall(); err != nil {
-		t.Fatalf("SoftInstall error: %v", err)
-	}
-	if mockApp.Cmd.MaybeInstalled != constants.OpenCode {
-		t.Fatalf(
-			"expected MaybeInstallPackage(%s), got %q",
-			constants.OpenCode,
-			mockApp.Cmd.MaybeInstalled,
-		)
-	}
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	testutil.VerifyNoRealCommands(t, mockApp.Base)
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
+			t.Errorf("expected no commands when opencode is already installed, got %d", got)
+		}
+		if mockApp.Cmd.MaybeInstalled != "" || mockApp.Cmd.InstalledPkg != "" {
+			t.Errorf(
+				"expected no package-manager calls, got maybe=%q install=%q",
+				mockApp.Cmd.MaybeInstalled, mockApp.Cmd.InstalledPkg,
+			)
+		}
+	})
+
+	// A user who already has opencode from somewhere else (npm, brew, their
+	// own build) keeps it: devgeta does not install a second copy over it.
+	t.Run("skips when opencode resolves on PATH from elsewhere", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		stubLookPath(t, func(string) (string, error) {
+			return "/usr/local/bin/opencode", nil
+		})
+
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
+			t.Errorf("expected no commands when opencode is on PATH, got %d", got)
+		}
+	})
+
+	t.Run("installs when neither the prefix nor PATH has it", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		stubLookPath(t, func(string) (string, error) {
+			return "", fmt.Errorf("not found")
+		})
+
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 2 {
+			t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+		}
+		if calls[0].Command != "curl" || calls[1].Command != "bash" {
+			t.Errorf(
+				"expected staged curl-then-bash install, got %q then %q",
+				calls[0].Command, calls[1].Command,
+			)
+		}
+		if mockApp.Cmd.MaybeInstalled != "" {
+			t.Errorf(
+				"expected no package-manager install, got MaybeInstallPackage(%q)",
+				mockApp.Cmd.MaybeInstalled,
+			)
+		}
+	})
 }
 
 func TestUninstall(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
+
+	prefix := isolateOpenCodeInstallPrefix(t)
+	writeOpenCodeBinaryFixture(t, prefix)
 
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
 	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
@@ -285,17 +465,50 @@ func TestUninstall(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCodeDir })
 	paths.Paths.Config.OpenCode = userConfigDir
 
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.AddToInstalled(constants.OpenCode, "package")
+	gc.Shell.Opencode = true
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
 	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 	if err := app.Uninstall(); err != nil {
 		t.Fatalf("Uninstall error: %v", err)
 	}
-	if tc.MockApp.Cmd.UninstalledPkg != constants.OpenCode {
+
+	// Removing the prefix IS the uninstall: there is no package-manager
+	// entry to remove, and `apt-get remove opencode` against a file in
+	// ~/.opencode was the Debian no-op ADR-0047 fixes.
+	if _, err := os.Stat(prefix); !os.IsNotExist(err) {
+		t.Errorf("expected %q to be removed, stat err = %v", prefix, err)
+	}
+	if _, err := os.Stat(userConfigDir); !os.IsNotExist(err) {
+		t.Errorf("expected %q to be removed, stat err = %v", userConfigDir, err)
+	}
+	if tc.MockApp.Cmd.UninstalledPkg != "" {
 		t.Errorf(
-			"expected UninstallPackage(%s), got %q",
-			constants.OpenCode,
+			"expected no package-manager uninstall, got UninstallPackage(%q)",
 			tc.MockApp.Cmd.UninstalledPkg,
 		)
+	}
+
+	after := &config.GlobalConfig{}
+	if err := after.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if after.IsTracked(constants.OpenCode, "package", "installed") {
+		t.Error("expected opencode to be dropped from the installed packages list")
+	}
+	if after.Shell.Opencode {
+		t.Error("expected the opencode shell feature to be disabled")
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)

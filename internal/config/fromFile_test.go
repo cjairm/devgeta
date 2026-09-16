@@ -904,3 +904,16 @@ func TestCanonicalRepoPath(t *testing.T) {
 		assert.NotEqual(t, linkPath, got)
 	})
 }
+
+// TestNewShellTemplateDataCarriesOpenCodeBinDir pins the shell config's
+// opencode PATH entry to pkg/paths rather than a literal in the template.
+// paths.Paths.Home.OpenCode is the prefix opencode's install script hardcodes
+// (ADR-0047), and it is already what the app's install, idempotency and
+// uninstall checks read - a second spelling of it in the template could drift
+// from all three.
+func TestNewShellTemplateDataCarriesOpenCodeBinDir(t *testing.T) {
+	data := NewShellTemplateData(ShellFeatures{Opencode: true})
+
+	want := filepath.Join(paths.Paths.Home.OpenCode, "bin")
+	assert.Equal(t, want, data.OpenCodeBinDir)
+}
