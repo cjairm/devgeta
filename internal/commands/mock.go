@@ -280,7 +280,6 @@ type MockBaseCommand struct {
 
 	// Return values for other methods
 	SetupError            error
-	MaybeSetupError       error
 	MaybeSetupInFileError error
 	MaybeInstallError     error
 	InstallFontURLError   error
@@ -298,7 +297,6 @@ func NewMockBaseCommand() *MockBaseCommand {
 		IsFontPresentResult:       false,
 		IsMacResult:               false,
 		SetupError:                nil,
-		MaybeSetupError:           nil,
 		MaybeSetupInFileError:     nil,
 		MaybeInstallError:         nil,
 		InstallFontURLError:       nil,
@@ -390,11 +388,6 @@ func (m *MockBaseCommand) execCommandResultLocked() (string, string, error) {
 // Setup mocks the BaseCommand.Setup method
 func (m *MockBaseCommand) Setup(line string) error {
 	return m.SetupError
-}
-
-// MaybeSetup mocks the BaseCommand.MaybeSetup method
-func (m *MockBaseCommand) MaybeSetup(line, toSearch string) error {
-	return m.MaybeSetupError
 }
 
 // MaybeSetupInFile mocks the BaseCommand.MaybeSetupInFile method

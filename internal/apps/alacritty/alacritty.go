@@ -8,17 +8,59 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
-var _ apps.App = (*Alacritty)(nil)
+var (
+	_ apps.App              = (*Alacritty)(nil)
+	_ apps.ThemedConfigurer = (*Alacritty)(nil)
+)
+
+// alacrittyColors is alacritty.toml.tmpl's color data: theme.Palette's hex
+// values reformatted to Alacritty's "0xRRGGBB" convention, since
+// files.GenerateFromTemplate's templates get no custom functions. Alacritty
+// has no dedicated "border" role, so its ANSI black/bright-black slot - which
+// today renders "0x63605e", distinct from any other role in the palette -
+// maps onto Palette.Border; magenta and cyan map onto Purple and Aqua, the
+// closest named roles.
+type alacrittyColors struct {
+	Background string
+	Foreground string
+	Black      string
+	Red        string
+	Green      string
+	Yellow     string
+	Blue       string
+	Magenta    string
+	Cyan       string
+}
+
+func hex0x(hex string) string {
+	return "0x" + strings.TrimPrefix(hex, "#")
+}
+
+func newAlacrittyColors(p theme.Palette) alacrittyColors {
+	return alacrittyColors{
+		Background: hex0x(p.Background),
+		Foreground: hex0x(p.Foreground),
+		Black:      hex0x(p.Border),
+		Red:        hex0x(p.Red),
+		Green:      hex0x(p.Green),
+		Yellow:     hex0x(p.Yellow),
+		Blue:       hex0x(p.Blue),
+		Magenta:    hex0x(p.Purple),
+		Cyan:       hex0x(p.Aqua),
+	}
+}
 
 type Alacritty struct {
 	Cmd  cmd.Command
@@ -46,7 +88,25 @@ func (a *Alacritty) ForceInstall() error {
 	return baseapp.Reinstall(a.Install, a.Uninstall)
 }
 
+// ForceConfigure resolves the theme for current_theme (falling back to
+// theme.DefaultThemeName when it is empty) and renders with it. `dg theme
+// set` does not go through here: it resolves the target theme itself and
+// calls ForceConfigureTheme directly, because current_theme is deliberately
+// not written yet at that point (docs/plans/cycles/2026-09-14-dg-theme.md
+// Step 5) - reading it here would render the theme being replaced.
 func (a *Alacritty) ForceConfigure() error {
+	def, err := theme.CurrentDefinition()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current theme: %w", err)
+	}
+	return a.ForceConfigureTheme(def)
+}
+
+func (a *Alacritty) ForceConfigureTheme(def theme.Definition) error {
+	p, err := def.PaletteFor(a.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
+	}
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
 		return fmt.Errorf("failed to create global config: %w", err)
@@ -55,7 +115,6 @@ func (a *Alacritty) ForceConfigure() error {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
 	font := "default"
-	theme := "default"
 	configFilePath := filepath.Join(
 		paths.Paths.Config.Alacritty,
 		fmt.Sprintf("%s.toml", constants.Alacritty),
@@ -64,10 +123,10 @@ func (a *Alacritty) ForceConfigure() error {
 		paths.Paths.App.Configs.Alacritty,
 		fmt.Sprintf("%s.toml.tmpl", constants.Alacritty),
 	)
-	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
+	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]any{
 		"Font":       font,
-		"Theme":      theme,
 		"ConfigPath": paths.Paths.Config.Root,
+		"Colors":     newAlacrittyColors(p),
 	}); err != nil {
 		return fmt.Errorf("failed to generate alacritty configuration: %w", err)
 	}

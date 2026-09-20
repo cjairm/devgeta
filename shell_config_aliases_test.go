@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"io/fs"
 	"path"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // TestShellConfigTemplateRendersCoderAliasesFromConstants pins devgeta.zsh's
@@ -136,6 +139,15 @@ func TestShellConfigCoderSectionHeaderRendersForEitherCoder(t *testing.T) {
 // three `{{if}}`/`{{end}}` pairs fixed the spacing without changing which
 // lines render - see configs/templates/devgeta.zsh.tmpl.
 func TestShellConfigCoderSectionIsContiguous(t *testing.T) {
+	// The PATH entry renders from pkg/paths (see
+	// TestShellConfigPutsOpenCodeBinDirOnPath), so its expected line is built
+	// from the same value rather than spelled out - it is machine-specific.
+	openCodePath := fmt.Sprintf(
+		`[[ ":$PATH:" == *":%s:"* ]] || export PATH="%s:$PATH"`,
+		filepath.Join(paths.Paths.Home.OpenCode, "bin"),
+		filepath.Join(paths.Paths.Home.OpenCode, "bin"),
+	)
+
 	tests := []struct {
 		name     string
 		features config.ShellFeatures
@@ -146,6 +158,7 @@ func TestShellConfigCoderSectionIsContiguous(t *testing.T) {
 			config.ShellFeatures{Opencode: true, Claude: true},
 			[]string{
 				"# ---- AI coders ----",
+				openCodePath,
 				`alias oc="opencode"`,
 				`alias cc="CLAUDE_CODE_NO_FLICKER=1 claude"`,
 			},
@@ -155,6 +168,7 @@ func TestShellConfigCoderSectionIsContiguous(t *testing.T) {
 			config.ShellFeatures{Opencode: true},
 			[]string{
 				"# ---- AI coders ----",
+				openCodePath,
 				`alias oc="opencode"`,
 			},
 		},
@@ -205,6 +219,70 @@ func contiguousLinesFollowing(rendered, header string, count int) []string {
 	return nil
 }
 
+// TestShellConfigPutsOpenCodeBinDirOnPath covers the other half of the `oc`
+// alias: it names the `opencode` binary and resolves it through PATH
+// (pkg/constants.OpenCodeLaunch), and opencode's official install script puts
+// that binary in a prefix nothing else adds to PATH - $HOME/.opencode/bin,
+// hardcoded, with no override (ADR-0047 decision 3). The script edits the
+// user's own rc files, which devgeta does not own and cannot keep consistent,
+// so devgeta puts the directory on PATH itself. Without this the alias, and
+// every tmux pane devgeta opens for opencode, resolve nothing.
+//
+// It is checked in both directions: gated on the opencode shell feature, the
+// same flag `dg uninstall opencode` clears, so an uninstall takes the PATH
+// entry with it.
+func TestShellConfigPutsOpenCodeBinDirOnPath(t *testing.T) {
+	binDir := filepath.Join(paths.Paths.Home.OpenCode, "bin")
+
+	enabled := renderEmbeddedShellConfig(t, config.ShellFeatures{Opencode: true})
+	lines := pathExportLinesFor(enabled, binDir)
+	if len(lines) != 1 {
+		t.Fatalf(
+			"expected exactly one line putting %q on PATH, got %q",
+			binDir, lines,
+		)
+	}
+	// Prepended, not appended: a macOS user migrating off the brew formula
+	// keeps a brew-installed opencode on PATH until they remove it by hand
+	// (docs/migrations/opencode-install-channel.md), and the copy devgeta
+	// installs and uninstalls is the one that should win.
+	if !strings.Contains(lines[0], `"`+binDir+`:$PATH"`) {
+		t.Errorf(
+			"expected %q to be PREPENDED to PATH, got %q",
+			binDir, lines[0],
+		)
+	}
+	// Re-sourcing a shell config is routine (`source ~/.zshrc`), and an
+	// unguarded prepend grows PATH by one copy every time.
+	if !strings.Contains(lines[0], `":$PATH:"`) {
+		t.Errorf(
+			"expected the PATH entry to skip a directory already on PATH, got %q",
+			lines[0],
+		)
+	}
+
+	disabled := renderEmbeddedShellConfig(t, config.ShellFeatures{})
+	if strings.Contains(disabled, binDir) {
+		t.Errorf(
+			"%q must only reach the shell config when the opencode feature is enabled",
+			binDir,
+		)
+	}
+}
+
+// pathExportLinesFor returns every rendered line that exports PATH mentioning
+// dir.
+func pathExportLinesFor(rendered, dir string) []string {
+	var found []string
+	for _, line := range strings.Split(rendered, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "export PATH=") && strings.Contains(line, dir) {
+			found = append(found, line)
+		}
+	}
+	return found
+}
+
 // TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput: the template
 // explains WHY its alias lines are rendered from pkg/constants, and that
 // explanation is for whoever edits the template - it must not be shipped into
@@ -212,7 +290,13 @@ func contiguousLinesFollowing(rendered, header string, count int) []string {
 func TestShellConfigTemplateKeepsMaintainerNotesOutOfTheOutput(t *testing.T) {
 	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
 
-	for _, leaked := range []string{"pkg/constants", "ADR-0021", "non-interactive"} {
+	for _, leaked := range []string{
+		"pkg/constants",
+		"pkg/paths",
+		"ADR-0021",
+		"ADR-0047",
+		"non-interactive",
+	} {
 		if strings.Contains(rendered, leaked) {
 			t.Errorf("maintainer note mentioning %q reached the generated shell config", leaked)
 		}
@@ -270,4 +354,71 @@ func aliasLinesFor(rendered, alias string) []string {
 		}
 	}
 	return found
+}
+
+// TestShellConfigAliasesAreGatedOnTheirOwnToolsFeature pins each alias to the
+// shell feature of the tool the alias actually runs.
+//
+// `alias cat="bat"` shipped inside the {{if .Eza}} block, so `cat` tracked eza
+// instead of bat: a machine with bat and no eza silently lost it, and a machine
+// with eza and no bat got a `cat` pointing at a binary that isn't installed.
+// The feature flags exist precisely so a generated devgeta.zsh only aliases
+// what is there, and an alias gated on a DIFFERENT tool's flag defeats that
+// while still looking correct in the template.
+//
+// Each case is checked in both directions - present with the flag on, absent
+// with it off - because "absent when off" alone would also pass if the alias
+// were dropped from the template altogether.
+func TestShellConfigAliasesAreGatedOnTheirOwnToolsFeature(t *testing.T) {
+	cases := []struct {
+		alias   string
+		feature string // the ShellFeatures field the alias must be gated on
+	}{
+		{alias: "ls", feature: "Eza"},
+		{alias: "lt", feature: "Eza"},
+		{alias: "cat", feature: "Bat"},
+		{alias: "cd", feature: "Zoxide"},
+		{alias: "mx", feature: "Mise"},
+	}
+
+	enabled := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+	for _, tc := range cases {
+		t.Run(tc.alias, func(t *testing.T) {
+			if len(aliasLinesFor(enabled, tc.alias)) == 0 {
+				t.Fatalf(
+					"`alias %s` does not render with every feature enabled; the case list is stale",
+					tc.alias,
+				)
+			}
+			withoutTool := renderEmbeddedShellConfig(t, shellFeaturesWithout(t, tc.feature))
+			if lines := aliasLinesFor(withoutTool, tc.alias); len(lines) > 0 {
+				t.Errorf(
+					"`alias %s` still renders with %s disabled: %q\nGate it on {{if .%s}} - the flag of the tool it runs.",
+					tc.alias,
+					tc.feature,
+					lines,
+					tc.feature,
+				)
+			}
+		})
+	}
+}
+
+// shellFeaturesWithout returns every shell feature enabled except the named
+// one. The field is located by name and the lookup is fatal when it misses, so
+// a renamed or misspelled feature fails loudly instead of quietly rendering
+// with everything on and passing.
+func shellFeaturesWithout(t *testing.T, feature string) config.ShellFeatures {
+	t.Helper()
+
+	features := allShellFeaturesEnabled()
+	field := reflect.ValueOf(&features).Elem().FieldByName(feature)
+	if !field.IsValid() {
+		t.Fatalf("config.ShellFeatures has no field %q", feature)
+	}
+	if field.Kind() != reflect.Bool {
+		t.Fatalf("config.ShellFeatures field %q is %s, want bool", feature, field.Kind())
+	}
+	field.SetBool(false)
+	return features
 }

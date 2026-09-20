@@ -135,7 +135,7 @@ do
 	-- change the command under that to load whatever the name of that colorscheme is.
 	--
 	-- If you want to see what colorschemes are already installed, you can use `:Telescope colorscheme`.
-	require("devgeta.themes.gruvbox")
+	require("devgeta.theme")
 
 	-- Highlight todo, notes, etc in comments
 	require("kickstart.plugins.todo_comments")

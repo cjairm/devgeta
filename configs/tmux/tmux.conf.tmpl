@@ -108,13 +108,13 @@ bind -n C-\\ if-shell "$is_vim" "send-keys C-\\" "select-pane -l"
 #### COLOUR (Gruvbox dark)
 
 # default statusbar colors
-set-option -g status-style fg=#fabd2f,bg=#282828 # bright_yellow on dark0_hard
+set-option -g status-style fg={{.Palette.Yellow}},bg={{.Palette.Background}} # bright_yellow on dark0_hard
 
 # default window title colors
-set-window-option -g window-status-style fg=#83a598,bg=default # bright_blue on default
+set-window-option -g window-status-style fg={{.Palette.Blue}},bg=default # bright_blue on default
 
 # active window title colors
-set-window-option -g window-status-current-style fg=#fe8019,bg=default # bright_orange on default
+set-window-option -g window-status-current-style fg={{.Palette.Orange}},bg=default # bright_orange on default
 
 # Flag a window whose coder wants attention (idle/blocked/error) while no
 # client is viewing it - the mirror @dg_window_agent_state is written by
@@ -122,7 +122,7 @@ set-window-option -g window-status-current-style fg=#fe8019,bg=default # bright_
 # alongside their authoritative per-pane @dg_agent_state write. See
 # docs/decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md for
 # why this is a SEPARATE option name from the pane-level one.
-set-window-option -g window-status-format "#{?#{&&:#{@dg_window_agent_state},#{==:#{window_active_clients},0}},#[fg=#fb4934]● ,}#I:#W#{?window_flags,#{window_flags}, }"
+set-window-option -g window-status-format "#{?#{&&:#{@dg_window_agent_state},#{==:#{window_active_clients},0}},#[fg={{.Palette.Red}}]● ,}#I:#W#{?window_flags,#{window_flags}, }"
 
 # Audible ding for the same "wants you" states (idle/blocked/error) on the
 # same unattended-window gate, played by configs/claude/agent-state.sh and
@@ -135,30 +135,30 @@ set-window-option -g window-status-format "#{?#{&&:#{@dg_window_agent_state},#{=
 set -g @dg_notify_sound "{{if .NotifySound}}on{{else}}off{{end}}"
 
 # pane border
-set-option -g pane-border-style fg=#3c3836 # dark1
-set-option -g pane-active-border-style fg=#b8bb26 # bright_green
+set-option -g pane-border-style fg={{.Palette.BackgroundElement}} # dark1
+set-option -g pane-active-border-style fg={{.Palette.Green}} # bright_green
 
 # Make the active pane obvious without painting a solid background (which would
 # punch through Alacritty's transparency/blur). Dim inactive panes' default
 # foreground, keep the active pane at full brightness, and emphasize the active
 # border with a heavier line plus arrows pointing at it.
-set-window-option -g window-style fg=#928374          # inactive panes: muted gray
-set-window-option -g window-active-style fg=#ebdbb2   # active pane: bright fg
+set-window-option -g window-style fg={{.Palette.ForegroundDim}}          # inactive panes: muted gray
+set-window-option -g window-active-style fg={{.Palette.Foreground}}   # active pane: bright fg
 set-window-option -g pane-border-lines heavy          # heavy line on the active border
 set-window-option -g pane-border-indicators arrows    # arrows point at the active pane
 
 # message text
-set-option -g message-style fg=#fe8019,bg=#282828 # bright_orange on dark0_hard
+set-option -g message-style fg={{.Palette.Orange}},bg={{.Palette.Background}} # bright_orange on dark0_hard
 
 # pane number display
-set-option -g display-panes-active-colour "#fe8019" # bright_orange
-set-option -g display-panes-colour "#83a598" # bright_blue
+set-option -g display-panes-active-colour "{{.Palette.Orange}}" # bright_orange
+set-option -g display-panes-colour "{{.Palette.Blue}}" # bright_blue
 
 # clock
-set-window-option -g clock-mode-colour "#b8bb26" # bright_green
+set-window-option -g clock-mode-colour "{{.Palette.Green}}" # bright_green
 
 # bell
-set-window-option -g window-status-bell-style fg=#282828,bg=#fb4934 # dark0_hard on bright_red
+set-window-option -g window-status-bell-style fg={{.Palette.Background}},bg={{.Palette.Red}} # dark0_hard on bright_red
 
 # To have the ability to use Tab for autocomplete
 unbind -n Tab

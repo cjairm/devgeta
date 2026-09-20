@@ -296,18 +296,44 @@ func CanonicalRepoPath(path string) string {
 }
 
 type GlobalConfig struct {
-	AppPath             string                 `yaml:"app_path"`
-	ConfigPath          string                 `yaml:"config_path"`
-	AlreadyInstalled    AlreadyInstalledConfig `yaml:"already_installed"`
-	CurrentFont         string                 `yaml:"current_font"`
-	CurrentTheme        string                 `yaml:"current_theme"`
-	Installed           InstalledConfig        `yaml:"installed"`
-	Shortcuts           map[string]string      `yaml:"shortcuts"`
-	Shell               ShellFeatures          `yaml:"shell"`
-	FailedInstallations []FailedInstallation   `yaml:"failed_installations,omitempty"`
-	Worktree            WorktreeConfig         `yaml:"worktree"`
-	Integrations        IntegrationsConfig     `yaml:"integrations,omitempty"`
-	Review              ReviewConfig           `yaml:"review,omitempty"`
+	AppPath          string                 `yaml:"app_path"`
+	ConfigPath       string                 `yaml:"config_path"`
+	AlreadyInstalled AlreadyInstalledConfig `yaml:"already_installed"`
+	CurrentFont      string                 `yaml:"current_font"`
+	// CurrentTheme is deploy state, not a preference: it names the theme every
+	// themed app's config was last rendered with, and a bare `dg config set`
+	// would persist a selection with no palette validation, no app reconfigure,
+	// and no rollback — the exact failure `dg theme set`'s transaction exists to
+	// prevent (docs/plans/cycles/2026-09-14-dg-theme.md Step 5). It is
+	// therefore not registered in cmd/config_settings.go; `dg theme set
+	// <name>` is its only write path, and `dg theme` is the read path.
+	CurrentTheme string `yaml:"current_theme"`
+	// PendingTheme records that a `dg theme set` switch is in progress: set
+	// before the first per-app backup is taken and cleared in the same
+	// config.Update call that commits CurrentTheme, so a crash between the two
+	// leaves at most one of them set. RecoverInterrupted uses it to tell a
+	// crashed-before-commit attempt (restore backups) from a crashed-during-
+	// cleanup one (delete them) — see the cycle doc's Step 5. Like
+	// CurrentTheme, it is transaction state, not a preference, and is not a
+	// cmd/config_settings.go key.
+	PendingTheme string `yaml:"pending_theme,omitempty"`
+	// Wallpapers maps a theme name to the content-addressed path of the
+	// image `dg theme set-wallpaper` copied for it, under
+	// ~/.config/devgeta/wallpapers/ (ADR-0044 point 3). It lives here, not
+	// in the theme's own YAML file, because configs/themes/*.yaml is
+	// embedded and ExtractEmbeddedConfigs overwrites it unconditionally on
+	// every install and binary upgrade — a path written there would be
+	// silently erased on the next upgrade. `dg theme set` applies
+	// Wallpapers[<name>] when present and otherwise leaves the desktop
+	// untouched; it never clears a wallpaper set outside devgeta.
+	Wallpapers          map[string]string    `yaml:"wallpapers,omitempty"`
+	Installed           InstalledConfig      `yaml:"installed"`
+	Shortcuts           map[string]string    `yaml:"shortcuts"`
+	Shell               ShellFeatures        `yaml:"shell"`
+	FailedInstallations []FailedInstallation `yaml:"failed_installations,omitempty"`
+	Worktree            WorktreeConfig       `yaml:"worktree"`
+	Integrations        IntegrationsConfig   `yaml:"integrations,omitempty"`
+	Review              ReviewConfig         `yaml:"review,omitempty"`
 }
 
 // GlobalConfigFilePath returns the absolute path of the global config file
@@ -662,11 +688,19 @@ func (gc *GlobalConfig) IsShellFeatureEnabled(featureName string) bool {
 // aliases at all (ADR-0021). devgeta.zsh's alias therefore stopped being the
 // definition of how devgeta launches a coder and became a rendering of it -
 // see pkg/constants.CoderLaunch, which is the one definition behind both.
+// OpenCodeBinDir is here for the same reason: opencode's install script puts
+// its binary in a prefix nothing else adds to PATH ($HOME/.opencode/bin,
+// hardcoded), and it edits the user's own rc files, which devgeta does not own
+// and cannot keep consistent - so devgeta puts the directory on PATH itself
+// (ADR-0047 decision 3). It renders from paths.Paths.Home.OpenCode, the same
+// value opencode's install, idempotency and uninstall checks read, rather than
+// a second spelling of it in the template.
 type ShellTemplateData struct {
 	ShellFeatures
 
-	OpenCodeAlias string
-	ClaudeAlias   string
+	OpenCodeAlias  string
+	OpenCodeBinDir string
+	ClaudeAlias    string
 }
 
 // NewShellTemplateData pairs a ShellFeatures value with the launch recipes'
@@ -675,9 +709,10 @@ type ShellTemplateData struct {
 // same path production uses instead of re-deriving the alias itself.
 func NewShellTemplateData(shell ShellFeatures) ShellTemplateData {
 	return ShellTemplateData{
-		ShellFeatures: shell,
-		OpenCodeAlias: constants.OpenCodeLaunch.AliasLine(),
-		ClaudeAlias:   constants.ClaudeLaunch.AliasLine(),
+		ShellFeatures:  shell,
+		OpenCodeAlias:  constants.OpenCodeLaunch.AliasLine(),
+		OpenCodeBinDir: filepath.Join(paths.Paths.Home.OpenCode, "bin"),
+		ClaudeAlias:    constants.ClaudeLaunch.AliasLine(),
 	}
 }
 

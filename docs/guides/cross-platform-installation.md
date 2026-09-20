@@ -163,26 +163,7 @@ type LaunchpadPPAStrategy struct {
 
 ---
 
-#### 4. InstallScriptStrategy
-
-**Purpose:** Install via curl | sh style scripts.
-
-**Use when:** Package provides an official install script (no apt package available).
-
-```go
-type InstallScriptStrategy struct {
-    cmd       *DebianCommand
-    scriptURL string
-}
-```
-
-**Example packages:** mise (formerly rtx), starship
-
-**Security note:** Only use for trusted, official install scripts.
-
----
-
-#### 5. NerdFontStrategy
+#### 4. NerdFontStrategy
 
 **Purpose:** Download and install Nerd Fonts from GitHub releases.
 
@@ -205,7 +186,7 @@ type NerdFontStrategy struct {
 
 ---
 
-#### 6. GitCloneStrategy
+#### 5. GitCloneStrategy
 
 **Purpose:** Clone a Git repository to a specific path.
 
@@ -258,6 +239,44 @@ lazydocker all ship `checksums.txt`); a release without one cannot be
 installed through this helper.
 
 **Example packages:** lazygit, lazydocker, rtk
+
+---
+
+### Helper Function: RunInstallScript
+
+For tools whose only supported channel is an official install script:
+
+```go
+func RunInstallScript(base BaseCommandExecutor, label, scriptURL, interpreter string) error
+```
+
+**Key behavior:**
+
+1. Downloads the script to a private staging directory with curl
+2. Runs it with `interpreter` only if that download succeeded
+
+The staging is the point. A `curl … | bash` pipeline exits with bash's status,
+not curl's, so a 404 or a truncated download pipes an empty script into bash —
+which exits 0 — and a broken download is reported as a successful install.
+
+Pass `bash`, not `sh`, unless the script's shebang really is `#!/bin/sh`: on
+Debian `sh` is dash, and a bash script run under dash fails in ways that look
+like a broken installer.
+
+Callers live in the app itself rather than in a Debian strategy, because a
+script is the same install on every platform and needs no platform branch. This
+also means detection, idempotency and uninstall have to key on the binary the
+script writes — a script-installed binary is never in dpkg, so `dpkg -l` reports
+it as absent forever and `apt-get remove` cannot remove it.
+
+There is no checksum verification available here: these scripts are served from
+a URL, not a release asset, so prefer `InstallGitHubBinary` whenever upstream
+publishes a release binary. Choosing a script over a verified binary is a §4
+security trade that needs its own ADR — see
+[ADR-0047](../decisions/ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md),
+which records the one for opencode.
+
+**Example packages:** claude, opencode
 
 ---
 
@@ -356,7 +375,7 @@ var PackageMappings = map[string]PackageMapping{
 | In default apt repos     | `AptStrategy` (automatic via MaybeInstallPackage) |
 | In a Launchpad PPA       | `LaunchpadPPAStrategy`                            |
 | In a custom PPA with GPG | `PPAStrategy`                                     |
-| Installed via script     | `InstallScriptStrategy`                           |
+| Installed via script     | `RunInstallScript` helper, called from the app    |
 | A Nerd Font              | `NerdFontStrategy`                                |
 | A git repository         | `GitCloneStrategy`                                |
 | A GitHub release binary  | `InstallGitHubBinary` helper                      |

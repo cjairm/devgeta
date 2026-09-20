@@ -19,12 +19,17 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
-var _ apps.App = (*Tmux)(nil)
+var (
+	_ apps.App              = (*Tmux)(nil)
+	_ apps.ThemedConfigurer = (*Tmux)(nil)
+	_ apps.LiveThemeApplier = (*Tmux)(nil)
+)
 
 const configFileName = ".tmux.conf"
 
@@ -54,7 +59,32 @@ func (t *Tmux) SoftInstall() error {
 	return t.Cmd.MaybeInstallPackage(constants.Tmux)
 }
 
+// ForceConfigure resolves the theme for current_theme (falling back to
+// theme.DefaultThemeName when it is empty), renders with it, then pushes the
+// result into a running tmux session (best-effort - see ApplyLiveTheme).
+// `dg theme set` does not go through here: it resolves the target theme
+// itself and calls ForceConfigureTheme directly, applying ApplyLiveTheme only
+// after its transaction commits, because current_theme is deliberately not
+// written yet when ForceConfigureTheme runs mid-switch
+// (docs/plans/cycles/2026-09-14-dg-theme.md Step 5) and a live push cannot be
+// rolled back.
 func (t *Tmux) ForceConfigure() error {
+	def, err := theme.CurrentDefinition()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current theme: %w", err)
+	}
+	if err := t.ForceConfigureTheme(def); err != nil {
+		return err
+	}
+	_ = t.ApplyLiveTheme()
+	return nil
+}
+
+func (t *Tmux) ForceConfigureTheme(def theme.Definition) error {
+	p, err := def.PaletteFor(t.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
+	}
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
 		return fmt.Errorf("failed to create global config: %w", err)
@@ -71,16 +101,26 @@ func (t *Tmux) ForceConfigure() error {
 	tmplPath := filepath.Join(paths.Paths.App.Configs.Tmux, "tmux.conf.tmpl")
 	if err := files.GenerateFromTemplate(tmplPath, configDest, struct {
 		NotifySound bool
+		Palette     theme.Palette
 	}{
 		NotifySound: gc.Worktree.NotifySound,
+		Palette:     p,
 	}); err != nil {
 		return fmt.Errorf("failed to generate tmux configuration: %w", err)
 	}
-	// Reload the running tmux server if we're inside a session (best-effort).
-	if os.Getenv("TMUX") != "" {
-		_ = t.ExecuteCommand("source-file", configDest)
-	}
 	return nil
+}
+
+// ApplyLiveTheme sources the just-rendered ~/.tmux.conf into the attached
+// tmux server, when running inside one - a no-op otherwise. Best-effort by
+// design (apps.LiveThemeApplier): its failure never undoes the file write,
+// since the config on disk is already correct and a new shell picks it up.
+func (t *Tmux) ApplyLiveTheme() error {
+	if os.Getenv("TMUX") == "" {
+		return nil
+	}
+	configDest := filepath.Join(paths.Paths.Home.Root, configFileName)
+	return t.ExecuteCommand("source-file", configDest)
 }
 
 func (t *Tmux) SoftConfigure() error {

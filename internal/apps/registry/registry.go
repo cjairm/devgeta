@@ -28,6 +28,8 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/shottr"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/apps/ulauncher"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/bat"
+	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/eza"
 	"github.com/cjairm/devgeta/pkg/constants"
 )
 
@@ -51,8 +53,10 @@ var Meta = map[string]AppMeta{
 	constants.Aerospace: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Alacritty: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Brave:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Bat:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Claude:    {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Docker:    {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
+	constants.Eza:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Fastfetch: {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
 	constants.Flameshot: {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Ghostty: {
@@ -120,10 +124,12 @@ func AppsByCoordinator(coordinator string) []string {
 var factories = map[string]func() apps.App{
 	constants.Aerospace:  func() apps.App { return aerospace.New() },
 	constants.Alacritty:  func() apps.App { return alacritty.New() },
+	constants.Bat:        func() apps.App { return bat.New() },
 	constants.Brave:      func() apps.App { return brave.New() },
 	constants.Claude:     func() apps.App { return claude.New() },
 	constants.DevgetaApp: func() apps.App { return devgeta.New() },
 	constants.Docker:     func() apps.App { return docker.New() },
+	constants.Eza:        func() apps.App { return eza.New() },
 	constants.Fastfetch:  func() apps.App { return fastfetch.New() },
 	constants.Flameshot:  func() apps.App { return flameshot.New() },
 	constants.Ghostty:    func() apps.App { return ghostty.New() },

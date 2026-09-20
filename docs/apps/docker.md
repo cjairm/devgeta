@@ -1,86 +1,81 @@
-# Docker Desktop
+# Docker
 
-Devgeta installs [Docker Desktop](https://www.docker.com/products/docker-desktop/),
-the containerization platform for building, shipping, and running distributed
-applications.
+Devgeta installs [Docker Desktop](https://www.docker.com/products/docker-desktop/)
+as a desktop app, and [lazydocker](https://github.com/jesseduffield/lazydocker)
+(aliased `lzd`) as a TUI over the same daemon.
 
 - **Module:** `internal/apps/docker/`
+- **Install:** `brew install --cask docker`
+- **Configuration:** none deployed — Docker Desktop's GUI or `~/.docker/daemon.json`
 
-## After Installation
+## Start it
 
-**Start Docker Desktop:**
-
-Open Docker Desktop from your Applications folder or launch it via Spotlight (`Cmd+Space` → "Docker").
-
-**Verify Docker is running:**
+The `docker` CLI does nothing until Docker Desktop is running. Open it from
+Applications (or `Cmd+Space` → "Docker"), then:
 
 ```bash
 docker version
 docker ps
 ```
 
-**Common commands:**
+## Commands
 
 ```bash
-# Run a container
-docker run hello-world
-
-# List running containers
-docker ps
-
-# List all containers
-docker ps -a
-
-# Pull an image
+docker run hello-world        # run a container
+docker ps                     # running
+docker ps -a                  # all, including stopped
 docker pull ubuntu
-
-# Build from Dockerfile
 docker build -t my-app .
+docker logs -f <container>    # follow output
+
+docker exec -it <container> bash                  # shell into a running container
+docker run -it --entrypoint=/bin/bash <image>     # shell into an image whose entrypoint crashes
 ```
 
-## Uninstall (Manual)
-
-Docker Desktop requires manual cleanup. Follow these steps:
-
-**Step 1 — Quit Docker Desktop:**
-
-Right-click the Docker icon in the menu bar and select "Quit Docker Desktop."
-
-**Step 2 — Uninstall via Homebrew (macOS):**
+## Reclaim disk space
 
 ```bash
-brew uninstall --cask docker
+docker system df                     # what's using space
+docker system prune                  # stopped containers, unused networks, dangling images
+docker system prune -a --volumes     # also unused images and volumes
 ```
 
-**Step 3 — Remove binaries:**
+Nuclear versions — these delete unbacked-up volume data:
 
 ```bash
-sudo rm -f /usr/local/bin/docker
-sudo rm -f /usr/local/bin/docker-compose
-sudo rm -f /usr/local/bin/docker-credential-desktop
-sudo rm -f /usr/local/bin/docker-credential-ecr-login
-sudo rm -f /usr/local/bin/docker-credential-osxkeychain
-sudo rm -f /usr/local/bin/hub-tool
-sudo rm -f /usr/local/bin/kubectl.docker
+docker rm -f $(docker ps -aq)
+docker rmi -f $(docker images -aq)
+docker volume rm -f $(docker volume ls -q)
 ```
 
-**Step 4 — Remove data and configuration:**
+## Kubernetes
+
+Docker Desktop runs a single-node cluster and bundles its own `kubectl`
+(**Settings → Kubernetes → Enable Kubernetes**). Devgeta does not install
+`kubectl`, so install it separately on Linux or for a remote cluster.
 
 ```bash
-sudo rm -rf ~/Library/Containers/com.docker.docker
-sudo rm -rf ~/Library/Application\ Support/Docker\ Desktop
-sudo rm -rf ~/.docker
+kubectl config get-contexts                            # clusters you can reach
+kubectl config use-context <context>
+kubectl config set-context --current --namespace=<ns>  # stop typing -n
+
+kubectl get pods
+kubectl get pod -l service=<name>       # by label, better than grep
+kubectl describe pod <pod>              # events, image, restart reasons
+
+kubectl logs --follow <pod>
+kubectl logs --previous <pod>           # the crashed container, not the restarted one
+kubectl exec -it <pod> -- bash
 ```
 
-**Step 5 — Remove shell completions:**
+`--previous` is the one for a `CrashLoopBackOff` — the current container just
+started; the reason it died is in the previous one.
 
-```bash
-sudo rm -f /usr/local/etc/bash_completion.d/docker
-sudo rm -f /usr/local/share/zsh/site-functions/_docker
-sudo rm -f /usr/local/share/fish/vendor_completions.d/docker.fish
-```
+## Uninstall
 
-Or as a single command:
+`dg uninstall docker` removes the cask and the `global_config.yaml` entry, but
+leaves daemon data, binaries, and completions. Full cleanup, after quitting
+Docker Desktop from the menu bar:
 
 ```bash
 brew uninstall --cask docker && \

@@ -15,7 +15,8 @@
 //   - eza -T - Tree view
 //   - eza -a - Show hidden files
 //   - eza --git - Show git status
-//   - eza --icons - Show file icons
+//   - eza --icons=auto - Show file icons (the value must be spelled with `=`;
+//     bare --icons consumes the next argument as its value)
 //   - eza -lah - Long format with hidden files and human-readable sizes
 
 package eza
@@ -23,6 +24,8 @@ package eza
 import (
 	"fmt"
 
+	"github.com/cjairm/devgeta/internal/apps"
+	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/pkg/constants"
@@ -39,6 +42,12 @@ func New() *Eza {
 	return &Eza{Cmd: osCmd, Base: baseCmd}
 }
 
+var _ apps.App = (*Eza)(nil)
+
+func (e *Eza) Name() string { return constants.Eza }
+
+func (e *Eza) Kind() apps.AppKind { return apps.KindTerminal }
+
 func (e *Eza) Install() error {
 	return e.Cmd.InstallPackage("eza")
 }
@@ -48,15 +57,11 @@ func (e *Eza) SoftInstall() error {
 }
 
 func (e *Eza) ForceInstall() error {
-	err := e.Uninstall()
-	if err != nil {
-		return fmt.Errorf("failed to uninstall eza: %w", err)
-	}
-	return e.Install()
+	return baseapp.Reinstall(e.Install, e.Uninstall)
 }
 
 func (e *Eza) Uninstall() error {
-	return fmt.Errorf("eza uninstall not supported through devgeta")
+	return fmt.Errorf("%w for eza", apps.ErrUninstallNotSupported)
 }
 
 func (e *Eza) ForceConfigure() error {
@@ -98,5 +103,5 @@ func (e *Eza) ExecuteCommand(args ...string) error {
 }
 
 func (e *Eza) Update() error {
-	return fmt.Errorf("eza update not implemented through devgeta")
+	return fmt.Errorf("%w for eza", apps.ErrUpdateNotSupported)
 }

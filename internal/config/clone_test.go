@@ -21,6 +21,8 @@ func newFullyPopulatedGlobalConfig() *GlobalConfig {
 		ConfigPath:   "/config",
 		CurrentFont:  "font",
 		CurrentTheme: "theme",
+		PendingTheme: "pending-theme",
+		Wallpapers:   map[string]string{"theme": "/wallpapers/abc.jpg"},
 		AlreadyInstalled: AlreadyInstalledConfig{
 			Packages:      []string{"a"},
 			DesktopApps:   []string{"b"},

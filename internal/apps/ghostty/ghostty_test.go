@@ -18,6 +18,76 @@ func init() {
 	testutil.InitLogger()
 }
 
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under tc's temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its palette through
+// theme.CurrentFor, which loads and validates a whole theme file - so even a
+// single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, tc *testutil.TestConfig, hex string) {
+	t.Helper()
+
+	themesDir := filepath.Join(tc.AppDir, "themes")
+	neovimConfigsDir := filepath.Join(tc.AppDir, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(tc.ConfigDir, "does-not-exist-nvim")
+}
+
 func TestNew(t *testing.T) {
 	app := New()
 	if app == nil {
@@ -235,9 +305,7 @@ window-padding-x = 10
 font-size = 13
 {{end}}
 
-{{if eq .Theme "default"}}
-background = #282828
-{{end}}
+background = {{.Palette.Background}}
 `
 	tmplPath := filepath.Join(tmplDir, "ghostty.conf.tmpl")
 	if err := os.WriteFile(tmplPath, []byte(tmplContent), 0o644); err != nil {
@@ -277,6 +345,7 @@ background = #282828
 		paths.Paths.Config.Ghostty = oldLocalConfig
 		paths.Paths.Config.Root = oldConfigRoot
 	})
+	setupThemeFixture(t, tc, "#282828")
 
 	app := &Ghostty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
@@ -312,6 +381,112 @@ background = #282828
 	}
 	if !strings.Contains(configStr, "window-padding-x = 10") {
 		t.Error("expected generated config to contain window-padding-x")
+	}
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
+// the palette through theme.CurrentFor rather than a hardcoded name: with
+// current_theme set to a fixture theme whose colors are distinguishable from
+// "default", the rendered config must show that fixture's color.
+func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	testutil.IsolateXDGDirs(t)
+
+	tmplDir := filepath.Join(tc.AppDir, "ghostty")
+	if err := os.MkdirAll(tmplDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmplContent := "background = {{.Palette.Background}}\nforeground = {{.Palette.Foreground}}\n"
+	if err := os.WriteFile(
+		filepath.Join(tmplDir, "ghostty.conf.tmpl"),
+		[]byte(tmplContent),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	terminalDir := filepath.Join(tc.AppDir, "terminal")
+	if err := os.MkdirAll(terminalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(terminalDir, "starter.sh"),
+		[]byte("#!/bin/bash\nzsh"),
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	destDir := filepath.Join(tc.ConfigDir, "ghostty")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	oldAppConfig := paths.Paths.App.Configs.Ghostty
+	oldAppTerminal := paths.Paths.App.Configs.Terminal
+	oldLocalConfig := paths.Paths.Config.Ghostty
+	oldConfigRoot := paths.Paths.Config.Root
+	paths.Paths.App.Configs.Ghostty = tmplDir
+	paths.Paths.App.Configs.Terminal = terminalDir
+	paths.Paths.Config.Ghostty = destDir
+	paths.Paths.Config.Root = tc.ConfigDir
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Ghostty = oldAppConfig
+		paths.Paths.App.Configs.Terminal = oldAppTerminal
+		paths.Paths.Config.Ghostty = oldLocalConfig
+		paths.Paths.Config.Root = oldConfigRoot
+	})
+
+	themesDir := filepath.Join(tc.AppDir, "themes")
+	neovimConfigsDir := filepath.Join(tc.AppDir, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	writeThemeFixture(t, themesDir, "custom", "#abcdef", "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(tc.ConfigDir, "does-not-exist-nvim")
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.CurrentTheme = "custom"
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &Ghostty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(destDir, "config"))
+	if err != nil {
+		t.Fatalf("failed to read generated config: %v", err)
+	}
+	if !strings.Contains(string(content), "#abcdef") {
+		t.Errorf(
+			"expected rendered config to use current_theme %q's color (#abcdef), got:\n%s",
+			"custom",
+			content,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -367,6 +542,7 @@ window-padding-x = 10
 		paths.Paths.Config.Ghostty = oldLocalConfig
 		paths.Paths.Config.Root = oldConfigRoot
 	})
+	setupThemeFixture(t, tc, "#282828")
 
 	app := &Ghostty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
@@ -458,6 +634,7 @@ func TestSoftConfigure_WritesConfigOnTheRunThatInstalled(t *testing.T) {
 		paths.Paths.Config.Ghostty = oldLocalConfig
 		paths.Paths.Config.Root = oldConfigRoot
 	})
+	setupThemeFixture(t, tc, "#282828")
 
 	// What a successful SoftInstall leaves behind before SoftConfigure runs.
 	gc := &config.GlobalConfig{}

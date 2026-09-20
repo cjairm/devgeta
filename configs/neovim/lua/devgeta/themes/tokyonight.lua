@@ -1,3 +1,4 @@
+-- [devgeta]
 local gh = require("kickstart.utils").gh
 
 vim.pack.add({ gh("folke/tokyonight.nvim") })
@@ -12,3 +13,4 @@ require("tokyonight").setup({
 -- Like many other themes, this one has different styles, and you could load
 -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
 vim.cmd.colorscheme("tokyonight-night")
+-- [/devgeta]

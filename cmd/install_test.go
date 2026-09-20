@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -299,5 +300,37 @@ func TestParseFlags_AllKnownApps_Valid(t *testing.T) {
 				t.Fatalf("--only %q returned nil config", appName)
 			}
 		})
+	}
+}
+
+// TestInstall_CallsRecoverInterruptedFn asserts run() sweeps for a crashed
+// `dg theme set`'s leftover backups before any category's SoftConfigure
+// writes onto the same paths (cycle doc Step 5), mirroring
+// TestConfigure_CallsRecoverInterruptedFn. run() has no mocking harness for
+// the install flow itself (real OS/package-manager calls), so this proves
+// call order the same way that gap is closed elsewhere: rig the sweep to
+// fail and assert run() returns that error immediately, before it reaches
+// any of its own real work (which would otherwise fail differently in a
+// test environment).
+func TestInstall_CallsRecoverInterruptedFn(t *testing.T) {
+	origRecover := recoverInterruptedFn
+	t.Cleanup(func() { recoverInterruptedFn = origRecover })
+
+	calls := 0
+	sentinel := fmt.Errorf("sentinel sweep failure")
+	recoverInterruptedFn = func() (string, error) {
+		calls++
+		return "", sentinel
+	}
+
+	err := run(installCmd, nil)
+	if err == nil {
+		t.Fatal("expected run() to return the sweep's error")
+	}
+	if !strings.Contains(err.Error(), sentinel.Error()) {
+		t.Errorf("expected run()'s error to wrap the sweep failure, got: %v", err)
+	}
+	if calls != 1 {
+		t.Errorf("expected recoverInterruptedFn called once, got %d", calls)
 	}
 }

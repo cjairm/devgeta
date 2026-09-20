@@ -14,6 +14,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/rtk"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -44,11 +45,17 @@ type settingsTemplateData struct {
 	config.IntegrationsConfig
 	ScratchDir          string
 	OutputBudgetEnabled bool
+	// Theme names the current theme (theme.Definition.Name), rendered into
+	// "custom:{{ .Theme }}" - the name Claude's own theme picker resolves
+	// against the file settings.json.tmpl's sibling ForceConfigureTheme call
+	// writes to themes/<name>.json.
+	Theme string
 }
 
 var (
 	_ apps.App                 = (*Claude)(nil)
 	_ apps.SelectiveConfigurer = (*Claude)(nil)
+	_ apps.ThemedConfigurer    = (*Claude)(nil)
 )
 
 type Claude struct {
@@ -113,7 +120,21 @@ func (c *Claude) Uninstall() error {
 	return gc.Save()
 }
 
+// ForceConfigure resolves the theme for current_theme (falling back to
+// theme.DefaultThemeName when it is empty) and renders with it. `dg theme
+// set` does not go through here: it resolves the target theme itself and
+// calls ForceConfigureTheme directly, because current_theme is deliberately
+// not written yet at that point (docs/plans/cycles/2026-09-14-dg-theme.md
+// Step 5) - reading it here would render the theme being replaced.
 func (c *Claude) ForceConfigure() error {
+	def, err := theme.CurrentDefinition()
+	if err != nil {
+		return fmt.Errorf("failed to resolve current theme: %w", err)
+	}
+	return c.ForceConfigureTheme(def)
+}
+
+func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 	if err := os.MkdirAll(paths.Paths.Config.Claude, 0o755); err != nil {
 		return err
 	}
@@ -124,6 +145,11 @@ func (c *Claude) ForceConfigure() error {
 	}
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
+	}
+
+	palette, err := def.PaletteFor(c.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
 	}
 
 	scratchDir, err := paths.EnsureScratchDir()
@@ -144,6 +170,7 @@ func (c *Claude) ForceConfigure() error {
 			IntegrationsConfig:  gc.Integrations,
 			ScratchDir:          string(scratchDirJSON),
 			OutputBudgetEnabled: gc.OutputBudgetEnabled(),
+			Theme:               def.Name,
 		},
 	); err != nil {
 		return fmt.Errorf("failed to render claude settings: %w", err)
@@ -172,11 +199,25 @@ func (c *Claude) ForceConfigure() error {
 		}
 	}
 
-	if err := files.CopyDir(
-		filepath.Join(paths.Paths.App.Configs.Claude, "themes"),
-		filepath.Join(paths.Paths.Config.Claude, "themes"),
+	// Rendered into a clean directory, not CopyDir'd: a blind directory copy
+	// would ship default.json.tmpl itself (a file no app can parse) and, on a
+	// second call with a different current_theme, leave a stale <old>.json
+	// behind alongside the new one (cycle doc Step 4). Unlike OpenCode's
+	// themes/ dir, nothing else in ~/.claude ever gets wiped, so this
+	// directory needs its own clean-slate treatment here.
+	themesDest := filepath.Join(paths.Paths.Config.Claude, "themes")
+	if err := os.RemoveAll(themesDest); err != nil {
+		return fmt.Errorf("failed to clear claude themes: %w", err)
+	}
+	if err := os.MkdirAll(themesDest, 0o755); err != nil {
+		return fmt.Errorf("failed to create claude themes directory: %w", err)
+	}
+	if err := files.GenerateFromTemplate(
+		filepath.Join(paths.Paths.App.Configs.Claude, "themes", "default.json.tmpl"),
+		filepath.Join(themesDest, def.Name+".json"),
+		map[string]any{"Palette": palette},
 	); err != nil {
-		return fmt.Errorf("failed to copy claude themes: %w", err)
+		return fmt.Errorf("failed to render claude theme: %w", err)
 	}
 
 	// task-redirect.sh, secret-guard.sh, and suppression-guard.sh source

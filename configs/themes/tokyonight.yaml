@@ -1,0 +1,45 @@
+# [devgeta]
+#
+# The `tokyonight` theme. See
+# docs/decisions/ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md
+# for the role names and why this file defines only `colors:` (no
+# `terminal:` group) — that's the shape every theme after `default` should
+# take, letting one palette apply to every surface, Alacritty and Ghostty
+# included.
+#
+# Colors are Tokyo Night's "night" variant (folke/tokyonight.nvim), the same
+# module `neovim_module` names below — already shipped, complete, and in use
+# by nothing until this file selects it.
+
+neovim_module: tokyonight
+
+# Ships alongside this file under configs/themes/wallpapers/ and is resolved
+# relative to the extracted configs tree, so it is present on every machine
+# devgeta installs on. `dg theme set-wallpaper` overrides it per machine.
+wallpaper: wallpapers/tokyonight.jpg
+
+colors:
+  background_hard: "#16161e"
+  background: "#1a1b26"
+  background_element: "#292e42"
+  background_subtle: "#3b4261"
+  border: "#414868"
+  foreground: "#c0caf5"
+  foreground_muted: "#a9b1d6"
+  foreground_dim: "#545c7e"
+  foreground_subtle: "#565f89"
+  red: "#f7768e"
+  green: "#9ece6a"
+  yellow: "#e0af68"
+  blue: "#7aa2f7"
+  purple: "#bb9af7"
+  aqua: "#7dcfff"
+  orange: "#ff9e64"
+  red_dim: "#f7768e"
+  green_dim: "#9ece6a"
+  yellow_dim: "#e0af68"
+  blue_dim: "#7aa2f7"
+  purple_dim: "#bb9af7"
+  aqua_dim: "#7dcfff"
+  diff_added_background: "#20303b"
+  diff_removed_background: "#37222c"

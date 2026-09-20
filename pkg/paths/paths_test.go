@@ -289,6 +289,18 @@ func TestFontsDirs(t *testing.T) {
 	})
 }
 
+// TestHomeOpenCode pins the prefix opencode's official install script writes
+// to. The script hardcodes $HOME/.opencode and offers no override env var, so
+// this is not a devgeta preference that can be moved — it is a fact about the
+// installer, and every detection, idempotency and uninstall check keys on it
+// (ADR-0047 decision 2).
+func TestHomeOpenCode(t *testing.T) {
+	want := filepath.Join(paths.Paths.Home.Root, ".opencode")
+	if got := paths.Paths.Home.OpenCode; got != want {
+		t.Errorf("expected Home.OpenCode %q, got %q", want, got)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {

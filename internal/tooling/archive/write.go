@@ -9,6 +9,7 @@ package archive
 
 import (
 	"archive/tar"
+	"bufio"
 	"compress/gzip"
 	"crypto/sha256"
 	"fmt"
@@ -30,7 +31,17 @@ type WriteOptions struct {
 	// SCHILY.xattr.<name> pax records instead of leaving them out. Darwin
 	// only — the command layer refuses this flag on any other OS.
 	MacMetadata bool
+	// OnProgress, when non-nil, is called with the number of source bytes
+	// read since the last call. Summed, it converges on ScanResult.TotalBytes.
+	OnProgress ProgressFunc
 }
+
+// readBufferSize is how much of a source file is pulled off the disk at a
+// time. The default 32 KiB io.Copy chunk means ~32,000 reads per GiB, which
+// an external or spinning drive answers far slower than the same bytes asked
+// for in large sequential runs — and a machine move is mostly large files on
+// exactly that kind of drive.
+const readBufferSize = 1 << 20 // 1 MiB
 
 // WriteResult names the three files Write produced.
 type WriteResult struct {
@@ -163,6 +174,10 @@ func streamArchive(
 	}
 	tw := tar.NewWriter(compWriter)
 
+	// One buffer reused across every file, so large sequential reads cost a
+	// single allocation for the whole archive rather than one per entry.
+	src := bufio.NewReaderSize(nil, readBufferSize)
+
 	for _, e := range entries {
 		switch e.Kind {
 		case KindDir:
@@ -207,7 +222,7 @@ func streamArchive(
 				return nil, nil, werr
 			}
 		case KindFile:
-			entryManifest, vanished, writeErr := writeFileEntry(tw, sourceRoot, e, opts.MacMetadata)
+			entryManifest, vanished, writeErr := writeFileEntry(tw, src, sourceRoot, e, opts)
 			if writeErr != nil {
 				return nil, nil, writeErr
 			}
@@ -233,9 +248,10 @@ func streamArchive(
 // other failure (permission revoked, read error) is fatal.
 func writeFileEntry(
 	tw *tar.Writer,
+	src *bufio.Reader,
 	sourceRoot string,
 	e Entry,
-	macMetadata bool,
+	opts WriteOptions,
 ) (entry ManifestEntry, vanished bool, err error) {
 	fullPath := filepath.Join(sourceRoot, filepath.FromSlash(e.Path))
 	f, openErr := os.Open(fullPath)
@@ -259,15 +275,16 @@ func writeFileEntry(
 		Mode:     int64(info.Mode().Perm()),
 		ModTime:  info.ModTime().Truncate(time.Second),
 	}
-	if macMetadata {
+	if opts.MacMetadata {
 		attachXattrs(hdr, fullPath)
 	}
 	if werr := tw.WriteHeader(hdr); werr != nil {
 		return ManifestEntry{}, false, werr
 	}
 
+	src.Reset(f)
 	h := sha256.New()
-	if _, cerr := io.Copy(tw, io.TeeReader(f, h)); cerr != nil {
+	if _, cerr := io.Copy(tw, countReads(io.TeeReader(src, h), opts.OnProgress)); cerr != nil {
 		return ManifestEntry{}, false, fmt.Errorf("reading %s: %w", e.Path, cerr)
 	}
 	return ManifestEntry{Hash: fmt.Sprintf("%x", h.Sum(nil)), Path: e.Path}, false, nil

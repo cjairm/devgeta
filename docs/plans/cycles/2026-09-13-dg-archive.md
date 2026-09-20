@@ -2,7 +2,9 @@
 
 **Date:** 2026-09-13
 **Estimated Duration:** ~10 hours
-**Status:** Draft — awaiting approval of this doc, ADR-0040 and ADR-0041.
+**Status:** Done — shipped in v1.27.0. Two items planned here landed in a
+follow-up (see [§9](#9-follow-up-after-v1270)): the byte progress meter §5
+called for, and a widened overwrite guard.
 
 ---
 
@@ -341,6 +343,56 @@ work without cgo).
 - [ ] Risks realistic?
 
 **Reviewer notes:**
+
+---
+
+## 9. Follow-up after v1.27.0
+
+v1.27.0 shipped the three phases but not the progress reporting §5 specified,
+and its overwrite guard turned out to be narrower than §5 intended. Both were
+closed in a follow-up:
+
+- [x] **Byte progress for the write and the verify.** §5 called for "progress
+      by bytes against the scan total" and it was never wired up — a large
+      archive printed one line and then nothing for hours. Both long phases now
+      report a bar, percent, bytes done over total, rate, and time left. The
+      renderer is `pkg/progress`, deliberately outside this package: the
+      archive phases emit a `ProgressFunc` callback and know nothing about
+      terminals.
+
+      Cost was the constraint, since this runs over hundreds of GB. The hot
+          path is one atomic add per buffer; a single goroutine does all
+          formatting and I/O on a fixed tick. There is no second pass over the
+          data — both phases already stream every byte through a reader.
+          Measured against the scan total for the write, and against the
+          archive's size on disk for the verify (that pass reads compressed
+          bytes back off the drive, so the source total would be the wrong
+          denominator).
+
+- [x] **The overwrite guard now covers every output, not just the archive.**
+      §5 said "the final archive name already exists (never overwrite)", and
+      the implementation checked exactly that one path — but the write phase
+      renames all three `.partial` files into place unconditionally, and the
+      verify phase writes a fourth file. A destination holding a previous
+      run's `<name>.sha256` or `<name>.skipped.txt` without its archive had
+      those replaced silently. All four paths are checked before anything is
+      created.
+
+- [x] **Free space is reported, and flagged when it is short.** A warning
+      rather than a refusal: the output is compressed and the ratio is not
+      knowable until it is written, so refusing on the uncompressed total
+      would block runs that fit comfortably. Running out mid-write was
+      already safe — every output is a `.partial` until the end, and a
+      failure deletes them.
+
+- [x] **Source reads use a 1 MiB buffer.** The default 32 KiB `io.Copy` chunk
+      is ~32,000 reads per GiB, which an external drive answers far slower
+      than the same bytes asked for in large sequential runs — and this
+      command exists to move large files onto exactly that kind of drive.
+
+Not changed, and worth stating because it is the guarantee the guard rests on:
+the source is only ever opened for reading, and the only removal a run performs
+is of the `.partial` files it created itself, on failure.
 
 ---
 

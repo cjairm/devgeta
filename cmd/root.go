@@ -20,45 +20,32 @@ import (
 var verbose bool
 
 var rootCmd = &cobra.Command{
-	Use:          "dg",
-	SilenceUsage: true,
-	Short:        "Devgeta - Your cross-platform CLI to install, configure, and manage development environments",
-	Long: `Devgeta (dg) helps you set up and manage your development environment with ease.
+	Use: "dg",
+	// Both are silenced because devgeta reports failures itself, through
+	// utils.MaybeExitWithError below. Leaving SilenceErrors off printed every
+	// RunE failure twice — once by Cobra on stderr, once by us on stdout.
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Short:         "Devgeta - Your cross-platform CLI to install, configure, and manage development environments",
+	// The command list is deliberately NOT written here. It used to be, and it
+	// drifted: the help advertised six commands that did not exist (reinstall,
+	// re-configure, update, check-updates, backup, restore - the last four are
+	// planned, and live in ROADMAP.md) while hiding five that did (completion,
+	// archive, task, workspace, worktree), plus every flag. Cobra renders the
+	// commands and flags from what is registered, so only prose belongs in
+	// Long, and a planned command belongs in ROADMAP.md until it runs.
+	Long: `Devgeta (dg) helps you set up and manage your development environment.
 
-Key Features:
-  • Debian/Ubuntu and macOS support
-  • Install, configure, and uninstall development apps, fonts, themes, and languages
-  • Maintain a global manifest of installed components to prevent conflicts
-  • Choose and apply themes and fonts for your environment
-  • Reconfigure or force reconfigure apps and dotfiles
-  • Safely uninstall only what Devgeta managed
-  • Detect and revert failed installs to keep your system clean
-  • Create and restore configuration backups
-  • Validate your setup to catch issues early
-  • Verbose output mode for better insight into what’s happening
-
-Available Commands:
-  install        Install apps, languages, fonts, themes (with optional --soft mode)
-  reinstall      Force reinstallation and configuration
-  configure      Apply configuration files for a named app (e.g., dg configure git)
-  re-configure   Re-apply configuration even if already present
-  uninstall      Remove previously installed apps or assets (fonts/themes) safely
-  update         Update selected apps (e.g., --neovim, --aerospace)
-  list           View all items installed via Devgeta
-  config         View and change devgeta settings (worktree.*)
-  check-updates  See if any managed apps have updates
-  backup         Create a backup of your current Devgeta-managed environment
-  restore        Restore a previous backup configuration
-  change         Change font or theme (--theme=..., --font=...)
-  version        Print the version number of devgeta
-
-Examples:
-  dg install
-  dg uninstall --font=my-font --app=aerospace
-  dg re-configure --app=neovim
-  dg change --theme=tokyonight --font=JetBrainsMono
-  dg backup --output=~/dg_backup.json
-`,
+  • One command syntax on both macOS and Debian/Ubuntu
+  • Installs, configures, and uninstalls apps, fonts, themes, and languages
+  • Tracks what it installed, so it only ever removes its own work
+  • Re-applies configuration on demand, without touching your edits
+  • Switches the theme of every themed app together`,
+	Example: `  dg install
+  dg install --only terminal
+  dg configure neovim --force
+  dg theme set tokyonight
+  dg completion zsh`,
 }
 
 // Execute runs the root command after wiring a process-level context that
@@ -99,7 +86,12 @@ func init() {
 		return nil
 	}
 
-	rootCmd.SetHelpFunc(utils.PrompCustomHelp)
+	// The same help function taskCmd and configCmd already opted into. The
+	// root used to print only Use+Long, which is why they had to opt out at
+	// all: it hid every subcommand and flag from `dg <sub> --help` too. One
+	// help function for the whole tree means no command can be left out of the
+	// listing by hand.
+	rootCmd.SetHelpFunc(standardHelpFunc)
 
 	rootCmd.Version = buildinfo.Version
 	rootCmd.SetVersionTemplate(fmt.Sprintf(

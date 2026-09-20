@@ -936,7 +936,8 @@ func claudePermissions(t *testing.T) map[string]map[string]string {
 		config.IntegrationsConfig
 		ScratchDir          string
 		OutputBudgetEnabled bool
-	}{ScratchDir: `"/tmp/placeholder-scratch"`}
+		Theme               string
+	}{ScratchDir: `"/tmp/placeholder-scratch"`, Theme: DEFAULT_THEME_NAME}
 	if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 		t.Fatalf("failed to render settings.json.tmpl: %v", err)
 	}
@@ -1099,7 +1100,8 @@ func TestScratchDirGrantParity(t *testing.T) {
 		config.IntegrationsConfig
 		ScratchDir          string
 		OutputBudgetEnabled bool
-	}{ScratchDir: mustJSONString(t, wantRoot)}
+		Theme               string
+	}{ScratchDir: mustJSONString(t, wantRoot), Theme: DEFAULT_THEME_NAME}
 	if err := files.GenerateFromTemplate(claudeTmplPath, claudeOut, claudeRenderData); err != nil {
 		t.Fatalf("failed to render settings.json.tmpl: %v", err)
 	}
@@ -1192,7 +1194,8 @@ func TestScratchDirGrantRendersValidJSONForHostilePaths(t *testing.T) {
 				config.IntegrationsConfig
 				ScratchDir          string
 				OutputBudgetEnabled bool
-			}{ScratchDir: mustJSONString(t, root)}
+				Theme               string
+			}{ScratchDir: mustJSONString(t, root), Theme: DEFAULT_THEME_NAME}
 			if err := files.GenerateFromTemplate(
 				claudeTmplPath,
 				claudeOut,

@@ -18,6 +18,14 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// VerifyOptions controls the verify phase's reporting.
+type VerifyOptions struct {
+	// OnProgress, when non-nil, is called with the number of archive bytes
+	// read since the last call. Summed, it converges on the archive file's
+	// size on disk — the compressed size, not the source total.
+	OnProgress ProgressFunc
+}
+
 // VerifyResult is the outcome of a successful Verify.
 type VerifyResult struct {
 	// ArchiveHash is the hex SHA-256 of the archive file's own bytes.
@@ -31,7 +39,7 @@ type VerifyResult struct {
 // naming the first mismatch found: a corrupted entry, an entry the manifest
 // lists that the archive lacks, or an archive entry the manifest does not
 // list.
-func Verify(archivePath string) (*VerifyResult, error) {
+func Verify(archivePath string, opts VerifyOptions) (*VerifyResult, error) {
 	manifestPath, err := manifestPathFor(archivePath)
 	if err != nil {
 		return nil, err
@@ -57,8 +65,10 @@ func Verify(archivePath string) (*VerifyResult, error) {
 	}
 	defer func() { _ = archiveFile.Close() }()
 
+	// Count at the file, before decompression, so progress is measured
+	// against the archive's size on disk — a total the caller can stat.
 	hasher := sha256.New()
-	tee := io.TeeReader(archiveFile, hasher)
+	tee := io.TeeReader(countReads(archiveFile, opts.OnProgress), hasher)
 
 	decompressed, closeDecoder, err := decompressReader(tee, archivePath)
 	if err != nil {

@@ -7,12 +7,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -20,6 +23,95 @@ import (
 
 func init() {
 	testutil.InitLogger()
+}
+
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under a fresh temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its theme through
+// theme.CurrentDefinition, which loads and validates a whole theme file - so
+// even a single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, hex string) {
+	t.Helper()
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+}
+
+// writeOpenCodeThemeTemplateFixture writes the minimal default.json.tmpl the
+// real configs/opencode/themes/default.json.tmpl provides, into appConfigDir
+// (a themes/ subdirectory is created).
+func writeOpenCodeThemeTemplateFixture(t *testing.T, appConfigDir, content string) {
+	t.Helper()
+	dir := filepath.Join(appConfigDir, "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "default.json.tmpl"),
+		[]byte(content),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestForceConfigureParts(t *testing.T) {
@@ -124,6 +216,47 @@ func TestNameAndKind(t *testing.T) {
 	}
 }
 
+// isolateOpenCodeInstallPrefix points paths.Paths.Home.OpenCode - the
+// directory the install script owns - at a fresh temp tree and restores the
+// original afterwards, so a test that creates or removes the installed binary
+// cannot touch the real one.
+func isolateOpenCodeInstallPrefix(t *testing.T) string {
+	t.Helper()
+	prefix := filepath.Join(t.TempDir(), ".opencode")
+	old := paths.Paths.Home.OpenCode
+	t.Cleanup(func() { paths.Paths.Home.OpenCode = old })
+	paths.Paths.Home.OpenCode = prefix
+	return prefix
+}
+
+// stubLookPath swaps the package-level PATH-lookup seam every app uses for
+// binary detection (commands.LookPathFn), so a test decides whether opencode
+// is on PATH instead of inheriting whatever the machine running the test has
+// installed.
+func stubLookPath(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	orig := commands.LookPathFn
+	t.Cleanup(func() { commands.LookPathFn = orig })
+	commands.LookPathFn = fn
+}
+
+// writeOpenCodeBinaryFixture creates the file the install script would leave
+// at <prefix>/bin/opencode.
+func writeOpenCodeBinaryFixture(t *testing.T, prefix string) {
+	t.Helper()
+	binDir := filepath.Join(prefix, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(binDir, constants.OpenCode),
+		[]byte("#!/bin/sh\n"),
+		0o755,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
@@ -131,21 +264,79 @@ func TestInstall(t *testing.T) {
 	if err := app.Install(); err != nil {
 		t.Fatalf("Install error: %v", err)
 	}
-	if mockApp.Cmd.InstalledPkg != constants.OpenCode {
-		t.Fatalf(
-			"expected InstallPackage(%s), got %q",
-			constants.OpenCode,
+
+	calls := mockApp.Base.ExecCommandCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+	}
+	download, execute := calls[0], calls[1]
+	if download.Command != "curl" {
+		t.Errorf("expected download step command 'curl', got %q", download.Command)
+	}
+	if !slices.Contains(download.Args, openCodeInstallScriptURL) {
+		t.Errorf(
+			"expected download step to fetch %q, got args %v",
+			openCodeInstallScriptURL, download.Args,
+		)
+	}
+	if download.Timeout == 0 {
+		t.Error("expected download step to carry a non-zero Timeout")
+	}
+	// The script's shebang is `#!/usr/bin/env bash` and it uses bash-only
+	// syntax. Running it with `sh` - dash on Debian - is the defect ADR-0047
+	// fixes, so the interpreter is part of the contract, not an incidental
+	// argument.
+	if execute.Command != "bash" {
+		t.Errorf("expected execute step command 'bash', got %q", execute.Command)
+	}
+	if execute.Timeout == 0 {
+		t.Error("expected execute step to carry a non-zero Timeout")
+	}
+
+	// No package manager is involved on either platform any more: brew on
+	// macOS offered no pin and no downgrade, and apt never had opencode at
+	// all (ADR-0047 decision 1).
+	if mockApp.Cmd.InstalledPkg != "" {
+		t.Errorf(
+			"expected no package-manager install, got InstallPackage(%q)",
 			mockApp.Cmd.InstalledPkg,
 		)
 	}
+}
 
-	testutil.VerifyNoRealCommands(t, mockApp.Base)
+// TestInstall_FailedDownloadBlocksInstall asserts a failed or truncated
+// download stops before the script ever runs, rather than being reported as a
+// successful install - the defect the staged shape replaces (`false | bash`
+// exits 0).
+func TestInstall_FailedDownloadBlocksInstall(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResults(
+		commands.ExecCommandResult("", "", fmt.Errorf("404 not found")),
+	)
+	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	err := app.Install()
+	if err == nil {
+		t.Fatal("expected Install to fail when the download step fails")
+	}
+	if !strings.Contains(err.Error(), "failed to download install script") {
+		t.Errorf("expected download-failure error, got: %v", err)
+	}
+	if got := mockApp.Base.GetExecCommandCallCount(); got != 1 {
+		t.Errorf(
+			"expected the execute step to be skipped after a failed download, got %d calls",
+			got,
+		)
+	}
 }
 
 func TestForceInstall(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
+
+	prefix := isolateOpenCodeInstallPrefix(t)
+	writeOpenCodeBinaryFixture(t, prefix)
 
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
 	oldOpenCodeDir := paths.Paths.Config.OpenCode
@@ -157,35 +348,114 @@ func TestForceInstall(t *testing.T) {
 	if err := app.ForceInstall(); err != nil {
 		t.Fatalf("ForceInstall() error: %v", err)
 	}
-	if tc.MockApp.Cmd.InstalledPkg != constants.OpenCode {
-		t.Errorf("expected Install to be called, got %q", tc.MockApp.Cmd.InstalledPkg)
-	}
 
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	// Uninstall removes the prefix with os.RemoveAll (no command at all),
+	// then Install stages the script: curl, then bash.
+	calls := tc.MockApp.Base.ExecCommandCalls
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+	}
+	if calls[0].Command != "curl" {
+		t.Errorf("expected download step 'curl', got %q", calls[0].Command)
+	}
+	if calls[1].Command != "bash" {
+		t.Errorf("expected install script executed via 'bash', got %q", calls[1].Command)
+	}
+	if tc.MockApp.Cmd.InstalledPkg != "" || tc.MockApp.Cmd.UninstalledPkg != "" {
+		t.Errorf(
+			"expected no package-manager calls, got install=%q uninstall=%q",
+			tc.MockApp.Cmd.InstalledPkg, tc.MockApp.Cmd.UninstalledPkg,
+		)
+	}
 }
 
 func TestSoftInstall(t *testing.T) {
-	mockApp := testutil.NewMockApp()
-	app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	// The prefix check is not a duplicate of the PATH lookup: a fresh
+	// install's ~/.opencode/bin is not on the running process's PATH (nor on
+	// the user's, until they open a new shell), so a PATH-only check would
+	// re-run the installer on every `dg install` - the Debian idempotency
+	// defect in ADR-0047.
+	t.Run("skips when the script's own binary is present, even off PATH", func(t *testing.T) {
+		prefix := isolateOpenCodeInstallPrefix(t)
+		writeOpenCodeBinaryFixture(t, prefix)
+		stubLookPath(t, func(string) (string, error) {
+			return "", fmt.Errorf("not found")
+		})
 
-	if err := app.SoftInstall(); err != nil {
-		t.Fatalf("SoftInstall error: %v", err)
-	}
-	if mockApp.Cmd.MaybeInstalled != constants.OpenCode {
-		t.Fatalf(
-			"expected MaybeInstallPackage(%s), got %q",
-			constants.OpenCode,
-			mockApp.Cmd.MaybeInstalled,
-		)
-	}
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
-	testutil.VerifyNoRealCommands(t, mockApp.Base)
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
+			t.Errorf("expected no commands when opencode is already installed, got %d", got)
+		}
+		if mockApp.Cmd.MaybeInstalled != "" || mockApp.Cmd.InstalledPkg != "" {
+			t.Errorf(
+				"expected no package-manager calls, got maybe=%q install=%q",
+				mockApp.Cmd.MaybeInstalled, mockApp.Cmd.InstalledPkg,
+			)
+		}
+	})
+
+	// A user who already has opencode from somewhere else (npm, brew, their
+	// own build) keeps it: devgeta does not install a second copy over it.
+	t.Run("skips when opencode resolves on PATH from elsewhere", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		stubLookPath(t, func(string) (string, error) {
+			return "/usr/local/bin/opencode", nil
+		})
+
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
+			t.Errorf("expected no commands when opencode is on PATH, got %d", got)
+		}
+	})
+
+	t.Run("installs when neither the prefix nor PATH has it", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		stubLookPath(t, func(string) (string, error) {
+			return "", fmt.Errorf("not found")
+		})
+
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SoftInstall(); err != nil {
+			t.Fatalf("SoftInstall error: %v", err)
+		}
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 2 {
+			t.Fatalf("expected 2 ExecCommand calls (download, execute), got %d", len(calls))
+		}
+		if calls[0].Command != "curl" || calls[1].Command != "bash" {
+			t.Errorf(
+				"expected staged curl-then-bash install, got %q then %q",
+				calls[0].Command, calls[1].Command,
+			)
+		}
+		if mockApp.Cmd.MaybeInstalled != "" {
+			t.Errorf(
+				"expected no package-manager install, got MaybeInstallPackage(%q)",
+				mockApp.Cmd.MaybeInstalled,
+			)
+		}
+	})
 }
 
 func TestUninstall(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
+
+	prefix := isolateOpenCodeInstallPrefix(t)
+	writeOpenCodeBinaryFixture(t, prefix)
 
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
 	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
@@ -195,17 +465,50 @@ func TestUninstall(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCodeDir })
 	paths.Paths.Config.OpenCode = userConfigDir
 
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.AddToInstalled(constants.OpenCode, "package")
+	gc.Shell.Opencode = true
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
 	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 	if err := app.Uninstall(); err != nil {
 		t.Fatalf("Uninstall error: %v", err)
 	}
-	if tc.MockApp.Cmd.UninstalledPkg != constants.OpenCode {
+
+	// Removing the prefix IS the uninstall: there is no package-manager
+	// entry to remove, and `apt-get remove opencode` against a file in
+	// ~/.opencode was the Debian no-op ADR-0047 fixes.
+	if _, err := os.Stat(prefix); !os.IsNotExist(err) {
+		t.Errorf("expected %q to be removed, stat err = %v", prefix, err)
+	}
+	if _, err := os.Stat(userConfigDir); !os.IsNotExist(err) {
+		t.Errorf("expected %q to be removed, stat err = %v", userConfigDir, err)
+	}
+	if tc.MockApp.Cmd.UninstalledPkg != "" {
 		t.Errorf(
-			"expected UninstallPackage(%s), got %q",
-			constants.OpenCode,
+			"expected no package-manager uninstall, got UninstallPackage(%q)",
 			tc.MockApp.Cmd.UninstalledPkg,
 		)
+	}
+
+	after := &config.GlobalConfig{}
+	if err := after.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if after.IsTracked(constants.OpenCode, "package", "installed") {
+		t.Error("expected opencode to be dropped from the installed packages list")
+	}
+	if after.Shell.Opencode {
+		t.Error("expected the opencode shell feature to be disabled")
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -255,11 +558,11 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		themeContent := `{"name": "Devgeta Gruvbox", "type": "dark"}`
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
-		if err := os.WriteFile(themeSourcePath, []byte(themeContent), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		writeOpenCodeThemeTemplateFixture(
+			t,
+			appConfigDir,
+			`{"name": "Devgeta Gruvbox", "foreground": "{{.Palette.Foreground}}"}`,
+		)
 
 		pluginDir := filepath.Join(appConfigDir, "plugin")
 		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
@@ -283,6 +586,7 @@ func TestForceConfigure(t *testing.T) {
 		oldConfigOpenCode := paths.Paths.Config.OpenCode
 		t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
 		paths.Paths.Config.OpenCode = userConfigDir
+		setupThemeFixture(t, "#ebdbb2")
 
 		app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
@@ -318,6 +622,9 @@ func TestForceConfigure(t *testing.T) {
 		}
 		if !strings.Contains(string(themeContentRead), "Devgeta Gruvbox") {
 			t.Error("Expected theme file to contain Gruvbox theme")
+		}
+		if !strings.Contains(string(themeContentRead), "#ebdbb2") {
+			t.Error("Expected theme file to be rendered with the current theme's palette")
 		}
 
 		// task-redirect.js plugin deployed
@@ -355,7 +662,7 @@ func TestForceConfigure(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -370,6 +677,7 @@ func TestForceConfigure(t *testing.T) {
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -396,6 +704,109 @@ func TestForceConfigure(t *testing.T) {
 
 		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	})
+}
+
+// TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
+// the theme through theme.CurrentDefinition rather than a hardcoded name:
+// with current_theme set to a fixture theme whose colors are distinguishable
+// from "default", both opencode.json's "theme" field and the rendered
+// themes/<name>.json must reflect it.
+func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+
+	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"foreground": "{{.Palette.Foreground}}"}`)
+
+	pluginDir := filepath.Join(appConfigDir, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	writeThemeFixture(t, themesDir, "custom", "#abcdef", "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.CurrentTheme = "custom"
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	configContent, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("failed to read opencode.json: %v", err)
+	}
+	if !strings.Contains(string(configContent), `"theme": "custom"`) {
+		t.Errorf("expected opencode.json to name the current theme, got: %s", configContent)
+	}
+
+	themePath := filepath.Join(userConfigDir, "themes", "custom.json")
+	themeContent, err := os.ReadFile(themePath)
+	if err != nil {
+		t.Fatalf("expected theme file at %s: %v", themePath, err)
+	}
+	if !strings.Contains(string(themeContent), "#abcdef") {
+		t.Errorf(
+			"expected rendered theme file to use current_theme %q's color (#abcdef), got:\n%s",
+			"custom",
+			themeContent,
+		)
+	}
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
 func TestSoftConfigure(t *testing.T) {
@@ -460,13 +871,14 @@ func TestSoftConfigure(t *testing.T) {
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -532,13 +944,14 @@ shell:
 		); err != nil {
 			t.Fatal(err)
 		}
-		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json")
+		themeSourcePath := filepath.Join(appConfigDir, "themes", "default.json.tmpl")
 		if err := os.WriteFile(themeSourcePath, []byte(`{"name": "test"}`), 0o644); err != nil {
 			t.Fatal(err)
 		}
 
 		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -847,7 +1260,7 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "themes", "default.json"),
+		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
 		[]byte(`{}`),
 		0o644,
 	); err != nil {
@@ -860,6 +1273,7 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 
 	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
+	setupThemeFixture(t, "#282828")
 
 	oldAppConfigsOpenCode := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigsOpenCode })

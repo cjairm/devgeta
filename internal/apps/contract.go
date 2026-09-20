@@ -1,5 +1,7 @@
 package apps
 
+import "github.com/cjairm/devgeta/internal/theme"
+
 // AppKind classifies what kind of application an app is.
 type AppKind int
 
@@ -46,6 +48,137 @@ type SelectiveConfigurer interface {
 	// ForceConfigureParts overwrites only the named parts, leaving all other
 	// configuration in place.
 	ForceConfigureParts(parts []string) error
+}
+
+// ThemedConfigurer is implemented by the seven apps with a theme surface
+// (Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, i3). It exists because
+// ForceConfigure() takes no arguments and resolves its theme from
+// current_theme, which `dg theme set` deliberately has not written yet when
+// it needs to render the *target* theme — see
+// docs/plans/cycles/2026-09-14-dg-theme.md's Step 5. `dg theme set` resolves
+// the requested theme itself and calls ForceConfigureTheme directly with the
+// already-loaded Definition; an app's own ForceConfigure calls it too, via
+// theme.CurrentDefinition(), so there is exactly one configure body per app.
+//
+// The argument is the full Definition, not just a Palette: every app calls
+// def.PaletteFor(a.Name()) to get its own color group (PaletteFor stays the
+// only place a group is chosen — no app or template picks colors: vs
+// terminal: itself), but OpenCode and Claude also need def.Name (their
+// rendered theme file's name and their config's "theme" field) and Neovim
+// needs def.NeovimModule (its generated shim) — neither of which a flat
+// Palette carries.
+type ThemedConfigurer interface {
+	ForceConfigureTheme(def theme.Definition) error
+}
+
+// LiveThemeApplier is implemented by a themed app that can push a theme into
+// an already-running process — tmux's `source-file` into a live session is
+// the only case today. `dg theme set` calls it only after its transaction has
+// committed, because a live push cannot be rolled back (cycle doc Step 5).
+type LiveThemeApplier interface {
+	ApplyLiveTheme() error
+}
+
+// StateGroup is one named, separately-selectable slice of an app's own state:
+// the unit `dg export` and `dg import` move, and the unit `--group` names
+// (ADR-0045). Paths are relative to a profile root, so one group definition
+// covers every profile the app has.
+//
+// A group is deliberately four fields and not a bare path list. Default
+// answers "does this move unless the user says otherwise", which ADR-0045
+// only allows for state that is version-stable and machine-independent; Why
+// is the one-line reason `--dry-run` prints beside the group, so what moves
+// is checkable before anything is written.
+type StateGroup struct {
+	// Name is what --group matches, lowercase and hyphenated ("bookmarks",
+	// "extension-settings").
+	Name string
+	// Paths are relative to a profile root, forward-slash separated. A path
+	// may be a single file ("Bookmarks") or a directory ("Sessions").
+	Paths []string
+	// Default reports whether the group is exported unless --group narrows
+	// the run. It has no say on the way in: an import restores every group
+	// the bundle carries, because the export already made that decision.
+	Default bool
+	// Why is the one-line reason shown by --dry-run.
+	Why string
+}
+
+// StatePorter is the optional interface an app implements to make its own
+// accumulated state portable — `dg export <app>` and `dg import <app>`.
+// It is optional for the same reason ThemedConfigurer is: most apps have no
+// state worth moving, and the ones that do need a hand-researched allowlist
+// that cannot be derived from the filesystem (ADR-0045). An app that does not
+// implement it is simply not exportable, and the command says so and names
+// the apps that are.
+//
+// What an adapter names is an allowlist: nothing it does not name ever moves.
+// A group may never name a credential or machine-bound file — that is not a
+// convention but a test, internal/tooling/appstate's denylist check, which
+// runs against every registered adapter.
+type StatePorter interface {
+	// StateRoots maps a profile key to that profile's absolute root
+	// directory. An app with a single profile returns one entry.
+	//
+	// Every root MUST be a direct child of one shared base directory. That
+	// base is what the bundle is written relative to, and the key is the
+	// bundle's top-level directory — which is the only thing keeping two
+	// profiles' identically-named files (every Chromium profile has a
+	// "Bookmarks") from colliding into one tar member.
+	StateRoots() (map[string]string, error)
+
+	// StateGroups returns the adapter's whole allowlist, in a fixed order.
+	StateGroups() []StateGroup
+
+	// IsRunning reports whether the app is running right now. Both
+	// directions refuse while it is: this state is SQLite and LevelDB, which
+	// copied out from under a live process arrives corrupt (ADR-0045).
+	IsRunning() (bool, error)
+}
+
+// StateProfileInfo is one profile's registration: the directory it lives in
+// and the two fields needed to show it to a user. Three fields and no more —
+// a registry entry is rebuilt from these, never transplanted, which is what
+// keeps ADR-0046's write out of the business of copying a machine-bound file.
+type StateProfileInfo struct {
+	// Dir is the profile's directory name, the same key StateRoots uses.
+	Dir string
+	// Name is the human-readable profile name ("Jair - Employ").
+	Name string
+	// Avatar is the app's own identifier for the profile picture. An app
+	// that has no such concept leaves it empty.
+	Avatar string
+}
+
+// StateProfileRegistrar is the optional interface an app implements when its
+// profiles are registered somewhere outside the profile directory itself —
+// Chromium keeps the list, the display names and the directory-name counter
+// in Local State, which the denylist forbids any bundle to carry (ADR-0046).
+//
+// It is optional for the same reason ThemedConfigurer is: an app with one
+// profile, or with profiles that are just directories, needs none of it. An
+// adapter that does not implement it keeps the old behaviour exactly — a
+// bundle naming a profile the machine lacks is refused, because devgeta has
+// no way to make that profile exist.
+type StateProfileRegistrar interface {
+	// ReadProfileRegistry returns every registered profile, keyed by
+	// directory. A machine where the app has never run returns an empty map
+	// rather than an error.
+	ReadProfileRegistry() (map[string]StateProfileInfo, error)
+
+	// EnsureProfiles creates and registers every profile in want that does
+	// not already exist, and returns the directories it created. An entry
+	// that is already registered is left exactly as it is: an import must
+	// never rename a profile the user already has.
+	//
+	// It is called only after the app has been confirmed not running, and
+	// only after the caller has backed up whatever the registration writes.
+	EnsureProfiles(want map[string]StateProfileInfo) ([]string, error)
+
+	// RegistryPaths are the absolute paths EnsureProfiles may write, so the
+	// caller can back them up before the first write and roll them back with
+	// everything else.
+	RegistryPaths() []string
 }
 
 // FontInstaller is the contract for the Fonts module, which installs named fonts

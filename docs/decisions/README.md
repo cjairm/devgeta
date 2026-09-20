@@ -61,3 +61,9 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name
 - [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
 - [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable
+- [ADR-0042](ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md) — An archive refuses on proof and warns on prediction
+- [ADR-0043](ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md) — A theme is a palette file, not a branch in every template
+- [ADR-0044](ADR-0044-a-theme-declares-a-wallpaper-it-never-ships-one.md) — A theme declares a wallpaper; it never ships one
+- [ADR-0045](ADR-0045-portable-app-state-is-an-allowlist-not-a-smaller-archive.md) — Portable app state is an allowlist, not a smaller archive
+- [ADR-0046](ADR-0046-a-bundle-carries-the-profile-registry-and-an-import-may-write-it.md) — A bundle carries the profile registry, and an import may write it
+- [ADR-0047](ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md) — opencode installs from its official script on every platform

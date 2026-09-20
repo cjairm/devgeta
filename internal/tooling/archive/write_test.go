@@ -348,3 +348,72 @@ func TestWriteFailureMidStreamLeavesNoFinalFile(t *testing.T) {
 		t.Errorf("expected no files left in destDir after a failed write, found: %v", names)
 	}
 }
+
+func TestWriteProgressSumsToTheScannedTotal(t *testing.T) {
+	root, _, _ := buildFixture(t)
+	destDir := t.TempDir()
+	scan, err := Scan(root, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	var reported int64
+	if _, err := Write(root, destDir, "myarchive", scan, WriteOptions{
+		OnProgress: func(n int64) { reported += n },
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	// The scan total counts regular-file bytes only, which is exactly what
+	// the write phase streams — so the meter can never end short of 100%.
+	if reported != scan.TotalBytes {
+		t.Errorf("progress reported %d bytes, scan promised %d", reported, scan.TotalBytes)
+	}
+	if scan.TotalBytes == 0 {
+		t.Fatal("fixture should contain file bytes, otherwise this proves nothing")
+	}
+}
+
+func TestWriteWithoutProgressCallbackStillArchives(t *testing.T) {
+	root, rootContent, _ := buildFixture(t)
+	destDir := t.TempDir()
+	scan, err := Scan(root, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	result, err := Write(root, destDir, "myarchive", scan, WriteOptions{OnProgress: nil})
+	if err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	entries := readBackTar(t, result.ArchivePath, false)
+	if got := entries["content.txt"].content; !bytes.Equal(got, rootContent) {
+		t.Errorf("content.txt = %q, want %q", got, rootContent)
+	}
+}
+
+func TestWriteProgressCountsFilesLargerThanTheReadBuffer(t *testing.T) {
+	// A file several read buffers long proves the count accumulates across
+	// reads rather than being recorded once per entry.
+	root := t.TempDir()
+	big := bytes.Repeat([]byte("a"), readBufferSize*2+1234)
+	writeFile(t, filepath.Join(root, "big.bin"), big)
+
+	destDir := t.TempDir()
+	scan, err := Scan(root, ScanOptions{})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	var reported int64
+	if _, err := Write(root, destDir, "myarchive", scan, WriteOptions{
+		OnProgress: func(n int64) { reported += n },
+	}); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	if reported != int64(len(big)) {
+		t.Errorf("progress reported %d bytes, file is %d", reported, len(big))
+	}
+}

@@ -252,6 +252,13 @@ var Paths = struct {
 	}
 	Home struct {
 		Root string
+		// OpenCode is where opencode's official install script puts
+		// everything it installs, binary included. The script hardcodes
+		// $HOME/.opencode with no override env var, so this is a fact about
+		// the installer rather than a devgeta choice - which is why
+		// opencode's install, idempotency check and uninstall all key on it
+		// (ADR-0047).
+		OpenCode string
 	}
 	System struct {
 		Applications string
@@ -378,9 +385,11 @@ var Paths = struct {
 		Root: GetDataDir(),
 	},
 	Home: struct {
-		Root string
+		Root     string
+		OpenCode string
 	}{
-		Root: GetHomeDir(),
+		Root:     GetHomeDir(),
+		OpenCode: GetHomeDir(".opencode"),
 	},
 	System: struct {
 		Applications string

@@ -96,7 +96,6 @@ alias ff="fzf --preview 'bat --style=numbers --color=always {}'"
 
 # quick edits
 alias edit-zsh="nvim ~/.zshrc"
-alias edit-ohmyzsh="nvim ~/.oh-my-zsh"
 alias edit-tmux="nvim ~/.tmux.conf"
 alias edit-nvim="nvim ~/.config/nvim/init.lua"
 
@@ -123,7 +122,7 @@ alias n='nvim'
 export EDITOR="${EDITOR:-nvim}"
 export VISUAL="${VISUAL:-nvim}"
 {{if .Fzf}}
-alias ns="fd --type f --hidden --exclude .git | fzf-tmux -p  --reverse | xargs nvim"
+alias ns="fd --type=f --hidden --exclude .git | fzf-tmux -p  --reverse | xargs nvim"
 {{end}}
 {{end}}
 
@@ -143,8 +142,12 @@ alias tmclear="clear && tmux clear-history && clear"
 tmn() {
     local session_name="$1"
     local path="${2:-$HOME}"
-    /usr/local/bin/tmux new-session -d -s "$session_name" -c "$path"
-    /usr/local/bin/tmux switch-client -t "$session_name"
+    # tmux by name, resolved through PATH. An absolute path here has to pick a
+    # Homebrew prefix, and whichever one it picks is wrong on half the machines
+    # devgeta supports (/opt/homebrew on Apple Silicon, /usr/local on Intel,
+    # /usr/bin on Debian).
+    tmux new-session -d -s "$session_name" -c "$path"
+    tmux switch-client -t "$session_name"
 }
 {{end}}
 
@@ -164,13 +167,20 @@ alias cd="z"
 
 {{if .Eza}}
 # ---- Eza (better ls) ----
-alias ls='eza -lh --group-directories-first --icons'
+{{/*
+  eza's --icons takes an OPTIONAL value, so the bare form swallows whatever
+  comes next: `ls ~/foo` reaches eza as `--icons ~/foo` and dies with
+  "invalid value '<that path>' for '--icons [<WHEN>]'". Every value-taking
+  flag in an alias must be spelled with `=`, so nothing can be eaten from the
+  user's argument list. Enforced by TestShellConfigAliasesSpellOptionValues.
+*/ -}}
+alias ls='eza -lh --group-directories-first --icons=auto'
 alias lsa='ls -a'
-alias lt='eza --tree --level=2 --long --icons --git'
+alias lt='eza --tree --level=2 --long --icons=auto --git'
 alias lta='lt -a'
 {{end}}
 
-{{if .Eza}}
+{{if .Bat}}
 # ---- Bat (better cat) ----
 alias cat="bat"
 {{end}}
@@ -183,11 +193,19 @@ alias cat="bat"
   convenience rendering of it for the user to type. See ADR-0021. This comment
   is for whoever edits this template; it deliberately does not reach the
   generated devgeta.zsh.
+
+  OpenCodeBinDir is rendered the same way, from pkg/paths. opencode's official
+  install script puts its binary in a prefix nothing else adds to PATH, and it
+  edits the user's own rc files - which devgeta does not own and cannot keep
+  consistent - so devgeta owns the PATH entry here instead (ADR-0047). The
+  guard skips a directory that is already on PATH, because re-sourcing a shell
+  config would otherwise prepend another copy every time.
 */ -}}
 {{if or .Opencode .Claude}}
 # ---- AI coders ----
 {{- end}}
 {{- if .Opencode}}
+[[ ":$PATH:" == *":{{.OpenCodeBinDir}}:"* ]] || export PATH="{{.OpenCodeBinDir}}:$PATH"
 {{.OpenCodeAlias}}
 {{- end}}
 {{- if .Claude}}

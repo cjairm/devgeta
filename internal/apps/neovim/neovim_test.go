@@ -20,6 +20,48 @@ func init() {
 	testutil.InitLogger()
 }
 
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one -
+// under neovimConfigsDir (paths.Paths.App.Configs.Neovim), the same tree
+// ForceConfigure's own CopyDir reads.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
 func TestNew(t *testing.T) {
 	app := New()
 
@@ -62,7 +104,11 @@ func TestSoftInstall(t *testing.T) {
 		t.Fatalf("SoftInstall error: %v", err)
 	}
 	if mockApp.Cmd.MaybeInstalled != constants.Neovim {
-		t.Fatalf("expected MaybeInstallPackage(%s), got %q", constants.Neovim, mockApp.Cmd.MaybeInstalled)
+		t.Fatalf(
+			"expected MaybeInstallPackage(%s), got %q",
+			constants.Neovim,
+			mockApp.Cmd.MaybeInstalled,
+		)
 	}
 
 	// Confirm deps were installed before neovim itself
@@ -164,7 +210,11 @@ func TestUninstall(t *testing.T) {
 			t.Fatalf("Uninstall error: %v", err)
 		}
 		if tc.MockApp.Cmd.UninstalledPkg != constants.Neovim {
-			t.Errorf("expected UninstallPackage(%s), got %q", constants.Neovim, tc.MockApp.Cmd.UninstalledPkg)
+			t.Errorf(
+				"expected UninstallPackage(%s), got %q",
+				constants.Neovim,
+				tc.MockApp.Cmd.UninstalledPkg,
+			)
 		}
 
 		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -191,7 +241,10 @@ func TestUninstall(t *testing.T) {
 
 		// Linux path issues 3 rm commands via Base.ExecCommand
 		if tc.MockApp.Base.GetExecCommandCallCount() != 3 {
-			t.Fatalf("expected 3 ExecCommand calls, got %d", tc.MockApp.Base.GetExecCommandCallCount())
+			t.Fatalf(
+				"expected 3 ExecCommand calls, got %d",
+				tc.MockApp.Base.GetExecCommandCallCount(),
+			)
 		}
 		calls := tc.MockApp.Base.ExecCommandCalls
 		for _, call := range calls {
@@ -237,7 +290,7 @@ func TestForceConfigure(t *testing.T) {
 	src := filepath.Join(tc.AppDir, "neovim")
 	dst := filepath.Join(tc.ConfigDir, "nvim")
 
-	if err := os.MkdirAll(src, 0755); err != nil {
+	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -252,9 +305,20 @@ func TestForceConfigure(t *testing.T) {
 	paths.Paths.Config.Nvim = dst
 
 	originalContent := "-- Neovim init.lua\nvim.g.mapleader = ' '"
-	if err := os.WriteFile(filepath.Join(src, "init.lua"), []byte(originalContent), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(src, "init.lua"),
+		[]byte(originalContent),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
+	writeNeovimModuleFixture(t, src, "gruvbox")
+
+	themesDir := t.TempDir()
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	t.Cleanup(func() { paths.Paths.App.Configs.Themes = oldThemes })
+	paths.Paths.App.Configs.Themes = themesDir
 
 	// Mock successful version check with version output
 	tc.MockApp.Base.SetExecCommandResult("NVIM v0.11.1\nBuild type: Release", "", nil)
@@ -262,7 +326,6 @@ func TestForceConfigure(t *testing.T) {
 
 	// Test ForceConfigure - should succeed with mocked version check
 	err := app.ForceConfigure()
-
 	if err != nil {
 		t.Fatalf("ForceConfigure failed: %v", err)
 	}
@@ -281,6 +344,16 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatalf("content mismatch: expected %q, got %q", originalContent, string(copiedContent))
 	}
 
+	// The generated theme shim names the current theme's neovim_module.
+	shimPath := filepath.Join(dst, "lua", "devgeta", "theme.lua")
+	shimContent, err := os.ReadFile(shimPath)
+	if err != nil {
+		t.Fatalf("expected theme shim at %s: %v", shimPath, err)
+	}
+	if !strings.Contains(string(shimContent), `require("devgeta.themes.gruvbox")`) {
+		t.Errorf("expected shim to require devgeta.themes.gruvbox, got: %s", shimContent)
+	}
+
 	// Verify shell config was generated
 	shellContent, err := os.ReadFile(tc.ZshConfigPath)
 	if err != nil {
@@ -293,7 +366,10 @@ func TestForceConfigure(t *testing.T) {
 
 	// Verify version check was called once (this is expected)
 	if tc.MockApp.Base.GetExecCommandCallCount() != 1 {
-		t.Errorf("Expected 1 command call (version check), got %d", tc.MockApp.Base.GetExecCommandCallCount())
+		t.Errorf(
+			"Expected 1 command call (version check), got %d",
+			tc.MockApp.Base.GetExecCommandCallCount(),
+		)
 	}
 }
 
@@ -307,7 +383,7 @@ func TestSoftConfigure(t *testing.T) {
 	src := filepath.Join(tc.AppDir, "neovim")
 	dst := filepath.Join(tc.ConfigDir, "nvim")
 
-	if err := os.MkdirAll(src, 0755); err != nil {
+	if err := os.MkdirAll(src, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -322,9 +398,20 @@ func TestSoftConfigure(t *testing.T) {
 	paths.Paths.Config.Nvim = dst
 
 	originalContent := "-- Neovim init.lua\nvim.g.mapleader = ' '"
-	if err := os.WriteFile(filepath.Join(src, "init.lua"), []byte(originalContent), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(src, "init.lua"),
+		[]byte(originalContent),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
+	writeNeovimModuleFixture(t, src, "gruvbox")
+
+	themesDir := t.TempDir()
+	writeThemeFixture(t, themesDir, "default", "#282828", "gruvbox")
+	oldThemes := paths.Paths.App.Configs.Themes
+	t.Cleanup(func() { paths.Paths.App.Configs.Themes = oldThemes })
+	paths.Paths.App.Configs.Themes = themesDir
 
 	// Mock successful version check with version output
 	tc.MockApp.Base.SetExecCommandResult("NVIM v0.11.1\nBuild type: Release", "", nil)
@@ -332,7 +419,6 @@ func TestSoftConfigure(t *testing.T) {
 
 	// First call should attempt to configure
 	err := app.SoftConfigure()
-
 	if err != nil {
 		t.Fatalf("SoftConfigure failed: %v", err)
 	}
@@ -358,7 +444,11 @@ func TestSoftConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	markerContent := "-- Existing config"
-	if err := os.WriteFile(filepath.Join(dst, "init.lua"), []byte(markerContent), 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(dst, "init.lua"),
+		[]byte(markerContent),
+		0o644,
+	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -384,6 +474,9 @@ func TestSoftConfigure(t *testing.T) {
 
 	// Verify version check was called once in first SoftConfigure (this is expected)
 	if tc.MockApp.Base.GetExecCommandCallCount() != 1 {
-		t.Errorf("Expected 1 command call (version check), got %d", tc.MockApp.Base.GetExecCommandCallCount())
+		t.Errorf(
+			"Expected 1 command call (version check), got %d",
+			tc.MockApp.Base.GetExecCommandCallCount(),
+		)
 	}
 }

@@ -10,6 +10,8 @@ upgrade cannot fix itself automatically.
 | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [v1-to-v2.md](v1-to-v2.md)                                 | You want to move existing worktrees between the shared root and an in-repo `.claude/worktrees/` folder (or back) after changing `worktree.location`. Check with `dg wt list` — empty, or already at the location you want, means nothing to do. |
 | [agent-permission-refresh.md](agent-permission-refresh.md) | You installed either agent before this release and want in-repo worktree edits unblocked and the `/tmp` scratch prompt gone. Check with the grep commands at the top of that guide.                                                             |
+| [shell-config-refresh.md](shell-config-refresh.md)         | `ls <path>` fails with `invalid value ... for '--icons [<WHEN>]'`, or `ls` is not eza at all. Your `devgeta.zsh` predates the fixed `ls` alias and an upgrade alone does not regenerate it, or something loads after it and takes `ls` back.    |
+| [opencode-install-channel.md](opencode-install-channel.md) | macOS only: you installed opencode through devgeta before it moved off Homebrew, and a leftover `brew` copy is still on disk. Check with `brew list opencode`. Also covers pinning a version by hand after a bad upstream release.              |
 
 A guide appears in that table only once the change it describes has shipped.
 Drafts for unshipped changes stay out of it, so nobody follows steps that don't

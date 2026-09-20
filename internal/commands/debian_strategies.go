@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strconv"
@@ -362,46 +361,13 @@ func (s *LaunchpadPPAStrategy) IsInstalled(packageName string) (bool, error) {
 	return s.cmd.IsPackageInstalled(packageName)
 }
 
-// InstallScriptStrategy implements installation by downloading and executing an install script
-//
-// cmd is BaseCommandExecutor rather than *DebianCommand — unlike AptStrategy,
-// PPAStrategy, and LaunchpadPPAStrategy, Install only ever needs ExecCommand,
-// so the narrower interface is enough, and it is also what makes this
-// strategy mockable with commands.NewMockBaseCommand() in tests instead of
-// requiring a real DebianCommand backed by real exec.
-type InstallScriptStrategy struct {
-	cmd       BaseCommandExecutor
-	scriptURL string
-}
-
-// Install downloads and executes an install script, staged through
-// RunInstallScript so a failed or truncated download is reported as a
-// failed install rather than a silent success.
-func (s *InstallScriptStrategy) Install(packageName string) error {
-	logger.L().Infow(
-		"Installing package via install script",
-		"package", packageName,
-		"script_url", s.scriptURL,
-	)
-
-	return RunInstallScript(s.cmd, packageName, s.scriptURL, "sh")
-}
-
-// IsInstalled checks if the package binary exists in common PATH locations
-func (s *InstallScriptStrategy) IsInstalled(packageName string) (bool, error) {
-	_, err := exec.LookPath(packageName)
-	if err != nil {
-		return false, nil
-	}
-	return true, nil
-}
-
 // NerdFontStrategy implements installation by downloading Nerd Font archives from GitHub releases
 //
 // cmd is BaseCommandExecutor rather than *DebianCommand: Install and
 // IsInstalled only need ExecCommand and IsFontPresent, both part of that
 // interface, so the narrower type is enough and keeps this strategy
-// mockable in tests (see InstallScriptStrategy's field doc for why).
+// mockable with commands.NewMockBaseCommand() in tests instead of requiring
+// a real DebianCommand backed by real exec.
 type NerdFontStrategy struct {
 	cmd        BaseCommandExecutor
 	archiveURL string // Full GitHub release URL for the tar.xz archive
@@ -484,7 +450,7 @@ func (s *NerdFontStrategy) IsInstalled(packageName string) (bool, error) {
 //
 // cmd is BaseCommandExecutor rather than *DebianCommand: Install only needs
 // ExecCommand, so the narrower type is enough and keeps this strategy
-// mockable in tests (see InstallScriptStrategy's field doc for why).
+// mockable in tests (see NerdFontStrategy's field doc for why).
 type GitCloneStrategy struct {
 	cmd         BaseCommandExecutor
 	repoURL     string

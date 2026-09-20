@@ -1,11 +1,13 @@
 package bat
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
 )
@@ -33,20 +35,6 @@ func TestInstall(t *testing.T) {
 		t.Fatalf("expected InstallPackage(%s), got %q", "bat", mc.InstalledPkg)
 	}
 }
-
-// SKIP: ForceInstall test as per guidelines
-// func TestForceInstall(t *testing.T) {
-// 	mc := commands.NewMockCommand()
-// 	app := &Bat{Cmd: mc}
-//
-// 	if err := app.ForceInstall(); err != nil {
-// 		t.Fatalf("ForceInstall error: %v", err)
-// 	}
-// 	// ForceInstall should call Install() which uses InstallPackage
-// 	if mc.InstalledPkg != "bat" {
-// 		t.Fatalf("expected InstallPackage(%s), got %q", "bat", mc.InstalledPkg)
-// 	}
-// }
 
 func TestSoftInstall(t *testing.T) {
 	mc := commands.NewMockCommand()
@@ -197,30 +185,51 @@ func TestExecuteCommand(t *testing.T) {
 	})
 }
 
-// SKIP: Uninstall test as per guidelines
-// func TestUninstall(t *testing.T) {
-// 	mc := commands.NewMockCommand()
-// 	app := &Bat{Cmd: mc}
-//
-// 	err := app.Uninstall()
-// 	if err == nil {
-// 		t.Fatal("expected Uninstall to return error for unsupported operation")
-// 	}
-// 	if err.Error() != "bat uninstall not supported through devgeta" {
-// 		t.Fatalf("unexpected error message: %v", err)
-// 	}
-// }
+// TestNameAndKind covers what registration needs: GetApp() hands back an
+// apps.App, and both `dg configure` and the uninstall bookkeeping identify it
+// by Name(). Without these two methods eza cannot be registered at all, which
+// is why `dg configure eza --force` answered "unknown app".
+func TestNameAndKind(t *testing.T) {
+	app := &Bat{}
 
-// SKIP: Update test as per guidelines
-// func TestUpdate(t *testing.T) {
-// 	mc := commands.NewMockCommand()
-// 	app := &Bat{Cmd: mc}
-//
-// 	err := app.Update()
-// 	if err == nil {
-// 		t.Fatal("expected Update to return error for unsupported operation")
-// 	}
-// 	if err.Error() != "bat update not implemented through devgeta" {
-// 		t.Fatalf("unexpected error message: %v", err)
-// 	}
-// }
+	if got := app.Name(); got != "bat" {
+		t.Errorf("Name() is %q, want %q", got, "bat")
+	}
+	if got := app.Kind(); got != apps.KindTerminal {
+		t.Errorf("Kind() is %v, want KindTerminal", got)
+	}
+}
+
+// TestUnsupportedOperationsReturnSentinels: the App contract requires the
+// sentinel errors, never free-form strings, because callers branch on them -
+// baseapp.Reinstall lets ForceInstall through only when Uninstall's error IS
+// apps.ErrUninstallNotSupported, and cmd/configure.go reports a clean message
+// only for apps.ErrConfigureNotSupported. A hand-written string is an ordinary
+// failure to every one of those callers.
+func TestUnsupportedOperationsReturnSentinels(t *testing.T) {
+	app := &Bat{}
+
+	if err := app.Uninstall(); !errors.Is(err, apps.ErrUninstallNotSupported) {
+		t.Errorf("Uninstall() returned %v, want apps.ErrUninstallNotSupported", err)
+	}
+	if err := app.Update(); !errors.Is(err, apps.ErrUpdateNotSupported) {
+		t.Errorf("Update() returned %v, want apps.ErrUpdateNotSupported", err)
+	}
+}
+
+// TestForceInstall_ReinstallsThroughAnUnsupportedUninstall is why the sentinels
+// matter here in practice. ForceInstall called Uninstall directly and returned
+// its error, so `--force` could never install bat at all: Uninstall always
+// fails for a tool devgeta cannot remove. baseapp.Reinstall is the contract's
+// answer - tolerate that one sentinel, then install.
+func TestForceInstall_ReinstallsThroughAnUnsupportedUninstall(t *testing.T) {
+	mc := commands.NewMockCommand()
+	app := &Bat{Cmd: mc}
+
+	if err := app.ForceInstall(); err != nil {
+		t.Fatalf("ForceInstall() failed: %v", err)
+	}
+	if mc.InstalledPkg != "bat" {
+		t.Errorf("expected InstallPackage(%q), got %q", "bat", mc.InstalledPkg)
+	}
+}

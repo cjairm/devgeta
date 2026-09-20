@@ -86,18 +86,18 @@ Hard constraints that override all other considerations:
 
 ## 5. Tech stack
 
-| Layer                       | Technology                    | Notes                                                                                               |
-| --------------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------- |
-| **Language**                | Go 1.25+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                                   |
-| **Build System**            | Make                          | See Makefile for targets                                                                            |
-| **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                                |
-| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                              |
-| **Config Generation**       | Go `text/template` + `embed`  | Templates in `configs/` embedded at compile time                                                    |
-| **Package Manager**         | Homebrew (macOS), APT (Linux) | With package name translation (see `pkg/constants/package_mappings.go`)                             |
-| **Logging**                 | Custom (zap-like logger)      | Initialized with `logger.Init(verbose)`                                                             |
-| **Testing**                 | Go `testing` package          | Unit tests in `*_test.go` alongside code                                                            |
-| **Installation Strategies** | Strategy pattern              | In `internal/commands/debian_strategies.go` (AptStrategy, PPAStrategy, InstallScriptStrategy, etc.) |
-| **CI/CD**                   | GitHub Actions                | `.github/workflows/release.yml` builds multiplatform binaries on git tag                            |
+| Layer                       | Technology                    | Notes                                                                                          |
+| --------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------------- |
+| **Language**                | Go 1.25+ (toolchain 1.26.3)   | stdlib, no cgo where possible (cross-compilation)                                              |
+| **Build System**            | Make                          | See Makefile for targets                                                                       |
+| **CLI Framework**           | Cobra                         | Used in `cmd/` for command structure                                                           |
+| **Config Format**           | YAML (`gopkg.in/yaml.v3`)     | State stored in `~/.config/devgeta/global_config.yaml`                                         |
+| **Config Generation**       | Go `text/template` + `embed`  | Templates in `configs/` embedded at compile time                                               |
+| **Package Manager**         | Homebrew (macOS), APT (Linux) | With package name translation (see `pkg/constants/package_mappings.go`)                        |
+| **Logging**                 | Custom (zap-like logger)      | Initialized with `logger.Init(verbose)`                                                        |
+| **Testing**                 | Go `testing` package          | Unit tests in `*_test.go` alongside code                                                       |
+| **Installation Strategies** | Strategy pattern              | In `internal/commands/debian_strategies.go` (AptStrategy, PPAStrategy, NerdFontStrategy, etc.) |
+| **CI/CD**                   | GitHub Actions                | `.github/workflows/release.yml` builds multiplatform binaries on git tag                       |
 
 ---
 
@@ -458,7 +458,6 @@ See `docs/guides/cross-platform-installation.md` for full details.
 - `AptStrategy` — Standard apt install with automatic name translation
 - `PPAStrategy` — Personal Package Archives with GPG key configuration
 - `LaunchpadPPAStrategy` — Launchpad PPA via `add-apt-repository`
-- `InstallScriptStrategy` — Executable install scripts (`curl | sh`)
 - `NerdFontStrategy` — GitHub release downloads for fonts
 - `GitCloneStrategy` — Git repository cloning and setup
 
@@ -499,7 +498,7 @@ Where to find and add code:
 | **Platform installers**    | `internal/commands/`           | Strategy implementations for Debian, Darwin                                                                                                                                                                           |
 | **Configuration logic**    | `internal/config/`             | Global state management                                                                                                                                                                                               |
 | **TUI components**         | `internal/tui/`                | TUIs live here; `internal/tui/components` is the shared toolkit (palette, hint bar, help overlay, filter field, list navigation) — new TUIs must be assembled from it, and logic needed by a second TUI moves into it |
-| **Shared utilities**       | `pkg/`                         | Logger, paths, file ops, constants, package mappings                                                                                                                                                                  |
+| **Shared utilities**       | `pkg/`                         | Logger, paths, file ops, constants, package mappings, `progress` (byte meter for long streaming work)                                                                                                                 |
 | **Embedded configs**       | `configs/`                     | Templates and static files (embedded at compile time)                                                                                                                                                                 |
 | **Shared agent artifacts** | `configs/shared/`              | Skills, commands, agents shipped to both AI coders **and to every user's other repos** — nothing here may carry a devgeta-specific decision (see below)                                                               |
 | **Tests**                  | `*_test.go` alongside impl     | Use testutil mocks; never execute real commands                                                                                                                                                                       |
@@ -619,7 +618,8 @@ Quick reference to where things live:
 | **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                                                         |
 | **Theming**             | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule                                                                   |
 | **Claude Code app**     | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                                                                                             |
-| **OpenCode app**        | `docs/apps/opencode.md`                      | OpenCode config, provider/model guidance, the `notify.js` activity plugin                                                                                     |
+| **OpenCode app**        | `docs/apps/opencode.md`                      | Install channel, provider/model guidance, the `notify.js` activity plugin                                                                                     |
+| **Brave app**           | `docs/apps/brave.md`                         | What `dg export brave` / `dg import brave` move, what they never move, and how to undo an import                                                              |
 | **Releasing**           | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                                                                                          |
 | **Release notes**       | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body                                                                            |
 | **Migrations**          | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                                                                                               |

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/apps"
@@ -14,6 +15,77 @@ import (
 
 func init() {
 	testutil.InitLogger()
+}
+
+// paletteRoles lists every role internal/theme.Palette validates, so a test
+// fixture theme file can be written without repeating this 24-line block at
+// every call site.
+var paletteRoles = []string{
+	"background_hard", "background", "background_element", "background_subtle",
+	"border", "foreground", "foreground_muted", "foreground_dim", "foreground_subtle",
+	"red", "green", "yellow", "blue", "purple", "aqua", "orange",
+	"red_dim", "green_dim", "yellow_dim", "blue_dim", "purple_dim", "aqua_dim",
+	"diff_added_background", "diff_removed_background",
+}
+
+// writeThemeFixture writes a minimal, fully valid theme file under themesDir
+// with every role set to hex, so internal/theme.Load accepts it.
+func writeThemeFixture(t *testing.T, themesDir, name, hex, neovimModule string) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("neovim_module: " + neovimModule + "\ncolors:\n")
+	for _, role := range paletteRoles {
+		b.WriteString("  " + role + ": \"" + hex + "\"\n")
+	}
+	path := filepath.Join(themesDir, name+".yaml")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		t.Fatalf("failed to write theme fixture %s: %v", path, err)
+	}
+}
+
+// writeNeovimModuleFixture drops a fake Neovim colorscheme module where
+// internal/theme's validateNeovimModule expects to find a shipped one.
+func writeNeovimModuleFixture(t *testing.T, neovimConfigsDir, module string) {
+	t.Helper()
+	dir := filepath.Join(neovimConfigsDir, "lua", "devgeta", "themes")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, module+".lua")
+	if err := os.WriteFile(path, []byte("-- fixture\n"), 0o644); err != nil {
+		t.Fatalf("failed to write neovim module fixture %s: %v", path, err)
+	}
+}
+
+// setupThemeFixture isolates paths.Paths.App.Configs.Themes, .Neovim and
+// paths.Paths.Config.Nvim under a fresh temp tree, writes a "default" theme
+// fixture with every role set to hex, and restores the originals in
+// t.Cleanup. ForceConfigure now resolves its theme through
+// theme.CurrentDefinition, which loads and validates a whole theme file - so
+// even a single-surface test has to give it one to load.
+func setupThemeFixture(t *testing.T, hex string) {
+	t.Helper()
+
+	root := t.TempDir()
+	themesDir := filepath.Join(root, "themes")
+	neovimConfigsDir := filepath.Join(root, "neovim")
+	if err := os.MkdirAll(themesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeThemeFixture(t, themesDir, "default", hex, "gruvbox")
+	writeNeovimModuleFixture(t, neovimConfigsDir, "gruvbox")
+
+	oldThemes := paths.Paths.App.Configs.Themes
+	oldNeovim := paths.Paths.App.Configs.Neovim
+	oldNvim := paths.Paths.Config.Nvim
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Themes = oldThemes
+		paths.Paths.App.Configs.Neovim = oldNeovim
+		paths.Paths.Config.Nvim = oldNvim
+	})
+	paths.Paths.App.Configs.Themes = themesDir
+	paths.Paths.App.Configs.Neovim = neovimConfigsDir
+	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
 }
 
 func TestNew(t *testing.T) {
@@ -96,7 +168,11 @@ func TestUninstall(t *testing.T) {
 		t.Fatalf("Uninstall error: %v", err)
 	}
 	if tc.MockApp.Cmd.UninstalledPkg != constants.I3 {
-		t.Errorf("expected UninstallPackage(%s), got %q", constants.I3, tc.MockApp.Cmd.UninstalledPkg)
+		t.Errorf(
+			"expected UninstallPackage(%s), got %q",
+			constants.I3,
+			tc.MockApp.Cmd.UninstalledPkg,
+		)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -111,13 +187,13 @@ func TestForceConfigure(t *testing.T) {
 
 	// Create source i3 config
 	i3ConfigAppDir := filepath.Join(appDir, "i3")
-	if err := os.MkdirAll(i3ConfigAppDir, 0755); err != nil {
+	if err := os.MkdirAll(i3ConfigAppDir, 0o755); err != nil {
 		t.Fatalf("Failed to create app i3 dir: %v", err)
 	}
 
-	sourceConfig := filepath.Join(i3ConfigAppDir, "config")
-	sourceContent := "# i3 config\nset $mod Mod4\n"
-	if err := os.WriteFile(sourceConfig, []byte(sourceContent), 0644); err != nil {
+	sourceConfig := filepath.Join(i3ConfigAppDir, "config.tmpl")
+	sourceContent := "# i3 config\nset $mod Mod4\nset $bg {{.Palette.Background}}\n"
+	if err := os.WriteFile(sourceConfig, []byte(sourceContent), 0o644); err != nil {
 		t.Fatalf("Failed to create source config: %v", err)
 	}
 
@@ -130,6 +206,7 @@ func TestForceConfigure(t *testing.T) {
 	})
 	paths.Paths.App.Configs.I3 = i3ConfigAppDir
 	paths.Paths.Config.I3 = filepath.Join(configDir, "i3")
+	setupThemeFixture(t, "#282828")
 
 	mockApp := testutil.NewMockApp()
 	i := &I3{Cmd: mockApp.Cmd}
@@ -139,15 +216,17 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatalf("ForceConfigure() failed: %v", err)
 	}
 
-	// Verify config was copied
+	wantContent := "# i3 config\nset $mod Mod4\nset $bg #282828\n"
+
+	// Verify config was rendered
 	dstConfig := filepath.Join(paths.Paths.Config.I3, "config")
 	content, err := os.ReadFile(dstConfig)
 	if err != nil {
 		t.Fatalf("Failed to read destination config: %v", err)
 	}
 
-	if string(content) != sourceContent {
-		t.Errorf("Config content mismatch.\nExpected: %s\nGot: %s", sourceContent, string(content))
+	if string(content) != wantContent {
+		t.Errorf("Config content mismatch.\nExpected: %s\nGot: %s", wantContent, string(content))
 	}
 
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
@@ -163,19 +242,19 @@ func TestSoftConfigure_PreservesExisting(t *testing.T) {
 
 	// Create source config (won't be used)
 	i3ConfigAppDir := filepath.Join(appDir, "i3")
-	if err := os.MkdirAll(i3ConfigAppDir, 0755); err != nil {
+	if err := os.MkdirAll(i3ConfigAppDir, 0o755); err != nil {
 		t.Fatalf("Failed to create app i3 dir: %v", err)
 	}
 
 	// Create existing config in target location
 	i3ConfigLocalDir := filepath.Join(configDir, "i3")
-	if err := os.MkdirAll(i3ConfigLocalDir, 0755); err != nil {
+	if err := os.MkdirAll(i3ConfigLocalDir, 0o755); err != nil {
 		t.Fatalf("Failed to create local i3 dir: %v", err)
 	}
 
 	existingConfig := filepath.Join(i3ConfigLocalDir, "config")
 	existingContent := "# Existing custom config\n"
-	if err := os.WriteFile(existingConfig, []byte(existingContent), 0644); err != nil {
+	if err := os.WriteFile(existingConfig, []byte(existingContent), 0o644); err != nil {
 		t.Fatalf("Failed to create existing config: %v", err)
 	}
 
@@ -220,13 +299,13 @@ func TestSoftConfigure_AppliesWhenMissing(t *testing.T) {
 
 	// Create source config
 	i3ConfigAppDir := filepath.Join(appDir, "i3")
-	if err := os.MkdirAll(i3ConfigAppDir, 0755); err != nil {
+	if err := os.MkdirAll(i3ConfigAppDir, 0o755); err != nil {
 		t.Fatalf("Failed to create app i3 dir: %v", err)
 	}
 
-	sourceConfig := filepath.Join(i3ConfigAppDir, "config")
+	sourceConfig := filepath.Join(i3ConfigAppDir, "config.tmpl")
 	sourceContent := "# i3 config from template\n"
-	if err := os.WriteFile(sourceConfig, []byte(sourceContent), 0644); err != nil {
+	if err := os.WriteFile(sourceConfig, []byte(sourceContent), 0o644); err != nil {
 		t.Fatalf("Failed to create source config: %v", err)
 	}
 
@@ -239,6 +318,7 @@ func TestSoftConfigure_AppliesWhenMissing(t *testing.T) {
 	})
 	paths.Paths.App.Configs.I3 = i3ConfigAppDir
 	paths.Paths.Config.I3 = filepath.Join(configDir, "i3")
+	setupThemeFixture(t, "#282828")
 
 	mockApp := testutil.NewMockApp()
 	i := &I3{Cmd: mockApp.Cmd}

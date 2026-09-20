@@ -17,24 +17,24 @@ font-family-bold = MesloLGLDZ Nerd Font Mono
 font-family-italic = MesloLGLDZ Nerd Font Mono
 {{end}}
 
-{{if eq .Theme "default"}}
-background = #282828
-foreground = #d4be98
 
-palette = 0=#63605e
-palette = 1=#ea6962
-palette = 2=#a9b665
-palette = 3=#d8a657
-palette = 4=#7daea3
-palette = 5=#d3869b
-palette = 6=#89b482
-palette = 7=#d4be98
-palette = 8=#63605e
-palette = 9=#ea6962
-palette = 10=#a9b665
-palette = 11=#d8a657
-palette = 12=#7daea3
-palette = 13=#d3869b
-palette = 14=#89b482
-palette = 15=#d4be98
-{{end}}
+background = {{.Palette.Background}}
+foreground = {{.Palette.Foreground}}
+
+palette = 0={{.Palette.Border}}
+palette = 1={{.Palette.Red}}
+palette = 2={{.Palette.Green}}
+palette = 3={{.Palette.Yellow}}
+palette = 4={{.Palette.Blue}}
+palette = 5={{.Palette.Purple}}
+palette = 6={{.Palette.Aqua}}
+palette = 7={{.Palette.Foreground}}
+palette = 8={{.Palette.Border}}
+palette = 9={{.Palette.Red}}
+palette = 10={{.Palette.Green}}
+palette = 11={{.Palette.Yellow}}
+palette = 12={{.Palette.Blue}}
+palette = 13={{.Palette.Purple}}
+palette = 14={{.Palette.Aqua}}
+palette = 15={{.Palette.Foreground}}
+

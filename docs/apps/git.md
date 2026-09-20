@@ -1,194 +1,252 @@
 # Git
 
-Devgeta installs and configures Git with devgeta integration.
+Devgeta installs [Git](https://git-scm.com) and [`gh`](https://cli.github.com)
+as terminal tools, and ships a starter `.gitconfig`. It does **not** set up your
+GitHub credentials — do that yourself with [Set up GitHub auth](#set-up-github-auth).
 
 - **Module:** `internal/apps/git/`
+- **Config source:** `configs/git/.gitconfig` → `~/.config/git/.gitconfig`
+- **Install:** both come with the `terminal` category (`dg install --only terminal`)
 
-## Recovering Lost Commits
+## Activate the shipped .gitconfig
 
-Git rarely deletes commits immediately. A `reset --hard`, bad rebase, or force-push makes commits **unreferenced** — they survive ~90 days before GC.
-
-### 1. Check reflog
+Devgeta writes to `~/.config/git/.gitconfig`, but git only reads
+`~/.config/git/config` or `~/.gitconfig`. Pull it in and set your identity:
 
 ```bash
-git reflog --date=iso              # current branch
-git reflog --date=iso --all        # all refs including remotes
+git config --global include.path ~/.config/git/.gitconfig
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
 ```
 
-Look for the line **before** the reset/rebase.
+What you get: `main` as the default branch, `pull.rebase`, `push.default =
+current`, `push.followTags`, `fetch.prune`, histogram diffs, `diff3` conflict
+markers, and the aliases `st co br ci lg last amend unstage`.
 
-### 2. Scan dangling commits (if reflog isn't enough)
+## Set up GitHub auth
+
+GitHub stopped accepting account passwords for git over HTTPS in 2021, so an
+HTTPS password prompt will always fail. Pick one of these three.
+
+### Option 1 — SSH (recommended)
 
 ```bash
-git fsck --no-reflogs --lost-found
+ssh-keygen -t ed25519 -C "you@example.com"
+cat ~/.ssh/id_ed25519.pub
 ```
 
-List them readable, newest first:
+Paste the key at **GitHub → Settings → SSH and GPG keys → New SSH key**, then:
 
 ```bash
-for c in $(git fsck --no-reflogs 2>/dev/null | awk '/dangling commit/{print $3}'); do
-  echo "$(git show -s --format='%ci %h %an | %s' $c)"
-done | sort -r | head -30
+ssh -T git@github.com                                    # verify
+git clone git@github.com:<owner>/<repo>.git              # clone with SSH
+git remote set-url origin git@github.com:<owner>/<repo>.git   # convert an HTTPS clone
 ```
 
-### 3. Inspect before trusting
+### Option 2 — gh
 
 ```bash
-git show <hash>            # full diff
-git show --stat <hash>     # files changed
-git log --oneline <hash>   # chain behind it
+gh auth login    # browser flow; say yes to "authenticate Git with your GitHub credentials"
+gh auth status   # verify
 ```
 
-### 4. Pin it (prevents GC)
+Sets `credential.helper = !gh auth git-credential`, so HTTPS stops prompting.
+
+### Option 3 — personal access token
+
+Create one at **GitHub → Settings → Developer settings → Personal access
+tokens**, then:
 
 ```bash
-git branch recovered <hash>
+git config --global credential.helper osxkeychain   # macOS
+git config --global credential.helper store         # Linux — plaintext, see below
 ```
 
-### 5. Restore
+Clone again, enter your username, paste the token as the password.
+
+`store` writes the token unencrypted to `~/.git-credentials`. For a keyring on
+Debian/Ubuntu you have to compile git's helper:
 
 ```bash
-git reset --hard <hash>                      # move branch to commit
-git push --force-with-lease origin <branch>  # restore remote
+sudo apt install make gcc libsecret-1-0 libsecret-1-dev libglib2.0-dev
+sudo make --directory=/usr/share/doc/git/contrib/credential/libsecret
+git config --global credential.helper \
+  /usr/share/doc/git/contrib/credential/libsecret/git-credential-libsecret
 ```
 
-## Special Cases
+Easier on Linux: use Option 1 or 2.
 
-**Staged but never committed (`git add` only):**
+### Private repos
 
-```bash
-git fsck --lost-found                # writes blobs to .git/lost-found/other/
-git show <blob-hash>                 # inspect contents
-```
+Auth alone is not access. If a correct credential still fails:
 
-You get file contents but not names.
+- Your account needs to be added to the repo.
+- **SAML SSO orgs:** authorize the key or token for that org — per key at
+  Settings → SSH and GPG keys, per token at Developer settings → tokens.
 
-**Never staged:** Unrecoverable from git. Check editor undo/local history.
-
-## Prevention
+## Branch work
 
 ```bash
-git push --force-with-lease    # refuses if remote changed
-git branch backup              # before risky rebases
-```
-
-## Common Workflows
-
-### Create a clean branch
-
-```bash
+# new branch off latest main
 git fetch origin
 git checkout -b <branch> origin/main
-git add . && git commit -m "feat: description"
-git push -u origin <branch>
+git add -p                            # stage hunk by hunk
+git commit -m "feat: description"
+git push -u origin HEAD
+
+git checkout -b <local> origin/<remote-branch>   # check out an existing remote branch
+git cherry-pick <hash> [<hash> ...]              # move specific commits here
+
+# squash another branch into a clean one
+git merge --squash origin/<source-branch>
+git commit -m "feat: combined description"
+
+# clean up after a merge
+git checkout main
+git fetch && git remote prune origin && git pull origin main
+git branch -d <merged-branch>         # -D to force
 ```
 
-### Re-sync with main (preserving uncommitted work)
+### Re-sync with main — uncommitted work
 
 ```bash
 git reset --soft <commit-before-your-work>
 git stash
-git merge main
-# resolve conflicts if any, then:
+git merge main            # resolve conflicts
 git stash pop
-git restore --staged .   # optional: unstage
+git restore --staged .    # optional
 ```
 
-### Re-sync with main (preserving committed work)
-
-When your work is already **committed**, replay it on top of the updated main.
-
-Suppose your history is:
-
-```
-295769d  <-- main (old base)
-   \
-    ... your commits ...  <-- HEAD (feat/your-branch)
-```
-
-**Primary: rebase.** One command — linear history, no merge commit. Best for a
-personal branch with a few clean commits. Conflicts are resolved per commit, so
-they can recur across commits.
+### Re-sync with main — committed work
 
 ```bash
 git switch feat/your-branch
-git rebase main          # replays your commits on top of latest main
+git rebase main           # linear history; conflicts resolved per commit
 ```
 
-**Alternative: wip branch + merge.** Reach for this when conflicts are messy
-(e.g. `package.json`, `package-lock.json`) and you'd rather resolve them once,
-when you must keep the original commit SHAs (shared branch), or when you want an
-explicit backup branch instead of relying on the reflog.
+If conflicts are messy (lockfiles), or the branch is shared and must keep its
+SHAs, merge instead:
 
 ```bash
-git switch -c wip/your-branch       # pin your commits on a temp branch
-git switch feat/your-branch         # back to your working branch
-git reset --hard <old-base>         # e.g. 295769d — drop to main's old base
-git merge main                      # fast-forward to latest main
-git merge wip/your-branch           # replay your commits; resolve conflicts once
-```
-
-Either way, if the branch was already pushed, update the remote with
-`git push --force-with-lease`. Clean up the temp branch at the end:
-
-```bash
+git switch -c wip/your-branch     # pin your commits
+git switch feat/your-branch
+git reset --hard <old-base>       # main's old base
+git merge main                    # fast-forward
+git merge wip/your-branch         # replay; resolve conflicts once
 git branch -d wip/your-branch
 ```
 
-### Squash merge into clean branch
+Either way, push with `git push --force-with-lease`.
+
+### Rename master to main
 
 ```bash
-git fetch origin
-git checkout -b <branch> origin/main
-git merge --squash origin/<source-branch>
-git commit -m "feat: combined description"
-git push -u origin <branch>
+git checkout master
+git branch -m master main
+git fetch
+git branch --unset-upstream
+git branch -u origin/main
+git remote set-head origin -a
 ```
 
-## Diagnosing Branch Divergence
+## Undo
 
-Symptom: `git pull` fails or says "Already up to date" but the expected files
-(e.g. a PR's content) aren't present. Usually the local branch and the remote
-branch **share a name but have different histories** — the local one is often
-just a copy of `main` under a different name.
+| Goal                            | Command                        |
+| ------------------------------- | ------------------------------ |
+| Unstage all, keep changes       | `git reset HEAD`               |
+| Unstage one file                | `git restore --staged <file>`  |
+| Discard a file's changes        | `git restore <file>`           |
+| Undo last commit, keep staged   | `git reset --soft HEAD^`       |
+| Undo last commit, discard it    | `git reset --hard HEAD^`       |
+| Reword the last commit          | `git commit --amend -m "msg"`  |
+| Add staged files to last commit | `git commit --amend --no-edit` |
 
-### 1. Compare the two tips
+## Inspect
 
 ```bash
-git rev-parse HEAD                  # local tip
-git rev-parse origin/<branch>       # remote tip (after fetch)
+git log main..<branch> --oneline     # commits <branch> has that main doesn't
+git log --branches --not --remotes   # local commits never pushed
+git diff-tree -p <commit>            # one commit's full patch
+git branch -vv                       # every branch and what it tracks
+git clean -Xfd                       # delete gitignored files
 ```
 
-Different hashes → divergent histories.
+For a diff or log between two refs, `devgeta task review-package <base> <head>`
+produces far less output — and the agent hooks redirect those commands to it
+(see [claude.md](claude.md#command-redirect-pretooluse-hook)).
 
-### 2. Check for unique commits on each side
+## Diagnose branch divergence
+
+`git pull` says "Already up to date" but a PR's files aren't there — usually the
+local and remote branch share a name but not a history.
 
 ```bash
+# 1. do the tips differ?
 git fetch origin <branch>
-git log --oneline origin/main..HEAD              # unique LOCAL commits
-git log --oneline HEAD..origin/<branch>          # unique REMOTE commits
+git rev-parse HEAD
+git rev-parse origin/<branch>
+
+# 2. does either side have unique commits?
+git log --oneline origin/main..HEAD        # unique LOCAL
+git log --oneline HEAD..origin/<branch>    # unique REMOTE
+
+# 3. is an upstream even set?
+git rev-parse --abbrev-ref @{upstream}     # errors if not
+
+# 4. no unique local work → adopt the remote
+git reset --hard origin/<branch>
+git branch --set-upstream-to=origin/<branch>
 ```
 
-If "unique local commits" is empty, the local branch has no work of its own —
-it's safe to point it at the remote.
+## Recover lost commits
 
-### 3. Check upstream tracking
+A `reset --hard`, bad rebase, or force-push leaves commits unreferenced for ~90
+days.
 
 ```bash
-git branch -vv                      # lists tracking branch per local branch
-git rev-parse --abbrev-ref @{upstream}   # errors if no upstream is set
+# 1. reflog — look at the line BEFORE the reset
+git reflog --date=iso --all
+
+# 2. if that's not enough, scan dangling commits, newest first
+for c in $(git fsck --no-reflogs 2>/dev/null | awk '/dangling commit/{print $3}'); do
+  echo "$(git show -s --format='%ci %h %an | %s' $c)"
+done | sort -r | head -30
+
+# 3. inspect
+git show <hash>
+
+# 4. pin it so GC can't take it
+git branch recovered <hash>
+
+# 5. restore
+git reset --hard <hash>
+git push --force-with-lease origin <branch>
 ```
 
-No upstream explains why a bare `git pull` fails. `git pull origin HEAD`
-resolves `origin/HEAD` (usually `main`), which is why it pulls the wrong ref
-and reports "Already up to date."
+Staged but never committed: `git fsck --lost-found` writes blobs to
+`.git/lost-found/other/` — you get contents, not filenames. Never staged is
+unrecoverable; check your editor's local history.
 
-### 4. Align local branch to the real remote branch
+Prevention: `git push --force-with-lease`, and `git branch backup` before a
+risky rebase.
 
-Only when step 2 confirms no unique local work:
+## Aliases
+
+Shell-level, from `configs/templates/devgeta.zsh.tmpl`:
+
+| Alias  | Expands to              |
+| ------ | ----------------------- |
+| `g`    | `git`                   |
+| `gcm`  | `git commit -m`         |
+| `gcam` | `git commit -a -m`      |
+| `gcad` | `git commit -a --amend` |
+| `lzg`  | `lazygit`               |
+
+## Uninstall
 
 ```bash
-git fetch origin <branch>
-git reset --hard origin/<branch>                 # adopt the remote history
-git branch --set-upstream-to=origin/<branch>     # future `git pull` just works
+dg uninstall git
 ```
+
+Removes the package, deletes `~/.config/git/`, clears the `git` entry from
+`global_config.yaml`.

@@ -27,7 +27,7 @@ func writeFixtureArchive(t *testing.T) (result *WriteResult) {
 func TestVerifySucceedsOnIntactArchive(t *testing.T) {
 	result := writeFixtureArchive(t)
 
-	vr, err := Verify(result.ArchivePath)
+	vr, err := Verify(result.ArchivePath, VerifyOptions{})
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestVerifyDetectsFlippedByte(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := Verify(result.ArchivePath); err == nil {
+	if _, err := Verify(result.ArchivePath, VerifyOptions{}); err == nil {
 		t.Fatal("expected Verify to detect a flipped byte")
 	}
 }
@@ -105,7 +105,7 @@ func TestVerifyDetectsEntryMissingFromArchive(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := Verify(result.ArchivePath); err == nil {
+	if _, err := Verify(result.ArchivePath, VerifyOptions{}); err == nil {
 		t.Fatal("expected Verify to detect a manifest entry missing from the archive")
 	}
 }
@@ -140,7 +140,7 @@ func TestVerifyDetectsEntryNotInManifest(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	if _, err := Verify(result.ArchivePath); err == nil {
+	if _, err := Verify(result.ArchivePath, VerifyOptions{}); err == nil {
 		t.Fatal("expected Verify to detect an archive entry the manifest does not list")
 	}
 }
@@ -151,7 +151,28 @@ func TestVerifyRejectsUnrecognizedExtension(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if _, err := Verify(path); err == nil {
+	if _, err := Verify(path, VerifyOptions{}); err == nil {
 		t.Fatal("expected Verify to reject an unrecognized archive extension")
+	}
+}
+
+func TestVerifyProgressSumsToTheArchiveSizeOnDisk(t *testing.T) {
+	result := writeFixtureArchive(t)
+	info, err := os.Stat(result.ArchivePath)
+	if err != nil {
+		t.Fatalf("Stat: %v", err)
+	}
+
+	var reported int64
+	if _, err := Verify(result.ArchivePath, VerifyOptions{
+		OnProgress: func(n int64) { reported += n },
+	}); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+
+	// Verify hashes the whole file, including the trailing bytes the tar
+	// reader stops short of, so the meter must reach the file's full size.
+	if reported != info.Size() {
+		t.Errorf("progress reported %d bytes, archive is %d on disk", reported, info.Size())
 	}
 }

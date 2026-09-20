@@ -2,27 +2,32 @@
   "$schema": "https://opencode.ai/theme.json",
 
   "defs": {
-    "gb_bg_dark": "#1d2021",
-    "gb_bg_panel_dark": "#282828",
-    "gb_bg_element_dark": "#3c3836",
+    "gb_bg_dark": "{{.Palette.BackgroundHard}}",
+    "gb_bg_panel_dark": "{{.Palette.Background}}",
+    "gb_bg_element_dark": "{{.Palette.BackgroundElement}}",
+    "gb_bg_subtle_dark": "{{.Palette.BackgroundSubtle}}",
+    "gb_border_dark": "{{.Palette.Border}}",
 
     "gb_bg_light": "#fbf1c7",
     "gb_bg_panel_light": "#f2e5bc",
     "gb_bg_element_light": "#ebdbb2",
 
-    "gb_fg_dark": "#ebdbb2",
-    "gb_fg_muted_dark": "#a89984",
+    "gb_fg_dark": "{{.Palette.Foreground}}",
+    "gb_fg_muted_dark": "{{.Palette.ForegroundMuted}}",
 
     "gb_fg_light": "#3c3836",
     "gb_fg_muted_light": "#7c6f64",
 
-    "gb_red": "#fb4934",
-    "gb_green": "#b8bb26",
-    "gb_yellow": "#fabd2f",
-    "gb_blue": "#83a598",
-    "gb_purple": "#d3869b",
-    "gb_aqua": "#8ec07c",
-    "gb_orange": "#fe8019"
+    "gb_red": "{{.Palette.Red}}",
+    "gb_green": "{{.Palette.Green}}",
+    "gb_yellow": "{{.Palette.Yellow}}",
+    "gb_blue": "{{.Palette.Blue}}",
+    "gb_purple": "{{.Palette.Purple}}",
+    "gb_aqua": "{{.Palette.Aqua}}",
+    "gb_orange": "{{.Palette.Orange}}",
+
+    "gb_diff_added_bg_dark": "{{.Palette.DiffAddedBackground}}",
+    "gb_diff_removed_bg_dark": "{{.Palette.DiffRemovedBackground}}"
   },
 
   "theme": {
@@ -45,9 +50,9 @@
       "light": "gb_bg_element_light"
     },
 
-    "border": { "dark": "#665c54", "light": "#d5c4a1" },
+    "border": { "dark": "gb_border_dark", "light": "#d5c4a1" },
     "borderActive": { "dark": "gb_orange", "light": "gb_orange" },
-    "borderSubtle": { "dark": "#504945", "light": "#ebdbb2" },
+    "borderSubtle": { "dark": "gb_bg_subtle_dark", "light": "#ebdbb2" },
 
     "diffAdded": { "dark": "gb_green", "light": "gb_green" },
     "diffRemoved": { "dark": "gb_red", "light": "gb_red" },
@@ -60,8 +65,8 @@
     "diffHighlightAdded": { "dark": "gb_green", "light": "gb_green" },
     "diffHighlightRemoved": { "dark": "gb_red", "light": "gb_red" },
 
-    "diffAddedBg": { "dark": "#32361a", "light": "#e6e9c1" },
-    "diffRemovedBg": { "dark": "#3c1f1e", "light": "#f2d3cf" },
+    "diffAddedBg": { "dark": "gb_diff_added_bg_dark", "light": "#e6e9c1" },
+    "diffRemovedBg": { "dark": "gb_diff_removed_bg_dark", "light": "#f2d3cf" },
     "diffContextBg": {
       "dark": "gb_bg_panel_dark",
       "light": "gb_bg_panel_light"
@@ -71,8 +76,8 @@
       "dark": "gb_fg_muted_dark",
       "light": "gb_fg_muted_light"
     },
-    "diffAddedLineNumberBg": { "dark": "#32361a", "light": "#e6e9c1" },
-    "diffRemovedLineNumberBg": { "dark": "#3c1f1e", "light": "#f2d3cf" },
+    "diffAddedLineNumberBg": { "dark": "gb_diff_added_bg_dark", "light": "#e6e9c1" },
+    "diffRemovedLineNumberBg": { "dark": "gb_diff_removed_bg_dark", "light": "#f2d3cf" },
 
     "markdownText": { "dark": "gb_fg_dark", "light": "gb_fg_light" },
     "markdownHeading": { "dark": "gb_blue", "light": "gb_blue" },

@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,6 +22,8 @@ func resetArchiveFlags(t *testing.T) {
 	origYes := archiveYesFlag
 	origGOOS := archiveGOOS
 	origNow := archiveNow
+	origFreeBytes := archiveFreeBytes
+	origProgressOut := archiveProgressOut
 	t.Cleanup(func() {
 		archiveDryRunFlag = origDryRun
 		archiveGzipFlag = origGzip
@@ -28,7 +33,12 @@ func resetArchiveFlags(t *testing.T) {
 		archiveYesFlag = origYes
 		archiveGOOS = origGOOS
 		archiveNow = origNow
+		archiveFreeBytes = origFreeBytes
+		archiveProgressOut = origProgressOut
 	})
+	// Meters draw nowhere by default: a test that archives should not spray
+	// progress lines into the test log.
+	archiveProgressOut = io.Discard
 	archiveDryRunFlag = false
 	archiveGzipFlag = false
 	archiveNoSkipFlag = false
@@ -269,5 +279,200 @@ func TestArchiveVerifySubcommandSucceeds(t *testing.T) {
 
 	if err := runArchiveVerify(archiveVerifyCmd, []string{archivePath}); err != nil {
 		t.Fatalf("runArchiveVerify: %v", err)
+	}
+}
+
+// eachArchiveOutput runs fn once per file a full archive run writes, so a
+// guard test covers every one of them rather than only the archive itself.
+func eachArchiveOutput(t *testing.T, fn func(t *testing.T, label, filename string)) {
+	t.Helper()
+	for _, c := range []struct{ label, filename string }{
+		{"the archive", "src-2026-09-13.tar.zst"},
+		{"the manifest", "src-2026-09-13.sha256"},
+		{"the skip report", "src-2026-09-13.skipped.txt"},
+		{"the archive checksum", "src-2026-09-13.tar.zst.sha256"},
+	} {
+		t.Run(c.label, func(t *testing.T) { fn(t, c.label, c.filename) })
+	}
+}
+
+func TestArchiveOutputPathsCoversEveryFileARunWrites(t *testing.T) {
+	got := archiveOutputPaths("/dest", "src-2026-09-13", ".tar.zst")
+
+	want := []string{
+		"/dest/src-2026-09-13.tar.zst",
+		"/dest/src-2026-09-13.sha256",
+		"/dest/src-2026-09-13.skipped.txt",
+		"/dest/src-2026-09-13.tar.zst.sha256",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d output paths, want %d: %v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("output path %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// A run must abort before creating anything if ANY of its outputs is already
+// on the drive. The write phase renames its .partial files into place
+// unconditionally, so a guard that only checked the archive would let a
+// leftover manifest or skip report be replaced silently.
+func TestRefuseIfAnyOutputExistsRefusesForEveryOutput(t *testing.T) {
+	eachArchiveOutput(t, func(t *testing.T, label, filename string) {
+		destDir := t.TempDir()
+		existing := filepath.Join(destDir, filename)
+		if err := os.WriteFile(existing, []byte("do not lose me"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+
+		err := refuseIfAnyOutputExists(destDir, "src-2026-09-13", ".tar.zst")
+		if err == nil {
+			t.Fatalf("expected a refusal when %s already exists", label)
+		}
+		if !strings.Contains(err.Error(), filename) {
+			t.Errorf("error %q should name the file in the way, %q", err, filename)
+		}
+		if !strings.Contains(err.Error(), destDir) {
+			t.Errorf("error %q should name the directory it found them in", err)
+		}
+
+		data, rerr := os.ReadFile(existing)
+		if rerr != nil {
+			t.Fatalf("ReadFile: %v", rerr)
+		}
+		if string(data) != "do not lose me" {
+			t.Errorf("%s was modified; it must be left exactly as found", label)
+		}
+	})
+}
+
+func TestRefuseIfAnyOutputExistsAllowsAnEmptyDestination(t *testing.T) {
+	if err := refuseIfAnyOutputExists(t.TempDir(), "src-2026-09-13", ".tar.zst"); err != nil {
+		t.Errorf("an empty destination should be accepted, got %v", err)
+	}
+}
+
+func TestRefuseIfAnyOutputExistsIgnoresUnrelatedFiles(t *testing.T) {
+	destDir := t.TempDir()
+	for _, name := range []string{"holiday-photos.tar.zst", "src-2026-09-12.tar.zst", "notes.txt"} {
+		if err := os.WriteFile(filepath.Join(destDir, name), []byte("x"), 0o644); err != nil {
+			t.Fatalf("WriteFile: %v", err)
+		}
+	}
+
+	if err := refuseIfAnyOutputExists(destDir, "src-2026-09-13", ".tar.zst"); err != nil {
+		t.Errorf("other archives on the drive must not block a run, got %v", err)
+	}
+}
+
+// The regression this guards: an earlier run's sidecars survive after the
+// archive itself is deleted, and the old guard only looked at the archive.
+func TestRunArchiveRefusesWhenOnlySidecarsRemain(t *testing.T) {
+	resetArchiveFlags(t)
+	archiveYesFlag = true
+	source := t.TempDir()
+	destDir := t.TempDir()
+	fixedNow := time.Date(2026, 9, 13, 0, 0, 0, 0, time.UTC)
+	archiveNow = func() time.Time { return fixedNow }
+
+	manifest := filepath.Join(destDir, filepath.Base(source)+"-2026-09-13.sha256")
+	if err := os.WriteFile(manifest, []byte("an earlier run's manifest"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	if err := runArchive(archiveCmd, []string{source, destDir}); err == nil {
+		t.Fatal("expected a refusal when a previous run's manifest is still on the drive")
+	}
+
+	data, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(data) != "an earlier run's manifest" {
+		t.Error("the existing manifest was overwritten; a refused run must touch nothing")
+	}
+}
+
+func TestShortOnSpaceWarning(t *testing.T) {
+	const gib = int64(1) << 30
+
+	if got := shortOnSpaceWarning(100*gib, 50*gib); got != "" {
+		t.Errorf("ample space should not warn, got %q", got)
+	}
+	if got := shortOnSpaceWarning(50*gib, 50*gib); got != "" {
+		t.Errorf("exactly enough space should not warn, got %q", got)
+	}
+
+	warning := shortOnSpaceWarning(10*gib, 200*gib)
+	if warning == "" {
+		t.Fatal("a destination smaller than the source should warn")
+	}
+	for _, want := range []string{"200.0 GiB", "10.0 GiB", "discarded"} {
+		if !strings.Contains(warning, want) {
+			t.Errorf("warning %q is missing %q", warning, want)
+		}
+	}
+}
+
+// Short space is a warning, not a refusal: the archive is compressed, and by
+// how much is unknowable until it is written.
+func TestRunArchiveProceedsDespiteLowFreeSpace(t *testing.T) {
+	resetArchiveFlags(t)
+	archiveYesFlag = true
+	archiveFreeBytes = func(string) (int64, error) { return 1, nil }
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "a.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	destDir := t.TempDir()
+
+	if err := runArchive(archiveCmd, []string{source, destDir}); err != nil {
+		t.Fatalf("a low free-space reading must warn, not refuse: %v", err)
+	}
+}
+
+func TestRunArchiveSurvivesAnUnreadableFreeSpaceReading(t *testing.T) {
+	resetArchiveFlags(t)
+	archiveYesFlag = true
+	archiveFreeBytes = func(string) (int64, error) { return 0, errors.New("statfs failed") }
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "a.txt"), []byte("content"), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	destDir := t.TempDir()
+
+	if err := runArchive(archiveCmd, []string{source, destDir}); err != nil {
+		t.Fatalf("an unavailable free-space reading must not fail the run: %v", err)
+	}
+}
+
+// The hint must never be a bare `tar -xf`: pasted in the wrong directory that
+// unpacks a whole home folder over the user's working tree. It must name a
+// destination and create it, since -C fails on a directory that isn't there.
+func TestRestoreCommandExtractsIntoItsOwnDirectory(t *testing.T) {
+	cases := []struct{ filename, want string }{
+		{
+			"Documents-2026-09-14.tar.zst",
+			"mkdir -p Documents-2026-09-14 && tar --zstd -xf Documents-2026-09-14.tar.zst -C Documents-2026-09-14",
+		},
+		{
+			"Documents-2026-09-14.tar.gz",
+			"mkdir -p Documents-2026-09-14 && tar -xzf Documents-2026-09-14.tar.gz -C Documents-2026-09-14",
+		},
+	}
+	for _, c := range cases {
+		got := restoreCommand(c.filename)
+		if got != c.want {
+			t.Errorf("restoreCommand(%q) =\n  %q\nwant\n  %q", c.filename, got, c.want)
+		}
+		if !strings.Contains(got, " -C ") {
+			t.Errorf(
+				"restoreCommand(%q) = %q, must extract into a named directory",
+				c.filename,
+				got,
+			)
+		}
 	}
 }

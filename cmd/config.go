@@ -286,10 +286,6 @@ applies.`,
 
 func init() {
 	rootCmd.AddCommand(configCmd)
-	// Same generic override taskCmd uses (see standardHelpFunc's doc comment
-	// in cmd/task.go) - without it, config's subcommands would be hidden
-	// behind the root's branded Use+Long-only help.
-	configCmd.SetHelpFunc(standardHelpFunc)
 	configCmd.AddCommand(configListCmd)
 	configCmd.AddCommand(configGetCmd)
 	configCmd.AddCommand(configSetCmd)

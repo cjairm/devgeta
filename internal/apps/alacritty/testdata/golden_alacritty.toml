@@ -1,0 +1,54 @@
+[env]
+TERM = "xterm-256color"
+
+[terminal.shell]
+program = "/home/tester/.config/alacritty/starter.sh"
+
+[general]
+import = []
+
+[window]
+padding.x = 10
+padding.y = 10
+
+decorations = "Buttonless"
+
+opacity = 0.8
+blur = true
+
+[terminal]
+
+
+[font]
+size = 13
+normal = { family = "MesloLGLDZ Nerd Font Mono", style = "Regular" }
+bold = { family = "MesloLGLDZ Nerd Font Mono", style = "Bold" }
+italic = { family = "MesloLGLDZ Nerd Font Mono", style = "Italic" }
+
+
+
+[colors]
+[colors.primary]
+background = "0x282828"
+foreground = "0xd4be98"
+
+[colors.normal]
+black = "0x63605e"
+red = "0xea6962"
+green = "0xa9b665"
+yellow = "0xd8a657"
+blue = "0x7daea3"
+magenta = "0xd3869b"
+cyan = "0x89b482"
+white = "0xd4be98"
+
+[colors.bright]
+black = "0x63605e"
+red = "0xea6962"
+green = "0xa9b665"
+yellow = "0xd8a657"
+blue = "0x7daea3"
+magenta = "0xd3869b"
+cyan = "0x89b482"
+white = "0xd4be98"
+
