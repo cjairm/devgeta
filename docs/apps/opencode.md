@@ -38,19 +38,26 @@ export OPENROUTER_API_KEY="your-key-here"
 OpenCode pins no model of its own — devgeta ships no default here, so these are
 suggestions, not configuration. Pick one per role and set it in OpenCode.
 
-| Role                       | Family                    | When to reach for it                                    |
-| -------------------------- | ------------------------- | ------------------------------------------------------- |
-| Daily coding (default)     | `anthropic/claude-opus`   | Everyday coding, bug fixes, PR reviews                  |
-| Hardest reasoning          | `anthropic/claude-fable`  | When nothing else solves it                             |
-| Agents + large repos       | `moonshotai/kimi`         | Large codebases, multi-file refactors, long agent runs  |
-| Deep review + architecture | `z-ai/glm`                | Architecture decisions, hard debugging, critical review |
-| Cheap bulk tasks           | `deepseek/deepseek-flash` | Background or non-critical automation                   |
+| Role                       | Family                    | Fallback, different lineage | When to reach for it                                    |
+| -------------------------- | ------------------------- | --------------------------- | ------------------------------------------------------- |
+| Daily coding (default)     | `anthropic/claude-opus`   | `openai/gpt-5.6-luna`       | Everyday coding, bug fixes, PR reviews                  |
+| Hardest reasoning          | `anthropic/claude-fable`  | OpenAI's reasoning line     | When nothing else solves it                             |
+| Agents + large repos       | `moonshotai/kimi`         | `deepseek/deepseek-v4-pro`  | Large codebases, multi-file refactors, long agent runs  |
+| Deep review + architecture | `z-ai/glm`                | `openai/gpt-5.6-luna`       | Architecture decisions, hard debugging, critical review |
+| Cheap bulk tasks           | `deepseek/deepseek-flash` | `z-ai/glm-5.3-flash`        | Background or non-critical automation                   |
 
-**Resolve the exact slug and point release yourself at
-[openrouter.ai/models](https://openrouter.ai/models).** Families are listed
-here without a version on purpose: point releases land every few weeks, and a
-version pinned in prose is wrong long before anyone notices. Check the price
-and the context window there too — both move.
+**Fallbacks verified against OpenRouter on 2026-09-19 — re-check before
+trusting one.** The left column names families on purpose, because point
+releases land every few weeks and a version pinned in prose is wrong long
+before anyone notices. The fallback column has to name specific models to be
+useful, so it carries a date instead; treat an old date as a reason to look
+rather than a recommendation. Resolve every current slug, price, and context
+window at [openrouter.ai/models](https://openrouter.ai/models) — all three
+move.
+
+Luna appears twice on purpose: it is the only pick here from a lineage that
+differs from **both** Anthropic and the Chinese open-weight cluster, which is
+exactly what you want in the reviewer slot.
 
 Two caveats on picking from a leaderboard. OpenRouter's programming collection
 ranks by **tokens processed over a trailing week**, which measures adoption, not
@@ -71,16 +78,16 @@ review.
 
 ## Fallbacks
 
-Prefer **OpenRouter's own failover** over remembering a backup slug: pass a
-`models` array on the request and it moves on when your first choice is down,
-rate-limited, or erroring. The mechanism keeps working when the list goes stale;
-a memorized slug does not. Current request shape is in
-[OpenRouter's docs](https://openrouter.ai/docs).
+Wire the fallback column above into **OpenRouter's own failover** rather than
+switching models by hand: pass a `models` array on the request and it moves on
+when your first choice is down, rate-limited, or erroring. Current request
+shape is in [OpenRouter's docs](https://openrouter.ai/docs).
 
-The same different-lineage rule applies as for reviewers, for a different
-reason: a fallback sharing a provider with its primary is taken out by the same
-outage, the same price change, and the same bad release. Pair each role's pick
-with one from another lineage.
+The different-lineage rule from the reviewer section applies here too, for a
+different reason: a fallback sharing a provider with its primary is taken out
+by the same outage, the same price change, and the same bad release. That is
+why the column crosses lineages on every row rather than falling back to a
+sibling model.
 
 Two tiers are worth having underneath that:
 
