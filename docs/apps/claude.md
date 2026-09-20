@@ -8,6 +8,32 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 - **Config source:** `configs/claude/` (+ shared content in `configs/shared/`)
 - **Install:** official script (`curl -fsSL https://claude.ai/install.sh | bash`)
 
+## Using it
+
+Start it with `cc`. Useful slash commands inside the session:
+
+- `/help` — help with Claude Code features
+- `/config` — settings (model, theme, permissions)
+- `/fast` — toggle fast mode (Opus with faster output)
+- `/loop` — run a prompt or command on a recurring interval
+- `/skills` — list available skills
+- `/init` — initialize CLAUDE.md for your project
+- `/review` — review a pull request
+
+Settings, themes, skills, commands, and agents all land in `~/.claude/` — see
+the deployment table below for exactly what goes where.
+
+**Resetting chat history.** Message/input history and past chats are separate:
+
+```bash
+rm ~/.claude/history.jsonl   # message/input history
+rm -rf ~/.claude/sessions ~/.claude/projects ~/.claude/tasks   # chats
+```
+
+Restart Claude Code afterwards. Note that `~/.claude/projects/<slug>/memory/`
+lives under that second path — deleting it discards the agent's memory notes
+for those projects along with the chats.
+
 ## What gets deployed
 
 `ForceConfigure` copies the following into `~/.claude/`:

@@ -1,6 +1,9 @@
-# Neovim App
+# Neovim
 
-Installs and configures [Neovim](https://neovim.io/) — a hyperextensible Vim-based text editor.
+Devgeta installs and configures [Neovim](https://neovim.io/), a hyperextensible
+Vim-based text editor.
+
+- **Module:** `internal/apps/neovim/`
 
 ## After Installation
 

@@ -1,6 +1,10 @@
-# Docker Desktop App
+# Docker Desktop
 
-Installs [Docker Desktop](https://www.docker.com/products/docker-desktop/) — the containerization platform for building, shipping, and running distributed applications.
+Devgeta installs [Docker Desktop](https://www.docker.com/products/docker-desktop/),
+the containerization platform for building, shipping, and running distributed
+applications.
+
+- **Module:** `internal/apps/docker/`
 
 ## After Installation
 

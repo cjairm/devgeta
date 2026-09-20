@@ -1,6 +1,8 @@
-# Git App
+# Git
 
-Installs and configures Git with devgeta integration.
+Devgeta installs and configures Git with devgeta integration.
+
+- **Module:** `internal/apps/git/`
 
 ## Recovering Lost Commits
 
