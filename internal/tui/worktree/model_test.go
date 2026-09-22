@@ -44,6 +44,7 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.switchToPaneFn = func(_, _, _ string) error { return nil }
 	m.clearAgentStateForPaneFn = func(_ string) error { return nil }
 	m.killSessionFn = func(_ string) error { return nil }
+	m.hasSessionFn = func(_ string) bool { return true }
 	m.listSessionNamesFn = func() ([]string, error) { return nil, nil }
 	m.repoCandidatesFn = func(_ string) ([]string, error) { return nil, nil }
 	m.validateRepoPathFn = func(path string) (string, error) { return path, nil }
@@ -303,20 +304,6 @@ func TestBuildRowsFilterMatchesSessionNames(t *testing.T) {
 			rows[0].kind,
 			rows[0].session.Name,
 		)
-	}
-}
-
-func TestLeafIndicesIncludesSessionRows(t *testing.T) {
-	rows := buildRows(testStatuses(), testSessions(), map[string]bool{}, "")
-	indices := leafIndices(rows)
-	// 3 worktree rows + 2 session rows = 5 leaf rows.
-	if len(indices) != 5 {
-		t.Fatalf("expected 5 leaf indices (worktree+session), got %d", len(indices))
-	}
-	for _, i := range indices {
-		if rows[i].kind == rowRepo {
-			t.Errorf("leafIndices must not include a repo header row, got index %d", i)
-		}
 	}
 }
 
@@ -650,37 +637,6 @@ func TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide(t *testing.T) {
 			)
 		}
 	})
-}
-
-// TestLeafIndicesIncludesPaneRows verifies pane rows are valid cursor landing
-// spots after a rows rebuild.
-func TestLeafIndicesIncludesPaneRows(t *testing.T) {
-	statuses := []worktree.WorktreeStatus{
-		{
-			Name:       "feature-a",
-			Repo:       "repo-a",
-			TmuxWindow: "wt-feature-a",
-			Panes: []tmux.PaneState{
-				{PaneID: "%1", State: worktree.AgentStateBusy},
-				{PaneID: "%2", State: worktree.AgentStateIdle},
-			},
-		},
-	}
-	rows := buildRows(statuses, nil, map[string]bool{}, "")
-	indices := leafIndices(rows)
-	// worktree row + 2 pane rows = 3 leaf rows (repo header excluded).
-	if len(indices) != 3 {
-		t.Fatalf("expected 3 leaf indices (worktree + 2 panes), got %d: %+v", len(indices), indices)
-	}
-	paneCount := 0
-	for _, i := range indices {
-		if rows[i].kind == rowPane {
-			paneCount++
-		}
-	}
-	if paneCount != 2 {
-		t.Errorf("expected leafIndices to include both pane rows, got %d", paneCount)
-	}
 }
 
 // TestNavigableIndicesIncludesPaneRows verifies j/k can reach pane rows.
@@ -1397,9 +1353,11 @@ func TestFilterHidesNonMatchingRows(t *testing.T) {
 
 func TestCursorWrapsAtBoundaries(t *testing.T) {
 	m := makeTestModel(testStatuses())
-	indices := leafIndices(m.rows)
+	// The navigation set, which is also what a rebuild clamps to — there is
+	// deliberately only one definition of a valid cursor position now.
+	indices := m.navigableIndices()
 	if len(indices) < 2 {
-		t.Skip("need at least 2 worktree rows")
+		t.Skip("need at least 2 navigable rows")
 	}
 
 	// Start at first worktree row

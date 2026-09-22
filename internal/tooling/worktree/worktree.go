@@ -1070,6 +1070,61 @@ func (l StateLayer) SessionStatuses() []SessionStatus {
 	return statuses
 }
 
+// PlainWindowBySession maps each session to its first window that is NOT
+// worktree-backed, in tmux's own window order. A session with no such window
+// is absent, so a zero value doubles as "nothing here the worktree rows don't
+// already reach".
+//
+// It is the question SessionStatuses above cannot answer. That one drops a
+// session containing a wt- window entirely, which is right for the session
+// ROWS — the worktree rows already reach those windows — but it also throws
+// away the fact that such a session can hold windows of its own that no row
+// reaches.
+//
+// It returns the window NAME rather than a bool because the caller needs to
+// switch to that window specifically. Switching to the session alone lands on
+// whichever window is active there, which is the dashboard's own [workspace]
+// window at the moment of the switch — and once the dashboard exits, that
+// window dies and tmux drops the client onto whatever remains, typically the
+// wt- window the plain window was the alternative to.
+//
+// ignorePaneID excludes the window that pane belongs to, for the caller that
+// is itself one of the windows being counted: `ctrl+t` opens the dashboard as
+// a "[workspace]" window in the CURRENT session (see the tmux binding), so
+// without it a repo session holding nothing but worktree windows looks like it
+// has a plain one the moment the dashboard is opened from inside it — and
+// switching there would land on the dashboard the user is already looking at.
+// The exclusion is pinned to that pane's own session, since window names are
+// not unique across sessions. Pass "" to count every window; a pane id that
+// matches nothing in the scan excludes nothing.
+func (l StateLayer) PlainWindowBySession(ignorePaneID string) map[string]string {
+	var ignoreSession, ignoreWindow string
+	if ignorePaneID != "" {
+		for session, panes := range l.PanesBySession {
+			for _, p := range panes {
+				if p.PaneID == ignorePaneID {
+					ignoreSession, ignoreWindow = session, p.Window
+					break
+				}
+			}
+		}
+	}
+	out := map[string]string{}
+	for session, panes := range l.PanesBySession {
+		for _, p := range panes {
+			if isWorktreeWindow(p.Window) {
+				continue
+			}
+			if session == ignoreSession && p.Window == ignoreWindow {
+				continue
+			}
+			out[session] = p.Window
+			break
+		}
+	}
+	return out
+}
+
 // aggregatePaneStates reduces a window's or a session's panes to the single
 // agent state its row reports, per ADR-0005's precedence. The one adapter
 // between a []tmux.PaneState and tmux.AggregateAgentState's []string, shared

@@ -2232,6 +2232,63 @@ func TestPaneStates(t *testing.T) {
 		},
 	)
 
+	// The real executor returns its stdout TrimSpace'd, so the last line of a
+	// scan arrives WITHOUT its trailing tab whenever that pane has no
+	// @dg_agent_state set. Every other fixture here ends in "\n", which keeps
+	// the final tab inside the string and cannot reproduce that shape — so this
+	// case is written the way production actually sees it.
+	t.Run(
+		"keeps the last pane when the trimmed stdout dropped its trailing tab",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult(
+				"other\tnotes\t%3\t2\tbash\tblocked\nmy-session\twt-feature-a\t%1\t0\tzsh",
+				"",
+				nil,
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			states := app.PaneStates()
+
+			expected := []tmux.PaneState{
+				{
+					Session:        "other",
+					Window:         "notes",
+					PaneID:         "%3",
+					PaneIndex:      "2",
+					CurrentCommand: "bash",
+					State:          "blocked",
+				},
+				{
+					Session:        "my-session",
+					Window:         "wt-feature-a",
+					PaneID:         "%1",
+					PaneIndex:      "0",
+					CurrentCommand: "zsh",
+					State:          "",
+				},
+			}
+			if len(states) != len(expected) {
+				t.Fatalf("expected %d states, got %d: %+v", len(expected), len(states), states)
+			}
+			for i, exp := range expected {
+				if states[i] != exp {
+					t.Errorf("state[%d] = %+v, want %+v", i, states[i], exp)
+				}
+			}
+		},
+	)
+
+	t.Run("drops a line with fewer than 5 fields", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("my-session\teditor\t%1\t0\n", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if states := app.PaneStates(); len(states) != 0 {
+			t.Errorf("expected no states from a 4-field line, got %+v", states)
+		}
+	})
+
 	t.Run("populates PaneIndex and CurrentCommand explicitly", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResult(

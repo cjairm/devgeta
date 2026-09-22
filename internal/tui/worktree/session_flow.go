@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -255,9 +256,100 @@ func (m Model) handleSwitchToSession() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	return m, m.switchToSessionCmd(sel.Name)
+}
+
+// handleSwitchToRepoSession is enter's rowRepo counterpart: switches the
+// attached client to the tmux session that holds this repo's worktree windows
+// and quits.
+//
+// The header row is the only place that session is reachable from. Its
+// worktree rows attach to individual wt- WINDOWS inside it, and the session
+// itself never appears among the session rows — ADR-0003 excludes any session
+// containing a wt- window, so the plain windows alongside those (the zsh the
+// repo session was started from) had no row of their own. Pressing enter here
+// used to fall through to handleAttach, which has no worktree selected on a
+// header row and returned silently.
+//
+// Which session that is gets READ, not derived. worktree.TmuxSessionName(repo)
+// is only where ensureWindow PUTS a new window; a window can end up somewhere
+// else entirely, and does — a `wt-hire2-…` window living in a session called
+// `hire2-tien` is a real case, and deriving the name would have switched to a
+// session that does not exist while the right one was on screen. Every live
+// worktree row already carries its panes, and a pane knows its own session
+// (ADR-0024's scan collects it), so the answer is in state the dashboard
+// already holds.
+func (m Model) handleSwitchToRepoSession() (tea.Model, tea.Cmd) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowRepo {
+		return m, nil
+	}
+	repo := m.rows[m.cursor].repo
+
+	if os.Getenv("TMUX") == "" {
+		m.status = notInsideTmuxStatus
+		return m, nil
+	}
+
+	// The plain WINDOW first, by name, because that window is the whole reason
+	// this row is a stop. Switching to the session alone lands on whichever
+	// window is active in it — which is the dashboard's own [workspace] window
+	// at the moment of the switch, and once the dashboard exits that window
+	// dies and tmux drops the client onto whatever is left, typically the wt-
+	// window this row exists to be an alternative to. That is the bug this
+	// ordering fixes, not a refinement of it.
+	if session, window, ok := m.repoPlainWindow(repo); ok {
+		return m, m.switchToWindowCmd(session, window)
+	}
+	// No plain window to aim at. Only reachable from a COLLAPSED header, which
+	// is a stop regardless of where it leads (l has to be able to re-expand
+	// it), so the session on its own is the best available answer.
+	name, ok := m.repoSessionName(repo)
+	if !ok {
+		m.status = "no tmux session for " + repo + " — open one of its worktrees first"
+		return m, nil
+	}
+	return m, m.switchToSessionCmd(name)
+}
+
+// repoSessionName resolves the tmux session holding repo's worktree windows.
+//
+// First answer: the session one of its live worktree panes reports. That is
+// the true owner whatever it is called, and it costs nothing — the panes are
+// already on the rows. Only when the repo has no live window anywhere does it
+// fall back to the name ensureWindow would have used, confirmed with
+// has-session so a stale guess is never handed to switch-client.
+func (m Model) repoSessionName(repo string) (string, bool) {
+	if name, ok := repoSessionFromPanes(m.statuses, repo); ok {
+		return name, true
+	}
+	derived := worktree.TmuxSessionName(repo)
+	if m.hasSessionFn(derived) {
+		return derived, true
+	}
+	return "", false
+}
+
+// switchToWindowCmd is switchToSessionCmd's window-targeted twin: it moves the
+// client to one specific window and quits, reporting a failure the same way.
+// It reuses attachFn, which is tmuxApp.SwitchToWindow — the same operation a
+// worktree row performs, minus that path's missing-window repair, which cannot
+// apply here because this window came out of a live scan.
+func (m Model) switchToWindowCmd(session, window string) tea.Cmd {
+	switchFn := m.attachFn
+	return func() tea.Msg {
+		if err := switchFn(session, window); err != nil {
+			return statusMsg("switch failed: " + err.Error())
+		}
+		return tea.QuitMsg{}
+	}
+}
+
+// switchToSessionCmd is the switch-client-then-quit command both enter paths
+// above return, so the session and repo-header rows can never drift on what
+// pressing enter does or on how a failed switch is reported.
+func (m Model) switchToSessionCmd(name string) tea.Cmd {
 	switchFn := m.switchToSessionFn
-	name := sel.Name
-	return m, func() tea.Msg {
+	return func() tea.Msg {
 		if err := switchFn(name); err != nil {
 			return statusMsg("switch failed: " + err.Error())
 		}

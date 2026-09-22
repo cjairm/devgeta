@@ -39,6 +39,12 @@ kinds:
   is the _only_ correlation done between sessions and worktrees — there is no further
   session↔worktree reconciliation). A leaf, no children.
 
+  > **The parenthesis above no longer holds.** The exclusion itself stands, but it hid the
+  > plain windows sitting alongside a repo's `wt-` windows, which then had no row at all.
+  > [ADR-0048](ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md) adds a narrow
+  > session↔repo resolution so the repo header row can reach them, and supersedes both this
+  > clause and the "Session↔worktree reconciliation" rejection below.
+
 The two kinds are differentiated inline in one flat top-level list — **not** in two labeled
 sections — by two orthogonal signals:
 
@@ -56,7 +62,9 @@ Rejected alternatives:
   parent; the user asked for a single unified list.
 - **Session↔worktree reconciliation** (mapping each session back to a worktree). More
   machinery than needed; the `wt-`-window exclusion filter is sufficient to avoid
-  double-listing a repo session.
+  double-listing a repo session. — **Reversed by
+  [ADR-0048](ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md):** sufficient to
+  avoid double-listing, but it also made a repo session's plain windows unreachable.
 - **A pure "list tmux sessions" model.** Would hide worktrees whose window isn't live —
   the exact "worktree without a session" case the dashboard must surface.
 - **Keeping `dg wt ui` as the name.** "Worktree UI" no longer describes a surface that

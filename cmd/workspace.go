@@ -20,7 +20,8 @@ both from one place.
 
 Key actions:
   s       New session
-  enter   Switch/attach to the selected session or pane
+  enter   Switch/attach to the selected worktree, session or pane; on a repo
+          header, switch to the tmux session holding that repo's worktrees
   d       Delete/kill the selected session
   e       Toggle the left pane's width (default / double)
   ctrl+r  Recompute the diff for the selected row`,

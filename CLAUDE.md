@@ -296,6 +296,7 @@ Verify these before changing code in these areas:
 ### Shell Integration
 
 - [ ] Shell config files (`devgeta.zsh`) are sourced correctly
+- [ ] `devgeta` resolves in a shell that read **no profile** — the case agents, hooks, cron and launchd actually run in. The PATH entry in `~/.zshrc` is invisible to them; `~/.zshenv` is the only file every zsh reads. Test: `env -i HOME="$HOME" PATH=/usr/bin:/bin zsh -c 'command -v devgeta'`
 - [ ] Mise activation works after install (test: `eval "$(mise activate zsh)"`)
 - [ ] User shell customizations are not overwritten
 - [ ] Aliases and functions don't conflict with user's existing setup

@@ -208,20 +208,10 @@ func buildRows(
 	return rows
 }
 
-// leafIndices returns indices into rows that are "leaf" data rows —
-// rowWorktree, rowSession, and rowPane — i.e. valid cursor landing spots that
-// carry selectable data, as opposed to rowRepo header rows. Used to keep the
-// cursor on a valid leaf after the row list is rebuilt. Deliberately not
-// named "worktreeIndices" (its pre-session name): selectedStatus still keeps
-// "worktree" narrow (rowWorktree only), and this now includes rowSession and
-// rowPane too — reusing that name here would contradict selectedStatus's
-// semantics.
-func leafIndices(rows []row) []int {
-	var out []int
-	for i, r := range rows {
-		if r.kind == rowWorktree || r.kind == rowSession || r.kind == rowPane {
-			out = append(out, i)
-		}
-	}
-	return out
-}
+// Removed: leafIndices, which returned every row EXCEPT a repo header and was
+// the set a rebuild clamped the cursor to. Having it alongside
+// navigableIndices meant two answers to "where may the cursor sit", and they
+// disagreed about headers — so a rebuild (every 3-second tick, every filter
+// keystroke, every collapse) pulled the cursor off a header the user had just
+// navigated to. Model.navigableIndices is now the only definition; keeping a
+// second one is what let them drift in the first place.

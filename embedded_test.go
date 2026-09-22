@@ -153,6 +153,55 @@ func TestZshenvStaysPathRepairSafe(t *testing.T) {
 	}
 }
 
+// The other half of what ~/.zshenv is for: devgeta's own binary has to be
+// resolvable in a shell that never read a profile. install.sh puts the PATH
+// entry in ~/.zshrc, which only INTERACTIVE shells read, so an AI coding agent
+// running `zsh -c`, a hook, cron or launchd inherits a PATH without it and
+// reports `devgeta` as missing while it sits installed one directory away.
+//
+// The directory is asserted against install.sh's own INSTALL_DIR rather than a
+// copy of the string: the installer and this script have to name the same
+// place, and nothing else would notice if one of them moved.
+func TestZshenvPutsTheInstallDirOnPath(t *testing.T) {
+	data, err := fs.ReadFile(ConfigsFS, "configs/zsh/zshenv.zsh")
+	if err != nil {
+		t.Fatalf("failed to read embedded zshenv.zsh: %v", err)
+	}
+	content := string(data)
+
+	installDir := installerInstallDir(t)
+	if !strings.Contains(content, installDir) {
+		t.Errorf(
+			"zshenv.zsh must put install.sh's INSTALL_DIR (%s) on PATH — without it, every "+
+				"shell that skips ~/.zshrc (an agent's `zsh -c`, a hook, cron, launchd) "+
+				"cannot find the devgeta binary at all",
+			installDir,
+		)
+	}
+	// Prepended, matching install.sh, so devgeta's own binary wins over a
+	// same-named one earlier in an inherited PATH.
+	if !strings.Contains(content, `export PATH="`+installDir+`:$PATH"`) {
+		t.Errorf("zshenv.zsh must PREPEND %s to PATH, the way install.sh does", installDir)
+	}
+	// Without the absence guard, ~/.zshrc's own entry (which runs later) leaves
+	// the directory on PATH twice in every interactive shell.
+	if !strings.Contains(content, `":$PATH:" != *":$HOME/.local/bin:"*`) {
+		t.Error(
+			"zshenv.zsh must skip the PATH entry when it is already there — otherwise an " +
+				"interactive shell ends up with it twice, once from here and once from ~/.zshrc",
+		)
+	}
+}
+
+// installerInstallDir reads INSTALL_DIR out of install.sh, unquoted.
+func installerInstallDir(t *testing.T) string {
+	t.Helper()
+	script := readInstallScript(t)
+	line := extractShellAssignment(t, script, "INSTALL_DIR")
+	value := strings.TrimPrefix(line, "INSTALL_DIR=")
+	return strings.Trim(value, `"'`)
+}
+
 // The project was renamed devgita -> devgeta, and the installed binary is now
 // devgeta. Embedded configs are the one place where the old name fails silently
 // rather than loudly: the agent and command prompts under configs/shared invoke
@@ -272,7 +321,9 @@ func TestEmbeddedShellScriptsAvoidBash4OnlySyntax(t *testing.T) {
 			"associative arrays or namerefs (bash 4 / 4.3)",
 		},
 		{
-			regexp.MustCompile(`\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?(?:,,?|\^\^?|@[QEPAaKk])\}`),
+			regexp.MustCompile(
+				`\$\{[A-Za-z_][A-Za-z0-9_]*(?:\[[^]]*\])?(?:,,?|\^\^?|@[QEPAaKk])\}`,
+			),
 			"case-modification or @ transformation expansion (bash 4 / 4.4)",
 		},
 		{regexp.MustCompile(`\bwait\s+-n\b`), "wait -n (bash 4.3)"},

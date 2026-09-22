@@ -1249,6 +1249,128 @@ func TestScanTmuxState(t *testing.T) {
 	})
 }
 
+// A session holding a repo's worktree windows is excluded from the standalone
+// session rows wholesale (see SessionStatuses / ADR-0003), so nothing told the
+// dashboard whether such a session ALSO has windows of its own. Without that,
+// a repo header can offer to switch to a session that holds nothing but the
+// worktree windows its own child rows already reach.
+func TestStateLayerPlainWindowBySession(t *testing.T) {
+	wtWindow := GetWindowName("repoA", "feat")
+
+	t.Run("a session with only worktree windows is not listed", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"repoA": {{Session: "repoA", Window: wtWindow, PaneID: "%1"}},
+			},
+		}
+
+		if got := layer.PlainWindowBySession(""); got["repoA"] != "" {
+			t.Errorf(
+				"a session whose every window is worktree-backed has nothing else to reach, got %q",
+				got["repoA"],
+			)
+		}
+	})
+
+	t.Run("a session with a worktree window AND a plain one is listed", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"repoA": {
+					{Session: "repoA", Window: wtWindow, PaneID: "%1"},
+					{Session: "repoA", Window: "zsh", PaneID: "%2"},
+				},
+			},
+		}
+
+		// The WINDOW, not just a yes: enter on the header switches straight to
+		// it, because switching to the session alone lands on whichever window
+		// is active there.
+		if got := layer.PlainWindowBySession(""); got["repoA"] != "zsh" {
+			t.Errorf("expected the plain window's name %q, got %q", "zsh", got["repoA"])
+		}
+	})
+
+	t.Run("a session with no worktree window at all is listed", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"notes": {{Session: "notes", Window: "vim", PaneID: "%3"}},
+			},
+		}
+
+		if got := layer.PlainWindowBySession(""); got["notes"] != "vim" {
+			t.Errorf("expected the plain window's name %q, got %q", "vim", got["notes"])
+		}
+	})
+
+	t.Run("an empty layer lists nothing", func(t *testing.T) {
+		if got := (StateLayer{}).PlainWindowBySession(""); len(got) != 0 {
+			t.Errorf("expected no sessions from an empty layer, got %v", got)
+		}
+	})
+
+	// The caller's own window does not count. `ctrl+t` opens the dashboard as a
+	// "[workspace]" window in the CURRENT session, so without this a repo
+	// session holding nothing but its worktree windows looks like it has a
+	// plain one the moment you open the dashboard from inside it — and
+	// switching there would land you back on the dashboard you are looking at.
+	t.Run("the window holding the ignored pane does not count", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"repoA": {
+					{Session: "repoA", Window: wtWindow, PaneID: "%1"},
+					{Session: "repoA", Window: "[workspace]", PaneID: "%9"},
+				},
+			},
+		}
+
+		if got := layer.PlainWindowBySession("%9"); got["repoA"] != "" {
+			t.Errorf(
+				"the dashboard's own window is not somewhere switching to the session goes, got %q",
+				got["repoA"],
+			)
+		}
+	})
+
+	// Window names are not unique across sessions, so the ignore has to be
+	// pinned to the one session it belongs to.
+	t.Run("a same-named window in another session still counts", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"repoA": {
+					{Session: "repoA", Window: wtWindow, PaneID: "%1"},
+					{Session: "repoA", Window: "[workspace]", PaneID: "%9"},
+				},
+				"repoB": {
+					{Session: "repoB", Window: GetWindowName("repoB", "feat"), PaneID: "%2"},
+					{Session: "repoB", Window: "[workspace]", PaneID: "%3"},
+				},
+			},
+		}
+
+		got := layer.PlainWindowBySession("%9")
+		if got["repoA"] != "" {
+			t.Errorf("repoA holds the ignored pane, so its [workspace] window must not count, got %q", got["repoA"])
+		}
+		if got["repoB"] != "[workspace]" {
+			t.Errorf("repoB's own [workspace] window is a different window and must still count, got %q", got["repoB"])
+		}
+	})
+
+	// A pane id that is not in the scan (a stale $TMUX_PANE, or the dashboard
+	// run outside tmux) must not silently suppress anything.
+	t.Run("an unknown ignored pane suppresses nothing", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"repoA": {{Session: "repoA", Window: "zsh", PaneID: "%1"}},
+			},
+		}
+
+		if got := layer.PlainWindowBySession("%404"); got["repoA"] != "zsh" {
+			t.Errorf("an ignore that matches no pane must leave the answer alone, got %q", got["repoA"])
+		}
+	})
+}
+
 // TestStateLayerApplyTo pins the ownership rule the dashboard depends on: the
 // apply half reads its input and writes a new slice, so the producer of a
 // []WorktreeStatus stays its only writer even while a tmux layer taken on

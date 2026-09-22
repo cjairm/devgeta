@@ -96,7 +96,13 @@ Install devgeta with a single command. This will:
 
 1. Download the appropriate binary for your OS and architecture
 2. Install to `~/.local/bin/devgeta`
-3. Configure your PATH automatically
+3. Configure your PATH automatically — in your shell config for interactive
+   shells, and (zsh only) in `~/.zshenv` so shells that never read a profile
+   find `devgeta` too: an AI coding agent running `zsh -c`, a git or editor
+   hook, cron, launchd. The `~/.zshenv` half is written by `dg install` /
+   `dg configure`, not by the installer; see
+   [docs/migrations/devgeta-on-path-in-non-interactive-shells.md](docs/migrations/devgeta-on-path-in-non-interactive-shells.md)
+   if you installed before it existed.
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | bash
@@ -196,6 +202,7 @@ dg install --skip databases,desktop
   - `dg wt prune` - Remove all managed worktrees
   - `dg wt prune --stale` - Clear git's leftover entries for already-deleted worktrees (removes nothing of yours)
 - `dg ws` (alias: `dg workspace`) - Unified TUI dashboard: repo workspaces (worktrees, circle `●`/`○` marker, expandable, `N trees` badge) and standalone tmux sessions (square `■`/`□` marker) in one flat list (`enter` switch/attach, `d` delete/kill, `s` new session, `n`/`N` new worktree, `/` filter, `q` quit). Also bound to bare `ctrl+t` in tmux.
+  - `enter` on a repo's header row switches to the non-worktree window in that repo's tmux session — the plain shell alongside its worktree windows, which has no row of its own. The header is only selectable when there is such a window to reach ([ADR-0048](docs/decisions/ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md)).
 - `dg list` (alias: `dg installed`) - Show everything Devgeta has installed, grouped by category
   - `--category <name>` - Filter to one bucket (`packages`, `desktop_apps`, `fonts`, `themes`, `terminal_tools`, `dev_languages`, `databases`)
 - `dg config` - View and change user-settable devgeta settings (`worktree.*` in `global_config.yaml`) without hand-editing YAML

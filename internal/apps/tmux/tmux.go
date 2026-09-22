@@ -365,6 +365,14 @@ func (t *Tmux) SessionWindows() []SessionWindow {
 // field may be an empty string when the @dg_agent_state pane option has not yet been set by an
 // agent. Returns nil when no server is reachable or the query fails, matching SessionWindows's
 // existing tolerance for this same command.
+//
+// The agent state being both LAST in the format and optionally empty is why a
+// line is accepted at 5 fields as well as 6: ExecCommand returns its stdout
+// TrimSpace'd, which eats the final line's trailing tab whenever that pane has
+// no @dg_agent_state set. Requiring 6 dropped that pane outright — and since
+// tmux orders the scan by session name, the victim was whichever session sorts
+// last, making its worktree read as windowless and its session read as
+// standalone (both are derived from this scan; see worktree.StateLayer).
 func (t *Tmux) PaneStates() []PaneState {
 	execCommand := cmd.CommandParams{
 		Command: constants.Tmux,
@@ -383,8 +391,12 @@ func (t *Tmux) PaneStates() []PaneState {
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
 		parts := strings.SplitN(scanner.Text(), "\t", 6)
-		if len(parts) != 6 {
+		if len(parts) < 5 {
 			continue
+		}
+		state := ""
+		if len(parts) == 6 {
+			state = strings.TrimSpace(parts[5])
 		}
 		states = append(
 			states,
@@ -394,7 +406,7 @@ func (t *Tmux) PaneStates() []PaneState {
 				PaneID:         strings.TrimSpace(parts[2]),
 				PaneIndex:      strings.TrimSpace(parts[3]),
 				CurrentCommand: strings.TrimSpace(parts[4]),
-				State:          strings.TrimSpace(parts[5]),
+				State:          state,
 			},
 		)
 	}

@@ -2,11 +2,15 @@ package tuiworktree
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"github.com/cjairm/devgeta/internal/apps/git"
+	"github.com/cjairm/devgeta/internal/apps/tmux"
+	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -101,6 +105,444 @@ func TestEnterOnSessionRowSwitchFailureShowsStatusAndDoesNotQuit(t *testing.T) {
 	}
 	if !strings.Contains(m4.status, "switch failed") {
 		t.Errorf("expected a 'switch failed' status, got %q", m4.status)
+	}
+}
+
+// --- enter on a repo header row (switch to the repo's own session) ---
+//
+// The header is the only row standing for the session that holds a repo's
+// worktree WINDOWS: ADR-0003 excludes any session containing a wt- window from
+// the session rows, so the plain windows alongside them are otherwise
+// unreachable. Before this, enter here fell through to handleAttach, which has
+// no worktree selected on a header row and returned in silence.
+
+// focusRepoHeader puts the cursor on repo's header row.
+func focusRepoHeader(t *testing.T, m Model, repo string) Model {
+	t.Helper()
+	if _, ok := m.focusRow(func(r row) bool { return r.kind == rowRepo && r.repo == repo }); !ok {
+		t.Fatalf("test setup: no header row for repo %q", repo)
+	}
+	return m
+}
+
+// repoWithSession returns one worktree status for repo whose live pane reports
+// belonging to sessionName — the shape the dashboard sees for any repo with a
+// live worktree window.
+func repoWithSession(repo, sessionName string) []worktree.WorktreeStatus {
+	return []worktree.WorktreeStatus{{
+		Name:       "feature-a",
+		Repo:       repo,
+		Path:       "/tmp/a",
+		TmuxWindow: worktree.GetWindowName(repo, "feature-a"),
+		Panes: []tmux.PaneState{
+			{Session: sessionName, Window: worktree.GetWindowName(repo, "feature-a"), PaneID: "%1"},
+		},
+	}}
+}
+
+// headerIndex returns the row index of repo's header row.
+func headerIndex(t *testing.T, m Model, repo string) int {
+	t.Helper()
+	for i, r := range m.rows {
+		if r.kind == rowRepo && r.repo == repo {
+			return i
+		}
+	}
+	t.Fatalf("test setup: no header row for repo %q", repo)
+	return -1
+}
+
+// --- which repo headers j/k stops on ---
+//
+// A header is worth stopping on only when switching to its session would land
+// somewhere the repo's own child rows do not already reach. When the session
+// holds nothing but worktree windows, stopping there is a keypress that buys
+// nothing and lengthens every trip down the list.
+
+func TestExpandedRepoHeaderIsSkippedWhenItsSessionIsOnlyWorktreeWindows(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{} // no plain window anywhere
+
+	if slices.Contains(m.navigableIndices(), headerIndex(t, m, "repo-a")) {
+		t.Error(
+			"a header whose session holds only the worktree windows its child rows " +
+				"already reach must not be a j/k stop",
+		)
+	}
+}
+
+func TestExpandedRepoHeaderIsNavigableWhenItsSessionHasAPlainWindow(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{"repo-a": "zsh"}
+
+	if !slices.Contains(m.navigableIndices(), headerIndex(t, m, "repo-a")) {
+		t.Error(
+			"the session's plain window is reachable from no other row, so its header " +
+				"must be a j/k stop",
+		)
+	}
+}
+
+// The header's session is read off the panes, so it is the session's REAL name
+// that decides, not TmuxSessionName(repo) — a `wt-hire2-…` window living in a
+// session called `hire2-tien` is a real case.
+func TestExpandedRepoHeaderUsesItsPanesSessionNameNotTheDerivedOne(t *testing.T) {
+	m := makeTestModel(repoWithSession("hire2", "hire2-tien"))
+	m.plainWindowBySession = map[string]string{"hire2-tien": "node"}
+
+	if !slices.Contains(m.navigableIndices(), headerIndex(t, m, "hire2")) {
+		t.Error("the plain window belongs to hire2-tien, the session the panes actually name")
+	}
+}
+
+// Unchanged from before the header gained an action: a collapsed header has to
+// stay reachable or l can never re-expand it.
+func TestCollapsedRepoHeaderStaysNavigableWithNoPlainWindow(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{}
+	m.collapsed["repo-a"] = true
+	m.rebuildRows()
+
+	if !slices.Contains(m.navigableIndices(), headerIndex(t, m, "repo-a")) {
+		t.Error("a collapsed header must stay reachable so l can re-expand it")
+	}
+}
+
+// A repo with no live window has no session to read, so there is nothing to
+// switch to and nothing to stop on.
+func TestExpandedRepoHeaderIsSkippedWhenNoWorktreeWindowIsLive(t *testing.T) {
+	m := makeTestModel(testStatuses()) // no Panes on any status
+	m.plainWindowBySession = map[string]string{"repo-a": "zsh"}
+
+	if slices.Contains(m.navigableIndices(), headerIndex(t, m, "repo-a")) {
+		t.Error("with no live pane there is no session to resolve, so the header is not a stop")
+	}
+}
+
+// The startup load has to answer this too, not just the 3-second tick. It
+// already takes a full tmux scan of its own and was throwing the plain-window
+// half away, so for the first tick's worth of time no header was a stop — the
+// same header became selectable a few seconds after the dashboard opened,
+// which is indistinguishable from it being broken.
+func TestInitialSessionLoadCarriesWhichSessionsHavePlainWindows(t *testing.T) {
+	window := worktree.GetWindowName("repo-a", "feature-a")
+	mockTmuxBase := commands.NewMockBaseCommand()
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult("repo-a\t0", "", nil), // list-sessions
+		// list-panes: the worktree window plus a plain zsh. No trailing tab on
+		// the last line — that is what the real executor's TrimSpace leaves.
+		commands.ExecCommandResult(
+			"repo-a\t"+window+"\t%1\t0\tzsh\t\nrepo-a\tzsh\t%2\t0\tzsh",
+			"",
+			nil,
+		),
+	)
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.mgr = &worktree.WorktreeManager{
+		Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: commands.NewMockBaseCommand()},
+		Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+		Base: commands.NewMockBaseCommand(),
+	}
+	m.plainWindowBySession = nil // as it is on the very first frame
+
+	updated, _ := m.Update(m.sessionsLoadCmd(m.sessionGen)())
+	m = updated.(Model)
+
+	if m.plainWindowBySession["repo-a"] != "zsh" {
+		t.Error(
+			"the startup session load must report repo-a's plain zsh window; otherwise its " +
+				"header only becomes selectable once the first 3-second tick lands",
+		)
+	}
+	// No VerifyNoRealCommands here: it asserts the base was never touched at
+	// all, and this test's whole point is to drive the scan through it. Nothing
+	// real can run — the manager's Tmux is a MockBaseCommand by construction.
+	if got := mockTmuxBase.GetExecCommandCallCount(); got != 2 {
+		t.Errorf("expected exactly the two mocked scan commands, got %d", got)
+	}
+}
+
+// End to end for the dashboard's own window: `ctrl+t` opens dg ws as a
+// "[workspace]" window in the session you pressed it from, so a repo session
+// holding nothing but worktree windows must not become selectable just because
+// you opened the dashboard from inside it.
+func TestTheDashboardsOwnWindowDoesNotMakeItsSessionSelectable(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%9")
+	window := worktree.GetWindowName("repo-a", "feature-a")
+	wtPane := tmux.PaneState{Session: "repo-a", Window: window, PaneID: "%1"}
+	layer := worktree.StateLayer{
+		PanesByWindow: map[string][]tmux.PaneState{window: {wtPane}},
+		PanesBySession: map[string][]tmux.PaneState{
+			"repo-a": {wtPane, {Session: "repo-a", Window: "[workspace]", PaneID: "%9"}},
+		},
+	}
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+
+	updated, _ := m.Update(tmuxStateMsg{layer: layer, gen: m.sessionGen})
+	m = updated.(Model)
+
+	if slices.Contains(m.navigableIndices(), headerIndex(t, m, "repo-a")) {
+		t.Error(
+			"the only non-worktree window in repo-a's session is the dashboard itself, " +
+				"so its header leads nowhere and must not be a stop",
+		)
+	}
+}
+
+// --- a selected header has to STAY selected ---
+//
+// Every rebuild re-clamps the cursor, and a rebuild happens on every 3-second
+// tmux tick, every filter keystroke and every collapse. Clamping against a
+// different set than j/k moves over is what made a selected header feel
+// haunted: you land on it, a tick fires, and the cursor is on the worktree
+// below it — sometimes before you even look.
+
+// fastTickLayer is a scan in which repo's worktree window is live in
+// sessionName and that session also holds a plain zsh window, i.e. one where
+// repo's header stays navigable.
+func fastTickLayer(repo, sessionName string) worktree.StateLayer {
+	window := worktree.GetWindowName(repo, "feature-a")
+	wtPane := tmux.PaneState{Session: sessionName, Window: window, PaneID: "%1"}
+	return worktree.StateLayer{
+		PanesByWindow: map[string][]tmux.PaneState{window: {wtPane}},
+		PanesBySession: map[string][]tmux.PaneState{
+			sessionName: {wtPane, {Session: sessionName, Window: "zsh", PaneID: "%2"}},
+		},
+	}
+}
+
+func TestTmuxTickDoesNotKnockTheCursorOffASelectedRepoHeader(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{"repo-a": "zsh"}
+	m = focusRepoHeader(t, m, "repo-a")
+
+	updated, _ := m.Update(
+		tmuxStateMsg{layer: fastTickLayer("repo-a", "repo-a"), gen: m.sessionGen},
+	)
+	m = updated.(Model)
+
+	if got := m.rows[m.cursor]; got.kind != rowRepo || got.repo != "repo-a" {
+		t.Errorf(
+			"a tick that changed nothing must leave the cursor on the header; it moved to kind=%d repo=%q path=%q",
+			got.kind,
+			got.repo,
+			got.status.Path,
+		)
+	}
+}
+
+// The same defect by its shortest path: a plain rebuild, which is what a filter
+// keystroke and a collapse both do.
+func TestRebuildKeepsTheCursorOnASelectedRepoHeader(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{"repo-a": "zsh"}
+	m = focusRepoHeader(t, m, "repo-a")
+	before := m.cursor
+
+	m.rebuildRows()
+
+	if m.cursor != before {
+		t.Errorf(
+			"rebuildRows clamped a navigable header away: cursor %d -> %d (kind=%d)",
+			before, m.cursor, m.rows[m.cursor].kind,
+		)
+	}
+}
+
+// The mirror of the two above: a header that is NOT navigable must still be
+// clamped away, or the cursor sits on a row j/k cannot return to.
+func TestRebuildClampsTheCursorOffANonNavigableRepoHeader(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{} // header not navigable
+	m.cursor = headerIndex(t, m, "repo-a")
+
+	m.rebuildRows()
+
+	if m.rows[m.cursor].kind == rowRepo {
+		t.Error("a header j/k cannot reach must not keep the cursor either")
+	}
+}
+
+// The set has to come off the same scan everything else does, or it goes stale
+// the moment a plain window is opened or closed.
+func TestTmuxScanRefreshesWhichSessionsHavePlainWindows(t *testing.T) {
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	layer := worktree.StateLayer{
+		PanesBySession: map[string][]tmux.PaneState{
+			"repo-a": {
+				{Session: "repo-a", Window: worktree.GetWindowName("repo-a", "feature-a")},
+				{Session: "repo-a", Window: "zsh"},
+			},
+		},
+	}
+
+	updated, _ := m.Update(tmuxStateMsg{layer: layer, gen: m.sessionGen})
+	m = updated.(Model)
+
+	if m.plainWindowBySession["repo-a"] != "zsh" {
+		t.Error("a scan showing a plain zsh window in repo-a's session must be picked up")
+	}
+}
+
+// enter on a header has to land on the session's PLAIN window by name, not on
+// the session and whatever window happens to be active in it.
+//
+// Switching to the session alone put the user right back on a worktree window:
+// the dashboard runs as a [workspace] window INSIDE that session, so it is the
+// active window at the moment of the switch, and when the dashboard then quits
+// its window dies and tmux drops the client onto whatever is left — typically
+// the wt- window the header was supposed to be an alternative to.
+func TestEnterOnRepoHeaderLandsOnThePlainWindowNotJustTheSession(t *testing.T) {
+	t.Setenv("TMUX", "1")
+	m := makeTestModel(repoWithSession("repo-a", "repo-a"))
+	m.plainWindowBySession = map[string]string{"repo-a": "zsh"}
+	m = focusRepoHeader(t, m, "repo-a")
+	m.switchToSessionFn = func(name string) error {
+		t.Errorf("switching to the session alone lands on its active window; got %q", name)
+		return nil
+	}
+	var gotSession, gotWindow string
+	m.attachFn = func(session, window string) error {
+		gotSession, gotWindow = session, window
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_ = m2.(Model)
+	if cmd == nil {
+		t.Fatal("expected a command from enter on a repo header row")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("expected tea.QuitMsg on a successful switch")
+	}
+	if gotSession != "repo-a" || gotWindow != "zsh" {
+		t.Errorf(
+			"expected a switch to repo-a:zsh, the window that made the header a stop; got %q:%q",
+			gotSession, gotWindow,
+		)
+	}
+}
+
+// The session a repo's worktree windows actually live in is READ off those
+// windows' panes, never assumed to be TmuxSessionName(repo). A `wt-hire2-…`
+// window sitting in a session called `hire2-tien` is a real case, and deriving
+// the name would switch to a session that does not exist.
+func TestEnterOnRepoHeaderSwitchesToTheSessionItsPanesReport(t *testing.T) {
+	t.Setenv("TMUX", "1")
+	statuses := []worktree.WorktreeStatus{{
+		Name:       "feature-a",
+		Repo:       "repo-a",
+		Path:       "/tmp/a",
+		TmuxWindow: worktree.GetWindowName("repo-a", "feature-a"),
+		Panes: []tmux.PaneState{
+			{Session: "repo-a-nicknamed", PaneID: "%1", PaneIndex: "0"},
+		},
+	}}
+	m := focusRepoHeader(t, makeTestModel(statuses), "repo-a")
+	m.hasSessionFn = func(_ string) bool {
+		t.Error("a live pane already names the session; has-session must not be consulted")
+		return false
+	}
+	var switchedTo string
+	m.switchToSessionFn = func(name string) error {
+		switchedTo = name
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_ = m2.(Model)
+	if cmd == nil {
+		t.Fatal("expected a command from enter on a repo header row")
+	}
+	msg := cmd()
+	if _, ok := msg.(tea.QuitMsg); !ok {
+		t.Errorf("expected tea.QuitMsg on successful switch, got %T: %+v", msg, msg)
+	}
+	if switchedTo != "repo-a-nicknamed" {
+		t.Errorf("expected the pane's own session %q, got %q", "repo-a-nicknamed", switchedTo)
+	}
+}
+
+// With no live window to read a session off, the name ensureWindow would have
+// used is worth one has-session check.
+func TestEnterOnRepoHeaderFallsBackToTheDerivedNameWhenNoWindowIsLive(t *testing.T) {
+	t.Setenv("TMUX", "1")
+	m := focusRepoHeader(t, makeTestModel(testStatuses()), "repo-a") // no Panes on any status
+	var asked string
+	m.hasSessionFn = func(name string) bool {
+		asked = name
+		return true
+	}
+	var switchedTo string
+	m.switchToSessionFn = func(name string) error {
+		switchedTo = name
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	_ = m2.(Model)
+	if cmd == nil {
+		t.Fatal("expected a command from enter on a repo header row")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Error("expected tea.QuitMsg on a successful switch")
+	}
+	want := worktree.TmuxSessionName("repo-a")
+	if asked != want {
+		t.Errorf("expected has-session asked about %q, got %q", want, asked)
+	}
+	if switchedTo != want {
+		t.Errorf("expected switchToSessionFn called with %q, got %q", want, switchedTo)
+	}
+}
+
+// No live window and no session by the derived name either: say so rather than
+// letting switch-client fail with tmux's own wording.
+func TestEnterOnRepoHeaderWithNoSessionExplainsInsteadOfSwitching(t *testing.T) {
+	t.Setenv("TMUX", "1")
+	m := focusRepoHeader(t, makeTestModel(testStatuses()), "repo-a")
+	m.hasSessionFn = func(_ string) bool { return false }
+	switchCalled := false
+	m.switchToSessionFn = func(_ string) error {
+		switchCalled = true
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m3 := m2.(Model)
+	if cmd != nil {
+		t.Error("enter on a repo header with no session should return no command")
+	}
+	if switchCalled {
+		t.Error("switchToSessionFn must not be called when the session does not exist")
+	}
+	if !strings.Contains(m3.status, "repo-a") {
+		t.Errorf("expected a status naming the repo, got %q", m3.status)
+	}
+}
+
+func TestEnterOnRepoHeaderOutsideTmuxShowsGuardMessage(t *testing.T) {
+	t.Setenv("TMUX", "")
+	m := focusRepoHeader(t, makeTestModel(testStatuses()), "repo-a")
+	switchCalled := false
+	m.switchToSessionFn = func(_ string) error {
+		switchCalled = true
+		return nil
+	}
+
+	m2, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m3 := m2.(Model)
+	if cmd != nil {
+		t.Error("enter outside tmux on a repo header row should return no command")
+	}
+	if switchCalled {
+		t.Error("switchToSessionFn must not be called outside tmux")
+	}
+	if !strings.Contains(m3.status, "not inside tmux") {
+		t.Errorf(
+			"expected the same not-inside-tmux guard message as handleAttach, got %q",
+			m3.status,
+		)
 	}
 }
 

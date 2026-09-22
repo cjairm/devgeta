@@ -689,6 +689,66 @@ Session rows add:
   no-op on a repo-header row, since only a worktree row has a specific worktree to
   review.
 
+Repo-header rows add:
+
+- `enter` — switch the attached tmux client to the **specific non-worktree window** in the
+  session that holds this repo's worktree windows, and quit the dashboard. Same tmux guard as
+  the rows above. That session never appears among the session rows — ADR-0003 excludes any
+  session containing a `wt-` window — so the header is the only row that reaches the plain
+  windows sitting alongside a repo's worktree windows (the `zsh` the repo session was started
+  from).
+
+  Targeting the window rather than the session is load-bearing, not a refinement.
+  `switch-client -t <session>` lands on whichever window is _active_ there, and at the moment
+  of the switch that is the dashboard's own `[workspace]` window — so once the dashboard
+  exits, its window dies and tmux drops the client onto whatever remains, which is typically
+  the very `wt-` window the header was meant to be an alternative to. The window comes from
+  `StateLayer.PlainWindowBySession`, the same reduction that decides whether the header is a
+  stop at all, so "the header is selectable" and "enter has somewhere to go" can never
+  disagree.
+
+  The session is **read off the worktree rows' own panes**, not derived:
+  `TmuxSessionName(<repo slug>)` is only where `ensureWindow` puts a _new_ window, and a
+  window can end up elsewhere — a `wt-hire2-…` window living in a session named `hire2-tien`
+  is a real case. The session-only switch survives as a fallback for one case: a **collapsed**
+  header, which is a stop regardless of where it leads, whose repo has no live window to read
+  a plain window off. There the derived name is tried and confirmed with `has-session`; if
+  that fails too the status line says so instead of surfacing tmux's own `switch-client`
+  error.
+
+- Which headers `j`/`k` stops on. A collapsed header is always a stop, so `l` can re-expand it
+  (unchanged). An **expanded** header is a stop only when its session holds at least one
+  window that is _not_ worktree-backed — that is, only when switching there would land
+  somewhere the repo's own child rows don't already reach. A session holding nothing but this
+  repo's worktree windows is fully covered by those rows, so stopping on its header would cost
+  a keypress on every trip down the list and buy nothing.
+
+  Three things make that judgement correct rather than flaky, each of which was a visible bug
+  first:
+
+  1. **The dashboard's own window does not count.** `ctrl+t` opens `dg ws` as a `[workspace]`
+     window in the session you pressed it from, so without excluding it, opening the dashboard
+     from inside a repo session made that repo's header selectable — and `enter` would have
+     switched to the session already on screen. The exclusion is by `$TMUX_PANE`, pinned to
+     that pane's own session since window names are not unique across sessions.
+  2. **The startup load answers it, not just the 3-second tick.** `sessionsLoadCmd` takes the
+     tmux scan itself rather than calling `ListSessions()` (that method is the same scan
+     reduced to one half), so the first frame already knows. Before this, a header only became
+     selectable once the first tick landed, which looked exactly like it being broken.
+  3. **One definition of a valid cursor position.** `navigableIndices` is both what `j`/`k`
+     move over and what a rebuild clamps to. A rebuild runs on every tmux tick, every filter
+     keystroke and every collapse, so while clamping used a narrower leaf-only set, a header
+     you had just selected lost the cursor to the worktree below it seconds later, on its own.
+
+  The plain window per session comes off the same scan as everything else
+  (`StateLayer.PlainWindowBySession`), which is the one fact `SessionStatuses` throws away
+  when it drops a `wt-`-containing session wholesale. Resolving it never costs a tmux call:
+  `navigableIndices` runs for every row on every keypress and render, so it reads only the
+  last scan's results.
+
+- The diff pane shows guidance rather than a diff, the same way session and pane rows do: a
+  repo spans several worktrees, so there is no single branch to diff.
+
 Pane rows add:
 
 - `enter` — switch the tmux client to that exact pane (same tmux guard and dashboard-quit

@@ -11,11 +11,64 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-16
+**Last updated:** 2026-09-22
 
 ---
 
 ## Recent changes
+
+- `devgeta` was invisible to anything that did not read `~/.zshrc`
+  (2026-09-22). An AI coding agent reported `devgeta is not available on PATH`
+  and went looking for a missing install, while the binary sat working in
+  `~/.local/bin`. `install.sh` writes its PATH entry into the user's **shell
+  config** — `~/.zshrc` for zsh — and that file is read by interactive shells
+  only. Anything that shells out without a profile (an agent running `zsh -c`,
+  a git or editor hook, cron, launchd, an app started from Finder) inherits a
+  PATH without it. `~/.zshenv`, the one file every zsh reads, already carried
+  devgeta's `path_helper` repair for a neighbouring problem, but that block
+  guards on `/usr/bin` being absent and so no-ops on a PATH that is merely
+  missing `~/.local/bin`. It now also puts the install directory on PATH when
+  it is not already there. The directory is asserted against `install.sh`'s own
+  `INSTALL_DIR` in `embedded_test.go` rather than copied, because the installer
+  and the script have to name the same place and nothing else would notice if
+  one of them moved. Still zsh-only: `setupZshenv` skips bash users and bash
+  has no unconditional equivalent (`$BASH_ENV` must be exported by the parent).
+
+- A repo header in `dg ws` reaches the plain windows in its session
+  (2026-09-22). A repo session holds a `wt-` window per worktree plus whatever
+  the user opened there; ADR-0003 excluded such a session from the session rows
+  wholesale, so those plain windows had no row and the header row itself did
+  nothing. Making it work took four corrections, each a bug on its own, and the
+  reasoning is in ADR-0048. The two worth knowing without reading it: switching
+  to a **session** is not switching to a **window** — tmux lands on the
+  session's active window, which at that moment is the dashboard's own
+  `[workspace]` window, so the dashboard exits, that window dies and tmux drops
+  you on the `wt-` window, which reads exactly like the header ignoring you; and
+  the same `[workspace]` window made sessions look like they had a plain window
+  when they did not, so the header became selectable depending on which session
+  you had opened the dashboard from.
+
+- One definition of where the cursor may sit in `dg ws` (2026-09-22). Movement
+  used `navigableIndices`; the post-rebuild clamp used `leafIndices`, which
+  never included a repo header. A rebuild runs on every 3-second tmux tick, so
+  any row the cursor could move to but not be clamped to was taken back
+  seconds later without a keypress — visible as a selected header silently
+  becoming the worktree below it. Latent for collapsed headers since ADR-0003;
+  it surfaced when headers became a common landing spot. `leafIndices` is
+  deleted rather than fixed: the defect was having two answers.
+
+- A tmux pane could vanish from every scan (2026-09-22). `PaneStates` asked
+  tmux for six tab-separated fields and dropped any line that did not have
+  exactly six. `ExecCommand` returns its stdout `TrimSpace`d, which eats the
+  final line's trailing tab whenever that pane has no `@dg_agent_state` set — so
+  the last pane of the scan was discarded, and tmux orders the scan by session
+  name, making the victim whichever session sorts last. That pane's worktree
+  read as windowless in `dg ws` and `dg wt list` while its window was plainly
+  there, and its session was listed as standalone because the scan no longer saw
+  a `wt-` window in it. The parser now accepts five fields as well as six. Every
+  existing fixture ended in `"\n"`, which keeps the tab inside the string, so no
+  test could reproduce the shape production actually sees; the regression test is
+  written trimmed.
 
 - opencode installs the same way on both platforms (2026-09-16). opencode
   1.18.30 crashed while building its system prompt, before any request reached a

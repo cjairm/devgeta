@@ -67,7 +67,12 @@ type (
 	// sessionsLoadCmd; see sessionsLoadCmd for the success/failure split.
 	sessionsMsg struct {
 		sessions []worktree.SessionStatus
-		gen      int
+		// plainWindowBySession comes off the very same scan the sessions above
+		// do, at no extra tmux cost — see sessionsLoadCmd. Without it the
+		// startup load answered only half the question and repo headers only
+		// became selectable once the first 3-second tick landed.
+		plainWindowBySession map[string]string
+		gen                  int
 	}
 	// tmuxStateMsg is the fast tick's result: one tmux scan's worth of state,
 	// carried as a layer rather than as a finished list.
@@ -153,14 +158,21 @@ type Model struct {
 	statuses []worktree.WorktreeStatus
 	// sessions holds standalone tmux sessions with no worktree-backed window;
 	// see sessionsLoadCmd for refresh cadence and failure handling.
-	sessions       []worktree.SessionStatus
-	loaded         bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
-	sessionsLoaded bool // true once the first ListSessions() result is in; mirrors loaded, for placeCursorOnActive's give-up condition
-	cursorPlaced   bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
-	rows           []row
-	cursor         int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
-	collapsed      map[string]bool
-	allCollapsed   bool
+	sessions []worktree.SessionStatus
+	// plainWindowBySession maps a tmux session to its first window that is NOT
+	// worktree-backed, from the last scan. It answers the one thing
+	// SessionStatuses throws away (see its doc comment): whether a repo's
+	// session holds anything the repo's own worktree rows do not already reach,
+	// and if so which window that is — enter on a repo header switches to that
+	// window by name. Replaced wholesale per scan, exactly like sessions above.
+	plainWindowBySession map[string]string
+	loaded               bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
+	sessionsLoaded       bool // true once the first ListSessions() result is in; mirrors loaded, for placeCursorOnActive's give-up condition
+	cursorPlaced         bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
+	rows                 []row
+	cursor               int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
+	collapsed            map[string]bool
+	allCollapsed         bool
 
 	// stateGen orders the wholesale replacements of m.statuses against each
 	// other. Update bumps it whenever it dispatches a slow load, the load
@@ -302,6 +314,7 @@ type Model struct {
 	switchToPaneFn           func(session, window, paneID string) error
 	clearAgentStateForPaneFn func(paneID string) error
 	killSessionFn            func(name string) error
+	hasSessionFn             func(name string) bool
 	listSessionNamesFn       func() ([]string, error)
 	repoCandidatesFn         func(cursorRepoSlug string) ([]string, error)
 	validateRepoPathFn       func(path string) (string, error)
@@ -361,6 +374,7 @@ func newModel(
 	m.switchToPaneFn = tmuxApp.SwitchToPane
 	m.clearAgentStateForPaneFn = tmuxApp.ClearAgentStateForPane
 	m.killSessionFn = tmuxApp.KillSession
+	m.hasSessionFn = tmuxApp.HasSession
 	// listSessionNamesFn feeds the blank-name auto-namer's collision check: it
 	// needs every session on the tmux server (not just the standalone ones the
 	// dashboard shows), so it goes through tmuxApp.ListSessions directly rather
@@ -529,14 +543,23 @@ func (m Model) scanTmuxCmd(gen int) tea.Cmd {
 // empty result (WorktreeManager.ListSessions' no-server case is (nil, nil))
 // is not an error: it produces a sessionsMsg, which the Update case below
 // applies with no status warning.
+// It takes the scan itself rather than calling mgr.ListSessions(), which is
+// that same scan reduced to one of its two halves. The dashboard needs both —
+// the standalone session rows AND which sessions hold a non-worktree window
+// (see the plainWindowSessions field) — and taking the scan here gets the
+// second for free instead of paying for another list-sessions plus list-panes.
 func (m Model) sessionsLoadCmd(gen int) tea.Cmd {
 	mgr := m.mgr
 	return func() tea.Msg {
-		sessions, err := mgr.ListSessions()
+		layer, err := mgr.ScanTmuxState()
 		if err != nil {
 			return statusMsg("failed to list sessions: " + err.Error())
 		}
-		return sessionsMsg{sessions: sessions, gen: gen}
+		return sessionsMsg{
+			sessions:             layer.SessionStatuses(),
+			plainWindowBySession: layer.PlainWindowBySession(os.Getenv("TMUX_PANE")),
+			gen:                  gen,
+		}
 	}
 }
 
@@ -744,8 +767,13 @@ func (m Model) selectedPane() (tmux.PaneState, bool) {
 
 func (m *Model) rebuildRows() {
 	m.rows = buildRows(m.statuses, m.sessions, m.collapsed, m.filter.Value())
-	// Keep cursor on a valid leaf row (worktree or session)
-	m.cursor = tuicomponents.ClampCursor(leafIndices(m.rows), m.cursor)
+	// Clamped against the SAME set j/k moves over. Clamping against a narrower
+	// one is a bug with a long fuse: a rebuild runs on every 3-second tmux
+	// tick, every filter keystroke and every collapse, so any row the cursor
+	// can move to but not be clamped to gets yanked out from under the user
+	// seconds after they land on it. That was live for repo headers, which
+	// navigableIndices admits and the old leaf-only set did not.
+	m.cursor = tuicomponents.ClampCursor(m.navigableIndices(), m.cursor)
 }
 
 // refreshView rebuilds the row list from the current m.statuses/m.sessions and
@@ -872,18 +900,69 @@ func (m *Model) placeCursorOnActive() {
 	}
 }
 
-// navigableIndices returns row indices that j/k visit: all worktree rows,
-// all session rows, plus collapsed repo header rows (so the user can reach a
-// collapsed header and press l).
+// navigableIndices returns row indices that j/k visit: all worktree rows, all
+// session rows, plus the repo header rows worth stopping on.
+//
+// A header earns a stop for one of two reasons. Collapsed, it has to be
+// reachable or l could never re-expand it. Expanded, only if switching to its
+// session (enter — see handleSwitchToRepoSession) would land somewhere the
+// repo's own child rows do not already reach: a session holding nothing but
+// this repo's worktree windows is fully covered by those rows, so stopping
+// there costs a keypress on every trip down the list and buys nothing.
 func (m *Model) navigableIndices() []int {
 	var out []int
 	for i, r := range m.rows {
 		if r.kind == rowWorktree || r.kind == rowSession || r.kind == rowPane ||
-			(r.kind == rowRepo && m.collapsed[r.repo]) {
+			(r.kind == rowRepo && (m.collapsed[r.repo] || m.repoHeaderLeadsSomewhere(r.repo))) {
 			out = append(out, i)
 		}
 	}
 	return out
+}
+
+// repoPlainWindow resolves where repo's header leads: the session holding its
+// worktree windows, and that session's first window which is NOT one of them.
+// ok is false when there is no such window — nothing the repo's own child rows
+// don't already reach, so nothing for the header to do.
+//
+// Deliberately free of any tmux call: it runs for every row on every keypress
+// and every render (see navigableIndices), so it reads only the last scan's own
+// results — the session name off the repo's panes, then that scan's plain
+// window for it. A repo with no live window resolves to no session and so to
+// false, which is the right answer anyway: there is nothing to switch to.
+func (m *Model) repoPlainWindow(repo string) (session, window string, ok bool) {
+	session, ok = repoSessionFromPanes(m.statuses, repo)
+	if !ok {
+		return "", "", false
+	}
+	window = m.plainWindowBySession[session]
+	return session, window, window != ""
+}
+
+// repoHeaderLeadsSomewhere is repoPlainWindow reduced to the yes/no
+// navigableIndices needs, so the two can never disagree about which headers are
+// stops: a header is a stop exactly when enter on it has a window to go to.
+func (m *Model) repoHeaderLeadsSomewhere(repo string) bool {
+	_, _, ok := m.repoPlainWindow(repo)
+	return ok
+}
+
+// repoSessionFromPanes returns the session repo's first live worktree pane
+// reports belonging to. That pane is the authority on where the repo's windows
+// actually are, which is not always the name TmuxSessionName(repo) would give
+// (see handleSwitchToRepoSession).
+func repoSessionFromPanes(statuses []worktree.WorktreeStatus, repo string) (string, bool) {
+	for _, s := range statuses {
+		if s.Repo != repo {
+			continue
+		}
+		for _, p := range s.Panes {
+			if p.Session != "" {
+				return p.Session, true
+			}
+		}
+	}
+	return "", false
 }
 
 func (m *Model) moveCursor(delta int) {
@@ -1013,6 +1092,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and treats its input as read-only, so this cannot disturb a list a
 		// slow load produced.
 		m.statuses = msg.layer.ApplyTo(m.statuses)
+		// Pane-derived like the line above, so it applies unconditionally too:
+		// it is read straight off this scan's panes and cannot race a session
+		// mutation the way a wholesale session-list replacement can.
+		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"))
 		if msg.gen != m.sessionGen {
 			// Session half is stale — a newer scan, a session load, or a
 			// session mutation has superseded it. The pane half above still
@@ -1030,6 +1113,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.gen != m.sessionGen {
 			return m, nil
 		}
+		m.plainWindowBySession = msg.plainWindowBySession
 		m.applySessions(msg.sessions)
 		return m, nil
 
@@ -1401,6 +1485,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		if _, ok := m.selectedSession(); ok {
 			return m.handleSwitchToSession()
+		}
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowRepo {
+			return m.handleSwitchToRepoSession()
 		}
 		return m.handleAttach()
 
@@ -2067,6 +2154,22 @@ func (m Model) renderRight(width int) string {
 		)
 	}
 
+	// Repo headers have the same problem as the session and pane rows below: a
+	// repo spans several worktrees, so selectedStatus never fires for one and
+	// the pane would otherwise keep showing whichever worktree's diff was
+	// selected last. This was already reachable on a COLLAPSED header; it
+	// became the common case once every header turned into a j/k stop (see
+	// navigableIndices).
+	if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowRepo {
+		return m.palette.Inactive.Render(
+			ansi.Truncate(
+				"Repos have no diff — enter switches to this repo's tmux session, h / l collapses.",
+				width,
+				"",
+			),
+		)
+	}
+
 	// Session rows have no diff: selectedStatus (and so selectionChangedCmd)
 	// never fires for them, so without this check the pane would keep
 	// showing whichever worktree's diff was selected last instead of
@@ -2283,7 +2386,7 @@ func (m Model) renderHelpPopup() string {
 	entries := []tuicomponents.WhichKeyEntry{
 		{
 			Key:  "enter",
-			Desc: "attach (auto-repairs missing window); on a session row: switch to it; on a pane row: switch to that exact pane",
+			Desc: "attach (auto-repairs missing window); on a session row: switch to it; on a pane row: switch to that exact pane; on a repo header: switch to that repo's session",
 		},
 		{Key: "n", Desc: "create a new worktree (repo picker → name prompt)"},
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},
