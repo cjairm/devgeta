@@ -26,6 +26,7 @@ import (
 	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
@@ -148,7 +149,7 @@ func (o *OpenCode) ForceConfigure() error {
 }
 
 func (o *OpenCode) ForceConfigureTheme(def theme.Definition) error {
-	if err := os.RemoveAll(paths.Paths.Config.OpenCode); err != nil {
+	if err := clearManagedConfig(paths.Paths.Config.OpenCode); err != nil {
 		return err
 	}
 	// Directory permissions should be 0755 not 0644. Directories need execute
@@ -234,6 +235,14 @@ func (o *OpenCode) ForceConfigureTheme(def theme.Definition) error {
 		pluginDst,
 	); err != nil {
 		return fmt.Errorf("failed to copy opencode plugins: %w", err)
+	}
+
+	// Having just given OpenCode plugins to load, pay off the startup cost
+	// that loading them triggers. Both directories matter: OpenCode resolves
+	// dependencies in each, and locking only the config dir leaves most of
+	// the delay in place (ADR-0049).
+	for _, dir := range []string{paths.Paths.Config.OpenCode, paths.Paths.Home.OpenCode} {
+		ensurePluginLockfile(o.Base, dir)
 	}
 
 	if err := baseapp.MaintainScratchDir(); err != nil {
@@ -461,4 +470,79 @@ func (o *OpenCode) Run(opts RunOptions) (RunResult, error) {
 
 func (o *OpenCode) Update() error {
 	return fmt.Errorf("%w for opencode", apps.ErrUpdateNotSupported)
+}
+
+// pluginLockfiles are the lockfile names OpenCode's embedded bun recognizes.
+// Any one of them is enough to keep bun off the network.
+var pluginLockfiles = []string{"package-lock.json", "bun.lock", "bun.lockb"}
+
+// devgetaManagedEntries is everything devgeta generates inside
+// ~/.config/opencode, and therefore everything a --force reconfigure is
+// entitled to delete. "plugin" is singular on purpose: OpenCode also loads a
+// sibling "plugins" directory, which devgeta never creates and which is where
+// `rtk init -g --opencode` installs rtk's plugin.
+//
+// Keep this in step with what ForceConfigureTheme writes.
+var devgetaManagedEntries = append(
+	[]string{"opencode.json", "themes", "plugin"},
+	baseapp.SharedConfigParts...,
+)
+
+// clearManagedConfig removes devgeta's own generated files from dir, leaving
+// everything else untouched.
+//
+// This deletes by allowlist rather than wiping the directory, because devgeta
+// is one of several writers here and by far the least entitled. OpenCode
+// keeps ~60MB of resolved node_modules, the package.json and lockfile
+// describing them, its tui.json, and whatever backups a user made; rtk keeps
+// its plugin. A blanket wipe took all of it, which cost users their rtk
+// integration and scheduled a full cold dependency install on the next launch
+// — the worst case of the stall ADR-0049 removes.
+//
+// An allowlist also fails safe: a file devgeta has not heard of survives,
+// where the inverse rule (enumerate what to keep) silently destroys anything
+// new that OpenCode or an integration starts writing.
+func clearManagedConfig(dir string) error {
+	for _, entry := range devgetaManagedEntries {
+		if err := os.RemoveAll(filepath.Join(dir, entry)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensurePluginLockfile gives dir a dependency lockfile if it declares
+// dependencies and has none.
+//
+// OpenCode resolves its plugin dependency with its embedded bun on EVERY
+// startup, whenever at least one plugin file exists — and devgeta installs
+// six. With no lockfile that resolution is a registry round-trip: measured at
+// 45-60s of idle wait per launch, growing as a machine's npm cache ages, even
+// though the dependency is already vendored at the right version. A lockfile
+// takes it under a second. See ADR-0049 for the measurements.
+//
+// --offline is load-bearing: it resolves purely from the vendored
+// node_modules, so generating the lockfile cannot itself make the network
+// call this exists to eliminate, nor change which version is installed.
+//
+// Best-effort by design. A missing npm or a failed generation logs and
+// continues — a slow OpenCode beats a failed `dg configure`. An existing
+// lockfile is never rewritten: regenerating one could change the resolved
+// version out from under the user.
+func ensurePluginLockfile(base cmd.BaseCommandExecutor, dir string) {
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+		return // nothing declares a dependency here, so there is nothing to lock
+	}
+	for _, lockfile := range pluginLockfiles {
+		if _, err := os.Stat(filepath.Join(dir, lockfile)); err == nil {
+			return
+		}
+	}
+	if _, _, err := base.ExecCommand(cmd.CommandParams{
+		Command: "npm",
+		Args:    []string{"install", "--package-lock-only", "--offline"},
+		Dir:     dir,
+	}); err != nil {
+		logger.L().Warnw("could not generate opencode plugin lockfile", "dir", dir, "error", err)
+	}
 }

@@ -163,3 +163,32 @@ no output about tmux.
 
 See [ADR-0005](../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
 for the full design.
+
+### Startup speed and the plugin lockfile
+
+OpenCode resolves its plugin dependency (`@opencode-ai/plugin`) with its
+embedded bun on **every** startup, whenever at least one plugin file is
+present — and devgeta installs six. With no lockfile, that resolution is a
+network round-trip, measured at 45–60s of idle wait per launch and growing as
+a machine's npm cache ages. A lockfile takes it under a second.
+
+`dg configure opencode` generates one when it is missing, in both directories
+OpenCode resolves in (`~/.config/opencode` and `~/.opencode`), using
+`npm install --package-lock-only --offline`. `--offline` resolves purely from
+the already-vendored `node_modules`, so it cannot change which version you
+have. An existing lockfile is never rewritten.
+
+The step is best-effort: without npm on PATH it is skipped with a warning and
+everything still works, just slowly.
+
+If OpenCode gets slow again after you upgrade it, the lockfile has gone stale
+against the new version — bun falls back to resolving. Re-run:
+
+```bash
+dg configure opencode --force
+```
+
+`--force` clears only what devgeta generates (`opencode.json`, `themes/`,
+`plugin/`, `skills/`, `commands/`, `agents/`). Your `tui.json`, your
+`node_modules`, rtk's `plugins/` directory and anything else in there are left
+alone. See [ADR-0049](../decisions/ADR-0049-opencode-plugins-ship-with-a-lockfile.md).

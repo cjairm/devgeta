@@ -68,3 +68,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0046](ADR-0046-a-bundle-carries-the-profile-registry-and-an-import-may-write-it.md) — A bundle carries the profile registry, and an import may write it
 - [ADR-0047](ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md) — opencode installs from its official script on every platform
 - [ADR-0048](ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md) — A repo header reaches its session's plain window
+- [ADR-0049](ADR-0049-opencode-plugins-ship-with-a-lockfile.md) — OpenCode plugins ship with a lockfile

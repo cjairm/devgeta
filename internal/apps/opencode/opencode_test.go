@@ -667,10 +667,14 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Join(userConfigDir, "themes"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		oldFilePath := filepath.Join(userConfigDir, "old-file.json")
+		// A stale theme devgeta itself rendered on an earlier run. The probe
+		// has to be devgeta-managed: ForceConfigure now clears only what
+		// devgeta generates, so an arbitrary foreign file would (correctly)
+		// survive and would not test this at all.
+		oldFilePath := filepath.Join(userConfigDir, "themes", "old-theme.json")
 		if err := os.WriteFile(oldFilePath, []byte("old content"), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -1318,5 +1322,414 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 	}
 	if sidecar["runner"] != runnerPath {
 		t.Errorf("sidecar runner = %v, want %q", sidecar["runner"], runnerPath)
+	}
+}
+
+// npmCallFor returns the single npm invocation recorded by the mock, or nil.
+func npmCallFor(t *testing.T, base *commands.MockBaseCommand) *commands.CommandParams {
+	t.Helper()
+	var found *commands.CommandParams
+	for i := range base.ExecCommandCalls {
+		if base.ExecCommandCalls[i].Command == "npm" {
+			found = &base.ExecCommandCalls[i]
+		}
+	}
+	return found
+}
+
+func TestEnsurePluginLockfile(t *testing.T) {
+	t.Run("GeneratesLockfileWhenPackageJSONHasNone", func(t *testing.T) {
+		tc := testutil.SetupCompleteTest(t)
+		defer tc.Cleanup()
+
+		dir := t.TempDir()
+		if err := os.WriteFile(
+			filepath.Join(dir, "package.json"),
+			[]byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+
+		ensurePluginLockfile(tc.MockApp.Base, dir)
+
+		got := npmCallFor(t, tc.MockApp.Base)
+		if got == nil {
+			t.Fatalf("expected npm to be invoked, got calls: %+v", tc.MockApp.Base.ExecCommandCalls)
+		}
+		if got.Dir != dir {
+			t.Errorf("Dir = %q, want %q", got.Dir, dir)
+		}
+		wantArgs := []string{"install", "--package-lock-only", "--offline"}
+		if !reflect.DeepEqual(got.Args, wantArgs) {
+			t.Errorf("Args = %v, want %v", got.Args, wantArgs)
+		}
+		// VerifyNoRealCommands is deliberately absent: it asserts ZERO
+		// ExecCommand calls, and this test's whole point is that npm is
+		// invoked. The mock recording the call is itself the proof that
+		// nothing reached a real shell.
+	})
+}
+
+func TestEnsurePluginLockfile_SkipsWhenLockfileExists(t *testing.T) {
+	// Every lockfile name bun recognizes. Devgeta must leave each one alone:
+	// regenerating would risk changing which dependency version is installed.
+	for _, lockfile := range []string{"package-lock.json", "bun.lock", "bun.lockb"} {
+		t.Run(lockfile, func(t *testing.T) {
+			tc := testutil.SetupCompleteTest(t)
+			defer tc.Cleanup()
+
+			dir := t.TempDir()
+			if err := os.WriteFile(
+				filepath.Join(dir, "package.json"),
+				[]byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`),
+				0o644,
+			); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, lockfile), []byte("{}"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			ensurePluginLockfile(tc.MockApp.Base, dir)
+
+			if got := npmCallFor(t, tc.MockApp.Base); got != nil {
+				t.Errorf("npm was invoked despite %s existing: %v", lockfile, got.Args)
+			}
+		})
+	}
+}
+
+func TestEnsurePluginLockfile_SkipsWhenNoPackageJSON(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	// An empty dir has no plugin dependency to resolve, so there is nothing
+	// to lock and npm must not be run.
+	ensurePluginLockfile(tc.MockApp.Base, t.TempDir())
+
+	if got := npmCallFor(t, tc.MockApp.Base); got != nil {
+		t.Errorf("npm was invoked with no package.json present: %v", got.Args)
+	}
+}
+
+// npmDirsFor returns the working directory of every npm invocation recorded,
+// which is what identifies WHICH opencode directory got a lockfile.
+func npmDirsFor(t *testing.T, base *commands.MockBaseCommand) []string {
+	t.Helper()
+	var dirs []string
+	for _, call := range base.ExecCommandCalls {
+		if call.Command == "npm" {
+			dirs = append(dirs, call.Dir)
+		}
+	}
+	return dirs
+}
+
+// ForceConfigure must lock BOTH opencode directories. Measured in ADR-0049:
+// locking only the config dir takes startup from 62s to 10s, while locking
+// both takes it to 0.87s. Covering one is not covering the bug.
+func TestForceConfigure_LocksBothOpenCodeDirs(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
+	pluginDir := filepath.Join(appConfigDir, "plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(pluginDir, "task-redirect.js"),
+		[]byte(`export const TaskRedirect = async () => ({});`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+
+	installPrefix := isolateOpenCodeInstallPrefix(t)
+	if err := os.MkdirAll(installPrefix, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Both dirs declare the plugin dependency, the way a real install leaves
+	// them, and neither has a lockfile yet.
+	pkgJSON := []byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`)
+	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{userConfigDir, installPrefix} {
+		if err := os.WriteFile(filepath.Join(dir, "package.json"), pkgJSON, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setupThemeFixture(t, "#ebdbb2")
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	dirs := npmDirsFor(t, tc.MockApp.Base)
+	for _, want := range []string{userConfigDir, installPrefix} {
+		if !slices.Contains(dirs, want) {
+			t.Errorf("no lockfile generated for %q; npm ran in %v", want, dirs)
+		}
+	}
+}
+
+// ForceConfigure wipes ~/.config/opencode to give the config a clean slate,
+// but OpenCode's resolved dependency state lives in that same directory and
+// is NOT devgeta's to throw away. Deleting it forces a full cold reinstall on
+// the next launch — the exact 45-60s stall ADR-0049 exists to remove.
+func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
+	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+	isolateOpenCodeInstallPrefix(t)
+
+	// Stand in for what a real OpenCode install leaves behind.
+	vendored := filepath.Join(userConfigDir, "node_modules", "@opencode-ai", "plugin")
+	if err := os.MkdirAll(vendored, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(vendored, "package.json"),
+		[]byte(`{"version":"1.18.32"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"package.json":      `{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`,
+		"package-lock.json": `{"lockfileVersion":3}`,
+	} {
+		if err := os.WriteFile(
+			filepath.Join(userConfigDir, name),
+			[]byte(body),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A stale artifact devgeta SHOULD still clear, proving preservation did
+	// not turn into "never delete anything". themes/ is devgeta-generated.
+	if err := os.MkdirAll(filepath.Join(userConfigDir, "themes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	staleTheme := filepath.Join(userConfigDir, "themes", "stale.json")
+	if err := os.WriteFile(staleTheme, []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	setupThemeFixture(t, "#ebdbb2")
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	for _, keep := range []string{
+		filepath.Join("node_modules", "@opencode-ai", "plugin", "package.json"),
+		"package.json",
+		"package-lock.json",
+	} {
+		if _, err := os.Stat(filepath.Join(userConfigDir, keep)); err != nil {
+			t.Errorf("ForceConfigure destroyed dependency state %q: %v", keep, err)
+		}
+	}
+	if _, err := os.Stat(staleTheme); !os.IsNotExist(err) {
+		t.Error("ForceConfigure should still clear stale devgeta-generated files")
+	}
+}
+
+// devgeta owns plugin/ (singular) and regenerates it from embedded configs.
+// plugins/ (plural) is a sibling directory OpenCode also loads, and it is
+// where `rtk init -g --opencode` installs rtk's plugin. devgeta never creates
+// it, so devgeta must not delete it: doing so silently tears out an
+// integration the user opted into (ADR-0004) on every --force reconfigure.
+func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+	isolateOpenCodeInstallPrefix(t)
+
+	rtkPlugin := filepath.Join(userConfigDir, "plugins", "rtk.ts")
+	if err := os.MkdirAll(filepath.Dir(rtkPlugin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		rtkPlugin,
+		[]byte("export const RtkOpenCodePlugin = 1"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	setupThemeFixture(t, "#ebdbb2")
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	if _, err := os.Stat(rtkPlugin); err != nil {
+		t.Errorf("ForceConfigure deleted the third-party plugins/ dir: %v", err)
+	}
+}
+
+// A --force reconfigure must clear what devgeta generates and nothing else.
+// OpenCode and its users keep their own files in this directory (tui.json,
+// auth state, hand-kept backups); devgeta neither ships nor tracks them, so
+// deleting them is data loss with no upside.
+func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"theme": "{{ .Theme }}"}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+	isolateOpenCodeInstallPrefix(t)
+
+	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Real examples seen on a live machine, none of them devgeta's.
+	foreign := map[string]string{
+		"tui.json":                        `{"theme":"gruvbox"}`,
+		"opencode.json.tui-migration.bak": `{"old":"config"}`,
+	}
+	for name, body := range foreign {
+		if err := os.WriteFile(
+			filepath.Join(userConfigDir, name),
+			[]byte(body),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A devgeta-generated file that MUST still be replaced, so the test can
+	// tell "preserves everything" apart from "preserves the right things".
+	if err := os.WriteFile(
+		filepath.Join(userConfigDir, "opencode.json"),
+		[]byte(`{"stale":true}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	setupThemeFixture(t, "#ebdbb2")
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	for name, want := range foreign {
+		got, err := os.ReadFile(filepath.Join(userConfigDir, name))
+		if err != nil {
+			t.Errorf("ForceConfigure deleted %q, which devgeta does not manage: %v", name, err)
+			continue
+		}
+		if string(got) != want {
+			t.Errorf("%s = %q, want it untouched (%q)", name, got, want)
+		}
+	}
+	regenerated, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("opencode.json missing: %v", err)
+	}
+	if strings.Contains(string(regenerated), "stale") {
+		t.Error("opencode.json was preserved but devgeta generates it — it must be regenerated")
 	}
 }
