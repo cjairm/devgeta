@@ -590,9 +590,11 @@ only. Every top-level row in the dashboard is exactly one of two kinds:
   worktree scan `dg wt list` uses. Expandable to its worktree rows via `h`/`l` (or `z`
   to toggle every repo at once), shown with a `▼`/`▶` chevron and an `N trees` badge. Shown even
   when its repo-slug tmux session isn't live.
-- **Session workspace**: a standalone tmux session with no worktree-backed (`wt-`) window,
-  sourced from `tmux list-sessions`. A leaf row, labeled `session`, unless it qualifies for
-  its own pane-row expansion (see below).
+- **Session workspace**: a standalone tmux session with no window backed by a **live**
+  worktree, sourced from `tmux list-sessions`. A leaf row, labeled `session`, unless it
+  qualifies for its own pane-row expansion (see below). Liveness is what decides, not the
+  `wt-` name: a worktree removed outside `dg wt remove` leaves its window behind with the
+  name intact, and that window no longer hides its session (see `LiveWorktreeWindows`).
 
 The two kinds carry different marker shapes so they're distinguishable at a glance while no
 agent has ever reported on them, not just by their label: worktree rows use a circle (`●`
@@ -718,10 +720,11 @@ Repo-header rows add:
 
 - Which headers `j`/`k` stops on. A collapsed header is always a stop, so `l` can re-expand it
   (unchanged). An **expanded** header is a stop only when its session holds at least one
-  window that is _not_ worktree-backed — that is, only when switching there would land
-  somewhere the repo's own child rows don't already reach. A session holding nothing but this
-  repo's worktree windows is fully covered by those rows, so stopping on its header would cost
-  a keypress on every trip down the list and buy nothing.
+  window that is _not_ backed by a live worktree — that is, only when switching there would
+  land somewhere the repo's own child rows don't already reach. A session holding nothing but
+  this repo's live worktree windows is fully covered by those rows, so stopping on its header
+  would cost a keypress on every trip down the list and buy nothing. A leftover window whose
+  worktree is gone is reachable from no child row, so it counts as a plain window here.
 
   Three things make that judgement correct rather than flaky, each of which was a visible bug
   first:

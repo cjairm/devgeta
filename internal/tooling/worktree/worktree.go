@@ -1044,17 +1044,43 @@ func (l StateLayer) ApplyTo(statuses []WorktreeStatus) []WorktreeStatus {
 	return applied
 }
 
+// LiveWorktreeWindows returns the set of tmux window names actually backed by
+// a live worktree right now - the same names ApplyTo computes via
+// GetWindowName(s.Repo, s.Name) for each entry. SessionStatuses and
+// PlainWindowBySession use it, instead of the wt- prefix alone, to decide
+// whether a window is worktree-backed.
+//
+// The prefix alone used to be enough, but it only ever proved "devgeta made
+// this window," never "the worktree it was made for still exists." A worktree
+// removed by hand - a bare `git worktree remove`, or an agent running inside
+// the worktree's own window doing it directly, bypassing `dg wt remove` -
+// never runs devgeta's window-kill step, so the window survives with its
+// wt- name intact. Hiding its session on the name alone made that session
+// permanently unreachable from the dashboard: not a worktree row (git no
+// longer lists it), and not a standalone session either (the stale name still
+// matched). Membership in the live set is the fix - once the worktree is
+// gone, its window is just a plain window again.
+func LiveWorktreeWindows(statuses []WorktreeStatus) map[string]bool {
+	windows := make(map[string]bool, len(statuses))
+	for _, s := range statuses {
+		windows[GetWindowName(s.Repo, s.Name)] = true
+	}
+	return windows
+}
+
 // SessionStatuses reduces this layer to the standalone sessions the workspace
-// dashboard lists on their own - those with no worktree-backed window, since a
-// worktree-backed session already appears as a worktree row. The exclusion and
-// the per-session aggregation both live here, off an already-taken scan,
-// rather than in ListSessions() taking a second one of its own.
-func (l StateLayer) SessionStatuses() []SessionStatus {
+// dashboard lists on their own - those with no LIVE worktree-backed window,
+// since a worktree-backed session already appears as a worktree row (see
+// LiveWorktreeWindows for why liveness, not just the wt- prefix, is what
+// decides that). The exclusion and the per-session aggregation both live
+// here, off an already-taken scan, rather than in ListSessions() taking a
+// second one of its own.
+func (l StateLayer) SessionStatuses(liveWindows map[string]bool) []SessionStatus {
 	var statuses []SessionStatus
 	for _, s := range l.Sessions {
 		panes := l.PanesBySession[s.Name]
 		if slices.ContainsFunc(panes, func(ps tmux.PaneState) bool {
-			return isWorktreeWindow(ps.Window)
+			return liveWindows[ps.Window]
 		}) {
 			continue
 		}
@@ -1097,7 +1123,14 @@ func (l StateLayer) SessionStatuses() []SessionStatus {
 // The exclusion is pinned to that pane's own session, since window names are
 // not unique across sessions. Pass "" to count every window; a pane id that
 // matches nothing in the scan excludes nothing.
-func (l StateLayer) PlainWindowBySession(ignorePaneID string) map[string]string {
+//
+// liveWindows is the same set SessionStatuses takes (see LiveWorktreeWindows)
+// - a window whose worktree no longer exists counts as plain here too, for
+// the identical reason.
+func (l StateLayer) PlainWindowBySession(
+	ignorePaneID string,
+	liveWindows map[string]bool,
+) map[string]string {
 	var ignoreSession, ignoreWindow string
 	if ignorePaneID != "" {
 		for session, panes := range l.PanesBySession {
@@ -1112,7 +1145,7 @@ func (l StateLayer) PlainWindowBySession(ignorePaneID string) map[string]string 
 	out := map[string]string{}
 	for session, panes := range l.PanesBySession {
 		for _, p := range panes {
-			if isWorktreeWindow(p.Window) {
+			if liveWindows[p.Window] {
 				continue
 			}
 			if session == ignoreSession && p.Window == ignoreWindow {
@@ -1150,7 +1183,7 @@ func (w *WorktreeManager) RefreshState(
 	statuses []WorktreeStatus,
 ) ([]WorktreeStatus, []SessionStatus, error) {
 	layer, err := w.ScanTmuxState()
-	return layer.ApplyTo(statuses), layer.SessionStatuses(), err
+	return layer.ApplyTo(statuses), layer.SessionStatuses(LiveWorktreeWindows(statuses)), err
 }
 
 // ListWorktreesOnly returns every worktree across every known repo with only
@@ -1206,22 +1239,28 @@ func (w *WorktreeManager) ListNames() ([]string, error) {
 	return names, nil
 }
 
-// ListSessions returns tmux sessions with no worktree-backed window - plain
-// sessions the workspace dashboard should list on their own, since a
-// worktree-backed session already appears via List(). Composed from the same
-// scan and the same apply half RefreshState uses (see StateLayer), so the two
-// paths cannot drift and a caller wanting both lists pays for one scan, not
-// two.
+// ListSessions returns tmux sessions with no LIVE worktree-backed window -
+// plain sessions the workspace dashboard should list on their own, since a
+// worktree-backed session already appears via List(). It resolves the live
+// worktree set itself (see LiveWorktreeWindows) so a worktree removed by hand
+// - leaving its window's wt- name behind with nothing left to back it - does
+// not keep hiding that window's session forever.
 //
 // Errors from Tmux.ListSessions() propagate unchanged, including its (nil,
 // nil) no-server result, which flows through as an empty list here rather
-// than an error.
+// than an error. ListWorktreesOnly's error is always nil today (see its own
+// doc comment) but is still checked here rather than ignored, matching every
+// other caller of it.
 func (w *WorktreeManager) ListSessions() ([]SessionStatus, error) {
+	statuses, err := w.ListWorktreesOnly()
+	if err != nil {
+		return nil, err
+	}
 	layer, err := w.ScanTmuxState()
 	if err != nil {
 		return nil, err
 	}
-	return layer.SessionStatuses(), nil
+	return layer.SessionStatuses(LiveWorktreeWindows(statuses)), nil
 }
 
 // findRepoForWorktree searches every known repo (via enumerateWorktrees, the

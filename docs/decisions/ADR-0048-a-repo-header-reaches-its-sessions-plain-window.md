@@ -61,11 +61,17 @@ their own.
 
 **Resolution, in two reads of the scan the dashboard already takes:**
 
-- `StateLayer.PlainWindowBySession(ignorePaneID)` maps each session to its first
-  window that is **not** worktree-backed, skipping the window holding
+- `StateLayer.PlainWindowBySession(ignorePaneID, liveWindows)` maps each session to
+  its first window that is **not** worktree-backed, skipping the window holding
   `ignorePaneID` (`$TMUX_PANE` — the dashboard's own, pinned to that pane's
   session because window names are not unique across sessions). This is exactly
-  the fact `SessionStatuses` discards when it drops a `wt-`-containing session.
+  the fact `SessionStatuses` discards when it drops a worktree-backed session.
+
+  > **"Worktree-backed" is membership in `liveWindows`, not the `wt-` prefix.** Both
+  > this function and `SessionStatuses` take the live worktrees' window names
+  > (`LiveWorktreeWindows`), so a window whose worktree no longer exists counts as
+  > plain here — which is correct, since no worktree row can reach it any more.
+
 - A repo's session is **read** off its worktree rows' panes, which carry it from
   the same scan. The derived name is a fallback only, and only where there is no
   live window to read.

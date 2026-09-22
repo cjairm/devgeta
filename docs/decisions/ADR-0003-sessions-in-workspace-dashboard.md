@@ -45,6 +45,13 @@ kinds:
   > session↔repo resolution so the repo header row can reach them, and supersedes both this
   > clause and the "Session↔worktree reconciliation" rejection below.
 
+  > **"A `wt-` window" now means a window backed by a worktree that still exists.** The name
+  > alone proved only that devgeta created the window, never that anything still backs it, so
+  > a worktree removed outside `dg wt remove` — which skips devgeta's window-kill step — left
+  > its window behind and hid that session permanently: no worktree row (git had dropped it)
+  > and no session row either. The exclusion set is now the live worktrees' own window names
+  > (`LiveWorktreeWindows`), which is the set the worktree rows actually cover.
+
 The two kinds are differentiated inline in one flat top-level list — **not** in two labeled
 sections — by two orthogonal signals:
 

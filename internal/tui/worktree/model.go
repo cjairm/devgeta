@@ -548,16 +548,24 @@ func (m Model) scanTmuxCmd(gen int) tea.Cmd {
 // the standalone session rows AND which sessions hold a non-worktree window
 // (see the plainWindowSessions field) — and taking the scan here gets the
 // second for free instead of paying for another list-sessions plus list-panes.
+//
+// statuses is captured here, not read from m.statuses inside the closure: the
+// closure runs on its own goroutine, after m may already have moved on, and
+// this is the same last-known-good worktree list ApplyTo would apply a tmux
+// layer to - the set worktree.LiveWorktreeWindows needs to tell a genuinely
+// worktree-backed window from an orphaned one (see its doc comment).
 func (m Model) sessionsLoadCmd(gen int) tea.Cmd {
 	mgr := m.mgr
+	statuses := m.statuses
 	return func() tea.Msg {
 		layer, err := mgr.ScanTmuxState()
 		if err != nil {
 			return statusMsg("failed to list sessions: " + err.Error())
 		}
+		liveWindows := worktree.LiveWorktreeWindows(statuses)
 		return sessionsMsg{
-			sessions:             layer.SessionStatuses(),
-			plainWindowBySession: layer.PlainWindowBySession(os.Getenv("TMUX_PANE")),
+			sessions:             layer.SessionStatuses(liveWindows),
+			plainWindowBySession: layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), liveWindows),
 			gen:                  gen,
 		}
 	}
@@ -1092,10 +1100,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and treats its input as read-only, so this cannot disturb a list a
 		// slow load produced.
 		m.statuses = msg.layer.ApplyTo(m.statuses)
+		// Repo/Name (what LiveWorktreeWindows reads) are git-derived and
+		// untouched by ApplyTo, so computing this off the just-applied
+		// m.statuses or the pre-apply one is equivalent - see ApplyTo.
+		liveWindows := worktree.LiveWorktreeWindows(m.statuses)
 		// Pane-derived like the line above, so it applies unconditionally too:
 		// it is read straight off this scan's panes and cannot race a session
 		// mutation the way a wholesale session-list replacement can.
-		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"))
+		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), liveWindows)
 		if msg.gen != m.sessionGen {
 			// Session half is stale — a newer scan, a session load, or a
 			// session mutation has superseded it. The pane half above still
@@ -1103,7 +1115,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshView()
 			return m, nil
 		}
-		m.applySessions(msg.layer.SessionStatuses())
+		m.applySessions(msg.layer.SessionStatuses(liveWindows))
 		return m, nil
 
 	case sessionsMsg:

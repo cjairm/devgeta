@@ -1256,6 +1256,7 @@ func TestScanTmuxState(t *testing.T) {
 // worktree windows its own child rows already reach.
 func TestStateLayerPlainWindowBySession(t *testing.T) {
 	wtWindow := GetWindowName("repoA", "feat")
+	live := map[string]bool{wtWindow: true}
 
 	t.Run("a session with only worktree windows is not listed", func(t *testing.T) {
 		layer := StateLayer{
@@ -1264,7 +1265,7 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		if got := layer.PlainWindowBySession(""); got["repoA"] != "" {
+		if got := layer.PlainWindowBySession("", live); got["repoA"] != "" {
 			t.Errorf(
 				"a session whose every window is worktree-backed has nothing else to reach, got %q",
 				got["repoA"],
@@ -1285,7 +1286,7 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 		// The WINDOW, not just a yes: enter on the header switches straight to
 		// it, because switching to the session alone lands on whichever window
 		// is active there.
-		if got := layer.PlainWindowBySession(""); got["repoA"] != "zsh" {
+		if got := layer.PlainWindowBySession("", live); got["repoA"] != "zsh" {
 			t.Errorf("expected the plain window's name %q, got %q", "zsh", got["repoA"])
 		}
 	})
@@ -1297,14 +1298,34 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		if got := layer.PlainWindowBySession(""); got["notes"] != "vim" {
+		if got := layer.PlainWindowBySession("", live); got["notes"] != "vim" {
 			t.Errorf("expected the plain window's name %q, got %q", "vim", got["notes"])
 		}
 	})
 
 	t.Run("an empty layer lists nothing", func(t *testing.T) {
-		if got := (StateLayer{}).PlainWindowBySession(""); len(got) != 0 {
+		if got := (StateLayer{}).PlainWindowBySession("", live); len(got) != 0 {
 			t.Errorf("expected no sessions from an empty layer, got %v", got)
+		}
+	})
+
+	// The window still has its wt- name, but nothing backs it any more (the
+	// worktree it was made for is gone) - it counts as plain, same as any
+	// window a user made themselves. This is the exact shape a worktree
+	// removed by hand leaves behind (see LiveWorktreeWindows).
+	t.Run("a window whose worktree no longer exists counts as plain", func(t *testing.T) {
+		layer := StateLayer{
+			PanesBySession: map[string][]tmux.PaneState{
+				"lever-meta": {{Session: "lever-meta", Window: wtWindow, PaneID: "%1"}},
+			},
+		}
+
+		if got := layer.PlainWindowBySession("", map[string]bool{}); got["lever-meta"] != wtWindow {
+			t.Errorf(
+				"expected the orphaned worktree window %q to count as plain, got %q",
+				wtWindow,
+				got["lever-meta"],
+			)
 		}
 	})
 
@@ -1323,7 +1344,7 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		if got := layer.PlainWindowBySession("%9"); got["repoA"] != "" {
+		if got := layer.PlainWindowBySession("%9", live); got["repoA"] != "" {
 			t.Errorf(
 				"the dashboard's own window is not somewhere switching to the session goes, got %q",
 				got["repoA"],
@@ -1334,6 +1355,7 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 	// Window names are not unique across sessions, so the ignore has to be
 	// pinned to the one session it belongs to.
 	t.Run("a same-named window in another session still counts", func(t *testing.T) {
+		wtWindowB := GetWindowName("repoB", "feat")
 		layer := StateLayer{
 			PanesBySession: map[string][]tmux.PaneState{
 				"repoA": {
@@ -1341,18 +1363,24 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 					{Session: "repoA", Window: "[workspace]", PaneID: "%9"},
 				},
 				"repoB": {
-					{Session: "repoB", Window: GetWindowName("repoB", "feat"), PaneID: "%2"},
+					{Session: "repoB", Window: wtWindowB, PaneID: "%2"},
 					{Session: "repoB", Window: "[workspace]", PaneID: "%3"},
 				},
 			},
 		}
 
-		got := layer.PlainWindowBySession("%9")
+		got := layer.PlainWindowBySession("%9", map[string]bool{wtWindow: true, wtWindowB: true})
 		if got["repoA"] != "" {
-			t.Errorf("repoA holds the ignored pane, so its [workspace] window must not count, got %q", got["repoA"])
+			t.Errorf(
+				"repoA holds the ignored pane, so its [workspace] window must not count, got %q",
+				got["repoA"],
+			)
 		}
 		if got["repoB"] != "[workspace]" {
-			t.Errorf("repoB's own [workspace] window is a different window and must still count, got %q", got["repoB"])
+			t.Errorf(
+				"repoB's own [workspace] window is a different window and must still count, got %q",
+				got["repoB"],
+			)
 		}
 	})
 
@@ -1365,8 +1393,11 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		if got := layer.PlainWindowBySession("%404"); got["repoA"] != "zsh" {
-			t.Errorf("an ignore that matches no pane must leave the answer alone, got %q", got["repoA"])
+		if got := layer.PlainWindowBySession("%404", live); got["repoA"] != "zsh" {
+			t.Errorf(
+				"an ignore that matches no pane must leave the answer alone, got %q",
+				got["repoA"],
+			)
 		}
 	})
 }
@@ -3303,10 +3334,51 @@ func TestCreateAt(t *testing.T) {
 	)
 }
 
+// wmForListSessionsTest builds a WorktreeManager wired to mockTmuxBase, plus a
+// Git mock chdir'd away from any repo and reporting no worktrees anywhere -
+// the "nothing live" baseline most ListSessions subtests build on. ListSessions
+// now has to resolve live worktrees to tell a genuinely worktree-backed window
+// from an orphaned one (see liveWorktreeWindows), so every subtest needs a
+// working Git even when it has no worktrees of its own to report.
+func wmForListSessionsTest(t *testing.T, mockTmuxBase *commands.MockBaseCommand) *WorktreeManager {
+	t.Helper()
+	cleanupPaths := testutil.SetupIsolatedPaths(t)
+	t.Cleanup(cleanupPaths)
+	t.Chdir(t.TempDir())
+	mockGitBase := commands.NewMockBaseCommand()
+	mockGitBase.SetExecCommandResult("", "fatal: not a git repository", os.ErrNotExist)
+	return &WorktreeManager{
+		Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
+		Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
+	}
+}
+
 func TestListSessions(t *testing.T) {
 	t.Run(
-		"excludes any session with at least one wt- window, keeps standalone sessions",
+		"excludes any session with at least one wt- window backed by a live worktree, keeps standalone sessions",
 		func(t *testing.T) {
+			cleanupPaths := testutil.SetupIsolatedPaths(t)
+			t.Cleanup(cleanupPaths)
+			t.Chdir(t.TempDir())
+
+			mainRootMyrepo := filepath.Join(t.TempDir(), "myrepo")
+			wtPathMyrepo := createWorktreeDir(t, "myrepo", "feat")
+			mainRootMixed := filepath.Join(t.TempDir(), "mixed")
+			wtPathMixed := createWorktreeDir(t, "mixed", "feat")
+
+			mockGitBase := commands.NewMockBaseCommand()
+			mockGitBase.SetExecCommandResults(
+				// cwdRepoRoot
+				commands.ExecCommandResult("", "fatal: not a git repository", os.ErrNotExist),
+				// basePath scan is alphabetical: "mixed" before "myrepo".
+				commands.ExecCommandResult(
+					worktreePorcelain(mainRootMixed, [2]string{wtPathMixed, "feat"}), "", nil,
+				),
+				commands.ExecCommandResult(
+					worktreePorcelain(mainRootMyrepo, [2]string{wtPathMyrepo, "feat"}), "", nil,
+				),
+			)
+
 			mockTmuxBase := commands.NewMockBaseCommand()
 			mockTmuxBase.SetExecCommandResults(
 				// list-sessions
@@ -3323,6 +3395,7 @@ func TestListSessions(t *testing.T) {
 				),
 			)
 			wm := &WorktreeManager{
+				Git:  &git.Git{Cmd: commands.NewMockCommand(), Base: mockGitBase},
 				Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
 			}
 
@@ -3410,9 +3483,7 @@ func TestListSessions(t *testing.T) {
 			// list-panes -a
 			commands.ExecCommandResult("work\tshell\t%1\t0\tclaude\tblocked\n", "", nil),
 		)
-		wm := &WorktreeManager{
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-		}
+		wm := wmForListSessionsTest(t, mockTmuxBase)
 
 		statuses, err := wm.ListSessions()
 		if err != nil {
@@ -3436,9 +3507,7 @@ func TestListSessions(t *testing.T) {
 			"error connecting to /tmp/tmux-1000/default (No such file or directory)",
 			errors.New("exit status 1"),
 		)
-		wm := &WorktreeManager{
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-		}
+		wm := wmForListSessionsTest(t, mockTmuxBase)
 
 		statuses, err := wm.ListSessions()
 		if err != nil {
@@ -3465,9 +3534,7 @@ func TestListSessions(t *testing.T) {
 			"some unexpected tmux failure",
 			errors.New("exit status 1"),
 		)
-		wm := &WorktreeManager{
-			Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-		}
+		wm := wmForListSessionsTest(t, mockTmuxBase)
 
 		statuses, err := wm.ListSessions()
 		if err == nil {
@@ -3506,9 +3573,7 @@ func TestListSessions(t *testing.T) {
 				// list-panes -a fails.
 				commands.ExecCommandResult("", "error", errors.New("no server")),
 			)
-			wm := &WorktreeManager{
-				Tmux: &tmux.Tmux{Cmd: commands.NewMockCommand(), Base: mockTmuxBase},
-			}
+			wm := wmForListSessionsTest(t, mockTmuxBase)
 
 			statuses, err := wm.ListSessions()
 			if err != nil {
@@ -3517,6 +3582,43 @@ func TestListSessions(t *testing.T) {
 			if len(statuses) != 1 || statuses[0].Name != "myrepo" {
 				t.Errorf(
 					"expected the worktree-backed session to incorrectly appear as standalone (documented trade-off), got %+v",
+					statuses,
+				)
+			}
+		},
+	)
+
+	// The incident this whole change exists for: a worktree removed by hand
+	// (a bare `git worktree remove`, bypassing `dg wt remove`) never runs
+	// devgeta's own window-kill step, so its tmux window survives with its
+	// wt- name intact. Before this fix, the prefix alone was enough to hide
+	// the session - permanently, since nothing devgeta ships can ever prune
+	// that worktree's window again. The session must come back the moment
+	// the worktree it was hidden for no longer exists.
+	t.Run(
+		"a session whose only wt- window belongs to an already-gone worktree is listed",
+		func(t *testing.T) {
+			orphanWindow := GetWindowName("lever-meta", "docs-cycle08-outcome")
+			mockTmuxBase := commands.NewMockBaseCommand()
+			mockTmuxBase.SetExecCommandResults(
+				// list-sessions
+				commands.ExecCommandResult("lever-meta\t1\n", "", nil),
+				// list-panes -a: the only window is the orphaned worktree window.
+				commands.ExecCommandResult(
+					"lever-meta\t"+orphanWindow+"\t%1\t0\tzsh\t\n", "", nil,
+				),
+			)
+			// wmForListSessionsTest's Git mock reports zero worktrees anywhere -
+			// the worktree this window was created for is gone.
+			wm := wmForListSessionsTest(t, mockTmuxBase)
+
+			statuses, err := wm.ListSessions()
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(statuses) != 1 || statuses[0].Name != "lever-meta" {
+				t.Errorf(
+					"expected the session with the orphaned wt- window to be listed as standalone, got %+v",
 					statuses,
 				)
 			}
