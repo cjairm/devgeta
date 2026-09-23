@@ -1044,43 +1044,78 @@ func (l StateLayer) ApplyTo(statuses []WorktreeStatus) []WorktreeStatus {
 	return applied
 }
 
-// LiveWorktreeWindows returns the set of tmux window names actually backed by
-// a live worktree right now - the same names ApplyTo computes via
-// GetWindowName(s.Repo, s.Name) for each entry. SessionStatuses and
-// PlainWindowBySession use it, instead of the wt- prefix alone, to decide
-// whether a window is worktree-backed.
+// WorktreeWindows answers, for the windows in one tmux scan, which of them a
+// worktree row already covers. SessionStatuses and PlainWindowBySession
+// classify against it.
 //
-// The prefix alone used to be enough, but it only ever proved "devgeta made
-// this window," never "the worktree it was made for still exists." A worktree
-// removed by hand - a bare `git worktree remove`, or an agent running inside
-// the worktree's own window doing it directly, bypassing `dg wt remove` -
-// never runs devgeta's window-kill step, so the window survives with its
-// wt- name intact. Hiding its session on the name alone made that session
-// permanently unreachable from the dashboard: not a worktree row (git no
-// longer lists it), and not a standalone session either (the stale name still
-// matched). Membership in the live set is the fix - once the worktree is
-// gone, its window is just a plain window again.
-func LiveWorktreeWindows(statuses []WorktreeStatus) map[string]bool {
-	windows := make(map[string]bool, len(statuses))
+// Why a type rather than a plain set: it has two states that must not be
+// confused. A KNOWN answer (LiveWorktreeWindows) comes from an authoritative
+// worktree list, so an empty one genuinely means "no worktrees exist" and
+// every wt- window in the scan is an orphan. An UNKNOWN answer
+// (UnknownWorktreeWindows) means the caller has no worktree list yet and falls
+// back to the wt- name prefix.
+//
+// Both were once "an empty map", and the dashboard paid for it: `dg ws` batches
+// its git enumeration and its tmux scan together, the scan lands first, and the
+// session half read that not-yet-loaded list as "nothing is worktree-backed" -
+// listing every repo's own session as a standalone row beside its repo row
+// until the next tick swept it away. The zero value is the unknown, prefix-only
+// state, which is the conservative one: it can hide an orphan for one tick, it
+// can never double-list.
+type WorktreeWindows struct {
+	live  map[string]bool
+	known bool
+}
+
+// LiveWorktreeWindows builds the known answer from an authoritative worktree
+// list: the window names ApplyTo computes via GetWindowName(s.Repo, s.Name)
+// for each row.
+//
+// Liveness rather than the wt- prefix is what decides, because the prefix only
+// ever proved "devgeta made this window," never "the worktree it was made for
+// still exists." A worktree removed by hand - a bare `git worktree remove`, or
+// an agent running inside the worktree's own window doing it directly,
+// bypassing `dg wt remove` - never runs devgeta's window-kill step, so the
+// window survives with its wt- name intact. Hiding its session on the name
+// alone made that session permanently unreachable from the dashboard: not a
+// worktree row (git no longer lists it), and not a standalone session either
+// (the stale name still matched).
+func LiveWorktreeWindows(statuses []WorktreeStatus) WorktreeWindows {
+	live := make(map[string]bool, len(statuses))
 	for _, s := range statuses {
-		windows[GetWindowName(s.Repo, s.Name)] = true
+		live[GetWindowName(s.Repo, s.Name)] = true
 	}
-	return windows
+	return WorktreeWindows{live: live, known: true}
+}
+
+// UnknownWorktreeWindows is the answer for a caller with no worktree list to
+// compare against yet - the dashboard's first frames. It classifies on the wt-
+// name prefix, which is what this code did before liveness existed.
+func UnknownWorktreeWindows() WorktreeWindows {
+	return WorktreeWindows{}
+}
+
+// backs reports whether a worktree row already covers this window.
+func (w WorktreeWindows) backs(window string) bool {
+	if !w.known {
+		return isWorktreeWindow(window)
+	}
+	return w.live[window]
 }
 
 // SessionStatuses reduces this layer to the standalone sessions the workspace
-// dashboard lists on their own - those with no LIVE worktree-backed window,
-// since a worktree-backed session already appears as a worktree row (see
-// LiveWorktreeWindows for why liveness, not just the wt- prefix, is what
-// decides that). The exclusion and the per-session aggregation both live
-// here, off an already-taken scan, rather than in ListSessions() taking a
-// second one of its own.
-func (l StateLayer) SessionStatuses(liveWindows map[string]bool) []SessionStatus {
+// dashboard lists on their own - those with no worktree-backed window, since a
+// worktree-backed session already appears as a worktree row. What counts as
+// worktree-backed is backed's decision, not a name match; see WorktreeWindows.
+// The exclusion and the per-session aggregation both live here, off an
+// already-taken scan, rather than in ListSessions() taking a second one of its
+// own.
+func (l StateLayer) SessionStatuses(backed WorktreeWindows) []SessionStatus {
 	var statuses []SessionStatus
 	for _, s := range l.Sessions {
 		panes := l.PanesBySession[s.Name]
 		if slices.ContainsFunc(panes, func(ps tmux.PaneState) bool {
-			return liveWindows[ps.Window]
+			return backed.backs(ps.Window)
 		}) {
 			continue
 		}
@@ -1124,12 +1159,12 @@ func (l StateLayer) SessionStatuses(liveWindows map[string]bool) []SessionStatus
 // not unique across sessions. Pass "" to count every window; a pane id that
 // matches nothing in the scan excludes nothing.
 //
-// liveWindows is the same set SessionStatuses takes (see LiveWorktreeWindows)
-// - a window whose worktree no longer exists counts as plain here too, for
-// the identical reason.
+// backed is the same answer SessionStatuses takes (see WorktreeWindows) - a
+// window whose worktree no longer exists counts as plain here too, for the
+// identical reason.
 func (l StateLayer) PlainWindowBySession(
 	ignorePaneID string,
-	liveWindows map[string]bool,
+	backed WorktreeWindows,
 ) map[string]string {
 	var ignoreSession, ignoreWindow string
 	if ignorePaneID != "" {
@@ -1145,7 +1180,7 @@ func (l StateLayer) PlainWindowBySession(
 	out := map[string]string{}
 	for session, panes := range l.PanesBySession {
 		for _, p := range panes {
-			if liveWindows[p.Window] {
+			if backed.backs(p.Window) {
 				continue
 			}
 			if session == ignoreSession && p.Window == ignoreWindow {

@@ -1254,9 +1254,20 @@ func TestScanTmuxState(t *testing.T) {
 // dashboard whether such a session ALSO has windows of its own. Without that,
 // a repo header can offer to switch to a session that holds nothing but the
 // worktree windows its own child rows already reach.
+// liveFor builds the known classification answer for the given repo/name
+// pairs, the way the dashboard builds it from its worktree rows. Pairs are
+// {repo, name}.
+func liveFor(pairs ...[2]string) WorktreeWindows {
+	statuses := make([]WorktreeStatus, 0, len(pairs))
+	for _, p := range pairs {
+		statuses = append(statuses, WorktreeStatus{Repo: p[0], Name: p[1]})
+	}
+	return LiveWorktreeWindows(statuses)
+}
+
 func TestStateLayerPlainWindowBySession(t *testing.T) {
 	wtWindow := GetWindowName("repoA", "feat")
-	live := map[string]bool{wtWindow: true}
+	live := liveFor([2]string{"repoA", "feat"})
 
 	t.Run("a session with only worktree windows is not listed", func(t *testing.T) {
 		layer := StateLayer{
@@ -1320,7 +1331,10 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		if got := layer.PlainWindowBySession("", map[string]bool{}); got["lever-meta"] != wtWindow {
+		if got := layer.PlainWindowBySession(
+			"",
+			LiveWorktreeWindows(nil),
+		); got["lever-meta"] != wtWindow {
 			t.Errorf(
 				"expected the orphaned worktree window %q to count as plain, got %q",
 				wtWindow,
@@ -1369,7 +1383,10 @@ func TestStateLayerPlainWindowBySession(t *testing.T) {
 			},
 		}
 
-		got := layer.PlainWindowBySession("%9", map[string]bool{wtWindow: true, wtWindowB: true})
+		got := layer.PlainWindowBySession(
+			"%9",
+			liveFor([2]string{"repoA", "feat"}, [2]string{"repoB", "feat"}),
+		)
 		if got["repoA"] != "" {
 			t.Errorf(
 				"repoA holds the ignored pane, so its [workspace] window must not count, got %q",
@@ -3624,4 +3641,42 @@ func TestListSessions(t *testing.T) {
 			}
 		},
 	)
+}
+
+// WorktreeWindows exists to keep "no worktrees exist" apart from "no worktree
+// list yet". Both were once an empty map, and the dashboard read the second as
+// the first: it batches its git enumeration and its tmux scan together, the
+// scan lands first, and every repo's own session was listed as a standalone
+// session beside its repo row until the next tick swept it away.
+func TestWorktreeWindowsSeparatesUnknownFromEmpty(t *testing.T) {
+	wtWindow := GetWindowName("repoA", "feat")
+	layer := StateLayer{
+		Sessions: []tmux.SessionInfo{{Name: "repoA"}},
+		PanesBySession: map[string][]tmux.PaneState{
+			"repoA": {{Session: "repoA", Window: wtWindow, PaneID: "%1"}},
+		},
+	}
+
+	if got := layer.SessionStatuses(UnknownWorktreeWindows()); len(got) != 0 {
+		t.Errorf(
+			"with no worktree list to check against, a wt- window must still be taken for "+
+				"a worktree's own and its session left out, got %+v",
+			got,
+		)
+	}
+
+	// The zero value is the unknown one on purpose: the conservative answer can
+	// hide an orphan for a tick, never double-list a repo's session.
+	var zero WorktreeWindows
+	if got := layer.SessionStatuses(zero); len(got) != 0 {
+		t.Errorf("the zero value must behave as unknown, got %+v", got)
+	}
+
+	if got := layer.SessionStatuses(LiveWorktreeWindows(nil)); len(got) != 1 {
+		t.Errorf(
+			"a known-empty worktree list makes that same window an orphan, so its session "+
+				"stands alone, got %+v",
+			got,
+		)
+	}
 }

@@ -62,17 +62,20 @@ type (
 		statuses []worktree.WorktreeStatus
 		gen      int
 	}
-	// sessionsMsg carries a successful whole-session-list result, stamped with
-	// the sessionGen it was dispatched with. Its only producer is
-	// sessionsLoadCmd; see sessionsLoadCmd for the success/failure split.
+	// sessionsMsg carries a successful session scan, stamped with the
+	// sessionGen it was dispatched with. Its only producer is sessionsLoadCmd;
+	// see sessionsLoadCmd for the success/failure split.
+	//
+	// It carries the raw layer, not finished lists, for the same reason
+	// tmuxStateMsg does: both halves it feeds (the session rows and
+	// plainWindowBySession) have to be classified against the worktree list,
+	// and the only correct one is whatever m.statuses holds when this LANDS.
+	// Classifying in the command instead pinned the answer to the list that
+	// existed when Init() dispatched it — empty — so every repo's own session
+	// was listed as standalone until the next tick.
 	sessionsMsg struct {
-		sessions []worktree.SessionStatus
-		// plainWindowBySession comes off the very same scan the sessions above
-		// do, at no extra tmux cost — see sessionsLoadCmd. Without it the
-		// startup load answered only half the question and repo headers only
-		// became selectable once the first 3-second tick landed.
-		plainWindowBySession map[string]string
-		gen                  int
+		layer worktree.StateLayer
+		gen   int
 	}
 	// tmuxStateMsg is the fast tick's result: one tmux scan's worth of state,
 	// carried as a layer rather than as a finished list.
@@ -549,26 +552,31 @@ func (m Model) scanTmuxCmd(gen int) tea.Cmd {
 // (see the plainWindowSessions field) — and taking the scan here gets the
 // second for free instead of paying for another list-sessions plus list-panes.
 //
-// statuses is captured here, not read from m.statuses inside the closure: the
-// closure runs on its own goroutine, after m may already have moved on, and
-// this is the same last-known-good worktree list ApplyTo would apply a tmux
-// layer to - the set worktree.LiveWorktreeWindows needs to tell a genuinely
-// worktree-backed window from an orphaned one (see its doc comment).
+// It returns the layer untouched and leaves the classifying to Update. No
+// model-owned memory crosses into this goroutine, so there is nothing to race,
+// and the worktree list the scan is judged against is the one that exists when
+// the message lands rather than one snapshotted here.
 func (m Model) sessionsLoadCmd(gen int) tea.Cmd {
 	mgr := m.mgr
-	statuses := m.statuses
 	return func() tea.Msg {
 		layer, err := mgr.ScanTmuxState()
 		if err != nil {
 			return statusMsg("failed to list sessions: " + err.Error())
 		}
-		liveWindows := worktree.LiveWorktreeWindows(statuses)
-		return sessionsMsg{
-			sessions:             layer.SessionStatuses(liveWindows),
-			plainWindowBySession: layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), liveWindows),
-			gen:                  gen,
-		}
+		return sessionsMsg{layer: layer, gen: gen}
 	}
+}
+
+// worktreeWindows is the classification input both session halves take (see
+// worktree.WorktreeWindows). It is authoritative only once the first worktree
+// load has landed: before that m.statuses is empty because nothing has filled
+// it yet, not because there are no worktrees, and reading those apart is the
+// difference between hiding a repo's session correctly and listing it twice.
+func (m Model) worktreeWindows() worktree.WorktreeWindows {
+	if !m.loaded {
+		return worktree.UnknownWorktreeWindows()
+	}
+	return worktree.LiveWorktreeWindows(m.statuses)
 }
 
 func (m Model) fastTickCmd() tea.Cmd {
@@ -1091,7 +1099,25 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// snapshot is never the better answer.
 			return m, nil
 		}
+		// Whether this is the load that first gave the dashboard a worktree
+		// list to judge windows against — read before applyStatuses sets it.
+		firstLoad := !m.loaded
 		m.applyStatuses(msg.statuses)
+		if firstLoad {
+			// Any session rows already on screen were classified without a
+			// worktree list (see worktreeWindows), so they are a guess this
+			// load has just settled. Re-run it now rather than leave the guess
+			// up until the next 3-second tick: that is how long an orphaned
+			// worktree's session would otherwise take to appear, which reads
+			// as the dashboard being broken rather than busy.
+			//
+			// Dispatched on the CURRENT sessionGen rather than a bumped one:
+			// nothing here mutates sessions, so a scan already in flight is
+			// not wrong, only classified against a poorer answer than this one
+			// will be. Bumping would discard it — usually the very scan Init
+			// dispatched alongside this load — and buy nothing.
+			return m, m.sessionsLoadCmd(m.sessionGen)
+		}
 		return m, nil
 
 	case tmuxStateMsg:
@@ -1100,14 +1126,14 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// and treats its input as read-only, so this cannot disturb a list a
 		// slow load produced.
 		m.statuses = msg.layer.ApplyTo(m.statuses)
-		// Repo/Name (what LiveWorktreeWindows reads) are git-derived and
-		// untouched by ApplyTo, so computing this off the just-applied
-		// m.statuses or the pre-apply one is equivalent - see ApplyTo.
-		liveWindows := worktree.LiveWorktreeWindows(m.statuses)
+		// Repo/Name (what the classification reads) are git-derived and
+		// untouched by ApplyTo, so taking this off the just-applied m.statuses
+		// or the pre-apply one is equivalent - see ApplyTo.
+		backed := m.worktreeWindows()
 		// Pane-derived like the line above, so it applies unconditionally too:
 		// it is read straight off this scan's panes and cannot race a session
 		// mutation the way a wholesale session-list replacement can.
-		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), liveWindows)
+		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
 		if msg.gen != m.sessionGen {
 			// Session half is stale — a newer scan, a session load, or a
 			// session mutation has superseded it. The pane half above still
@@ -1115,18 +1141,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshView()
 			return m, nil
 		}
-		m.applySessions(msg.layer.SessionStatuses(liveWindows))
+		m.applySessions(msg.layer.SessionStatuses(backed))
 		return m, nil
 
 	case sessionsMsg:
-		// Only reached on a successful ListSessions() (see sessionsLoadCmd);
-		// a failure produces a statusMsg instead, which never reaches this
-		// case and so never touches m.sessions - see that comment for why.
+		// Only reached on a successful scan (see sessionsLoadCmd); a failure
+		// produces a statusMsg instead, which never reaches this case and so
+		// never touches m.sessions - see that comment for why.
 		if msg.gen != m.sessionGen {
 			return m, nil
 		}
-		m.plainWindowBySession = msg.plainWindowBySession
-		m.applySessions(msg.sessions)
+		backed := m.worktreeWindows()
+		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
+		m.applySessions(msg.layer.SessionStatuses(backed))
 		return m, nil
 
 	case deletedMsg:

@@ -575,7 +575,7 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 				m.currentSessionFn = func() (string, bool) { return "repo-b", true }
 				return m
 			},
-			msg:      sessionsMsg{sessions: testSessions()},
+			msg:      sessionsMsg{layer: sessionsLayer(testSessions())},
 			wantPath: "/tmp/x",
 		},
 		{

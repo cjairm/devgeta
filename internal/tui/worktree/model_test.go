@@ -53,6 +53,12 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.createFn = func(_, _, _ string) (string, error) { return "", nil }
 	m.prTitleFn = func(_, _ string) string { return "" }
 	m.launchReviewFn = func(_, _, _ string) error { return nil }
+	// A manager that scans an empty tmux server, so a test can run the commands
+	// a handler returns without the real one. Overridden by any test that cares
+	// what the scan finds. It is set by default because handlers legitimately
+	// dispatch scans — the first statusesMsg does — and a nil manager turns
+	// that into a panic in tests that merely drain the commands they get back.
+	m.mgr = quietMgr()
 	m.statuses = statuses
 	m.rebuildRows()
 	return m
@@ -158,6 +164,27 @@ func testSessions() []worktree.SessionStatus {
 		{Name: "scratch", Attached: false},
 		{Name: "notes", Attached: true},
 	}
+}
+
+// quietMgr is a manager whose tmux scan succeeds with nothing in it, for tests
+// that run a handler's returned commands without caring about the scan. The
+// first statusesMsg dispatches one (see its case in update), so a model that
+// executes its commands needs a manager even when tmux is beside the point.
+func quietMgr() *worktree.WorktreeManager {
+	return mgrWithMockedTmux(commands.NewMockBaseCommand())
+}
+
+// sessionsLayer builds a scan holding exactly these sessions and no panes, so
+// SessionStatuses reproduces them verbatim whatever the worktree list says.
+// sessionsMsg carries the raw scan rather than a finished list (it is
+// classified when it lands, not when it is built), so a test that cares only
+// about which sessions arrive states them here.
+func sessionsLayer(sessions []worktree.SessionStatus) worktree.StateLayer {
+	infos := make([]tmux.SessionInfo, 0, len(sessions))
+	for _, s := range sessions {
+		infos = append(infos, tmux.SessionInfo{Name: s.Name, Attached: s.Attached})
+	}
+	return worktree.StateLayer{Sessions: infos}
 }
 
 func TestBuildRowsRepoHeaderWorktreeCount(t *testing.T) {
@@ -1870,9 +1897,9 @@ func mgrWithMockedTmux(mockTmuxBase *commands.MockBaseCommand) *worktree.Worktre
 
 func TestInitBatchesWorktreeAndSessionLoads(t *testing.T) {
 	// Init()'s tea.Batch only bundles the commands - it doesn't invoke them -
-	// so this is safe even though makeTestModel leaves m.mgr nil (calling
-	// loadCmd/sessionsLoadCmd's returned closures would nil-dereference, but
-	// nothing here calls them).
+	// so nothing here reaches the manager. makeTestModel's quiet manager has no
+	// Git either, so loadCmd's closure would still nil-dereference; nothing
+	// here calls it.
 	m := makeTestModel(nil)
 	msg := m.Init()()
 	batch, ok := msg.(tea.BatchMsg)

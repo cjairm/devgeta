@@ -1107,3 +1107,160 @@ func TestNewSessionCreateDuplicateNameErrorShowsStatusAndClearsPrompt(t *testing
 		t.Errorf("expected a 'create session failed' status, got %q", m5.status)
 	}
 }
+
+// --- session rows must not double-list a repo's own session at startup ---
+//
+// `Init()` batches the git enumeration and the tmux scan together and the scan
+// wins: it is two execs against a running server, while the enumeration spawns
+// a git process per known repo. The session half therefore runs while the
+// worktree list is still empty, and "empty list" must not be read as "no
+// worktree backs any window" — that listed every repo's own session as a
+// standalone row alongside its repo row until the next 3-second tick swept it
+// away.
+
+// sessionScanMock is a tmux scan of one session per entry: sessions maps a
+// session name to the windows in it, in order.
+func sessionScanMock(
+	t *testing.T,
+	order []string,
+	windows map[string][]string,
+) *commands.MockBaseCommand {
+	t.Helper()
+	var sessionLines, paneLines []string
+	pane := 0
+	for _, s := range order {
+		sessionLines = append(sessionLines, s+"\t0")
+		for _, w := range windows[s] {
+			pane++
+			paneLines = append(paneLines, fmt.Sprintf("%s\t%s\t%%%d\t0\tzsh\t", s, w, pane))
+		}
+	}
+	mock := commands.NewMockBaseCommand()
+	mock.SetExecCommandResults(
+		commands.ExecCommandResult(strings.Join(sessionLines, "\n"), "", nil),
+		commands.ExecCommandResult(strings.Join(paneLines, "\n"), "", nil),
+	)
+	return mock
+}
+
+func TestStartupSessionLoadDoesNotListARepoSessionBeforeTheWorktreeListLands(t *testing.T) {
+	window := worktree.GetWindowName("repo-a", "feature-a")
+	mock := sessionScanMock(t,
+		[]string{"repo-a", "misc"},
+		map[string][]string{"repo-a": {window}, "misc": {"zsh"}},
+	)
+	m := makeTestModel(nil) // the first frame: no worktree list has landed yet
+	m.mgr = mgrWithMockedTmux(mock)
+
+	updated, _ := m.Update(m.sessionsLoadCmd(m.sessionGen)())
+	m = updated.(Model)
+
+	if hasRow(m.rows, rowSession, "repo-a") {
+		t.Error(
+			"repo-a's session holds a worktree window and no worktree list has loaded yet, " +
+				"so it must not be listed as a standalone session",
+		)
+	}
+	if !hasRow(m.rows, rowSession, "misc") {
+		t.Error("misc is a genuine standalone session and must still be listed")
+	}
+}
+
+// The classification input is whatever m.statuses holds when the message
+// LANDS, never a copy captured when the command was built — the ownership rule
+// the pane half already follows (see tmuxStateMsg). Capturing it at build time
+// pinned the answer to the empty list Init() dispatched with.
+func TestSessionLoadClassifiesAgainstTheWorktreeListPresentWhenItLands(t *testing.T) {
+	window := worktree.GetWindowName("repo-a", "feature-a")
+	mock := sessionScanMock(t,
+		[]string{"repo-a"},
+		map[string][]string{"repo-a": {window}},
+	)
+	m := makeTestModel(nil)
+	m.mgr = mgrWithMockedTmux(mock)
+
+	msg := m.sessionsLoadCmd(m.sessionGen)()             // built and run with an empty list
+	m.applyStatuses(repoWithSession("repo-a", "repo-a")) // the slow load lands first
+
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if hasRow(m.rows, rowSession, "repo-a") {
+		t.Error(
+			"repo-a's worktree is in the list by the time the scan lands, so its session " +
+				"is already covered by the worktree row and must not be listed again",
+		)
+	}
+}
+
+// The other half of the same rule, and the behavior that must not regress: an
+// authoritative list that is genuinely empty means a wt- window really is an
+// orphan, so its session IS a standalone session.
+func TestOrphanedWorktreeWindowIsListedAsASessionOnceTheWorktreeListIsKnown(t *testing.T) {
+	orphan := worktree.GetWindowName("lever-meta", "docs-cycle15-outcome")
+	mock := sessionScanMock(t,
+		[]string{"lever-meta"},
+		map[string][]string{"lever-meta": {orphan}},
+	)
+	m := makeTestModel(nil)
+	m.mgr = mgrWithMockedTmux(mock)
+	m.applyStatuses(nil) // the list loaded, and there are no worktrees at all
+
+	updated, _ := m.Update(m.sessionsLoadCmd(m.sessionGen)())
+	m = updated.(Model)
+
+	if !hasRow(m.rows, rowSession, "lever-meta") {
+		t.Error(
+			"no worktree backs this window any more, so nothing else can reach its " +
+				"session and it must be listed as a standalone session",
+		)
+	}
+}
+
+// An orphan has to appear as soon as there IS a worktree list to judge it
+// against, not a tick later. The startup scan is classified before any list
+// exists (see worktreeWindows), so the first worktree load has to re-run that
+// classification rather than leave its provisional answer on screen for three
+// seconds — the same "becomes right a few seconds after you look at it"
+// failure ADR-0048 already had to fix once.
+func TestFirstWorktreeLoadRefreshesTheSessionClassification(t *testing.T) {
+	orphan := worktree.GetWindowName("lever-meta", "docs-cycle15-outcome")
+	windows := map[string][]string{"lever-meta": {orphan}}
+
+	m := makeTestModel(nil)
+	m.mgr = mgrWithMockedTmux(sessionScanMock(t, []string{"lever-meta"}, windows))
+
+	// First frame: no worktree list yet, so the orphan is taken for a live
+	// worktree's window and its session stays hidden.
+	updated, _ := m.Update(m.sessionsLoadCmd(m.sessionGen)())
+	m = updated.(Model)
+	if hasRow(m.rows, rowSession, "lever-meta") {
+		t.Fatal("setup: the orphan should still be hidden before any worktree list lands")
+	}
+
+	// The worktree load lands, and there are no worktrees at all. Its handler
+	// also dispatches diff work, so the session refresh is one message among
+	// several in the returned batch.
+	m.mgr = mgrWithMockedTmux(sessionScanMock(t, []string{"lever-meta"}, windows))
+	updated, cmd := m.Update(statusesMsg{gen: m.stateGen})
+	m = updated.(Model)
+
+	var refreshed bool
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(sessionsMsg); !ok {
+			continue
+		}
+		refreshed = true
+		updated, _ = m.Update(msg)
+		m = updated.(Model)
+	}
+	if !refreshed {
+		t.Fatal("the first worktree load must re-run the classification its arrival invalidated")
+	}
+	if !hasRow(m.rows, rowSession, "lever-meta") {
+		t.Error(
+			"nothing backs that window now, so its session must appear with the worktree " +
+				"load rather than on the next 3-second tick",
+		)
+	}
+}
