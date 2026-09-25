@@ -194,9 +194,11 @@ set -g @resurrect-strategy-nvim 'session'
 # drop to the shell.
 set -g @resurrect-processes '"claude->claude --continue" "opencode->opencode --continue"'
 
-# Bootstrap: clone TPM and install plugins on first launch (idempotent)
-if "test ! -d ~/.tmux/plugins/tpm" \
-   "run 'git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm && ~/.tmux/plugins/tpm/bin/install_plugins'"
+# Plugins are cloned by `dg configure tmux`, not from here. tmux can only ask
+# "is TPM missing?", which is true exactly once per machine — so a bootstrap
+# line here never installs a plugin added to this file after a user's first
+# install, and tmux ignores an `@plugin` with nothing behind it in silence.
+# See Tmux.ensurePlugins in internal/apps/tmux/tmux.go.
 
 # Initialize TPM — must stay the last line of this file
 run '~/.tmux/plugins/tpm/tpm'

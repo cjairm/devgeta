@@ -93,6 +93,50 @@ func setupThemeFixture(t *testing.T, hex string) {
 	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
 }
 
+// stubTPM plants a fake TPM checkout under the test's isolated
+// paths.Paths.Home.Root, so a configure takes ensurePlugins' steady-state
+// path — no clone, one mocked run of TPM's installer — and returns that
+// installer's path for the caller to assert on. Call it AFTER overriding
+// paths.Paths.Home.Root.
+func stubTPM(t *testing.T) string {
+	t.Helper()
+	binDir := filepath.Join(paths.Paths.Home.Root, ".tmux", "plugins", "tpm", "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatalf("failed to create fake tpm checkout: %v", err)
+	}
+	installer := filepath.Join(binDir, "install_plugins")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("failed to write fake tpm installer: %v", err)
+	}
+	return installer
+}
+
+// verifyOnlyPluginInstall asserts the operation's only shell-out was TPM's
+// installer. It stands in for testutil.VerifyNoRealCommands in the configure
+// tests: configure now runs the plugin bootstrap (ensurePlugins), so a zero
+// call count no longer holds, but the property those tests exist to protect —
+// every execution goes through the mock, none of it reaches a real binary —
+// is what this checks instead.
+func verifyOnlyPluginInstall(t *testing.T, base *commands.MockBaseCommand, installer string) {
+	t.Helper()
+	calls := base.ExecCommandCalls
+	if len(calls) != 1 {
+		t.Fatalf(
+			"expected exactly 1 mocked command (the tpm installer), got %d: %v",
+			len(calls),
+			calls,
+		)
+	}
+	if calls[0].Command != installer {
+		t.Errorf(
+			"expected the tpm installer %q to be run, got %q %v",
+			installer,
+			calls[0].Command,
+			calls[0].Args,
+		)
+	}
+}
+
 func TestNew(t *testing.T) {
 	t.Helper()
 
@@ -318,6 +362,7 @@ func TestForceConfigure(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 	paths.Paths.Home.Root = destDir
 	setupThemeFixture(t, "#282828")
+	installer := stubTPM(t)
 
 	// Create source tmux.conf file (without leading dot in source)
 	sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
@@ -359,7 +404,7 @@ func TestForceConfigure(t *testing.T) {
 		t.Error("Expected shell config to contain Tmux feature")
 	}
 
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
 }
 
 // TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
@@ -412,6 +457,7 @@ func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 	paths.Paths.App.Configs.Themes = themesDir
 	paths.Paths.App.Configs.Neovim = neovimConfigsDir
 	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
+	installer := stubTPM(t)
 
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
@@ -442,7 +488,7 @@ func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 		)
 	}
 
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
 }
 
 // TestForceConfigureRendersNotifySound proves ForceConfigure renders
@@ -515,6 +561,7 @@ shell:
 			t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 			paths.Paths.Home.Root = destDir
 			setupThemeFixture(t, "#282828")
+			installer := stubTPM(t)
 
 			// Real template action, the same one shipped in
 			// configs/tmux/tmux.conf.tmpl.
@@ -550,7 +597,7 @@ shell:
 				)
 			}
 
-			testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+			verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
 		})
 	}
 }
@@ -599,6 +646,110 @@ func TestForceConfigureReloadsInsideTmux(t *testing.T) {
 	}
 }
 
+// setupConfigureEnv isolates everything ForceConfigure touches — the template
+// source, the home the config is written to, the theme fixtures — and returns
+// the test context plus that home. It exists because the plugin-bootstrap
+// tests below need the same environment the older configure tests build
+// inline, and a third copy of that block is a copy too many.
+func setupConfigureEnv(t *testing.T) (*testutil.TestConfig, string) {
+	t.Helper()
+
+	tc := testutil.SetupCompleteTest(t)
+	t.Cleanup(tc.Cleanup)
+	testutil.IsolateXDGDirs(t)
+	t.Setenv("TMUX", "") // no live reload: it would add a second mocked call
+
+	sourceDir := filepath.Join(tc.AppDir, "tmux")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(sourceDir, "tmux.conf.tmpl"),
+		[]byte("# test\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	oldTmux := paths.Paths.App.Configs.Tmux
+	t.Cleanup(func() { paths.Paths.App.Configs.Tmux = oldTmux })
+	paths.Paths.App.Configs.Tmux = sourceDir
+
+	oldHome := paths.Paths.Home.Root
+	t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
+	paths.Paths.Home.Root = tc.ConfigDir
+	setupThemeFixture(t, "#282828")
+
+	return tc, tc.ConfigDir
+}
+
+// TestForceConfigureInstallsTmuxPlugins covers the plugin bootstrap that used
+// to live in the config file as `if "test ! -d ~/.tmux/plugins/tpm"`. That
+// gate could only fire on a machine with no TPM at all, so a plugin added to
+// the template later was never installed for an existing user and failed
+// silently — tmux ignores an `@plugin` line whose plugin is not on disk.
+// Configure now owns the bootstrap; these cases pin each half of it.
+func TestForceConfigureInstallsTmuxPlugins(t *testing.T) {
+	t.Run("clones TPM when it is missing", func(t *testing.T) {
+		tc, home := setupConfigureEnv(t)
+
+		app := &tmux.Tmux{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.ForceConfigure(); err != nil {
+			t.Fatalf("ForceConfigure returned error: %v", err)
+		}
+
+		calls := tc.MockApp.Base.ExecCommandCalls
+		if len(calls) == 0 {
+			t.Fatal("expected a mocked git clone of tpm, got no commands at all")
+		}
+		want := []string{
+			"clone",
+			"https://github.com/tmux-plugins/tpm",
+			filepath.Join(home, ".tmux", "plugins", "tpm"),
+		}
+		if calls[0].Command != constants.Git || !slices.Equal(calls[0].Args, want) {
+			t.Errorf(
+				"expected first command to be git %v, got %q %v",
+				want, calls[0].Command, calls[0].Args,
+			)
+		}
+	})
+
+	t.Run("runs TPM's installer without re-cloning when TPM is present", func(t *testing.T) {
+		tc, _ := setupConfigureEnv(t)
+		installer := stubTPM(t)
+
+		app := &tmux.Tmux{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.ForceConfigure(); err != nil {
+			t.Fatalf("ForceConfigure returned error: %v", err)
+		}
+
+		// Exactly one call, and it is the installer: a second clone of a TPM
+		// that already exists would be the old bootstrap's mistake inverted.
+		verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
+	})
+
+	t.Run("a failed plugin install does not fail the configure", func(t *testing.T) {
+		tc, home := setupConfigureEnv(t)
+		stubTPM(t)
+		tc.MockApp.Base.SetExecCommandResult(
+			"",
+			"network is unreachable",
+			errors.New("exit status 1"),
+		)
+
+		app := &tmux.Tmux{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		// The deployed config is already correct at this point, so an offline
+		// machine must get a warning and a written ~/.tmux.conf, not a failure.
+		if err := app.ForceConfigure(); err != nil {
+			t.Fatalf("ForceConfigure should tolerate a plugin-install failure, got: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".tmux.conf")); err != nil {
+			t.Errorf("expected ~/.tmux.conf to be written anyway: %v", err)
+		}
+	})
+}
+
 func TestSoftConfigure(t *testing.T) {
 	t.Helper()
 
@@ -627,6 +778,7 @@ func TestSoftConfigure(t *testing.T) {
 		t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 		paths.Paths.Home.Root = destDir
 		setupThemeFixture(t, "#282828")
+		installer := stubTPM(t)
 
 		// Create source tmux.conf file (without leading dot in source)
 		sourceConfig := filepath.Join(sourceDir, "tmux.conf.tmpl")
@@ -671,7 +823,7 @@ func TestSoftConfigure(t *testing.T) {
 			t.Error("Expected shell config to contain Tmux feature on first call")
 		}
 
-		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+		verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
 	})
 
 	// Test case 2: Configuration already exists - should skip file copy but enable shell feature
@@ -688,6 +840,7 @@ func TestSoftConfigure(t *testing.T) {
 		oldHome := paths.Paths.Home.Root
 		t.Cleanup(func() { paths.Paths.Home.Root = oldHome })
 		paths.Paths.Home.Root = homeDir
+		installer := stubTPM(t)
 
 		existingConfig := filepath.Join(homeDir, ".tmux.conf")
 		existingContent := "# Existing tmux configuration\nset -g mouse on"
@@ -750,7 +903,7 @@ func TestSoftConfigure(t *testing.T) {
 			t.Error("Expected shell config to contain Tmux feature even when config file exists")
 		}
 
-		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+		verifyOnlyPluginInstall(t, tc.MockApp.Base, installer)
 	})
 }
 

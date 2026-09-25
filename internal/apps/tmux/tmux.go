@@ -17,12 +17,15 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
+	"github.com/cjairm/devgeta/internal/apps/git"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
+	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 var (
@@ -32,6 +35,10 @@ var (
 )
 
 const configFileName = ".tmux.conf"
+
+// tpmRepoURL is TPM, the plugin manager the rendered ~/.tmux.conf declares
+// its plugins to with `set -g @plugin` and initializes on its last line.
+const tpmRepoURL = "https://github.com/tmux-plugins/tpm"
 
 type Tmux struct {
 	Cmd  cmd.Command
@@ -76,8 +83,72 @@ func (t *Tmux) ForceConfigure() error {
 	if err := t.ForceConfigureTheme(def); err != nil {
 		return err
 	}
+	// Before the live reload, so a source-file inside a running tmux loads
+	// the plugins in the same pass instead of needing a second one.
+	t.maybeEnsurePlugins()
 	_ = t.ApplyLiveTheme()
 	return nil
+}
+
+// ensurePlugins makes the plugins the rendered ~/.tmux.conf declares actually
+// exist on disk: it clones TPM when missing, then runs TPM's own installer,
+// which clones every `set -g @plugin` the config declares and skips the ones
+// already there.
+//
+// This lives in the configure step rather than in the config file because
+// tmux can only express "is TPM missing?" — the gate the template used to
+// carry. That gate is true exactly once per machine, so every plugin added to
+// the template after a user's first install was silently never installed for
+// them: tmux ignores an `@plugin` line with nothing behind it, with no error
+// anywhere, and the feature just quietly does not exist (this is how shipped
+// tmux-resurrect and tmux-continuum reached users' machines uninstalled).
+// Running TPM's installer on every configure converges both the fresh machine
+// and the existing one, and it is cheap to repeat: it clones only what is
+// absent and prints "Already installed" for the rest.
+//
+// TPM's installer does not need a running tmux server ("Tmux has to be
+// installed on the system, but does not need to be started in order to run
+// this script" — bin/install_plugins), so this works during a headless
+// `dg install` as well as from inside a session.
+func (t *Tmux) ensurePlugins() error {
+	tpmDir := filepath.Join(paths.Paths.Home.Root, ".tmux", "plugins", "tpm")
+	if !files.DirAlreadyExist(tpmDir) {
+		utils.PrintInfo("Installing the tmux plugin manager (first run only)...")
+		// Through the git wrapper rather than a raw exec, so the call is
+		// mockable and wrapped like every other git invocation.
+		g := &git.Git{Cmd: t.Cmd, Base: t.Base}
+		if err := g.Clone(tpmRepoURL, tpmDir); err != nil {
+			return fmt.Errorf("failed to clone tpm into %s: %w", tpmDir, err)
+		}
+	}
+	installer := filepath.Join(tpmDir, "bin", "install_plugins")
+	if !files.FileAlreadyExist(installer) {
+		return fmt.Errorf("tpm installer not found at %s", installer)
+	}
+	stdout, stderr, err := t.Base.ExecCommand(cmd.CommandParams{Command: installer})
+	if err != nil {
+		detail := strings.TrimSpace(stderr)
+		if detail == "" {
+			detail = strings.TrimSpace(stdout)
+		}
+		return fmt.Errorf("failed to install tmux plugins: %w: %s", err, detail)
+	}
+	logger.L().Debugw("Installed tmux plugins", "output", strings.TrimSpace(stdout))
+	return nil
+}
+
+// maybeEnsurePlugins runs ensurePlugins and downgrades a failure to a visible
+// warning. The deployed ~/.tmux.conf is already correct at this point, so an
+// offline machine or a broken TPM checkout must not fail the configure — and
+// the user is told exactly how to finish the job later.
+func (t *Tmux) maybeEnsurePlugins() {
+	if err := t.ensurePlugins(); err != nil {
+		logger.L().Warnw("Could not install tmux plugins", "error", err)
+		utils.PrintWarning(
+			"tmux plugins were not installed: " + err.Error() +
+				"\nRe-run `dg configure tmux --force`, or press prefix + I inside tmux.",
+		)
+	}
 }
 
 func (t *Tmux) ForceConfigureTheme(def theme.Definition) error {
@@ -139,6 +210,11 @@ func (t *Tmux) SoftConfigure() error {
 				return fmt.Errorf("failed to enable tmux feature: %w", err)
 			}
 		}
+		// The existing-config branch is exactly where the old in-config
+		// bootstrap could never reach: the user already has ~/.tmux.conf and
+		// TPM, so nothing re-ran, and plugins added to the template since
+		// their first install stayed missing forever. Converge them here too.
+		t.maybeEnsurePlugins()
 		return nil
 	}
 	return t.ForceConfigure()

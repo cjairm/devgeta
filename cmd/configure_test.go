@@ -349,7 +349,11 @@ func TestConfigureAfterInterruptedSwitch_SurvivesNextSet(t *testing.T) {
 
 			origGetApp := getAppFn
 			t.Cleanup(func() { getAppFn = origGetApp })
-			tmuxApp := &tmux.Tmux{}
+			// Mocked Cmd/Base, not a zero value: ForceConfigure shells out
+			// now (it installs the tmux plugins the rendered config
+			// declares), and a nil Base would take that call to a real one.
+			mockApp := testutil.NewMockApp()
+			tmuxApp := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 			getAppFn = func(name string) (apps.App, error) {
 				if name != constants.Tmux {
 					return nil, fmt.Errorf("unexpected app lookup: %s", name)
