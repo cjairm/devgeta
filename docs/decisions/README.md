@@ -67,5 +67,8 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0045](ADR-0045-portable-app-state-is-an-allowlist-not-a-smaller-archive.md) — Portable app state is an allowlist, not a smaller archive
 - [ADR-0046](ADR-0046-a-bundle-carries-the-profile-registry-and-an-import-may-write-it.md) — A bundle carries the profile registry, and an import may write it
 - [ADR-0047](ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md) — opencode installs from its official script on every platform
-- [ADR-0048](ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md) — A repo header reaches its session's plain window
+- [ADR-0048](ADR-0048-a-repo-header-reaches-its-sessions-plain-window.md) — A repo header reaches its session's plain window (superseded by ADR-0052)
 - [ADR-0049](ADR-0049-opencode-plugins-ship-with-a-lockfile.md) — OpenCode plugins ship with a lockfile
+- [ADR-0050](ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md) — Dashboard view state lives in a tmux server option
+- [ADR-0051](ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md) — Worktree rows carry a diffstat from the slow refresh
+- [ADR-0052](ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md) — A repo header is a label, and its sessions are rows

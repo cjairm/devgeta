@@ -1,7 +1,7 @@
 # ADR-0048 — A repo header reaches its session's plain window
 
 **Date:** 2026-09-22
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0052](ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md)
 
 Supersedes the "no further session↔worktree reconciliation" clause of
 [ADR-0003](ADR-0003-sessions-in-workspace-dashboard.md). The rest of ADR-0003 —
