@@ -34,11 +34,12 @@ _session_, a smaller set, and one the header could never represent.
   collapsed, it is a stop only so `l` (or enter) can expand it. Enter on a
   header never switches sessions.
 - **Each live session holding this repo's worktree windows gets a row under the
-  repo**, before the worktree rows, showing the session's name.
+  repo**, before the worktree rows, showing the session's name — **but only when
+  the session also holds a plain window** (amended 2026-09-25, below).
   - Sessions are read from the repo's worktree panes, from the same scan
     (ADR-0024). No new tmux calls, and names are never derived.
-  - Enter switches to that session's first plain window, and otherwise to its
-    first worktree window of this repo. It never switches to the bare session,
+  - Enter switches to that session's first plain window. It never switches to
+    the bare session,
     which would land on the dashboard's own window (ADR-0048, constraint 1,
     still holds).
   - **Glyph:** the row is drawn like a standalone session row, `■`/`□` for
@@ -51,7 +52,9 @@ _session_, a smaller set, and one the header could never represent.
     session, since a session name is unique on the server.
   - **Startup cursor:** the dashboard opens on this row when it is the session
     you are in. That replaces `placeCursorOnActive`'s derived-name match, which
-    missed any session not named after its repo.
+    missed any session not named after its repo. When the session you are in
+    has no row, it opens on the first worktree row whose pane reports that
+    session.
 - **`$` renames a session**, on repo-session and standalone-session rows alike.
   `$` is tmux's own key for rename-session. The new name is flattened the way
   `TmuxSessionName` does it. It is checked against the live sessions first, but
@@ -78,3 +81,22 @@ _session_, a smaller set, and one the header could never represent.
 - Not solved here: `wt-<repo>-<name>` window names can collide across repos,
   and two repos with the same folder name share a header. Both need repo
   identity by path across the worktree tooling, which is a separate decision.
+
+## Amendment (2026-09-25): worktree-only sessions get no row
+
+In use, a session holding nothing but one worktree window (the common case for
+a repo you opened once and never added a window to) drew a session row and a
+worktree row for the same window. Enter on either landed in the same place, so
+the list read as a duplicate.
+
+- **A repo-session row now requires at least one plain window** in the session.
+  Windows count, not panes: a worktree window split into several panes is still
+  one worktree window. The dashboard's own `[workspace]` window is excluded,
+  the same way `PlainWindowBySession` already excludes it, so opening the
+  dashboard inside such a session does not make its row appear.
+- **Enter's fallback to the repo's worktree window is removed**: a row now
+  implies a plain window to switch to.
+- **Cost:** a worktree-only session's name is not shown, and `$` rename is not
+  reachable from the dashboard for it until it gains a plain window. Accepted:
+  the name is visible in tmux itself, and the moment a second real window
+  exists the row comes back.

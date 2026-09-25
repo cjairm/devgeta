@@ -497,8 +497,13 @@ func TestCreateAtMultiPaneFailureKillsWindowNotSession(t *testing.T) {
 	)
 	mockTmuxBase := commands.NewMockBaseCommand()
 	mockTmuxBase.SetExecCommandResults(
-		commands.ExecCommandResult("", "", nil),                // list-windows (state)
-		commands.ExecCommandResult("", "", nil),                // list-windows (ensure)
+		commands.ExecCommandResult("", "", nil), // list-windows (state)
+		commands.ExecCommandResult("", "", nil), // list-windows (ensure)
+		commands.ExecCommandResult(
+			"",
+			"",
+			nil,
+		), // list-panes -a (repoSessionFromLivePanes)
 		commands.ExecCommandResult("", "", nil),                // show-options (paneShell)
 		commands.ExecCommandResult("", "", nil),                // has-session
 		commands.ExecCommandResult("", "", nil),                // new-window
@@ -626,8 +631,13 @@ func TestCreateNeverMovesTheClient(t *testing.T) {
 			name: "CreateAt",
 			tmux: func(mock *commands.MockBaseCommand, found string) {
 				mock.SetExecCommandResults(
-					commands.ExecCommandResult("", "", nil),     // list-windows (state)
-					commands.ExecCommandResult("", "", nil),     // list-windows (ensureWindow)
+					commands.ExecCommandResult("", "", nil), // list-windows (state)
+					commands.ExecCommandResult("", "", nil), // list-windows (ensureWindow)
+					commands.ExecCommandResult(
+						"",
+						"",
+						nil,
+					), // list-panes -a (repoSessionFromLivePanes)
 					commands.ExecCommandResult("", "", nil),     // show-options (paneShell)
 					commands.ExecCommandResult("", "", nil),     // has-session
 					commands.ExecCommandResult("", "", nil),     // new-window (pane 0 + its cmd)
@@ -695,6 +705,7 @@ func TestFollowWindowSwitchesToTheWindowsSession(t *testing.T) {
 		mockTmuxBase.SetExecCommandResults(
 			// SessionWindows' format is "<session>\t<window>" per line.
 			commands.ExecCommandResult("wt-myrepo\twt-myrepo-feat\n", "", nil), // WindowSession
+			commands.ExecCommandResult("@3\twt-myrepo-feat", "", nil),          // window id lookup
 			commands.ExecCommandResult("", "", nil),                            // switch-client
 			commands.ExecCommandResult("", "", nil),                            // select-window
 		)
@@ -996,7 +1007,11 @@ func TestLongPromptSurvivesToThePaneCommandOnEveryCreatePath(t *testing.T) {
 			name: "CreateWindowInSession: the repo session already exists",
 			build: func(t *testing.T, wm *WorktreeManager, layout Layout) error {
 				// HasSession is ExecuteCommand-based: a nil error means "exists".
+				// The first result answers list-panes -a (repoSessionFromLivePanes,
+				// no live window - falls back to the derived name), the second
+				// has-session.
 				wm.Tmux.Base.(*commands.MockBaseCommand).SetExecCommandResults(
+					commands.ExecCommandResult("", "", nil),
 					commands.ExecCommandResult("", "", nil),
 				)
 				return wm.createWindowWithLayout(repoSlug, windowName, wtPath, layout)
@@ -1006,9 +1021,12 @@ func TestLongPromptSurvivesToThePaneCommandOnEveryCreatePath(t *testing.T) {
 		{
 			name: "CreateSessionWithWindow: the first worktree for a repo",
 			build: func(t *testing.T, wm *WorktreeManager, layout Layout) error {
-				// show-options answers first (harmlessly, with a non-absolute
-				// value), then has-session must FAIL so the session is created.
+				// list-panes -a answers first (repoSessionFromLivePanes, no
+				// live window), then show-options (harmlessly, with a
+				// non-absolute value), then has-session must FAIL so the
+				// session is created.
 				wm.Tmux.Base.(*commands.MockBaseCommand).SetExecCommandResults(
+					commands.ExecCommandResult("", "", nil), // list-panes -a
 					commands.ExecCommandResult("", "", nil), // show-options
 					commands.ExecCommandResult("", "no such session", os.ErrNotExist),
 					commands.ExecCommandResult("", "", nil), // new-session
@@ -1214,4 +1232,52 @@ func resolvedLayoutForTest(t *testing.T, name, prompt string) Layout {
 		t.Fatalf("setup: %v", err)
 	}
 	return layout
+}
+
+// TestCreateWindowWithLayoutFollowsRepoSessionOverDerivedName is ADR-0052's
+// new-worktree-window placement rule: a new window goes into the session
+// that already holds the repo's OTHER worktree windows, read fresh off a
+// list-panes -a scan, rather than the derived TmuxSessionName(repoSlug) -
+// which stays wrong the moment that session has been renamed (see rename.go
+// / $). has-session must also be skipped entirely: a live pane there already
+// proves the session exists.
+func TestCreateWindowWithLayoutFollowsRepoSessionOverDerivedName(t *testing.T) {
+	repoSlug := "hire2"
+	windowName := GetWindowName(repoSlug, "feat2")
+	wtPath := "/tmp/wt/hire2/feat2"
+	existingWindow := GetWindowName(repoSlug, "feat1")
+
+	mockTmuxBase := commands.NewMockBaseCommand()
+	// PaneStates parses "session\twindow\tpaneID\tindex\tcommand\tstate": the
+	// repo's other worktree lives in "hire2-tien", not the derived name
+	// "hire2".
+	mockTmuxBase.SetExecCommandResults(
+		commands.ExecCommandResult("hire2-tien\t"+existingWindow+"\t%1\t0\tzsh\t\n", "", nil),
+		commands.ExecCommandResult("", "", nil), // show-options (paneShell)
+		commands.ExecCommandResult("", "", nil), // new-window (CreateWindowInSession)
+	)
+	wm := newLayoutTestWM(commands.NewMockBaseCommand(), mockTmuxBase)
+
+	if err := wm.createWindowWithLayout(repoSlug, windowName, wtPath, stubLayout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var newWindowArgs []string
+	for _, c := range mockTmuxBase.ExecCommandCalls {
+		if len(c.Args) > 0 && c.Args[0] == "has-session" {
+			t.Error("expected has-session to be skipped once a live session was already found")
+		}
+		if len(c.Args) > 0 && c.Args[0] == "new-window" {
+			newWindowArgs = c.Args
+		}
+	}
+	if newWindowArgs == nil {
+		t.Fatalf("expected a new-window call, calls: %+v", mockTmuxBase.ExecCommandCalls)
+	}
+	if joined := strings.Join(newWindowArgs, " "); !strings.Contains(joined, "-t hire2-tien:") {
+		t.Errorf(
+			"expected the new window to target the live session hire2-tien, got %v",
+			newWindowArgs,
+		)
+	}
 }

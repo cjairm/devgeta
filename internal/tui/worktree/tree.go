@@ -13,7 +13,13 @@ type rowKind int
 const (
 	rowRepo rowKind = iota
 	rowWorktree
+	rowRepoSession
 	rowSession
+	// rowSessionsHeader is the dim "sessions" section label buildRows emits
+	// once, right before the standalone-session rows, when there is at least
+	// one to show (layout B). It hosts no children and is never a cursor
+	// stop, so navigableIndices and rowKey both leave it out entirely.
+	rowSessionsHeader
 	rowPane
 )
 
@@ -25,6 +31,10 @@ type row struct {
 	// session holds the standalone tmux session this row describes, set only
 	// when kind == rowSession.
 	session worktree.SessionStatus
+
+	// repoSession holds the live session holding repo's worktree windows this
+	// row describes (ADR-0052), set only when kind == rowRepoSession.
+	repoSession worktree.RepoSessionStatus
 
 	// pane holds the individual tmux pane this row describes, set only when
 	// kind == rowPane.
@@ -58,16 +68,53 @@ func qualifiesForPaneRows(panes []tmux.PaneState) bool {
 	return count >= 2
 }
 
+// repoKey is rowKey's rowRepo case, exposed separately for the call sites
+// that only have the repo name in hand rather than a full row — the h/l/z
+// fold handlers and buildRows.
+func repoKey(repo string) string {
+	return "repo:" + repo
+}
+
+// rowKey identifies a row by stable identity rather than by the tmux window
+// or session name it happens to display (B5): "repo:<folder name>" for a
+// repo header, "wt:<path>" for a worktree, "sess:<name>" for a session (a
+// repo-session row uses the exact same prefix as a standalone one, since a
+// session name is unique on the server - ADR-0052), "pane:<paneID>" for a
+// pane. The fold map, sameParentRow and paneParentKey all key off this one
+// function so they can't drift apart.
+//
+// A worktree's TmuxWindow ("wt-<repo>-<name>") is not unique: "taskqueue" +
+// "groups-x" and "taskqueue-groups" + "x" both derive
+// "wt-taskqueue-groups-x". Keying by Path instead can't collide — no two
+// worktrees ever share a filesystem path.
+func rowKey(r row) string {
+	switch r.kind {
+	case rowRepo:
+		return repoKey(r.repo)
+	case rowWorktree:
+		return "wt:" + r.status.Path
+	case rowRepoSession:
+		return "sess:" + r.repoSession.Name
+	case rowSession:
+		return "sess:" + r.session.Name
+	case rowPane:
+		return "pane:" + r.pane.PaneID
+	}
+	return ""
+}
+
 // paneParentKey returns the collapse-map key for a row that can host pane
-// children (rowWorktree/rowSession) and whether it qualifies for expansion at
-// all (see qualifiesForPaneRows). ok=false for every other row kind, or a
-// worktree/session with fewer than 2 stateful panes.
+// children (rowWorktree/rowRepoSession/rowSession) and whether it qualifies
+// for expansion at all (see qualifiesForPaneRows). ok=false for every other
+// row kind, or a parent with fewer than 2 stateful panes.
 func paneParentKey(r row) (key string, qualifies bool) {
 	switch r.kind {
 	case rowWorktree:
-		return "worktree:" + r.status.TmuxWindow, qualifiesForPaneRows(r.status.Panes)
+		return rowKey(r), qualifiesForPaneRows(r.status.Panes)
+	case rowRepoSession:
+		return rowKey(r), qualifiesForPaneRows(r.repoSession.Panes)
 	case rowSession:
-		return "session:" + r.session.Name, qualifiesForPaneRows(r.session.Panes)
+		return rowKey(r), qualifiesForPaneRows(r.session.Panes)
 	}
 	return "", false
 }
@@ -87,14 +134,15 @@ func chevronGlyphFor(r row, collapsed map[string]bool) string {
 }
 
 // enclosingPaneParent scans backward from row index i for the nearest
-// preceding rowWorktree/rowSession — the parent that owns row i's pane
-// children, mirroring the order buildRows emits them in (parent immediately
-// followed by its panes). Stops and returns ok=false if it hits a row that
-// isn't a pane before finding one, which should not happen given emission
-// order but guards against it anyway.
+// preceding rowWorktree/rowRepoSession/rowSession — the parent that owns row
+// i's pane children, mirroring the order buildRows emits them in (parent
+// immediately followed by its panes). Stops and returns ok=false if it hits a
+// row that isn't a pane before finding one, which should not happen given
+// emission order but guards against it anyway.
 func enclosingPaneParent(rows []row, i int) (row, bool) {
 	for j := i - 1; j >= 0; j-- {
-		if rows[j].kind == rowWorktree || rows[j].kind == rowSession {
+		if rows[j].kind == rowWorktree || rows[j].kind == rowRepoSession ||
+			rows[j].kind == rowSession {
 			return rows[j], true
 		}
 		if rows[j].kind != rowPane {
@@ -104,19 +152,17 @@ func enclosingPaneParent(rows []row, i int) (row, bool) {
 	return row{}, false
 }
 
-// sameParentRow reports whether a and b are the same rowWorktree/rowSession
-// parent, identified the same way as paneParentKey's key (TmuxWindow /
-// session Name) - used to relocate a parent row by identity after a rebuild,
-// since a rebuild can shift row positions.
+// sameParentRow reports whether a and b are the same
+// rowWorktree/rowRepoSession/rowSession parent, identified by rowKey (the
+// same identity paneParentKey uses) - used to relocate a parent row after a
+// rebuild, since a rebuild can shift row positions.
 func sameParentRow(a, b row) bool {
 	if a.kind != b.kind {
 		return false
 	}
 	switch a.kind {
-	case rowWorktree:
-		return a.status.TmuxWindow == b.status.TmuxWindow
-	case rowSession:
-		return a.session.Name == b.session.Name
+	case rowWorktree, rowRepoSession, rowSession:
+		return rowKey(a) == rowKey(b)
 	}
 	return false
 }
@@ -125,9 +171,14 @@ func sameParentRow(a, b row) bool {
 // collapsed map, then appends sessions (standalone tmux sessions with no
 // worktree-backed window) as leaf rows after every repo group — one flat
 // list: repo workspaces first, then plain sessions.
+//
+// repoSessions supplies each repo's live sessions (ADR-0052): sorted by
+// (Repo, Name) already (RepoSessionStatuses' own contract), so grouping them
+// here is a single linear pass, not a re-sort.
 func buildRows(
 	statuses []worktree.WorktreeStatus,
 	sessions []worktree.SessionStatus,
+	repoSessions []worktree.RepoSessionStatus,
 	collapsed map[string]bool,
 	filter string,
 ) []row {
@@ -135,6 +186,10 @@ func buildRows(
 	groups := map[string][]worktree.WorktreeStatus{}
 	for _, s := range statuses {
 		groups[s.Repo] = append(groups[s.Repo], s)
+	}
+	repoSessionsByRepo := map[string][]worktree.RepoSessionStatus{}
+	for _, rs := range repoSessions {
+		repoSessionsByRepo[rs.Repo] = append(repoSessionsByRepo[rs.Repo], rs)
 	}
 
 	// Sort repos
@@ -168,12 +223,26 @@ func buildRows(
 			worktreeCount: len(visible),
 			agentState:    worktree.AggregateAgentState(childStates),
 		})
-		if !collapsed[repo] {
+		if !collapsed[repoKey(repo)] {
+			// Session rows first (ADR-0052): the repo's live sessions, before
+			// its worktree rows, so a repo reads as "where it lives, then
+			// what's in it."
+			for _, rs := range repoSessionsByRepo[repo] {
+				sessRow := row{kind: rowRepoSession, repo: repo, repoSession: rs}
+				rows = append(rows, sessRow)
+				if qualifiesForPaneRows(rs.Panes) {
+					if !collapsed[rowKey(sessRow)] {
+						for _, p := range rs.Panes {
+							rows = append(rows, row{kind: rowPane, pane: p})
+						}
+					}
+				}
+			}
 			for _, s := range visible {
-				rows = append(rows, row{kind: rowWorktree, repo: repo, status: s})
+				wtRow := row{kind: rowWorktree, repo: repo, status: s}
+				rows = append(rows, wtRow)
 				if qualifiesForPaneRows(s.Panes) {
-					key := "worktree:" + s.TmuxWindow
-					if !collapsed[key] {
+					if !collapsed[rowKey(wtRow)] {
 						for _, p := range s.Panes {
 							rows = append(rows, row{kind: rowPane, pane: p})
 						}
@@ -187,17 +256,21 @@ func buildRows(
 	// appended after every repo group so they read as trailing leaves of one
 	// unified list. They have no children and are unaffected by any repo's
 	// collapsed state.
-	sorted := make([]worktree.SessionStatus, len(sessions))
-	copy(sorted, sessions)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
-	for _, s := range sorted {
-		if filter != "" && !strings.Contains(strings.ToLower(s.Name), filter) {
-			continue
+	sorted := make([]worktree.SessionStatus, 0, len(sessions))
+	for _, s := range sessions {
+		if filter == "" || strings.Contains(strings.ToLower(s.Name), filter) {
+			sorted = append(sorted, s)
 		}
-		rows = append(rows, row{kind: rowSession, session: s})
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Name < sorted[j].Name })
+	if len(sorted) > 0 {
+		rows = append(rows, row{kind: rowSessionsHeader})
+	}
+	for _, s := range sorted {
+		sessRow := row{kind: rowSession, session: s}
+		rows = append(rows, sessRow)
 		if qualifiesForPaneRows(s.Panes) {
-			key := "session:" + s.Name
-			if !collapsed[key] {
+			if !collapsed[rowKey(sessRow)] {
 				for _, p := range s.Panes {
 					rows = append(rows, row{kind: rowPane, pane: p})
 				}

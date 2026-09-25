@@ -3017,7 +3017,7 @@ func TestRemoveWithSessionInRepo(t *testing.T) {
 			commands.ExecCommandResult("", "", nil), // kill-session
 		)
 
-		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName); err != nil {
+		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -3057,7 +3057,7 @@ func TestRemoveWithSessionInRepo(t *testing.T) {
 			commands.ExecCommandResult("", "", nil),        // kill-session
 		)
 
-		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName); err != nil {
+		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
@@ -3083,7 +3083,7 @@ func TestRemoveWithSessionInRepo(t *testing.T) {
 			commands.ExecCommandResult("", "", nil), // kill-window
 		)
 
-		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName); err != nil {
+		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		for _, c := range tmuxCallArgs(mockTmuxBase) {
@@ -3105,7 +3105,7 @@ func TestRemoveWithSessionInRepo(t *testing.T) {
 			commands.ExecCommandResult("", "no such session", os.ErrNotExist), // has-session fails
 		)
 
-		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName); err != nil {
+		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		for _, c := range tmuxCallArgs(mockTmuxBase) {
@@ -3144,7 +3144,7 @@ func TestRemoveWithSessionInRepo(t *testing.T) {
 			commands.ExecCommandResult("", "", nil), // kill-session
 		)
 
-		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName); err != nil {
+		if err := wm.RemoveWithSessionInRepo(repoSlug, wtName, true); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		calls := tmuxCallArgs(mockTmuxBase)
@@ -3201,6 +3201,7 @@ func TestCreateAt(t *testing.T) {
 				"",
 				nil,
 			), // ensureWindow list-windows (no window)
+			commands.ExecCommandResult("", "", nil), // list-panes -a (repoSessionFromLivePanes)
 			commands.ExecCommandResult("", "", nil), // show-options (paneShell)
 			commands.ExecCommandResult(
 				"",

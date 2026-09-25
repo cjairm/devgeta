@@ -58,6 +58,20 @@ func findStatusesMsg(t *testing.T, cmd tea.Cmd) (statusesMsg, bool) {
 	return statusesMsg{}, false
 }
 
+// filterFor activates the filter and types text into it, so a test can start
+// from a filtered list. FilterField's text is unexported, so it can only be
+// set by driving the same keys a user would.
+func filterFor(t *testing.T, m Model, text string) Model {
+	t.Helper()
+	updated, _ := m.Update(tea.KeyPressMsg{Code: '/'})
+	m = updated.(Model)
+	for _, r := range text {
+		updated, _ = m.Update(tea.KeyPressMsg{Code: r})
+		m = updated.(Model)
+	}
+	return m
+}
+
 // tickWork splits a tick handler's batch into the refresh command it dispatched
 // and its own timer re-arm, and returns the message the refresh produced. The
 // re-arm is deliberately never run: it is a tea.Tick, so running it would block
@@ -473,20 +487,6 @@ func assertDebouncedDiff(t *testing.T, m Model, msgs []tea.Msg, wantPath string)
 // previous row's changes for up to 30 seconds, since ADR-0024 took the diff off
 // the 3-second tick.
 func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
-	// filterFor activates the filter and types text into it, so a case can start
-	// from a filtered list. FilterField's text is unexported, so it can only be
-	// set by driving the same keys a user would.
-	filterFor := func(t *testing.T, m Model, text string) Model {
-		t.Helper()
-		updated, _ := m.Update(tea.KeyPressMsg{Code: '/'})
-		m = updated.(Model)
-		for _, r := range text {
-			updated, _ = m.Update(tea.KeyPressMsg{Code: r})
-			m = updated.(Model)
-		}
-		return m
-	}
-
 	cases := []struct {
 		name     string
 		setup    func(t *testing.T) Model
@@ -513,7 +513,7 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 			name: "l expands a repo and lands on its first worktree",
 			setup: func(t *testing.T) Model {
 				m := makeTestModel(testStatuses())
-				m.collapsed["repo-b"] = true
+				m.collapsed[repoKey("repo-b")] = true
 				m.rebuildRows()
 				m.cursor = 3 // the collapsed repo-b header
 				return m
@@ -542,16 +542,6 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 			wantPath: "/tmp/x",
 		},
 		{
-			// esc clears the text and rebuilds every row, so the cursor's index
-			// now means a completely different row.
-			name: "esc clears the filter and rebuilds every row",
-			setup: func(t *testing.T) Model {
-				return filterFor(t, makeTestModel(testStatuses()), "x")
-			},
-			msg:      tea.KeyPressMsg{Code: tea.KeyEscape},
-			wantPath: "/tmp/a",
-		},
-		{
 			// The path no key list could ever have caught: a bracketed paste
 			// never reaches handleKey at all.
 			name: "pasting into the filter moves the cursor with no key involved",
@@ -566,17 +556,32 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 		{
 			// model.go's placeCursorOnActive, reached from the sessionsMsg
 			// handler when the session list is the second of the two initial
-			// loads to arrive: it jumps the cursor onto the row for the tmux
-			// session dg ws is actually running in.
+			// loads to arrive: it jumps the cursor onto repo-b's repo-session
+			// row (ADR-0052/B8) for the tmux session dg ws is actually
+			// running in - a repo-session row has no diff, so the path is "".
 			name: "sessionsMsg arriving second places the cursor on the active session's row",
 			setup: func(t *testing.T) Model {
 				m := makeTestModel(testStatuses())
 				m.loaded = true // the worktree load already arrived
-				m.currentSessionFn = func() (string, bool) { return "repo-b", true }
+				m.currentSessionFn = func() (string, bool) { return "repo-b-session", true }
 				return m
 			},
-			msg:      sessionsMsg{layer: sessionsLayer(testSessions())},
-			wantPath: "/tmp/x",
+			msg: sessionsMsg{layer: worktree.StateLayer{
+				Sessions: append(
+					sessionsLayer(testSessions()).Sessions,
+					tmux.SessionInfo{Name: "repo-b-session"},
+				),
+				PanesByWindow: map[string][]tmux.PaneState{
+					worktree.GetWindowName("repo-b", "feature-x"): {
+						{
+							Session: "repo-b-session",
+							Window:  worktree.GetWindowName("repo-b", "feature-x"),
+							PaneID:  "%1",
+						},
+					},
+				},
+			}},
+			wantPath: "",
 		},
 		{
 			// The mirror of TestMovingFromPaneRowToDifferentWorktreeArmsDebounce:
@@ -632,6 +637,32 @@ func TestEveryCursorMovingPathArmsTheDiffDebounce(t *testing.T) {
 			}
 			assertDebouncedDiff(t, m, flattenCmd(cmd), tc.wantPath)
 		})
+	}
+}
+
+// TestEscClearingFilterKeepsSameRowSelected is B1's fix applied to esc:
+// clearing the filter brings back every hidden row, but the row that was
+// visible and selected keeps its identity, so rebuildRows must land the
+// cursor back on it rather than sliding it onto whatever row now sits at its
+// old numeric index (previously repo-a/feature-a, an unrelated row).
+func TestEscClearingFilterKeepsSameRowSelected(t *testing.T) {
+	m := filterFor(t, makeTestModel(testStatuses()), "x")
+	m.mgr = newTestWorktreeManager()
+	before := m.selectedPath()
+	if before != "/tmp/x" {
+		t.Fatalf("test setup: expected the filtered cursor on /tmp/x, got %q", before)
+	}
+
+	updated, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	m = updated.(Model)
+
+	if got := m.selectedPath(); got != before {
+		t.Errorf("expected esc to keep the cursor on %q, got %q", before, got)
+	}
+	for _, msg := range flattenCmd(cmd) {
+		if _, ok := msg.(diffDebounceMsg); ok {
+			t.Error("esc restoring the same row must not arm a new diff debounce")
+		}
 	}
 }
 
@@ -694,7 +725,7 @@ func TestSelectedPathOnSessionPaneRowStaysEmpty(t *testing.T) {
 // diff that already applies.
 func TestDrillingIntoPaneRowDoesNotArmDebounce(t *testing.T) {
 	m := makeTestModel(paneRowTestStatuses())
-	key := "worktree:wt-feature-a"
+	key := "wt:/tmp/a"
 	m.collapsed[key] = true
 	m.rebuildRows()
 	m.mgr = newTestWorktreeManager()

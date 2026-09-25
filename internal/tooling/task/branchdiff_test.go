@@ -610,6 +610,102 @@ func TestBranchDiffAt(t *testing.T) {
 	})
 }
 
+// TestBranchStatsAt covers ADR-0051: the ws dashboard's per-row diffstat.
+// Unlike BranchDiffAt, it takes defaultBranch as a parameter rather than
+// resolving it itself - the caller resolves it once per repo, not once per
+// worktree - and skips the rendered diff and color pass entirely.
+func TestBranchStatsAt(t *testing.T) {
+	t.Run(
+		"counts only, no diff body, and never re-resolves the default branch",
+		func(t *testing.T) {
+			tm, gitBase, _ := newTaskSetup()
+			worktreeDiffScript{
+				mergeBase: gitAnswer{stdout: "abc123\n"},
+				numstat:   gitAnswer{stdout: "5\t2\tmain.go\n40\t12\tgo.sum\n"},
+				untracked: gitAnswer{stdout: "notes.txt\x00"},
+			}.install(gitBase)
+
+			res, err := BranchStatsAt(tm.Git, "/tmp/wt", "main")
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			// main.go (included) + notes.txt (untracked); go.sum excluded from totals -
+			// the exact fixture TestBranchDiffAt uses, so the two can be compared.
+			if res.Files != 2 || res.Added != 5 || res.Removed != 2 {
+				t.Errorf("unexpected stats: %+v", res)
+			}
+
+			for _, call := range gitBase.ExecCommandCalls {
+				if len(call.Args) < 2 || call.Args[0] != "-C" || call.Args[1] != "/tmp/wt" {
+					t.Errorf("expected every call to target -C /tmp/wt, got %v", call.Args)
+				}
+				if slices.Contains(call.Args, "symbolic-ref") {
+					t.Errorf(
+						"expected BranchStatsAt not to re-resolve the default branch, got %v",
+						call.Args,
+					)
+				}
+			}
+		},
+	)
+
+	t.Run("no changes yields zero counts, not an error", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		worktreeDiffScript{mergeBase: gitAnswer{stdout: "abc123\n"}}.install(gitBase)
+
+		res, err := BranchStatsAt(tm.Git, "/tmp/wt", "main")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.Files != 0 || res.Added != 0 || res.Removed != 0 {
+			t.Errorf("expected zero stats for no changes, got %+v", res)
+		}
+	})
+
+	t.Run("merge-base failure surfaces error", func(t *testing.T) {
+		tm, gitBase, _ := newTaskSetup()
+		worktreeDiffScript{
+			mergeBase: gitAnswer{stderr: "fatal: no merge base", err: fmt.Errorf("exit 1")},
+		}.install(gitBase)
+		if _, err := BranchStatsAt(tm.Git, "/tmp/wt", "main"); err == nil {
+			t.Fatal("expected error when merge-base fails")
+		}
+	})
+
+	// The row's numbers and the diff pane's header must never disagree
+	// (ADR-0051) - proved here by computing both from the identical fixture
+	// and comparing.
+	t.Run("matches BranchDiffAt's counts on the same fixture", func(t *testing.T) {
+		fixture := func() worktreeDiffScript {
+			return worktreeDiffScript{
+				defaultBranch: gitAnswer{stdout: "origin/main\n"},
+				mergeBase:     gitAnswer{stdout: "abc123\n"},
+				diff:          gitAnswer{stdout: "diff --git a/x b/x\n+hi\n"},
+				numstat:       gitAnswer{stdout: "5\t2\tmain.go\n40\t12\tgo.sum\n"},
+				untracked:     gitAnswer{stdout: "notes.txt\x00"},
+			}
+		}
+
+		tm, gitBase, _ := newTaskSetup()
+		fixture().install(gitBase)
+		full, err := BranchDiffAt(tm.Git, "/tmp/wt")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		tm2, gitBase2, _ := newTaskSetup()
+		fixture().install(gitBase2)
+		stats, err := BranchStatsAt(tm2.Git, "/tmp/wt", "main")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		if stats.Files != full.Files || stats.Added != full.Added || stats.Removed != full.Removed {
+			t.Errorf("expected stats %+v to match the full diff's counts %+v", stats, full)
+		}
+	})
+}
+
 // rendezvousWait bounds how long one diff waits for the other. It is only ever
 // reached when the two do NOT overlap, so it trades a slow failure for a
 // readable one instead of hanging until the test binary's timeout.

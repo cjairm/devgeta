@@ -1166,17 +1166,7 @@ func (l StateLayer) PlainWindowBySession(
 	ignorePaneID string,
 	backed WorktreeWindows,
 ) map[string]string {
-	var ignoreSession, ignoreWindow string
-	if ignorePaneID != "" {
-		for session, panes := range l.PanesBySession {
-			for _, p := range panes {
-				if p.PaneID == ignorePaneID {
-					ignoreSession, ignoreWindow = session, p.Window
-					break
-				}
-			}
-		}
-	}
+	ignoreSession, ignoreWindow := l.paneWindow(ignorePaneID)
 	out := map[string]string{}
 	for session, panes := range l.PanesBySession {
 		for _, p := range panes {
@@ -1191,6 +1181,24 @@ func (l StateLayer) PlainWindowBySession(
 		}
 	}
 	return out
+}
+
+// paneWindow returns the session and window the pane paneID lives in, or two
+// empty strings when paneID is "" or matches nothing in the scan. Window names
+// are not unique across sessions, so callers excluding "the dashboard's own
+// window" must match on both.
+func (l StateLayer) paneWindow(paneID string) (session, window string) {
+	if paneID == "" {
+		return "", ""
+	}
+	for s, panes := range l.PanesBySession {
+		for _, p := range panes {
+			if p.PaneID == paneID {
+				return s, p.Window
+			}
+		}
+	}
+	return "", ""
 }
 
 // aggregatePaneStates reduces a window's or a session's panes to the single
@@ -2155,11 +2163,11 @@ func (w *WorktreeManager) RemoveInRepo(repoSlug, name string, force bool) error 
 // session that hosted its window. If the attached client is on that session,
 // it is first moved to the fallback session (created on demand) so the
 // terminal survives the kill. The fallback session itself is never killed.
-func (w *WorktreeManager) RemoveWithSessionInRepo(repoSlug, name string) error {
+func (w *WorktreeManager) RemoveWithSessionInRepo(repoSlug, name string, force bool) error {
 	windowName := GetWindowName(repoSlug, name)
 	session, hadWindow := w.Tmux.WindowSession(windowName)
 
-	if err := w.removeByRepo(repoSlug, name, true); err != nil {
+	if err := w.removeByRepo(repoSlug, name, force); err != nil {
 		return err
 	}
 
@@ -2487,7 +2495,19 @@ func (w *WorktreeManager) createWindowWithLayout(
 	repoSlug, windowName, wtPath string,
 	layout Layout,
 ) error {
-	session := TmuxSessionName(repoSlug)
+	// The session already holding repoSlug's other worktree windows wins over
+	// the derived TmuxSessionName(repoSlug) (ADR-0052): without this, renaming
+	// a repo's session makes the next create start a second, differently-named
+	// session for the same repo. Read fresh rather than derived, because a
+	// pane already knows which session it lives in and that can be anything -
+	// exactly the ADR-0048 lesson repoSessionFromLivePanes's own scan repeats
+	// here for the create path. found is also this branch's answer to whether
+	// the session already exists, so the HasSession call below is skipped
+	// entirely when it's true: a live pane there already proves it.
+	session, found := w.repoSessionFromLivePanes(repoSlug)
+	if !found {
+		session = TmuxSessionName(repoSlug)
+	}
 	// Both branches create pane 0, so both carry pane 0's command (ADR-0021:
 	// any tmux call that brings a pane into existence carries that pane's
 	// command). new-session is the one that reads like session setup rather
@@ -2496,7 +2516,7 @@ func (w *WorktreeManager) createWindowWithLayout(
 	// exactly where users hit it most.
 	shell := w.paneShell()
 	pane0Command := layout.pane0CreatedCommand(shell)
-	if w.Tmux.HasSession(session) {
+	if found || w.Tmux.HasSession(session) {
 		if err := w.Tmux.CreateWindowInSession(
 			session,
 			windowName,
@@ -2523,6 +2543,24 @@ func (w *WorktreeManager) createWindowWithLayout(
 		return err
 	}
 	return nil
+}
+
+// repoSessionFromLivePanes finds the tmux session already holding one of
+// repoSlug's worktree windows, from one fresh `tmux list-panes -a` scan
+// (ADR-0052). One tmux call is acceptable here: a create already pays for
+// several, and the manager keeps no scan of its own to read this from
+// instead - going back to deriving the name to save this call is the exact
+// bug this function exists to prevent. ok=false means repoSlug has no live
+// window anywhere yet (its first worktree, the common case), where the
+// derived TmuxSessionName(repoSlug) is the only sensible starting point.
+func (w *WorktreeManager) repoSessionFromLivePanes(repoSlug string) (string, bool) {
+	prefix := windowPrefix + TmuxSessionName(repoSlug) + "-"
+	for _, p := range w.Tmux.PaneStates() {
+		if strings.HasPrefix(p.Window, prefix) {
+			return p.Session, true
+		}
+	}
+	return "", false
 }
 
 // Prune removes all worktrees in the centralized directory
@@ -2559,6 +2597,60 @@ func (w *WorktreeManager) Prune() error {
 	}
 
 	return nil
+}
+
+// WorkAtRisk is what removing a worktree without force would lose
+// (ADR-0053): uncommitted changes, and commits that exist nowhere else.
+type WorkAtRisk struct {
+	Dirty    bool
+	Unpushed int
+}
+
+// Any reports whether there is anything at risk at all.
+func (r WorkAtRisk) Any() bool { return r.Dirty || r.Unpushed > 0 }
+
+// String names what is at risk, e.g. "uncommitted changes and 3 unpushed
+// commits", for messages that say what a forced removal would lose.
+func (r WorkAtRisk) String() string {
+	var parts []string
+	if r.Dirty {
+		parts = append(parts, "uncommitted changes")
+	}
+	switch {
+	case r.Unpushed == 1:
+		parts = append(parts, "1 unpushed commit")
+	case r.Unpushed > 1:
+		parts = append(parts, fmt.Sprintf("%d unpushed commits", r.Unpushed))
+	}
+	return strings.Join(parts, " and ")
+}
+
+// WouldLoseWorkError is a removal without force refused because it would lose
+// work. Callers that offer a force (the dashboard) detect it with errors.As.
+type WouldLoseWorkError struct {
+	Name string
+	Risk WorkAtRisk
+}
+
+func (e *WouldLoseWorkError) Error() string {
+	return fmt.Sprintf(
+		"worktree '%s' has %s; use --force to remove anyway (they would be lost)",
+		e.Name, e.Risk,
+	)
+}
+
+// workAtRisk checks wtPath for work a removal would lose. Either check
+// failing is an error, never "nothing at risk".
+func (w *WorktreeManager) workAtRisk(wtPath string) (WorkAtRisk, error) {
+	dirty, err := w.Git.IsWorktreeDirty(wtPath)
+	if err != nil {
+		return WorkAtRisk{}, err
+	}
+	unpushed, err := w.Git.UnpushedCommitCount(wtPath, w.Git.DefaultBranchIn(wtPath))
+	if err != nil {
+		return WorkAtRisk{}, err
+	}
+	return WorkAtRisk{Dirty: dirty, Unpushed: unpushed}, nil
 }
 
 // removeByRepo removes a worktree by repo slug and name.
@@ -2611,12 +2703,17 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 	}
 
 	if state.WtExists && !force {
-		dirty, err := w.Git.IsWorktreeDirty(wtPath)
-		if err == nil && dirty {
+		risk, err := w.workAtRisk(wtPath)
+		if err != nil {
+			// Fail closed (ADR-0053): an unanswered check is not a clean one.
 			return fmt.Errorf(
-				"worktree '%s' has uncommitted changes; use --force to remove anyway",
-				name,
+				"worktree '%s' was not removed: could not check it for unsaved work (%w); "+
+					"use --force to remove anyway",
+				name, err,
 			)
+		}
+		if risk.Any() {
+			return &WouldLoseWorkError{Name: name, Risk: risk}
 		}
 	}
 
@@ -2639,9 +2736,18 @@ func (w *WorktreeManager) removeByRepo(repoSlug, name string, force bool) error 
 	// "feat-login" alongside "feat/login").
 	journalBranch, journalBranchErr := w.Git.BranchForWorktree(wtPath)
 
+	// The branch to delete is the one git reports, never `name`: `name` is
+	// the flattened directory name, so for branch "feat/login" it is
+	// "feat-login" - a branch that does not exist, or worse, a different one.
+	// Unresolved (e.g. a detached HEAD) means no branch is deleted.
+	branchToDelete := ""
+	if journalBranchErr == nil {
+		branchToDelete = journalBranch
+	}
+
 	removedByFallback := false
 	if state.WtExists {
-		if err := w.Git.RemoveWorktree(wtPath, true, name); err != nil {
+		if err := w.Git.RemoveWorktree(wtPath, branchToDelete != "", branchToDelete); err != nil {
 			// The worktree came out cleanly and only `branch -D` failed: the
 			// directory and its registration are already gone, so there is
 			// nothing to fall back to and nothing to prune. This must be

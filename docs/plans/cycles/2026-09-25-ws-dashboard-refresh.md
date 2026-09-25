@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-25
 **Estimated Duration:** ~2 days
-**Status:** Approved — not started
+**Status:** Done
 
 Decisions: [ADR-0050](../../decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md) ·
 [ADR-0051](../../decisions/ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md) ·
@@ -81,43 +81,43 @@ test.
 
 **Look (layout B + soft bar)**
 
-- [ ] Repo header: bold name only. No status dot and no count badge. A collapsed header shows `▸ name  N`, where N is the number of worktrees hidden under it.
-- [ ] Worktree row: status glyph, name cut with `…`, and a dim `+A −R` pinned to the right edge ([ADR-0051](../../decisions/ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md)). Nothing is shown when there are no changes. The `∕` glyph and `└` connectors are removed.
-- [ ] Standalone sessions go under a dim `sessions` header. The per-row "session" label is removed.
-- [ ] Selected row: a soft background with a yellow `▌` edge, and the glyph keeps its color. This replaces the solid blue block. The armed-delete red stays as it is.
-- [ ] Hint bar: `↵ open · n new · d delete · / filter · ? help`. Everything else stays reachable from `?`.
-- [ ] Right pane: blank on header, session and pane rows (no explanatory sentence).
-- [ ] Default left width goes from 35 to 40.
+- [x] Repo header: bold name only. No status dot and no count badge. A collapsed header shows `▸ name  N`, where N is the number of worktrees hidden under it.
+- [x] Worktree row: status glyph, name cut with `…`, and a dim `+A −R` pinned to the right edge ([ADR-0051](../../decisions/ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md)). Nothing is shown when there are no changes. The `∕` glyph and `└` connectors are removed.
+- [x] Standalone sessions go under a dim `sessions` header. The per-row "session" label is removed.
+- [x] Selected row: a soft background with a yellow `▌` edge, and the glyph keeps its color. This replaces the solid blue block. The armed-delete red stays as it is.
+- [x] Hint bar: `↵ open · n new · d delete · / filter · ? help`. Everything else stays reachable from `?`.
+- [x] Right pane: blank on header, session and pane rows (no explanatory sentence).
+- [x] Default left width goes from 35 to 40.
 
 **Session rows under each repo** ([ADR-0052](../../decisions/ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md), supersedes ADR-0048)
 
-- [ ] A repo header is a label. An expanded header is never a cursor stop. A collapsed header is a stop only so it can be expanded (`l` or enter expands it; neither switches sessions).
-- [ ] Under each repo, one row per live tmux session holding that repo's worktree windows, listed before the worktree rows: `■ hire2-tien`. There can be more than one. It is drawn like a standalone session row: `■`/`□` for attached/detached. Once any of its **plain-window** panes has reported agent state, it switches to the agent-state glyph aggregated over those panes. The repo's worktree panes are left out of that aggregate because their own rows already show them. It gets pane children under the same rule (2+ stateful plain-window panes, ADR-0008), with key `sess:<name>`.
-- [ ] Enter on a repo-session row switches to that session's first plain window if it has one, otherwise to that session's first worktree window of this repo. It never switches to the bare session, which would land on the dashboard's own window (ADR-0048, constraint 1).
-- [ ] `$` renames the selected session (repo or standalone), using tmux's own key for rename-session. The prompt is prefilled with the current name. The name is flattened the way `TmuxSessionName` does. A duplicate is checked against the live session list first, only for a clearer message; tmux itself rejects duplicates (`duplicate session: …`), and that error is what the status line shows if the check is raced. After a rename, both the fold key and the in-memory cursor key move from `sess:<old>` to `sess:<new>`, so the renamed row keeps its fold and the cursor.
-- [ ] New worktree windows for a repo go into the session that already holds that repo's windows. The derived `TmuxSessionName(repo)` is only a fallback. Without this, a rename makes the next `n` start a second session. The manager has no scan of its own, so a create runs **one `tmux list-panes -a` at create time** to find that session. A create is a mutation, so one tmux call is fine. Do not "optimize" it back into a derived name; the derived name is the bug.
+- [x] A repo header is a label. An expanded header is never a cursor stop. A collapsed header is a stop only so it can be expanded (`l` or enter expands it; neither switches sessions).
+- [x] Under each repo, one row per live tmux session holding that repo's worktree windows, listed before the worktree rows: `■ hire2-tien`. There can be more than one. It is drawn like a standalone session row: `■`/`□` for attached/detached. Once any of its **plain-window** panes has reported agent state, it switches to the agent-state glyph aggregated over those panes. The repo's worktree panes are left out of that aggregate because their own rows already show them. It gets pane children under the same rule (2+ stateful plain-window panes, ADR-0008), with key `sess:<name>`.
+- [x] Enter on a repo-session row switches to that session's first plain window if it has one, otherwise to that session's first worktree window of this repo. It never switches to the bare session, which would land on the dashboard's own window (ADR-0048, constraint 1).
+- [x] `$` renames the selected session (repo or standalone), using tmux's own key for rename-session. The prompt is prefilled with the current name. The name is flattened the way `TmuxSessionName` does. A duplicate is checked against the live session list first, only for a clearer message; tmux itself rejects duplicates (`duplicate session: …`), and that error is what the status line shows if the check is raced. After a rename, both the fold key and the in-memory cursor key move from `sess:<old>` to `sess:<new>`, so the renamed row keeps its fold and the cursor.
+- [x] New worktree windows for a repo go into the session that already holds that repo's windows. The derived `TmuxSessionName(repo)` is only a fallback. Without this, a rename makes the next `n` start a second session. The manager has no scan of its own, so a create runs **one `tmux list-panes -a` at create time** to find that session. A create is a mutation, so one tmux call is fine. Do not "optimize" it back into a derived name; the derived name is the bug.
 
 **Saved state** ([ADR-0050](../../decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md))
 
-- [ ] Saved: collapsed rows and left width. It lives in the tmux server option `@dg_ws_state` as versioned JSON.
-- [ ] **The cursor is not saved.** The dashboard keeps opening on the row for the session you are in (`placeCursorOnActive`, fixed by B8). A saved cursor would compete with that at startup and lose "open on where I am", which is the more useful default when `ctrl+t` is pressed from inside a session. Because nothing needs saving at quit, there is no quit-time write and no need to cover the dashboard's eight quit paths.
-- [ ] Loaded at startup. Written only at the moment a fold changes (`h`, `l`, `z`, a rename moving a fold key), when `e` is pressed, and when a drag ends (`MouseReleaseMsg`), never on each `MouseMotionMsg`. On write, keys for rows that no longer exist are dropped. A failed write (tmux rejects values of about 20 KB and up with `command too long`) is logged at debug level, and the fold or resize still happens. Saving is best-effort and never blocks the UI.
-- [ ] Width is one saved number. `e` toggles between the default and wide widths, and a drag sets any width. A terminal resize clamps the width without discarding it. The `leftPaneWide` bool goes away.
-- [ ] New tmux wrapper methods:
+- [x] Saved: collapsed rows and left width. It lives in the tmux server option `@dg_ws_state` as versioned JSON.
+- [x] **The cursor is not saved.** The dashboard keeps opening on the row for the session you are in (`placeCursorOnActive`, fixed by B8). A saved cursor would compete with that at startup and lose "open on where I am", which is the more useful default when `ctrl+t` is pressed from inside a session. Because nothing needs saving at quit, there is no quit-time write and no need to cover the dashboard's eight quit paths.
+- [x] Loaded at startup. Written only at the moment a fold changes (`h`, `l`, `z`, a rename moving a fold key), when `e` is pressed, and when a drag ends (`MouseReleaseMsg`), never on each `MouseMotionMsg`. On write, keys for rows that no longer exist are dropped. A failed write (tmux rejects values of about 20 KB and up with `command too long`) is logged at debug level, and the fold or resize still happens. Saving is best-effort and never blocks the UI.
+- [x] Width is one saved number. `e` toggles between the default and wide widths, and a drag sets any width. A terminal resize clamps the width without discarding it. The `leftPaneWide` bool goes away.
+- [x] New tmux wrapper methods:
   - `GlobalOption(name)` runs `show-options -gqv <name>`. `-q` matters: without it an unset option exits 1 with `invalid option`, which is every first launch after a tmux restart. Empty output means unset, not an error.
   - `SetGlobalOption(name, value)` runs `set-option -g <name> <value>`.
   - `RenameSession(old, new)` runs `rename-session -t <old> <new>`.
 
 **Bug fixes**
 
-- [ ] **B1. The cursor follows a row number, not a row.** Every rebuild (3-second tick, filter keystroke, fold, delete) keeps the old index, so rows appearing above the cursor move it onto another row. The diff switches, and enter then acts on the wrong row. Fix: one `rowKey(row)` function (see B5). Record the key before a rebuild, find it again after, and clamp only when that row is gone.
-- [ ] **B2. Expanding with `z` puts the cursor in another repo.** Same cause as B1, and the same fix covers it.
-- [ ] **B3. `z` sometimes needs two presses.** `allCollapsed` gets out of sync with the per-repo folds. Fix: remove the flag. `z` collapses every repo if any is expanded, and expands all otherwise.
-- [ ] **B4. The previous worktree's diff shows under the new row** until the new diff arrives, and the scroll offset carries over. Fix: when `diffPath` is not the selected row's path, draw `loading…`. Reset `diffScroll` on every selection change, not only on j/k.
-- [ ] **B5. Fold and identity keys use the tmux window name, which is not unique.** For example `taskqueue` + `groups-x` and `taskqueue-groups` + `x` both become `wt-taskqueue-groups-x`: folding one folds both, and `sameParentRow` can jump across repos. Fix: key rows by stable identity. `repo:<folder name>` (today's `Repo` value; identity by path is out of scope), `wt:<path>`, `sess:<name>` and `pane:<paneID>` are produced by one `rowKey`, which the fold map, cursor restore and saved state all use.
-- [ ] **B6. A diff over 64 KB is cut in the middle of a color code or character.** Fix: cut at the last full line before the limit.
-- [ ] **B7. The repo header maps to only one session** (the problem the maintainer reported). Resolved by the session rows above.
-- [ ] **B8. The dashboard opens on the wrong row when a repo's session has another name.** `placeCursorOnActive` (model.go:912) matches worktree rows with `TmuxSessionName(r.status.Repo) == current`, the derived name ADR-0048 already showed is wrong. From inside `hire2-tien`, the cursor lands nowhere. Fix: match the current session against session rows by name, repo-session rows included, which now carry the real name read from the scan.
+- [x] **B1. The cursor follows a row number, not a row.** Every rebuild (3-second tick, filter keystroke, fold, delete) keeps the old index, so rows appearing above the cursor move it onto another row. The diff switches, and enter then acts on the wrong row. Fix: one `rowKey(row)` function (see B5). Record the key before a rebuild, find it again after, and clamp only when that row is gone.
+- [x] **B2. Expanding with `z` puts the cursor in another repo.** Same cause as B1, and the same fix covers it.
+- [x] **B3. `z` sometimes needs two presses.** `allCollapsed` gets out of sync with the per-repo folds. Fix: remove the flag. `z` collapses every repo if any is expanded, and expands all otherwise.
+- [x] **B4. The previous worktree's diff shows under the new row** until the new diff arrives, and the scroll offset carries over. Fix: when `diffPath` is not the selected row's path, draw `loading…`. Reset `diffScroll` on every selection change, not only on j/k.
+- [x] **B5. Fold and identity keys use the tmux window name, which is not unique.** For example `taskqueue` + `groups-x` and `taskqueue-groups` + `x` both become `wt-taskqueue-groups-x`: folding one folds both, and `sameParentRow` can jump across repos. Fix: key rows by stable identity. `repo:<folder name>` (today's `Repo` value; identity by path is out of scope), `wt:<path>`, `sess:<name>` and `pane:<paneID>` are produced by one `rowKey`, which the fold map, cursor restore and saved state all use.
+- [x] **B6. A diff over 64 KB is cut in the middle of a color code or character.** Fix: cut at the last full line before the limit.
+- [x] **B7. The repo header maps to only one session** (the problem the maintainer reported). Resolved by the session rows above.
+- [x] **B8. The dashboard opens on the wrong row when a repo's session has another name.** `placeCursorOnActive` (model.go:912) matches worktree rows with `TmuxSessionName(r.status.Repo) == current`, the derived name ADR-0048 already showed is wrong. From inside `hire2-tien`, the cursor lands nowhere. Fix: match the current session against session rows by name, repo-session rows included, which now carry the real name read from the scan.
 
 ### Explicitly Out of Scope
 

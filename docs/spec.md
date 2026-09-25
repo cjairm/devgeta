@@ -584,26 +584,47 @@ dg workspace   # alias
 
 Unified full-screen TUI dashboard — the single entry point to the worktree/session UI (the
 old `dg wt ui` subcommand has been removed). Scoped to **workspaces** rather than worktrees
-only. Every top-level row in the dashboard is exactly one of two kinds:
+only. Every row in the dashboard is one of four kinds:
 
-- **Repo workspace** (worktree-backed): a repo with git worktrees, sourced from the same
-  worktree scan `dg wt list` uses. Expandable to its worktree rows via `h`/`l` (or `z`
-  to toggle every repo at once), shown with a `▼`/`▶` chevron and an `N trees` badge. Shown even
-  when its repo-slug tmux session isn't live.
-- **Session workspace**: a standalone tmux session with no window backed by a **live**
-  worktree, sourced from `tmux list-sessions`. A leaf row, labeled `session`, unless it
-  qualifies for its own pane-row expansion (see below). Liveness is what decides, not the
-  `wt-` name: a worktree removed outside `dg wt remove` leaves its window behind with the
-  name intact, and that window no longer hides its session (see `LiveWorktreeWindows`).
+- **Repo header** (worktree-backed): a repo with git worktrees, sourced from the same
+  worktree scan `dg wt list` uses. It is a **label**, not a switch target
+  ([ADR-0052](decisions/ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md),
+  supersedes ADR-0048): bold name only, no status dot and no count badge while expanded.
+  Expanded, it is never a cursor stop — `h`/`l`/`z` fold and expand its worktree rows, but
+  `j`/`k` skip over it entirely. Collapsed, it shows `▸ name  N` (N = the number of worktrees
+  hidden under it) and is a stop only so `l` or `enter` can re-expand it; neither switches
+  anywhere.
+- **Repo-session row**: one row per **live tmux session holding this repo's worktree
+  windows and at least one plain window of its own**, listed under the repo header before its
+  worktree rows. A repo's windows can live in more than one session (`hire2` and `hire2-tien`
+  is a real case), so there can be more than one of these per repo. Read straight off the
+  scan's own panes — never derived from a name, which ADR-0048 already showed can be wrong.
+  A session holding **only** worktree windows gets no row: each of those windows already has
+  its own worktree row, so a session row would be a second way to the same place. Windows
+  count, not panes — a worktree window split into several panes is still just that worktree —
+  and the dashboard's own `[workspace]` window (from `ctrl+t`) is not counted as plain.
+- **Worktree row**: one git worktree, a leaf under its repo header (and, implicitly, under
+  whichever repo-session row(s) its window's session matches).
+- **Standalone session row**: a tmux session with no window backed by a **live** worktree,
+  sourced from `tmux list-sessions`, listed under a dim `sessions` section header after every
+  repo group. Liveness is what decides, not the `wt-` name: a worktree removed outside
+  `dg wt remove` leaves its window behind with the name intact, and that window no longer
+  hides its session (see `LiveWorktreeWindows`).
 
-The two kinds carry different marker shapes so they're distinguishable at a glance while no
-agent has ever reported on them, not just by their label: worktree rows use a circle (`●`
-running / `○` not), session rows use a square (`■` attached / `□` detached) — in both, a
-filled glyph means active and the color matches (green active, dim inactive). This shape
-distinction is the "quiet" default; once an agent has reported, the row switches to the state
-vocabulary described next, which is shared across every row kind.
+Repo-session rows and standalone session rows share one identity space (a session name is
+unique on the tmux server): both key off `sess:<name>` for folding, pane-row expansion, and
+cursor restore, and both render the same way — a square marker, no trailing label — so they
+read as the same kind of thing to the eye.
 
-The dot on a worktree row, a session row, and a repo header all report what the AI coder(s)
+Worktree rows and session rows (either kind) carry different marker shapes so they're
+distinguishable at a glance while no agent has ever reported on them: worktree rows use a
+circle (`●` running / `○` not), session rows use a square (`■` attached / `□` detached) — in
+both, a filled glyph means active and the color matches (green active, dim inactive). This
+shape distinction is the "quiet" default; once an agent has reported, the row switches to the
+state vocabulary described next, which is shared across every row kind except the repo header,
+which no longer carries one at all.
+
+The dot on a worktree row and a session row (either kind) reports what the AI coder(s)
 underneath are doing, not just whether something is running. On top of running (`●` green) /
 not-running (`○`/`□` gray, no window or no agent yet), three "wants you" states layer on top
 of a live window: finished and waiting on you (`◆` purple), blocked on a permission prompt
@@ -618,29 +639,38 @@ extended to every row kind, all sharing one precedence rule
   more than one coder pane (e.g. a split-pane review beside a working coder) shows the most
   urgent state, so one finished pane is enough to show `◆` even while its neighbor keeps
   working.
-- **Session rows** aggregate every pane in that tmux session and show the same state
-  vocabulary (`●`/`◆`/`!`/`✕`) once any agent has reported there, replacing the plain
+- **Standalone session rows** aggregate every pane in that tmux session and show the same
+  state vocabulary (`●`/`◆`/`!`/`✕`) once any agent has reported there, replacing the plain
   attached/detached square with a colored dot. A session nobody has ever run an agent in —
   the common case — keeps the plain `■`/`□` square; the shape distinction still applies to
   that quiet case.
-- **Repo headers** aggregate across every worktree in the repo (whether or not the repo is
-  currently expanded), so collapsing a repo no longer hides an urgent child's state. A repo
-  where no worktree has ever had an agent report falls back to a dim "not running" glyph
-  rather than a false all-clear.
+- **Repo-session rows** aggregate only their **plain-window** panes — the ones that are not
+  one of the repo's own `wt-…` windows. A session holding nothing but worktree windows shows
+  the plain `■`/`□` square, since those windows' own rows already show their state; a session
+  with a plain window too (the `zsh` a repo session was started from, say) picks up the state
+  vocabulary from that window's panes alone, the same aggregation rule as any other session
+  row.
 - **Individual panes**, revealed by expansion (next paragraph), each show their own dot for
   that one pane's state.
 
-A worktree row or session row with **two or more** panes reporting a non-empty agent state
-gains its own `▼`/`▶` chevron (the same convention as a repo header), and `h`/`l` reveal or
-hide its **pane rows** — one child row per pane, indented further than the parent, showing
-the pane's index, the command currently running in it, and that pane's own dot. This answers
-"which pane wants attention," not just "which window": a window with a working coder and a
-finished reviewer side by side shows exactly which one is which once expanded. `enter` on a
-pane row switches the attached tmux client straight to that exact pane, not just its window.
-A parent with zero or one stateful pane never gets a chevron — a single pane's state is
-already exactly what the parent's own dot says, so a chevron there would be noise. Collapsing
-a worktree/session's pane rows is independent of collapsing a repo header, even when a repo
-and a standalone session happen to share the same name.
+The repo header itself carries no aggregate glyph at all (ADR-0052): the header is a label,
+and a repo's activity is visible on its session row(s) and worktree rows instead — collapsing
+a repo hides those rows, not an aggregate the header used to show in their place.
+
+A worktree row or session row (either kind) with **two or more** panes reporting a non-empty
+agent state gains its own `▼`/`▶` chevron, and `h`/`l` reveal or hide its **pane rows** — one
+child row per pane, indented further than the parent, showing the pane's index, the command
+currently running in it, and that pane's own dot. For a repo-session row, only its
+**plain-window** panes count toward that threshold and appear as children — its repo's own
+worktree panes already have rows of their own. This answers "which pane wants attention," not
+just "which window": a window with a working coder and a finished reviewer side by side shows
+exactly which one is which once expanded. `enter` on a pane row switches the attached tmux
+client straight to that exact pane, not just its window. A parent with zero or one stateful
+pane never gets a chevron — a single pane's state is already exactly what the parent's own dot
+says, so a chevron there would be noise. Collapsing a worktree/session's pane rows is
+independent of collapsing a repo header, even when a repo and a standalone session happen to
+share the same name — and, since repo-session and standalone rows key off the same
+`sess:<name>` identity, renaming a session (see `$` below) carries its fold along.
 
 Attaching to a row, or switching to a pane (`enter`), clears its state — attaching is the user acknowledging it.
 tmux's own status bar (`configs/tmux/tmux.conf.tmpl`) separately flags any other window in the
@@ -659,19 +689,59 @@ is off by default and opt-in (see `notify_sound` above), each state has a distin
 the three are told apart without looking, and a missing sound player or audio device is
 silence rather than an error or a blocked hook.
 
-Both kinds share the existing worktree-row keys (`j`/`k` nav,
-`h`/`l` fold, `z` toggle-all, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit), plus
-two keys added this cycle: `e` toggles the left pane between its default width and double
-width, both clamped to 60% of the terminal — per-session only, not persisted — and `ctrl+r`
-recomputes the branch diff for the currently selected row, in both the list and the
-diff-focused view. `ctrl+r` is diff-only: it deliberately does not re-read git worktree state
-([ADR-0024](decisions/ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md)).
-Session rows add:
+Every row kind shares the base keys (`j`/`k` nav, `h`/`l` fold, `z` toggle-all, `n`/`N` create a
+worktree, `/` filter, `?` help, `q` quit), plus `e` (toggle the left pane between its default
+width, 40 columns, and double that, both clamped to 60% of the terminal) and `ctrl+r`
+(recompute the branch diff for the currently selected row, in both the list and the
+diff-focused view — diff-only, it deliberately does not re-read git worktree state,
+[ADR-0024](decisions/ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md)).
 
-- `enter` — switch the attached tmux client to the session (guarded: only works inside tmux,
-  same guard message as attaching to a worktree) and quit the dashboard.
+**Deleting a worktree never loses work unless forced**
+([ADR-0053](decisions/ADR-0053-removing-a-worktree-never-loses-work-unless-forced.md)). On a
+worktree row, `d` `d` (delete) and `D` `D` (delete and kill its session) refuse when the
+worktree has uncommitted changes (untracked files included) or commits that no remote branch
+and no local default branch contain, and when either can't be checked. The status line says
+what is at risk — `feat not deleted: it has uncommitted changes and 2 unpushed commits · F F
+deletes it anyway` — and `F` `F` is the one forced delete, with an armed hint that names what
+will be lost. A delete removes the branch git reports for the worktree, never one derived from
+the row's flattened name.
+
+**View state is saved** across the dashboard closing and reopening — which folds are
+collapsed and the left-pane width — in one tmux server-global option, `@dg_ws_state`
+([ADR-0050](decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md)). It
+lasts as long as the tmux server (gone after `tmux kill-server` or a reboot, same as the
+sessions it describes) and is written only when one of those actually changes (a fold, `e`, or
+a drag ending), never on every tick or mouse-motion event. The cursor itself is **not** saved:
+the dashboard always opens on the row for the tmux session you're actually in (or, when that
+session holds only worktree windows and so has no row, on its first worktree row), which is the
+more useful default when `ctrl+t` is pressed from inside a session, and a saved cursor would
+compete with that.
+
+Every worktree row carries a diffstat, `+A −R` (green and red, like the diff header in the right pane), pinned to its right edge
+([ADR-0051](decisions/ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md)) —
+nothing is drawn when there are no changes. It is computed for every worktree on the **slow**
+refresh only, with the repo's default branch resolved once and reused across that repo's
+worktrees, and the selected row's own number stays current between slow refreshes for free
+(the full branch-diff computation it already does when selected produces the same counts).
+
+Session rows (standalone and repo-session alike) add:
+
+- `enter` — switch the attached tmux client to the session (repo-session: to that session's
+  first **plain** window, which it always has — it never switches to the bare session, which would land on whichever
+  window happens to be active there, typically the dashboard's own `[workspace]` window at the
+  moment of the switch). Guarded: only works inside tmux, same guard message as attaching to a
+  worktree.
 - `d` `d` — kill the session (two-press confirm, same "press again" hint style as worktree
-  delete).
+  delete). On a repo-session row it closes only that session's **plain** windows — the ones the
+  row stands for — and never the repo's worktree windows, which share the session but belong to
+  their own rows; the session stays, holding them, and its row goes away with its last plain
+  window. The dashboard's own window is never closed.
+- `$` — rename the session. The prompt is prefilled with the current name; the typed name is
+  flattened the way `TmuxSessionName` does (`.`, `:`, and whitespace become `_`). A duplicate is
+  checked against the live session list first, only for a clearer message — tmux's own
+  `rename-session` already rejects a duplicate (`duplicate session: …`), and that is what shows
+  if the check is raced. The renamed row keeps its fold and the cursor: both move from
+  `sess:<old>` to `sess:<new>`.
 - `s` (works from any row, not just a session row) — opens a two-step create flow:
   1. **Pick a folder** — a fuzzy picker with `root` (the user's home `~`) pinned at the top,
      then the same ranked repo candidates the worktree flow offers, and — like that flow — a
@@ -685,72 +755,19 @@ Session rows add:
   Inside tmux, the client switches to the new session and the dashboard quits; outside tmux, the
   session is created detached and reported (`session created: <name>`) without switching. A
   duplicate typed name surfaces tmux's own "duplicate session" error on the status line — there's
-  no separate pre-check.
+  no separate pre-check. New worktree windows for a repo go into the session that already holds
+  that repo's other windows (read from one `tmux list-panes -a` at create time), not the derived
+  `TmuxSessionName(<repo slug>)` — otherwise a rename would make the next worktree create start
+  a second, differently-named session for the same repo.
 
-- `D`/`r`/`R` are worktree-only actions and are no-ops on a session row. `R` is additionally a
-  no-op on a repo-header row, since only a worktree row has a specific worktree to
-  review.
+- `D`/`r`/`R` are worktree-only actions and are no-ops on a session row.
+- The diff pane draws nothing, same as a repo header or pane row: a session has no single
+  branch to diff.
 
-Repo-header rows add:
-
-- `enter` — switch the attached tmux client to the **specific non-worktree window** in the
-  session that holds this repo's worktree windows, and quit the dashboard. Same tmux guard as
-  the rows above. That session never appears among the session rows — ADR-0003 excludes any
-  session containing a `wt-` window — so the header is the only row that reaches the plain
-  windows sitting alongside a repo's worktree windows (the `zsh` the repo session was started
-  from).
-
-  Targeting the window rather than the session is load-bearing, not a refinement.
-  `switch-client -t <session>` lands on whichever window is _active_ there, and at the moment
-  of the switch that is the dashboard's own `[workspace]` window — so once the dashboard
-  exits, its window dies and tmux drops the client onto whatever remains, which is typically
-  the very `wt-` window the header was meant to be an alternative to. The window comes from
-  `StateLayer.PlainWindowBySession`, the same reduction that decides whether the header is a
-  stop at all, so "the header is selectable" and "enter has somewhere to go" can never
-  disagree.
-
-  The session is **read off the worktree rows' own panes**, not derived:
-  `TmuxSessionName(<repo slug>)` is only where `ensureWindow` puts a _new_ window, and a
-  window can end up elsewhere — a `wt-hire2-…` window living in a session named `hire2-tien`
-  is a real case. The session-only switch survives as a fallback for one case: a **collapsed**
-  header, which is a stop regardless of where it leads, whose repo has no live window to read
-  a plain window off. There the derived name is tried and confirmed with `has-session`; if
-  that fails too the status line says so instead of surfacing tmux's own `switch-client`
-  error.
-
-- Which headers `j`/`k` stops on. A collapsed header is always a stop, so `l` can re-expand it
-  (unchanged). An **expanded** header is a stop only when its session holds at least one
-  window that is _not_ backed by a live worktree — that is, only when switching there would
-  land somewhere the repo's own child rows don't already reach. A session holding nothing but
-  this repo's live worktree windows is fully covered by those rows, so stopping on its header
-  would cost a keypress on every trip down the list and buy nothing. A leftover window whose
-  worktree is gone is reachable from no child row, so it counts as a plain window here.
-
-  Three things make that judgement correct rather than flaky, each of which was a visible bug
-  first:
-
-  1. **The dashboard's own window does not count.** `ctrl+t` opens `dg ws` as a `[workspace]`
-     window in the session you pressed it from, so without excluding it, opening the dashboard
-     from inside a repo session made that repo's header selectable — and `enter` would have
-     switched to the session already on screen. The exclusion is by `$TMUX_PANE`, pinned to
-     that pane's own session since window names are not unique across sessions.
-  2. **The startup load answers it, not just the 3-second tick.** `sessionsLoadCmd` takes the
-     tmux scan itself rather than calling `ListSessions()` (that method is the same scan
-     reduced to one half), so the first frame already knows. Before this, a header only became
-     selectable once the first tick landed, which looked exactly like it being broken.
-  3. **One definition of a valid cursor position.** `navigableIndices` is both what `j`/`k`
-     move over and what a rebuild clamps to. A rebuild runs on every tmux tick, every filter
-     keystroke and every collapse, so while clamping used a narrower leaf-only set, a header
-     you had just selected lost the cursor to the worktree below it seconds later, on its own.
-
-  The plain window per session comes off the same scan as everything else
-  (`StateLayer.PlainWindowBySession`), which is the one fact `SessionStatuses` throws away
-  when it drops a `wt-`-containing session wholesale. Resolving it never costs a tmux call:
-  `navigableIndices` runs for every row on every keypress and render, so it reads only the
-  last scan's results.
-
-- The diff pane shows guidance rather than a diff, the same way session and pane rows do: a
-  repo spans several worktrees, so there is no single branch to diff.
+The repo header adds nothing (ADR-0052): it is a label, and `enter`/`l` on a **collapsed**
+header expand it — the same action either key already performs, since that is the only thing
+left for the header to do. An **expanded** header is never a `j`/`k` stop; only a collapsed
+one is, so `l` can re-expand it. The diff pane draws nothing on a header row either way.
 
 Pane rows add:
 
@@ -759,7 +776,8 @@ Pane rows add:
 - The diff pane: a pane belongs to a worktree, so moving the cursor onto one of a worktree's
   pane rows keeps showing that worktree's branch diff, exactly as if the cursor were still on
   the worktree row itself — drilling into a pane (`l`) never blanks or delays the diff. A pane
-  row under a standalone session shows no diff, same as the session row itself.
+  row under a session (standalone or repo-session) draws nothing, same as the session row
+  itself.
 
 Bare `ctrl+t` (no tmux prefix) opens `dg ws` (see `configs/tmux/tmux.conf.tmpl`) — it previously
 opened tmux's native `choose-tree -Zs` popup, which this replaces. This is the only key bound

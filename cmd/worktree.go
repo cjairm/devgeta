@@ -195,13 +195,13 @@ var worktreeRemoveCmd = &cobra.Command{
 This command:
   1. Kills the tmux window wt-<repo>-<name> if it exists
   2. Removes the git worktree
-  3. Deletes the branch (force delete with -D)
+  3. Deletes the worktree's branch
 
 If no name is provided, opens an interactive fzf picker to select a worktree.
 
-Use --force to remove even if the worktree has uncommitted changes.
-
-Warning: Any uncommitted changes in the worktree will be lost.`,
+It refuses, and says why, when removing would lose work: uncommitted changes
+(untracked files included), or commits that no remote branch and no local
+default branch contain. Use --force to remove anyway; that work is lost.`,
 	Args: cobra.MaximumNArgs(1),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) != 0 {

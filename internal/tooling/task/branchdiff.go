@@ -186,6 +186,46 @@ func BranchDiffAt(g *git_app.Git, dir string) (BranchDiffResult, error) {
 	return res, nil
 }
 
+// BranchStatsResult is BranchStatsAt's payload (ADR-0051): just the counts a
+// dashboard row needs, no diff body and no per-file breakdown.
+type BranchStatsResult struct {
+	Files   int
+	Added   int
+	Removed int
+}
+
+// BranchStatsAt returns the diffstat counts only for the worktree at dir
+// against its merge-base with defaultBranch (ADR-0051) - the ws dashboard's
+// per-row number. It shares base resolution and changedFiles with
+// collectWorktreeDiff, so a row's counts and the diff pane's header can
+// never disagree, and skips the rendered diff and its color pass entirely.
+//
+// defaultBranch is a parameter, not resolved here, because it is a
+// repo-level answer (DefaultBranchIn), not a per-worktree one: the caller
+// resolves it once per repo per slow refresh and passes it to every one of
+// that repo's worktrees, rather than paying for it again per worktree.
+func BranchStatsAt(g *git_app.Git, dir, defaultBranch string) (BranchStatsResult, error) {
+	baseOut, err := g.RunCapture(atDir(dir, "merge-base", "origin/"+defaultBranch, "HEAD")...)
+	if err != nil {
+		return BranchStatsResult{}, fmt.Errorf("branch-stats: %w", err)
+	}
+	base := strings.TrimSpace(baseOut)
+
+	changes, err := changedFiles(g, dir, base)
+	if err != nil {
+		return BranchStatsResult{}, fmt.Errorf("branch-stats: %w", err)
+	}
+	included, _ := partitionExcluded(changes)
+	untracked := untrackedFiles(g, dir)
+
+	res := BranchStatsResult{Files: len(included) + len(untracked)}
+	for _, f := range included {
+		res.Added += f.Added
+		res.Removed += f.Removed
+	}
+	return res, nil
+}
+
 // untrackedNote renders the trailing untracked-files block both branch-diff
 // renderings append, with a leading newline, or "" when nothing is untracked.
 // Untracked files carry no diff at all, so naming them is the only way a

@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1269,6 +1270,27 @@ func (g *Git) IsWorktreeDirty(path string) (bool, error) {
 		return false, fmt.Errorf("failed to check worktree status: %w", err)
 	}
 	return strings.TrimSpace(stdout) != "", nil
+}
+
+// UnpushedCommitCount counts the commits on path's checked-out HEAD that exist
+// nowhere else: on no remote-tracking branch and, when defaultBranch is not
+// "", not on that local branch either. These are the commits deleting the
+// branch would lose (ADR-0053). A repo with no remote counts every commit not
+// merged into defaultBranch, which is exactly that.
+func (g *Git) UnpushedCommitCount(path, defaultBranch string) (int, error) {
+	args := []string{"-C", path, "rev-list", "--count", "HEAD", "--not", "--remotes"}
+	if defaultBranch != "" {
+		args = append(args, "refs/heads/"+defaultBranch)
+	}
+	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{Command: constants.Git, Args: args})
+	if err != nil {
+		return 0, fmt.Errorf("failed to count unpushed commits: %w", err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(stdout))
+	if err != nil {
+		return 0, fmt.Errorf("unexpected rev-list output %q: %w", strings.TrimSpace(stdout), err)
+	}
+	return n, nil
 }
 
 // PruneWorktrees removes stale worktree entries

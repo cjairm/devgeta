@@ -12,7 +12,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -49,8 +48,13 @@ type sessionCreatedMsg struct {
 // sessionKilledMsg reports a successful killSessionFn call so Update can drop
 // the killed session from m.sessions, rebuild rows, and set a "removed:"
 // confirmation - mirroring deletedMsg's shape for worktree deletes.
+//
+// windowsOnly marks a repo session whose plain windows were closed rather
+// than the session killed (see handleKillSession): the session still exists,
+// holding its worktree windows.
 type sessionKilledMsg struct {
-	name string
+	name        string
+	windowsOnly bool
 }
 
 // handleNewSession opens the folder picker for the s keybinding, from any row.
@@ -259,74 +263,35 @@ func (m Model) handleSwitchToSession() (tea.Model, tea.Cmd) {
 	return m, m.switchToSessionCmd(sel.Name)
 }
 
-// handleSwitchToRepoSession is enter's rowRepo counterpart: switches the
-// attached client to the tmux session that holds this repo's worktree windows
-// and quits.
+// handleSwitchToRepoSessionRow is enter's rowRepoSession counterpart
+// (ADR-0052, replacing ADR-0048's handleSwitchToRepoSession): switches the
+// attached client to the row's session and quits.
 //
-// The header row is the only place that session is reachable from. Its
-// worktree rows attach to individual wt- WINDOWS inside it, and the session
-// itself never appears among the session rows — ADR-0003 excludes any session
-// containing a wt- window, so the plain windows alongside those (the zsh the
-// repo session was started from) had no row of their own. Pressing enter here
-// used to fall through to handleAttach, which has no worktree selected on a
-// header row and returned silently.
-//
-// Which session that is gets READ, not derived. worktree.TmuxSessionName(repo)
-// is only where ensureWindow PUTS a new window; a window can end up somewhere
-// else entirely, and does — a `wt-hire2-…` window living in a session called
-// `hire2-tien` is a real case, and deriving the name would have switched to a
-// session that does not exist while the right one was on screen. Every live
-// worktree row already carries its panes, and a pane knows its own session
-// (ADR-0024's scan collects it), so the answer is in state the dashboard
-// already holds.
-func (m Model) handleSwitchToRepoSession() (tea.Model, tea.Cmd) {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowRepo {
+// The plain window first, by name, because that window is the whole reason a
+// plain switch-client isn't enough: switching to the session alone lands on
+// whichever window is active in it — which is the dashboard's own [workspace]
+// window at the moment of the switch — and once the dashboard exits that
+// window dies and tmux drops the client onto whatever is left, typically a
+// wt- window. A plain window always exists: the row is only built for a
+// session holding one (see worktree.RepoSessionStatuses).
+func (m Model) handleSwitchToRepoSessionRow() (tea.Model, tea.Cmd) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowRepoSession {
 		return m, nil
 	}
-	repo := m.rows[m.cursor].repo
+	session := m.rows[m.cursor].repoSession.Name
 
 	if os.Getenv("TMUX") == "" {
 		m.status = notInsideTmuxStatus
 		return m, nil
 	}
 
-	// The plain WINDOW first, by name, because that window is the whole reason
-	// this row is a stop. Switching to the session alone lands on whichever
-	// window is active in it — which is the dashboard's own [workspace] window
-	// at the moment of the switch, and once the dashboard exits that window
-	// dies and tmux drops the client onto whatever is left, typically the wt-
-	// window this row exists to be an alternative to. That is the bug this
-	// ordering fixes, not a refinement of it.
-	if session, window, ok := m.repoPlainWindow(repo); ok {
+	if window := m.plainWindowBySession[session]; window != "" {
 		return m, m.switchToWindowCmd(session, window)
 	}
-	// No plain window to aim at. Only reachable from a COLLAPSED header, which
-	// is a stop regardless of where it leads (l has to be able to re-expand
-	// it), so the session on its own is the best available answer.
-	name, ok := m.repoSessionName(repo)
-	if !ok {
-		m.status = "no tmux session for " + repo + " — open one of its worktrees first"
-		return m, nil
-	}
-	return m, m.switchToSessionCmd(name)
-}
-
-// repoSessionName resolves the tmux session holding repo's worktree windows.
-//
-// First answer: the session one of its live worktree panes reports. That is
-// the true owner whatever it is called, and it costs nothing — the panes are
-// already on the rows. Only when the repo has no live window anywhere does it
-// fall back to the name ensureWindow would have used, confirmed with
-// has-session so a stale guess is never handed to switch-client.
-func (m Model) repoSessionName(repo string) (string, bool) {
-	if name, ok := repoSessionFromPanes(m.statuses, repo); ok {
-		return name, true
-	}
-	derived := worktree.TmuxSessionName(repo)
-	if m.hasSessionFn(derived) {
-		return derived, true
-	}
-	return "", false
+	// Should not happen: both come from the same scan with the same
+	// exclusions, so a row implies a plain window.
+	m.status = "no window found in " + session
+	return m, nil
 }
 
 // switchToWindowCmd is switchToSessionCmd's window-targeted twin: it moves the
@@ -357,17 +322,17 @@ func (m Model) switchToSessionCmd(name string) tea.Cmd {
 	}
 }
 
-// handleKillSession is d's rowSession counterpart to handleDelete: a
+// handleKillSession is d's session-row counterpart to handleDelete (both
+// standalone and repo-session rows - see selectedSessionName): a
 // two-press kill confirmation, armed/confirmed the same way
 // confirmThenRemove is (arm on first press, clear on any other key, confirm
 // on second press - see handleKey's pendingKillSession clearing block), but
 // keyed by session name alone since sessions have no repo.
 func (m Model) handleKillSession() (tea.Model, tea.Cmd) {
-	sel, ok := m.selectedSession()
+	name, ok := m.selectedSessionName()
 	if !ok {
 		return m, nil
 	}
-	name := sel.Name
 
 	// First press (or cursor moved to another session): arm
 	if m.pendingKillSession != name {
@@ -377,6 +342,30 @@ func (m Model) handleKillSession() (tea.Model, tea.Cmd) {
 
 	// Second press: execute
 	m.pendingKillSession = ""
+
+	// A repo's session row stands for that session's PLAIN windows only (see
+	// worktree.RepoSessionStatus.Panes): the repo's worktree windows live in
+	// the same session but belong to their own rows. Killing the session
+	// would close those too, so close only the row's own panes; tmux drops
+	// each window with its last pane, and the session lives on with its
+	// worktree windows. Panes already excludes the dashboard's own window.
+	if rs, ok := m.repoSessionNamed(name); ok {
+		paneIDs := make([]string, 0, len(rs.Panes))
+		for _, p := range rs.Panes {
+			paneIDs = append(paneIDs, p.PaneID)
+		}
+		killPaneFn := m.killPaneFn
+		m.status = actionStatus("closing windows in", name)
+		return m, func() tea.Msg {
+			for _, id := range paneIDs {
+				if err := killPaneFn(id); err != nil {
+					return statusMsg("close windows failed: " + err.Error())
+				}
+			}
+			return sessionKilledMsg{name: name, windowsOnly: true}
+		}
+	}
+
 	killFn := m.killSessionFn
 	m.status = actionStatus("killing session", name)
 	return m, func() tea.Msg {

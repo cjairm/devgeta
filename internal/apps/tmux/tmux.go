@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps"
@@ -728,11 +729,43 @@ func (t *Tmux) ClearAgentStateForPane(paneID string) error {
 
 // SwitchToWindow moves the attached client to the given session and selects the
 // window, so it works no matter which session the client is currently on.
+//
+// The window is targeted by its id, not "session:name": tmux parses a "." in a
+// target as the window/pane separator, so a window named after a version
+// string (Claude Code's process title is e.g. "2.1.282", which automatic-rename
+// copies) or a worktree named "fix-v1.2" fails with "can't find pane". The
+// id is resolved first so a missing window never moves the client.
 func (t *Tmux) SwitchToWindow(session, name string) error {
+	id, err := t.windowID(session, name)
+	if err != nil {
+		return err
+	}
 	if err := t.SwitchToSession(session); err != nil {
 		return err
 	}
-	return t.ExecuteCommand("select-window", "-t", session+":"+name)
+	return t.ExecuteCommand("select-window", "-t", id)
+}
+
+// windowID returns the server-wide id (e.g. "@7") of the window named exactly
+// name in session. Matching the name here, rather than handing it to tmux as a
+// target, sidesteps tmux's target syntax entirely - see SwitchToWindow.
+func (t *Tmux) windowID(session, name string) (string, error) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args:    []string{"list-windows", "-t", session, "-F", "#{window_id}\t#{window_name}"},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", fmt.Errorf("failed to list windows in session %s: %w", session, err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		parts := strings.SplitN(scanner.Text(), "\t", 2)
+		if len(parts) == 2 && parts[1] == name {
+			return parts[0], nil
+		}
+	}
+	return "", fmt.Errorf("no window named %q in session %s", name, session)
 }
 
 // SwitchToPane moves the attached client to session, selects window within
@@ -772,6 +805,52 @@ func (t *Tmux) CurrentSession() (string, bool) {
 	return name, true
 }
 
+// OriginWindow returns the name of the window the user was in when they
+// started the program whose process id is pid, running in pane paneID.
+//
+// A window created just to run a program (a key binding like
+// `new-window "dg ws"`) has that program as the pane's first process: the
+// shell tmux starts it with replaces itself with the command. The user came
+// from the session's previously active window, which tmux already tracks as
+// window_last_flag. A program typed into an existing shell is that shell's
+// child instead, and its own window is where the user is. Telling the two
+// apart by process, not by window name, keeps this independent of how the
+// binding names its window. Returns ("", false) when tmux cannot answer.
+func (t *Tmux) OriginWindow(paneID string, pid int) (string, bool) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args:    []string{"display-message", "-p", "-t", paneID, "#{pane_pid}\t#{window_name}"},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", false
+	}
+	panePID, window, ok := strings.Cut(strings.TrimSpace(stdout), "\t")
+	if !ok || window == "" {
+		return "", false
+	}
+	if panePID != strconv.Itoa(pid) {
+		return window, true
+	}
+	execCommand = cmd.CommandParams{
+		Command: constants.Tmux,
+		Args: []string{
+			"list-windows", "-t", paneID, "-F", "#{window_last_flag}\t#{window_name}",
+		},
+	}
+	stdout, _, err = t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", false
+	}
+	scanner := bufio.NewScanner(strings.NewReader(stdout))
+	for scanner.Scan() {
+		if name, found := strings.CutPrefix(scanner.Text(), "1\t"); found {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // DefaultShell returns tmux's server-global "default-shell" option value -
 // the shell tmux itself would launch a pane with when nothing more specific
 // is given. Unlike CurrentSession, this does not gate on running inside a
@@ -799,6 +878,37 @@ func (t *Tmux) DefaultShell() (string, bool) {
 // SwitchToSession moves the attached client to the given session.
 func (t *Tmux) SwitchToSession(name string) error {
 	return t.ExecuteCommand("switch-client", "-t", name)
+}
+
+// GlobalOption returns the tmux server-global option name's current value via
+// "show-options -gqv name". -q matters: without it, querying an option that
+// was never set exits 1 with "invalid option" - the case on every first
+// dashboard launch after a tmux restart, before anything has ever written it
+// (verified on tmux 3.7c). Empty output means unset, not a query failure, so
+// callers get ("", nil) rather than having to distinguish the two.
+func (t *Tmux) GlobalOption(name string) (string, error) {
+	execCommand := cmd.CommandParams{
+		Command: constants.Tmux,
+		Args:    []string{"show-options", "-gqv", name},
+	}
+	stdout, _, err := t.Base.ExecCommand(execCommand)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
+// SetGlobalOption sets the tmux server-global option name to value via
+// "set-option -g name value".
+func (t *Tmux) SetGlobalOption(name, value string) error {
+	return t.ExecuteCommand("set-option", "-g", name, value)
+}
+
+// RenameSession renames tmux session old to newName via
+// "rename-session -t old newName". tmux itself rejects a name already in use
+// with "duplicate session: <name>", which this simply propagates.
+func (t *Tmux) RenameSession(old, newName string) error {
+	return t.ExecuteCommand("rename-session", "-t", old, newName)
 }
 
 // maxSendKeysBytes is the largest send-keys payload guaranteed to reach a
@@ -840,6 +950,13 @@ func (t *Tmux) SendKeysToWindowInSession(session, window, keys string) error {
 // KillSession terminates a tmux session
 func (t *Tmux) KillSession(name string) error {
 	return t.ExecuteCommand("kill-session", "-t", name)
+}
+
+// KillPane closes the pane identified by paneID (a tmux pane_id like "%12").
+// tmux closes the window with its last pane. Pane IDs are unique server-wide,
+// so, unlike a name, this cannot hit a different window or misparse.
+func (t *Tmux) KillPane(paneID string) error {
+	return t.ExecuteCommand("kill-pane", "-t", paneID)
 }
 
 // HasSession checks if a session exists

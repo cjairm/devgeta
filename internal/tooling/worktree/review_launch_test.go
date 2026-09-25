@@ -90,6 +90,11 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 	mockTmuxBase := commands.NewMockBaseCommand()
 	mockTmuxBase.SetExecCommandResults(
 		commands.ExecCommandResult("", "", nil), // WindowSession (LaunchReviewInRepo's own check)
+		commands.ExecCommandResult(
+			"",
+			"",
+			nil,
+		), // list-panes -a (repoSessionFromLivePanes, no live window)
 		commands.ExecCommandResult("", "", nil), // show-options (paneShell, no answer)
 		commands.ExecCommandResult("", "", nil), // HasSession -> true (nil err)
 		commands.ExecCommandResult("", "", nil), // CreateWindowInSession: new-window + review cmd
@@ -101,7 +106,7 @@ func TestLaunchReviewNoLiveWindowUsesEnsureWindowCreatePath(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	wantOrder := []string{"list-windows", "show-options", "has-session", "new-window"}
+	wantOrder := []string{"list-windows", "list-panes", "show-options", "has-session", "new-window"}
 	gotOrder := tmuxCommandOrder(mockTmuxBase)
 	if len(gotOrder) != len(wantOrder) {
 		t.Fatalf("expected %v, got %v", wantOrder, gotOrder)

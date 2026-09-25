@@ -30,6 +30,14 @@ type Palette struct {
 	Selected lip.Style // bg ANSI 4, fg ANSI 15, bold
 	Armed    lip.Style // bg ANSI 1, fg ANSI 15
 
+	// Soft-bar row selection (ws dashboard layout B): a subtle background
+	// raise plus a colored "▌" edge marker, rather than Selected's solid
+	// block - so a row's own glyph color stays visible instead of being
+	// swept into one uniform selection color. Kept separate from Selected,
+	// which other TUIs (e.g. inventory) still use as-is.
+	SoftSelected lip.Style // bg ANSI 8
+	SelectedBar  lip.Style // bold ANSI 3 - the "▌" glyph itself
+
 	// Tabs
 	TabActive   lip.Style // bold + underline + ANSI 15
 	TabInactive lip.Style // ANSI 8
@@ -83,6 +91,9 @@ func NewPalette() *Palette {
 
 		Selected: lip.NewStyle().Background(lip.Color("4")).Foreground(lip.Color("15")),
 		Armed:    lip.NewStyle().Background(lip.Color("1")).Foreground(lip.Color("15")),
+
+		SoftSelected: lip.NewStyle().Background(lip.Color("8")),
+		SelectedBar:  lip.NewStyle().Bold(true).Foreground(lip.Color("3")),
 
 		TabActive:   lip.NewStyle().Bold(true).Underline(true).Foreground(lip.Color("15")),
 		TabInactive: lip.NewStyle().Foreground(lip.Color("8")),

@@ -28,6 +28,7 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 		height:         40,
 		prTitles:       map[string]string{},
 		prTitlePending: map[string]bool{},
+		diffStats:      map[string]task.BranchStatsResult{},
 	}
 	m.diffFn = func(_ string) (task.BranchDiffResult, error) {
 		return task.BranchDiffResult{Content: "diff content", Files: 1, Added: 5, Removed: 2}, nil
@@ -39,11 +40,14 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.windowSessionFn = func(_ string) (string, bool) { return "", false }
 	m.clearAgentStateFn = func(_ string) error { return nil }
 	m.currentSessionFn = func() (string, bool) { return "", false }
+	m.originWindowFn = func() (string, bool) { return "", false }
+	m.killPaneFn = func(_ string) error { return nil }
 	m.createSessionFn = func(_, _ string) error { return nil }
 	m.switchToSessionFn = func(_ string) error { return nil }
 	m.switchToPaneFn = func(_, _, _ string) error { return nil }
 	m.clearAgentStateForPaneFn = func(_ string) error { return nil }
 	m.killSessionFn = func(_ string) error { return nil }
+	m.renameSessionFn = func(_, _ string) error { return nil }
 	m.hasSessionFn = func(_ string) bool { return true }
 	m.listSessionNamesFn = func() ([]string, error) { return nil, nil }
 	m.repoCandidatesFn = func(_ string) ([]string, error) { return nil, nil }
@@ -143,7 +147,7 @@ func testStatuses() []worktree.WorktreeStatus {
 
 func TestBuildRowsGrouping(t *testing.T) {
 	statuses := testStatuses()
-	rows := buildRows(statuses, nil, map[string]bool{}, "")
+	rows := buildRows(statuses, nil, nil, map[string]bool{}, "")
 	// Should have: repo-a header, feature-a, feature-b, repo-b header, feature-x
 	if len(rows) != 5 {
 		t.Fatalf("expected 5 rows, got %d", len(rows))
@@ -188,7 +192,7 @@ func sessionsLayer(sessions []worktree.SessionStatus) worktree.StateLayer {
 }
 
 func TestBuildRowsRepoHeaderWorktreeCount(t *testing.T) {
-	rows := buildRows(testStatuses(), nil, map[string]bool{}, "")
+	rows := buildRows(testStatuses(), nil, nil, map[string]bool{}, "")
 	if rows[0].kind != rowRepo || rows[0].repo != "repo-a" {
 		t.Fatal("expected first row to be repo-a header")
 	}
@@ -204,7 +208,7 @@ func TestBuildRowsRepoHeaderWorktreeCount(t *testing.T) {
 	// Collapsing a repo must not change its header's worktree count — the
 	// count describes the repo's children, not what's currently rendered.
 	collapsed := map[string]bool{"repo-a": true}
-	rowsCollapsed := buildRows(testStatuses(), nil, collapsed, "")
+	rowsCollapsed := buildRows(testStatuses(), nil, nil, collapsed, "")
 	if rowsCollapsed[0].kind != rowRepo || rowsCollapsed[0].worktreeCount != 2 {
 		t.Errorf("collapsed repo-a header should still report worktreeCount=2, got %d",
 			rowsCollapsed[0].worktreeCount)
@@ -221,7 +225,7 @@ func TestBuildRowsRepoHeaderAggregatesAgentState(t *testing.T) {
 		{Name: "feature-b", Repo: "repo-a", AgentState: worktree.AgentStateIdle},
 		{Name: "feature-x", Repo: "repo-b", AgentState: ""},
 	}
-	rows := buildRows(statuses, nil, map[string]bool{}, "")
+	rows := buildRows(statuses, nil, nil, map[string]bool{}, "")
 	if rows[0].kind != rowRepo || rows[0].repo != "repo-a" {
 		t.Fatal("expected first row to be repo-a header")
 	}
@@ -248,7 +252,7 @@ func TestBuildRowsRepoHeaderAggregatesAgentState(t *testing.T) {
 	// Collapsing must not change the aggregation — it describes the repo's
 	// children, not what's currently rendered.
 	collapsed := map[string]bool{"repo-a": true}
-	rowsCollapsed := buildRows(statuses, nil, collapsed, "")
+	rowsCollapsed := buildRows(statuses, nil, nil, collapsed, "")
 	if rowsCollapsed[0].agentState != worktree.AgentStateBlocked {
 		t.Errorf(
 			"collapsed repo-a header should still aggregate to %q, got %q",
@@ -258,14 +262,17 @@ func TestBuildRowsRepoHeaderAggregatesAgentState(t *testing.T) {
 }
 
 func TestBuildRowsSessionsAppendedAsLeavesAfterRepos(t *testing.T) {
-	rows := buildRows(testStatuses(), testSessions(), map[string]bool{}, "")
-	// repo-a header, feature-a, feature-b, repo-b header, feature-x, then
-	// sessions alpha-sorted: notes, scratch.
-	if len(rows) != 7 {
-		t.Fatalf("expected 7 rows (5 worktree rows + 2 sessions), got %d", len(rows))
+	rows := buildRows(testStatuses(), testSessions(), nil, map[string]bool{}, "")
+	// repo-a header, feature-a, feature-b, repo-b header, feature-x, then a
+	// dim "sessions" header, then sessions alpha-sorted: notes, scratch.
+	if len(rows) != 8 {
+		t.Fatalf(
+			"expected 8 rows (5 worktree rows + sessions header + 2 sessions), got %d",
+			len(rows),
+		)
 	}
 	for i := range 5 {
-		if rows[i].kind == rowSession {
+		if rows[i].kind == rowSession || rows[i].kind == rowSessionsHeader {
 			t.Fatalf(
 				"row %d: session rows must come after all repo groups, got session at index %d",
 				i,
@@ -273,25 +280,31 @@ func TestBuildRowsSessionsAppendedAsLeavesAfterRepos(t *testing.T) {
 			)
 		}
 	}
-	if rows[5].kind != rowSession || rows[5].session.Name != "notes" {
-		t.Errorf("expected row 5 to be session 'notes' (alpha-sorted), got kind=%d name=%q",
-			rows[5].kind, rows[5].session.Name)
+	if rows[5].kind != rowSessionsHeader {
+		t.Errorf("expected row 5 to be the sessions header, got kind=%d", rows[5].kind)
 	}
-	if rows[6].kind != rowSession || rows[6].session.Name != "scratch" {
-		t.Errorf("expected row 6 to be session 'scratch', got kind=%d name=%q",
+	if rows[6].kind != rowSession || rows[6].session.Name != "notes" {
+		t.Errorf("expected row 6 to be session 'notes' (alpha-sorted), got kind=%d name=%q",
 			rows[6].kind, rows[6].session.Name)
+	}
+	if rows[7].kind != rowSession || rows[7].session.Name != "scratch" {
+		t.Errorf("expected row 7 to be session 'scratch', got kind=%d name=%q",
+			rows[7].kind, rows[7].session.Name)
 	}
 }
 
 func TestBuildRowsSessionsWithNoWorktrees(t *testing.T) {
 	// Sessions must appear even when there are zero repos/worktrees.
-	rows := buildRows(nil, testSessions(), map[string]bool{}, "")
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 session rows, got %d", len(rows))
+	rows := buildRows(nil, testSessions(), nil, map[string]bool{}, "")
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 rows (sessions header + 2 sessions), got %d", len(rows))
 	}
-	for _, r := range rows {
+	if rows[0].kind != rowSessionsHeader {
+		t.Errorf("expected the sessions header first, got kind=%d", rows[0].kind)
+	}
+	for _, r := range rows[1:] {
 		if r.kind != rowSession {
-			t.Errorf("expected only session rows, got kind=%d", r.kind)
+			t.Errorf("expected only session rows after the header, got kind=%d", r.kind)
 		}
 		if r.repo != "" {
 			t.Errorf("session row must not carry a repo, got %q", r.repo)
@@ -303,7 +316,7 @@ func TestBuildRowsSessionRowUnaffectedByCollapse(t *testing.T) {
 	// Collapsing every repo must not hide or alter session rows — sessions
 	// have no expand/collapse state of their own.
 	collapsed := map[string]bool{"repo-a": true, "repo-b": true}
-	rows := buildRows(testStatuses(), testSessions(), collapsed, "")
+	rows := buildRows(testStatuses(), testSessions(), nil, collapsed, "")
 	var sessionCount int
 	for _, r := range rows {
 		if r.kind == rowSession {
@@ -318,18 +331,21 @@ func TestBuildRowsSessionRowUnaffectedByCollapse(t *testing.T) {
 func TestBuildRowsFilterMatchesSessionNames(t *testing.T) {
 	// Judgment call: filter matches session names too, consistent with the
 	// dashboard reading as one unified/filterable list.
-	rows := buildRows(testStatuses(), testSessions(), map[string]bool{}, "notes")
-	if len(rows) != 1 {
+	rows := buildRows(testStatuses(), testSessions(), nil, map[string]bool{}, "notes")
+	if len(rows) != 2 {
 		t.Fatalf(
-			"expected filter 'notes' to leave only the matching session row, got %d rows",
+			"expected filter 'notes' to leave only the sessions header + matching session row, got %d rows",
 			len(rows),
 		)
 	}
-	if rows[0].kind != rowSession || rows[0].session.Name != "notes" {
+	if rows[0].kind != rowSessionsHeader {
+		t.Errorf("expected the sessions header first, got kind=%d", rows[0].kind)
+	}
+	if rows[1].kind != rowSession || rows[1].session.Name != "notes" {
 		t.Errorf(
 			"expected the 'notes' session row, got kind=%d name=%q",
-			rows[0].kind,
-			rows[0].session.Name,
+			rows[1].kind,
+			rows[1].session.Name,
 		)
 	}
 }
@@ -371,8 +387,8 @@ func TestSelectedStatusFalseForSessionRow(t *testing.T) {
 // TestRenderLeftSessionRowShowsName is a regression test for a bug caught in
 // review: with rowSession falling through to the rowWorktree render branch,
 // a populated m.sessions rendered as a blank name with a stray "└" connector
-// (r.status is zero-valued for a session row). renderLeft now has its own
-// (placeholder, pending Step 7) rowSession branch that renders r.session.Name.
+// (r.status is zero-valued for a session row). renderLeft has its own
+// rowSession branch that renders r.session.Name.
 func TestRenderLeftSessionRowShowsName(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.sessions = testSessions()
@@ -384,6 +400,36 @@ func TestRenderLeftSessionRowShowsName(t *testing.T) {
 	}
 	if !strings.Contains(out, "scratch") {
 		t.Errorf("expected renderLeft output to contain session name %q, got:\n%s", "scratch", out)
+	}
+}
+
+// TestRenderLeftRepoSessionRowShowsName is the rowRepoSession twin of the
+// test above (ADR-0052, Step 7): it must render r.repoSession.Name through
+// its own branch rather than falling through to the rowWorktree one, whose
+// zero-valued r.status would render a blank name and a stray "└" connector.
+func TestRenderLeftRepoSessionRowShowsName(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "repo-a", Name: "repo-a-tien"}}
+	m.rebuildRows()
+
+	out := ansi.Strip(m.renderLeft(40))
+	var ownLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "repo-a-tien") {
+			ownLine = line
+		}
+	}
+	if ownLine == "" {
+		t.Fatalf(
+			"expected renderLeft output to contain repo-session name %q, got:\n%s",
+			"repo-a-tien", out,
+		)
+	}
+	if strings.Contains(ownLine, "└") {
+		t.Errorf(
+			"expected no stray worktree tree-connector on the repo-session row itself, got %q",
+			ownLine,
+		)
 	}
 }
 
@@ -413,7 +459,7 @@ func TestBuildRowsPaneRowsForQualifyingWorktree(t *testing.T) {
 			},
 		},
 	}
-	rows := buildRows(statuses, nil, map[string]bool{}, "")
+	rows := buildRows(statuses, nil, nil, map[string]bool{}, "")
 	if len(rows) != 4 {
 		t.Fatalf("expected 4 rows (repo header + worktree + 2 panes), got %d: %+v", len(rows), rows)
 	}
@@ -453,18 +499,25 @@ func TestBuildRowsPaneRowsForQualifyingSession(t *testing.T) {
 			},
 		},
 	}
-	rows := buildRows(nil, sessions, map[string]bool{}, "")
-	if len(rows) != 3 {
-		t.Fatalf("expected 3 rows (session + 2 panes), got %d: %+v", len(rows), rows)
+	rows := buildRows(nil, sessions, nil, map[string]bool{}, "")
+	if len(rows) != 4 {
+		t.Fatalf(
+			"expected 4 rows (sessions header + session + 2 panes), got %d: %+v",
+			len(rows),
+			rows,
+		)
 	}
-	if rows[0].kind != rowSession {
-		t.Fatalf("expected row 0 to be the session, got %+v", rows[0])
+	if rows[0].kind != rowSessionsHeader {
+		t.Fatalf("expected row 0 to be the sessions header, got %+v", rows[0])
 	}
-	if rows[1].kind != rowPane || rows[1].pane.PaneID != "%1" {
-		t.Errorf("expected row 1 to be pane %%1 right after the session row, got %+v", rows[1])
+	if rows[1].kind != rowSession {
+		t.Fatalf("expected row 1 to be the session, got %+v", rows[1])
 	}
-	if rows[2].kind != rowPane || rows[2].pane.PaneID != "%2" {
-		t.Errorf("expected row 2 to be pane %%2, got %+v", rows[2])
+	if rows[2].kind != rowPane || rows[2].pane.PaneID != "%1" {
+		t.Errorf("expected row 2 to be pane %%1 right after the session row, got %+v", rows[2])
+	}
+	if rows[3].kind != rowPane || rows[3].pane.PaneID != "%2" {
+		t.Errorf("expected row 3 to be pane %%2, got %+v", rows[3])
 	}
 }
 
@@ -495,7 +548,7 @@ func TestBuildRowsPaneRowsIncludeAllPanesNotJustStateful(t *testing.T) {
 			},
 		},
 	}
-	rows := buildRows(statuses, nil, map[string]bool{}, "")
+	rows := buildRows(statuses, nil, nil, map[string]bool{}, "")
 	var paneIDs []string
 	for _, r := range rows {
 		if r.kind == rowPane {
@@ -528,7 +581,7 @@ func TestBuildRowsNoPaneRowsBelowThreshold(t *testing.T) {
 				},
 			},
 		}
-		rows := buildRows(statuses, nil, map[string]bool{}, "")
+		rows := buildRows(statuses, nil, nil, map[string]bool{}, "")
 		for _, r := range rows {
 			if r.kind == rowPane {
 				t.Errorf("expected no pane rows with 0 stateful panes, got %+v", rows)
@@ -545,7 +598,7 @@ func TestBuildRowsNoPaneRowsBelowThreshold(t *testing.T) {
 				},
 			},
 		}
-		rows := buildRows(nil, sessions, map[string]bool{}, "")
+		rows := buildRows(nil, sessions, nil, map[string]bool{}, "")
 		for _, r := range rows {
 			if r.kind == rowPane {
 				t.Errorf("expected no pane rows with only 1 stateful pane, got %+v", rows)
@@ -556,14 +609,14 @@ func TestBuildRowsNoPaneRowsBelowThreshold(t *testing.T) {
 
 // TestBuildRowsPaneRowsCollapsedByKey verifies that setting a qualifying
 // parent's collapse key to true in the collapsed map suppresses its pane
-// rows, for both the "worktree:<TmuxWindow>" and "session:<Name>" key
-// schemes.
+// rows, for both the "wt:<Path>" and "sess:<Name>" key schemes (rowKey, B5).
 func TestBuildRowsPaneRowsCollapsedByKey(t *testing.T) {
 	t.Run("worktree collapse key", func(t *testing.T) {
 		statuses := []worktree.WorktreeStatus{
 			{
 				Name:       "feature-a",
 				Repo:       "repo-a",
+				Path:       "/repos/repo-a/feature-a",
 				TmuxWindow: "wt-feature-a",
 				Panes: []tmux.PaneState{
 					{PaneID: "%1", State: worktree.AgentStateBusy},
@@ -571,12 +624,12 @@ func TestBuildRowsPaneRowsCollapsedByKey(t *testing.T) {
 				},
 			},
 		}
-		collapsed := map[string]bool{"worktree:wt-feature-a": true}
-		rows := buildRows(statuses, nil, collapsed, "")
+		collapsed := map[string]bool{"wt:/repos/repo-a/feature-a": true}
+		rows := buildRows(statuses, nil, nil, collapsed, "")
 		for _, r := range rows {
 			if r.kind == rowPane {
 				t.Errorf(
-					"expected no pane rows when worktree:wt-feature-a is collapsed, got %+v",
+					"expected no pane rows when wt:/repos/repo-a/feature-a is collapsed, got %+v",
 					rows,
 				)
 			}
@@ -593,24 +646,29 @@ func TestBuildRowsPaneRowsCollapsedByKey(t *testing.T) {
 				},
 			},
 		}
-		collapsed := map[string]bool{"session:notes": true}
-		rows := buildRows(nil, sessions, collapsed, "")
+		collapsed := map[string]bool{"sess:notes": true}
+		rows := buildRows(nil, sessions, nil, collapsed, "")
 		for _, r := range rows {
 			if r.kind == rowPane {
-				t.Errorf("expected no pane rows when session:notes is collapsed, got %+v", rows)
+				t.Errorf("expected no pane rows when sess:notes is collapsed, got %+v", rows)
 			}
 		}
 	})
 }
 
-// TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide verifies ADR-0008's
-// rationale for the "session:" prefix: a repo named "shared" and a standalone
-// session also named "shared" use disjoint collapse-map keys (bare "shared"
-// for the repo, "session:shared" for the session's pane expansion), so
-// collapsing one can never affect the other.
+// TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide verifies rowKey's
+// prefixes (B5): a repo named "shared" and a standalone session also named
+// "shared" use disjoint collapse-map keys ("repo:shared" for the repo,
+// "sess:shared" for the session's pane expansion), so collapsing one can
+// never affect the other.
 func TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
-		{Name: "feature-a", Repo: "shared", TmuxWindow: "wt-feature-a"},
+		{
+			Name:       "feature-a",
+			Repo:       "shared",
+			Path:       "/repos/shared/feature-a",
+			TmuxWindow: "wt-feature-a",
+		},
 	}
 	sessions := []worktree.SessionStatus{
 		{Name: "shared", Panes: qualifyingPanes()},
@@ -634,8 +692,8 @@ func TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide(t *testing.T) {
 	}
 
 	t.Run("collapsing the repo leaves the session's pane expansion untouched", func(t *testing.T) {
-		collapsed := map[string]bool{"shared": true}
-		rows := buildRows(statuses, sessions, collapsed, "")
+		collapsed := map[string]bool{"repo:shared": true}
+		rows := buildRows(statuses, sessions, nil, collapsed, "")
 
 		if hasRepoWorktreeRow(rows) {
 			t.Error("expected repo 'shared' collapse to hide its worktree row, but it is present")
@@ -649,8 +707,8 @@ func TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide(t *testing.T) {
 	})
 
 	t.Run("collapsing the session leaves the repo's worktree row untouched", func(t *testing.T) {
-		collapsed := map[string]bool{"session:shared": true}
-		rows := buildRows(statuses, sessions, collapsed, "")
+		collapsed := map[string]bool{"sess:shared": true}
+		rows := buildRows(statuses, sessions, nil, collapsed, "")
 
 		if !hasRepoWorktreeRow(rows) {
 			t.Error(
@@ -660,7 +718,7 @@ func TestBuildRowsRepoAndSessionCollapseKeysDoNotCollide(t *testing.T) {
 		}
 		if hasSessionPaneRows(rows) {
 			t.Error(
-				"expected session 'shared' pane rows to be hidden once session:shared is collapsed",
+				"expected session 'shared' pane rows to be hidden once sess:shared is collapsed",
 			)
 		}
 	})
@@ -960,8 +1018,11 @@ func TestPaneRowShowsGuidanceInsteadOfStaleDiff(t *testing.T) {
 	if strings.Contains(got, "stale diff content") {
 		t.Errorf("pane row must not render a stale worktree diff, got %q", got)
 	}
-	if !strings.Contains(got, "no diff") {
-		t.Errorf("expected pane guidance text, got %q", got)
+	// Layout B draws nothing on a pane row rather than an explanatory
+	// sentence (step 10) - the hint bar and help popup already say what a
+	// pane row does.
+	if got != "" {
+		t.Errorf("expected a blank right pane on a pane row, got %q", got)
 	}
 }
 
@@ -1039,7 +1100,7 @@ func TestArrowKeysDoNotMoveCursorWhileFiltering(t *testing.T) {
 func TestFoldHide(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	// Collapse repo-a
-	m.collapsed["repo-a"] = true
+	m.collapsed[repoKey("repo-a")] = true
 	m.rebuildRows()
 	// Should have: repo-a header, repo-b header, feature-x
 	if len(m.rows) != 3 {
@@ -1543,8 +1604,10 @@ func TestSessionRowShowsGuidanceInsteadOfStaleDiff(t *testing.T) {
 	if strings.Contains(got, "stale diff content") {
 		t.Errorf("session row must not render a stale worktree diff, got %q", got)
 	}
-	if !strings.Contains(got, "no diff") {
-		t.Errorf("expected session guidance text, got %q", got)
+	// Layout B draws nothing on a session row rather than an explanatory
+	// sentence (step 10).
+	if got != "" {
+		t.Errorf("expected a blank right pane on a session row, got %q", got)
 	}
 }
 
@@ -1589,7 +1652,15 @@ func TestNarrowTerminalNoPanic(t *testing.T) {
 // toggle on a comfortably wide terminal, where safeMaxLeft() never binds.
 func TestToggleLeftPaneWidthDefaultAndWide(t *testing.T) {
 	m := makeTestModel(testStatuses())
-	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	// A real dashboard starts at defaultLeftPaneWidth (newModel); makeTestModel
+	// seeds minLeftPaneWidth instead purely as a test fixture convenience, and
+	// a resize now CLAMPS the existing width rather than resetting it to a
+	// default/wide target (ADR-0050), so it must be set explicitly here.
+	m.leftPaneWidth = defaultLeftPaneWidth
+	// Wide enough that safeMaxLeft() (60% of width) comfortably clears the
+	// wide target (defaultLeftPaneWidth*2 = 80): this test's whole point is
+	// that neither toggle target clamps here.
+	m2, _ := m.Update(tea.WindowSizeMsg{Width: 240, Height: 40})
 	m3 := m2.(Model)
 	if m3.leftPaneWidth != defaultLeftPaneWidth {
 		t.Fatalf(
@@ -1601,18 +1672,12 @@ func TestToggleLeftPaneWidthDefaultAndWide(t *testing.T) {
 
 	m4, _ := m3.Update(tea.KeyPressMsg{Code: 'e'})
 	m5 := m4.(Model)
-	if !m5.leftPaneWide {
-		t.Error("expected leftPaneWide to be true after first e press")
-	}
 	if want := defaultLeftPaneWidth * 2; m5.leftPaneWidth != want {
 		t.Errorf("expected wide left pane width %d, got %d", want, m5.leftPaneWidth)
 	}
 
 	m6, _ := m5.Update(tea.KeyPressMsg{Code: 'e'})
 	m7 := m6.(Model)
-	if m7.leftPaneWide {
-		t.Error("expected leftPaneWide to be false after second e press")
-	}
 	if m7.leftPaneWidth != defaultLeftPaneWidth {
 		t.Errorf(
 			"expected default left pane width %d after second e press, got %d",
@@ -1630,6 +1695,11 @@ func TestToggleLeftPaneWidthDefaultAndWide(t *testing.T) {
 // leave rightPaneWidth() at 0 with no way back.
 func TestToggleLeftPaneWidthNarrowTerminalClampsBothTargets(t *testing.T) {
 	m := makeTestModel(testStatuses())
+	// See TestToggleLeftPaneWidthDefaultAndWide: a resize clamps the existing
+	// width rather than resetting it, so the starting width must be the real
+	// default for this test's own premise (defaultLeftPaneWidth, above
+	// safeMaxLeft() at width 36) to hold.
+	m.leftPaneWidth = defaultLeftPaneWidth
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 36, Height: 20})
 	m3 := m2.(Model)
 
@@ -1668,11 +1738,12 @@ func TestToggleLeftPaneWidthNarrowTerminalClampsBothTargets(t *testing.T) {
 	}
 }
 
-// TestToggleLeftPaneWidthAfterMouseDrag exercises the reason leftPaneWide is
-// a bool rather than a width comparison: a mouse drag can leave leftPaneWidth
-// at an arbitrary value that matches neither toggle target, and e must still
-// flip to the correct target from the bool's own state, not from comparing
-// against the dragged width.
+// TestToggleLeftPaneWidthAfterMouseDrag covers ADR-0050's replacement for the
+// old leftPaneWide bool: e now compares leftPaneWidth against the default
+// target directly, with no separate flag to drift from a mouse-dragged
+// width. A drag to a width that isn't exactly the default is "not at the
+// default," so e snaps it back to the default rather than assuming the next
+// step in some remembered default<->wide cycle.
 func TestToggleLeftPaneWidthAfterMouseDrag(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
@@ -1688,34 +1759,23 @@ func TestToggleLeftPaneWidthAfterMouseDrag(t *testing.T) {
 			m5.leftPaneWidth,
 		)
 	}
-	if m5.leftPaneWide {
-		t.Fatal("drag alone must not flip leftPaneWide")
-	}
 
-	// leftPaneWide is still false, so e must move to the wide target, not
-	// toggle back to default just because 50 happens to be closer to it.
 	m6, _ := m5.Update(tea.KeyPressMsg{Code: 'e'})
 	m7 := m6.(Model)
-	if !m7.leftPaneWide {
-		t.Error("expected leftPaneWide to become true after e post-drag")
-	}
-	if want := defaultLeftPaneWidth * 2; m7.leftPaneWidth != want {
+	if m7.leftPaneWidth != defaultLeftPaneWidth {
 		t.Errorf(
-			"expected e to move the dragged width to the wide target %d, got %d",
-			want,
+			"expected e to snap the dragged width to the default %d, got %d",
+			defaultLeftPaneWidth,
 			m7.leftPaneWidth,
 		)
 	}
 }
 
-// TestWindowSizeMsgDiscardsADraggedWidth pins a maintainer-decided behavior
-// (see model.go's leftPaneTarget comment): a terminal resize re-derives
-// leftPaneWidth from the e-toggle's bool and discards any width the user set
-// by dragging the divider, rather than clamping the dragged value. This is a
-// real user-visible change from the previous behavior and was escalated to
-// the maintainer, who decided to keep it - this test is the guard against an
-// accidental revert to clamp-instead-of-replace.
-func TestWindowSizeMsgDiscardsADraggedWidth(t *testing.T) {
+// TestResizeClampsButKeepsADraggedWidth is ADR-0050's explicit reversal of
+// the dashboard's old behavior: width is a single saved number now, so a
+// terminal resize must only keep it in bounds, never discard it back to a
+// default/wide target the way the e-toggle's bool used to force.
+func TestResizeClampsButKeepsADraggedWidth(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m2, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	m3 := m2.(Model)
@@ -1728,13 +1788,21 @@ func TestWindowSizeMsgDiscardsADraggedWidth(t *testing.T) {
 		t.Fatalf("expected drag to set left pane width to 50, got %d", m5.leftPaneWidth)
 	}
 
-	m6, _ := m5.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	// A resize that still comfortably fits 50 must leave it untouched.
+	m6, _ := m5.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
 	m7 := m6.(Model)
-	if want := m7.leftPaneTarget(); m7.leftPaneWidth != want {
+	if m7.leftPaneWidth != 50 {
+		t.Errorf("expected a resize to keep the dragged width 50, got %d", m7.leftPaneWidth)
+	}
+
+	// A resize too narrow for 50 clamps it down, but never below minLeftPaneWidth.
+	m8, _ := m7.Update(tea.WindowSizeMsg{Width: 60, Height: 30})
+	m9 := m8.(Model)
+	if want := m9.safeMaxLeft(); m9.leftPaneWidth != want {
 		t.Errorf(
-			"expected WindowSizeMsg to discard the dragged width 50 and re-derive %d, got %d",
+			"expected the too-narrow resize to clamp to safeMaxLeft() %d, got %d",
 			want,
-			m7.leftPaneWidth,
+			m9.leftPaneWidth,
 		)
 	}
 }
@@ -2050,9 +2118,11 @@ func TestSessionsLoadErrorPreservesLastGoodSessionsAndWarnsStatus(t *testing.T) 
 
 // --- Step 7: status dot, chevron/badge, hint bar, help ---
 
-func TestRenderLeftRepoHeaderShowsTreeCountBadge(t *testing.T) {
-	// testStatuses(): repo-a has 2 worktrees, repo-b has 1 - exercises both
-	// the plural and singular badge wording.
+// TestRenderLeftRepoHeaderIsBoldNameOnly is layout B's repo header
+// (ADR-0052/step 10): an expanded header is just the name, padded to width -
+// no status dot and no "N trees" count badge. The count only ever shows up
+// once the header is collapsed (see TestRenderLeftCollapsedRepoHeaderShowsChevronAndCount).
+func TestRenderLeftRepoHeaderIsBoldNameOnly(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	out := ansi.Strip(m.renderLeft(40))
 	lines := strings.Split(out, "\n")
@@ -2069,25 +2139,20 @@ func TestRenderLeftRepoHeaderShowsTreeCountBadge(t *testing.T) {
 			repoBLine = lines[i]
 		}
 	}
-	if !strings.Contains(repoALine, "2 trees") {
-		t.Errorf("expected repo-a header to show '2 trees' badge, got %q", repoALine)
+	for _, badge := range []string{"2 trees", "1 tree", "○", "●", "◆", "!", "✕"} {
+		if strings.Contains(repoALine, badge) {
+			t.Errorf(
+				"expected no status dot or count badge on an expanded header, found %q in %q",
+				badge,
+				repoALine,
+			)
+		}
 	}
-	if !strings.Contains(repoBLine, "1 tree") {
-		t.Errorf("expected repo-b header to show '1 tree' badge (singular), got %q", repoBLine)
+	if !strings.Contains(repoALine, "repo-a") {
+		t.Errorf("expected repo-a's name in its header line, got %q", repoALine)
 	}
-	if strings.Contains(repoBLine, "1 trees") {
-		t.Errorf("expected repo-b header to use singular 'tree', not plural, got %q", repoBLine)
-	}
-
-	// Regression guard: testStatuses() sets no AgentState anywhere, so both
-	// headers must aggregate to "" and render the dim "no session" glyph
-	// (○) rather than a false "running" green dot - and the dot column must
-	// not throw off the right-aligned badge (line width still == 40).
-	if !strings.Contains(repoALine, "○") {
-		t.Errorf("expected repo-a header with no reporting children to show ○, got %q", repoALine)
-	}
-	if !strings.Contains(repoBLine, "○") {
-		t.Errorf("expected repo-b header with no reporting children to show ○, got %q", repoBLine)
+	if !strings.Contains(repoBLine, "repo-b") {
+		t.Errorf("expected repo-b's name in its header line, got %q", repoBLine)
 	}
 	if w := ansi.StringWidth(repoALine); w != 40 {
 		t.Errorf("expected repo-a header line width 40, got %d (%q)", w, repoALine)
@@ -2097,12 +2162,53 @@ func TestRenderLeftRepoHeaderShowsTreeCountBadge(t *testing.T) {
 	}
 }
 
+// TestRenderLeftCollapsedRepoHeaderShowsChevronAndCount covers the other
+// half: a collapsed header shows "▸ name  N", where N is the number of
+// worktrees hidden under it - still no status dot.
+func TestRenderLeftCollapsedRepoHeaderShowsChevronAndCount(t *testing.T) {
+	m := makeTestModel(testStatuses()) // repo-a has 2 worktrees
+	m.collapsed[repoKey("repo-a")] = true
+	m.rebuildRows()
+
+	var repoALine string
+	for i, r := range m.rows {
+		if r.kind == rowRepo && r.repo == "repo-a" {
+			repoALine = ansi.Strip(strings.Split(m.renderLeft(40), "\n")[i])
+		}
+	}
+	if !strings.Contains(repoALine, "▸") {
+		t.Errorf("expected the collapsed chevron ▸, got %q", repoALine)
+	}
+	if !strings.Contains(repoALine, "repo-a") {
+		t.Errorf("expected repo-a's name, got %q", repoALine)
+	}
+	if !strings.Contains(repoALine, "2") {
+		t.Errorf("expected the bare hidden-worktree count 2, got %q", repoALine)
+	}
+	if strings.Contains(repoALine, "tree") {
+		t.Errorf("expected a bare number, not the old 'N trees' wording, got %q", repoALine)
+	}
+	for _, dot := range []string{"○", "●", "◆", "!", "✕"} {
+		if strings.Contains(repoALine, dot) {
+			t.Errorf(
+				"expected no status dot on a collapsed header either, found %q in %q",
+				dot,
+				repoALine,
+			)
+		}
+	}
+}
+
 // TestRenderLeftRepoHeaderShowsAgentStateGlyph verifies ADR-0008 Step 6: a
 // collapsed repo header aggregates its children's AgentState (via
 // worktree.AggregateAgentState / buildRows) and renders the resulting glyph,
 // so collapsing a repo with a blocked worktree still shows "!" instead of
 // hiding it.
-func TestRenderLeftRepoHeaderShowsAgentStateGlyph(t *testing.T) {
+// TestRenderLeftCollapsedRepoHeaderNeverShowsAgentStateGlyph documents
+// layout B's removal of the header's status dot (ADR-0052/step 10): a
+// blocked child used to surface "!" on a collapsed header (ADR-0008 §6);
+// that glyph is gone from the header entirely now, collapsed or not.
+func TestRenderLeftCollapsedRepoHeaderNeverShowsAgentStateGlyph(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
 		{
 			Name:         "feature-a",
@@ -2118,7 +2224,7 @@ func TestRenderLeftRepoHeaderShowsAgentStateGlyph(t *testing.T) {
 		},
 	}
 	m := makeTestModel(statuses)
-	m.collapsed = map[string]bool{"repo-a": true}
+	m.collapsed = map[string]bool{repoKey("repo-a"): true}
 	m.rebuildRows()
 
 	out := ansi.Strip(m.renderLeft(40))
@@ -2131,17 +2237,20 @@ func TestRenderLeftRepoHeaderShowsAgentStateGlyph(t *testing.T) {
 	}
 
 	repoLine := lines[0]
-	if !strings.Contains(repoLine, "!") {
+	if strings.Contains(repoLine, "!") {
 		t.Errorf(
-			"expected collapsed repo-a header with a blocked child to show '!', got %q",
+			"expected no agent-state glyph on the header even with a blocked child, got %q",
 			repoLine,
 		)
 	}
 	if w := ansi.StringWidth(repoLine); w != 40 {
 		t.Errorf("expected repo header line width 40, got %d (%q)", w, repoLine)
 	}
-	if !strings.Contains(repoLine, "2 trees") {
-		t.Errorf("expected collapsed repo-a header to still show '2 trees' badge, got %q", repoLine)
+	if !strings.Contains(repoLine, "2") {
+		t.Errorf(
+			"expected the collapsed header to show the hidden-worktree count 2, got %q",
+			repoLine,
+		)
 	}
 }
 
@@ -2182,11 +2291,13 @@ func TestRenderLeftSessionRowShowsGlyphAndLabel(t *testing.T) {
 			scratchLine,
 		)
 	}
-	if !strings.Contains(notesLine, "session") {
-		t.Errorf("expected session row to show the 'session' label, got %q", notesLine)
+	// The trailing "session" label is gone (ADR-0052/step 10): standalone
+	// sessions read as a group under the dim "sessions" header instead.
+	if strings.Contains(notesLine, "session") {
+		t.Errorf("expected no trailing 'session' label on the row, got %q", notesLine)
 	}
-	if !strings.Contains(scratchLine, "session") {
-		t.Errorf("expected session row to show the 'session' label, got %q", scratchLine)
+	if strings.Contains(scratchLine, "session") {
+		t.Errorf("expected no trailing 'session' label on the row, got %q", scratchLine)
 	}
 }
 
@@ -2199,7 +2310,7 @@ func TestRenderLeftSessionRowCursorAndArmedStyling(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.sessions = testSessions()
 	m.rebuildRows()
-	selectedPrefix := strings.SplitN(m.palette.Selected.Render("X"), "X", 2)[0]
+	softSelectedPrefix := strings.SplitN(m.palette.SoftSelected.Render("X"), "X", 2)[0]
 	armedPrefix := strings.SplitN(m.palette.Armed.Render("X"), "X", 2)[0]
 
 	idx := -1
@@ -2215,10 +2326,18 @@ func TestRenderLeftSessionRowCursorAndArmedStyling(t *testing.T) {
 
 	rawLines := strings.Split(m.renderLeft(40), "\n")
 	selectedLine := rawLines[idx]
-	if !strings.Contains(selectedLine, selectedPrefix) {
+	// Layout B's soft-bar selection (ADR-0052/step 10), not the old solid
+	// Selected block - the armed-delete red is unchanged (checked below).
+	if !strings.Contains(selectedLine, softSelectedPrefix) {
 		t.Errorf(
-			"expected cursor-selected (non-armed) session row to use the Selected style, got %q",
+			"expected cursor-selected (non-armed) session row to use the soft-bar style, got %q",
 			selectedLine,
+		)
+	}
+	if !strings.Contains(ansi.Strip(selectedLine), "▌") {
+		t.Errorf(
+			"expected the selected row's yellow ▌ edge marker, got %q",
+			ansi.Strip(selectedLine),
 		)
 	}
 	if strings.Contains(selectedLine, armedPrefix) {
@@ -2329,10 +2448,10 @@ func TestRenderLeftSessionRowShowsAgentStateGlyph(t *testing.T) {
 					tc.agentState, notesLine,
 				)
 			}
-			// The "session" label must survive the glyph swap.
-			if !strings.Contains(notesLine, "session") {
+			// The trailing "session" label is gone (ADR-0052/step 10).
+			if strings.Contains(notesLine, "session") {
 				t.Errorf(
-					"expected session row to still show the 'session' label, got %q",
+					"expected no trailing 'session' label, got %q",
 					notesLine,
 				)
 			}
@@ -2343,8 +2462,8 @@ func TestRenderLeftSessionRowShowsAgentStateGlyph(t *testing.T) {
 // TestRenderLeftSessionRowAgentStateSelectedStyling mirrors
 // TestRenderLeftSessionRowCursorAndArmedStyling but for a session that has
 // reported an agent state: the cursor branch must swap in StatusGlyph while
-// still nesting inside the Selected style, and the Armed (pending-kill)
-// styling must behave the same regardless of agent state.
+// still nesting inside the soft-bar selection style, and the Armed
+// (pending-kill) styling must behave the same regardless of agent state.
 func TestRenderLeftSessionRowAgentStateSelectedStyling(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.sessions = []worktree.SessionStatus{
@@ -2363,7 +2482,7 @@ func TestRenderLeftSessionRowAgentStateSelectedStyling(t *testing.T) {
 	}
 	m.cursor = idx
 
-	selectedPrefix := strings.SplitN(m.palette.Selected.Render("X"), "X", 2)[0]
+	softSelectedPrefix := strings.SplitN(m.palette.SoftSelected.Render("X"), "X", 2)[0]
 	armedPrefix := strings.SplitN(m.palette.Armed.Render("X"), "X", 2)[0]
 
 	rawLines := strings.Split(m.renderLeft(40), "\n")
@@ -2372,8 +2491,8 @@ func TestRenderLeftSessionRowAgentStateSelectedStyling(t *testing.T) {
 	if !strings.Contains(strippedLine, "◆") {
 		t.Errorf("expected idle session row to show ◆ when selected, got %q", strippedLine)
 	}
-	if !strings.Contains(selectedLine, selectedPrefix) {
-		t.Errorf("expected selected session row to use the Selected style, got %q", selectedLine)
+	if !strings.Contains(selectedLine, softSelectedPrefix) {
+		t.Errorf("expected selected session row to use the soft-bar style, got %q", selectedLine)
 	}
 
 	m.pendingKillSession = "notes"
@@ -2493,7 +2612,7 @@ func TestRenderLeftWorktreeRowAgentStateSelectedAndStyling(t *testing.T) {
 			}
 
 			m.cursor = wtIdx
-			selectedPrefix := strings.SplitN(m.palette.Selected.Render("X"), "X", 2)[0]
+			softSelectedPrefix := strings.SplitN(m.palette.SoftSelected.Render("X"), "X", 2)[0]
 
 			// Render and check the stripped output contains the expected glyph
 			rawLines := strings.Split(m.renderLeft(40), "\n")
@@ -2514,11 +2633,11 @@ func TestRenderLeftWorktreeRowAgentStateSelectedAndStyling(t *testing.T) {
 				)
 			}
 
-			// Check that the raw output contains the Selected style prefix,
-			// proving the glyph was successfully nested inside Selected.Render()
-			if !strings.Contains(rawLine, selectedPrefix) {
+			// Check that the raw output contains the soft-selected style
+			// prefix, proving the glyph was successfully nested inside it.
+			if !strings.Contains(rawLine, softSelectedPrefix) {
 				t.Errorf(
-					"agent state %q (selected): expected Selected style prefix in raw output, got %q",
+					"agent state %q (selected): expected soft-selected style prefix in raw output, got %q",
 					tc.agentState,
 					rawLine,
 				)
@@ -2585,11 +2704,17 @@ func TestRenderHintShowsArmedKillSessionHint(t *testing.T) {
 	}
 }
 
-func TestRenderHintDefaultListIncludesNewSession(t *testing.T) {
+// TestRenderHintDefaultListIsLayoutBsFiveKeys pins the default hint bar's
+// exact, minimal content (ADR-0052/step 10): everything else - new session,
+// review, width toggle, diff refresh, fold, and more - stays reachable from
+// ? instead of competing for space here (see the corresponding
+// TestRenderHelpPopupIncludes* tests below for those).
+func TestRenderHintDefaultListIsLayoutBsFiveKeys(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	out := ansi.Strip(m.renderHint(200))
-	if !strings.Contains(out, "new session") {
-		t.Errorf("expected default hint bar to include 's: new session', got %q", out)
+	want := "↵ open · n new · d delete · / filter · ? help"
+	if out != want {
+		t.Errorf("expected the default hint bar %q, got %q", want, out)
 	}
 }
 
@@ -2613,56 +2738,6 @@ func TestRenderHelpPopupIncludesSessionKeys(t *testing.T) {
 	}
 }
 
-func TestRenderHintDefaultListIncludesReview(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	out := ansi.Strip(m.renderHint(200))
-	if !strings.Contains(out, "R") {
-		t.Errorf("expected default hint bar to include 'R: review', got %q", out)
-	}
-	if !strings.Contains(out, "review") {
-		t.Errorf("expected default hint bar to include 'R: review', got %q", out)
-	}
-}
-
-// TestRenderHintWidthConstraintAt80 documents the actual, verified behavior of
-// the default hint bar at 80 columns: HintBar joins every "key desc" pair with
-// " · " and truncates the WHOLE joined string to the given width (see
-// hintbar.go). Summing the pre-existing ~14 entries' character counts already
-// exceeds 150 characters, well past 80 — so the hint bar was ALREADY
-// truncating well before "q" (and several other entries) at 80 columns,
-// before this task ever touched it. The new "R" entry lands even further into
-// the already-invisible-at-80 tail, so it also does not appear at width 80.
-// This is a pre-existing limitation of HintBar's truncate-the-whole-string
-// design, not something this task's "R" addition caused or is responsible for
-// fixing (fixing it is explicitly out of this task's scope per the brief).
-func TestRenderHintWidthConstraintAt80(t *testing.T) {
-	m := makeTestModel(testStatuses())
-
-	out80 := ansi.Strip(m.renderHint(80))
-	if out80 == "" {
-		t.Fatal("expected non-empty hint bar at width 80")
-	}
-	// Verified actual output at width 80: the string is truncated mid-word
-	// before reaching "d", "D", "r", "R", "/", "?", or "q" — so the new "R
-	// review" entry does not appear. This is expected, pre-existing
-	// truncation, not a regression from adding "R".
-	if strings.Contains(out80, "R review") {
-		t.Errorf(
-			"expected 'R review' to be truncated away at width 80 (pre-existing hint bar overflow), but it was present: %q",
-			out80,
-		)
-	}
-
-	// At a comfortably wide width (matching the sibling tests), the "R"
-	// entry IS present — this is the width where the feature is actually
-	// usable/discoverable, and it's the meaningful regression-catching
-	// assertion for this task.
-	out200 := ansi.Strip(m.renderHint(200))
-	if !strings.Contains(out200, "R review") {
-		t.Errorf("expected default hint bar at width 200 to include 'R review', got %q", out200)
-	}
-}
-
 func TestRenderHelpPopupIncludesReview(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	out := ansi.Strip(m.renderHelpPopup())
@@ -2674,14 +2749,6 @@ func TestRenderHelpPopupIncludesReview(t *testing.T) {
 	}
 }
 
-func TestRenderHintDefaultListIncludesWidthToggle(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	out := ansi.Strip(m.renderHint(200))
-	if !strings.Contains(out, "e width") {
-		t.Errorf("expected default hint bar to include 'e width', got %q", out)
-	}
-}
-
 func TestRenderHelpPopupIncludesWidthToggle(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	out := ansi.Strip(m.renderHelpPopup())
@@ -2690,15 +2757,12 @@ func TestRenderHelpPopupIncludesWidthToggle(t *testing.T) {
 	}
 }
 
-// ctrl+r is bound in both key handlers (ADR-0024 §3), so both hint bars have to
-// advertise it — an undocumented refresh key is the same as no refresh key.
-func TestRenderHintIncludesDiffRefreshInBothModes(t *testing.T) {
+// ctrl+r is bound in both key handlers (ADR-0024 §3). The diff-focused hint
+// bar still advertises it directly; the list one dropped to layout B's five
+// keys (step 10) and leaves it to the help popup instead (see
+// TestRenderHelpPopupIncludesDiffRefresh below).
+func TestRenderHintDiffFocusedIncludesDiffRefresh(t *testing.T) {
 	m := makeTestModel(testStatuses())
-
-	if out := ansi.Strip(m.renderHint(200)); !strings.Contains(out, "^r refresh") {
-		t.Errorf("expected the list hint bar to include '^r refresh', got %q", out)
-	}
-
 	m.diffFocused = true
 	if out := ansi.Strip(m.renderHint(200)); !strings.Contains(out, "^r refresh") {
 		t.Errorf("expected the diff-focused hint bar to include '^r refresh', got %q", out)
@@ -2773,7 +2837,7 @@ func paneRowTestSessions() []worktree.SessionStatus {
 
 func TestLExpandsCollapsedQualifyingWorktreeRow(t *testing.T) {
 	m := makeTestModel(paneRowTestStatuses())
-	key := "worktree:wt-feature-a"
+	key := "wt:/tmp/a"
 	m.collapsed[key] = true
 	m.rebuildRows()
 	if m.rows[m.cursor].kind != rowWorktree {
@@ -2805,7 +2869,7 @@ func TestHCollapsesExpandedQualifyingWorktreeRowCursorStays(t *testing.T) {
 	mi, _ := m.Update(tea.KeyPressMsg{Code: 'h'})
 	m2 := mi.(Model)
 
-	key := "worktree:wt-feature-a"
+	key := "wt:/tmp/a"
 	if !m2.collapsed[key] {
 		t.Error("expected the worktree pane key to be collapsed (true) after h")
 	}
@@ -2837,7 +2901,7 @@ func TestHOnPaneRowCollapsesParentAndMovesCursorToParent(t *testing.T) {
 	mi, _ = m.Update(tea.KeyPressMsg{Code: 'h'})
 	m2 := mi.(Model)
 
-	key := "worktree:wt-feature-a"
+	key := "wt:/tmp/a"
 	if !m2.collapsed[key] {
 		t.Error("expected the worktree pane key to be collapsed after h on a pane row")
 	}
@@ -2854,7 +2918,7 @@ func TestHOnPaneRowCollapsesParentAndMovesCursorToParent(t *testing.T) {
 func TestLExpandsCollapsedQualifyingSessionRow(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = paneRowTestSessions()
-	key := "session:notes"
+	key := "sess:notes"
 	m.collapsed[key] = true
 	m.rebuildRows()
 	if m.rows[m.cursor].kind != rowSession {
@@ -2888,7 +2952,7 @@ func TestHCollapsesExpandedQualifyingSessionRowCursorStays(t *testing.T) {
 	mi, _ := m.Update(tea.KeyPressMsg{Code: 'h'})
 	m2 := mi.(Model)
 
-	key := "session:notes"
+	key := "sess:notes"
 	if !m2.collapsed[key] {
 		t.Error("expected the session pane key to be collapsed (true) after h")
 	}
@@ -2900,18 +2964,18 @@ func TestHCollapsesExpandedQualifyingSessionRowCursorStays(t *testing.T) {
 // TestHOnNonQualifyingWorktreeOnlyCollapsesRepo is a regression guard: a
 // worktree row that doesn't qualify for pane rows (fewer than 2 stateful
 // panes, or none at all here) must fall through to the existing repo-collapse
-// behavior unchanged, and must never write a "worktree:"/"session:" key into
+// behavior unchanged, and must never write a "wt:"/"sess:" key into
 // the collapsed map.
 func TestHOnNonQualifyingWorktreeOnlyCollapsesRepo(t *testing.T) {
 	m := makeTestModel(testStatuses()) // no Panes set on any status
 	mi, _ := m.Update(tea.KeyPressMsg{Code: 'h'})
 	m2 := mi.(Model)
 
-	if !m2.collapsed["repo-a"] {
+	if !m2.collapsed[repoKey("repo-a")] {
 		t.Error("expected repo-a to be collapsed (existing behavior)")
 	}
 	for k := range m2.collapsed {
-		if strings.HasPrefix(k, "worktree:") || strings.HasPrefix(k, "session:") {
+		if strings.HasPrefix(k, "wt:") || strings.HasPrefix(k, "sess:") {
 			t.Errorf(
 				"did not expect a pane-parent collapse key to be set for a non-qualifying row, got %q",
 				k,
@@ -2937,7 +3001,7 @@ func TestLOnNonQualifyingWorktreeOnlyAffectsRepo(t *testing.T) {
 	mi, _ = m.Update(tea.KeyPressMsg{Code: 'l'})
 	m2 := mi.(Model)
 
-	if m2.collapsed["repo-a"] {
+	if m2.collapsed[repoKey("repo-a")] {
 		t.Error("expected repo-a to be expanded (existing behavior)")
 	}
 	if m2.rows[m2.cursor].kind != rowWorktree || m2.rows[m2.cursor].status.Repo != "repo-a" {
@@ -2947,7 +3011,7 @@ func TestLOnNonQualifyingWorktreeOnlyAffectsRepo(t *testing.T) {
 		)
 	}
 	for k := range m2.collapsed {
-		if strings.HasPrefix(k, "worktree:") || strings.HasPrefix(k, "session:") {
+		if strings.HasPrefix(k, "wt:") || strings.HasPrefix(k, "sess:") {
 			t.Errorf(
 				"did not expect a pane-parent collapse key to be set for a non-qualifying row, got %q",
 				k,
@@ -3009,6 +3073,7 @@ func TestRenderLeftWorktreeRowShowsChevronWhenQualifying(t *testing.T) {
 		{
 			Name:       "feature-a",
 			Repo:       "repo-a",
+			Path:       "/tmp/feature-a",
 			TmuxWindow: "wt-feature-a",
 			Panes:      qualifyingPanes(),
 		},
@@ -3039,7 +3104,7 @@ func TestRenderLeftWorktreeRowShowsChevronWhenQualifying(t *testing.T) {
 		t.Errorf("expected worktree row line width 40, got %d (%q)", w, line)
 	}
 
-	m.collapsed["worktree:wt-feature-a"] = true
+	m.collapsed["wt:/tmp/feature-a"] = true
 	m.rebuildRows()
 	out2 := ansi.Strip(m.renderLeft(40))
 	line2 := findWorktreeLine(strings.Split(out2, "\n"))
@@ -3090,7 +3155,7 @@ func TestRenderLeftSessionRowShowsChevronWhenQualifying(t *testing.T) {
 		t.Errorf("expected session row line width 40, got %d (%q)", w, line)
 	}
 
-	m.collapsed["session:notes"] = true
+	m.collapsed["sess:notes"] = true
 	m.rebuildRows()
 	out2 := ansi.Strip(m.renderLeft(40))
 	line2 := findSessionLine(strings.Split(out2, "\n"))

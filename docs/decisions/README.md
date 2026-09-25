@@ -72,3 +72,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0050](ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md) — Dashboard view state lives in a tmux server option
 - [ADR-0051](ADR-0051-worktree-rows-carry-a-diffstat-from-the-slow-refresh.md) — Worktree rows carry a diffstat from the slow refresh
 - [ADR-0052](ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md) — A repo header is a label, and its sessions are rows
+- [ADR-0053](ADR-0053-removing-a-worktree-never-loses-work-unless-forced.md) — Removing a worktree never loses work unless forced

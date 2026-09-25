@@ -3349,3 +3349,48 @@ func TestCreateWorktreeFetchIsBoundedAndNonInteractive(t *testing.T) {
 		t.Errorf("expected GIT_TERMINAL_PROMPT=0 in Env, got %v", fetch.Env)
 	}
 }
+
+func TestUnpushedCommitCount(t *testing.T) {
+	t.Run("excludes remotes and the local default branch", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("3\n", "", nil)
+		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		n, err := app.UnpushedCommitCount("/wt", "main")
+		if err != nil || n != 3 {
+			t.Fatalf("expected (3, nil), got (%d, %v)", n, err)
+		}
+		want := []string{"-C", "/wt", "rev-list", "--count", "HEAD", "--not", "--remotes", "refs/heads/main"}
+		if got := mockApp.Base.GetLastExecCommandCall().Args; strings.Join(got, " ") != strings.Join(want, " ") {
+			t.Errorf("args = %v, want %v", got, want)
+		}
+	})
+
+	t.Run("no default branch excludes remotes only", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("0", "", nil)
+		app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if _, err := app.UnpushedCommitCount("/wt", ""); err != nil {
+			t.Fatal(err)
+		}
+		args := mockApp.Base.GetLastExecCommandCall().Args
+		if last := args[len(args)-1]; last != "--remotes" {
+			t.Errorf("expected --remotes last, got %v", args)
+		}
+	})
+
+	t.Run("a failed or garbled answer is an error, never zero", func(t *testing.T) {
+		for _, tc := range []struct {
+			out string
+			err error
+		}{{"", errors.New("boom")}, {"not a number", nil}} {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult(tc.out, "", tc.err)
+			app := &Git{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			if _, err := app.UnpushedCommitCount("/wt", "main"); err == nil {
+				t.Errorf("expected an error for output %q / err %v", tc.out, tc.err)
+			}
+		}
+	})
+}

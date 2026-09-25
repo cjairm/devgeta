@@ -1560,9 +1560,13 @@ func TestSessionWindows(t *testing.T) {
 }
 
 func TestSwitchToWindow(t *testing.T) {
-	t.Run("calls switch-client then select-window", func(t *testing.T) {
+	t.Run("resolves the window id, then switch-client and select-window by id", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResult("", "", nil)
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@1\tzsh\n@4\twt-feature", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 		err := app.SwitchToWindow("my-session", "wt-feature")
@@ -1570,14 +1574,58 @@ func TestSwitchToWindow(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		calls := mockApp.Base.GetExecCommandCallCount()
-		if calls != 2 {
-			t.Fatalf("expected 2 calls (switch-client + select-window), got %d", calls)
+		if calls != 3 {
+			t.Fatalf(
+				"expected 3 calls (list-windows + switch-client + select-window), got %d",
+				calls,
+			)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil || !slices.Equal(last.Args, []string{"select-window", "-t", "@4"}) {
+			t.Errorf("expected select-window -t @4, got %v", last)
+		}
+	})
+
+	// tmux reads "." in a target as window.pane, so "my-session:2.1.282"
+	// fails with "can't find pane: 1.282". Claude Code's process title is its
+	// version, which automatic-rename copies into the window name.
+	t.Run("targets a dotted window name by id", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@2\t2.1\n@3\t2.1.282", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SwitchToWindow("my-session", "2.1.282"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last == nil || !slices.Equal(last.Args, []string{"select-window", "-t", "@3"}) {
+			t.Errorf("expected select-window -t @3, got %v", last)
+		}
+	})
+
+	t.Run("does not move the client when the window is missing", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("@1\tzsh", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.SwitchToWindow("my-session", "wt-feature"); err == nil {
+			t.Fatal("expected error for a window that does not exist")
+		}
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+			t.Errorf("expected only the list-windows call, got %d calls", calls)
 		}
 	})
 
 	t.Run("returns error when switch-client fails", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResult("", "error", errors.New("no client"))
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@4\twt-feature", "", nil),
+			commands.ExecCommandResult("", "error", errors.New("no client")),
+		)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 		err := app.SwitchToWindow("bad-session", "wt-feature")
@@ -2712,7 +2760,12 @@ func TestClearAgentStateForWindow(t *testing.T) {
 func TestSwitchToPane(t *testing.T) {
 	t.Run("switches session, selects window, then selects pane", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResult("", "", nil)
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@4\twt-feature", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+			commands.ExecCommandResult("", "", nil),
+		)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err != nil {
@@ -2720,23 +2773,23 @@ func TestSwitchToPane(t *testing.T) {
 		}
 
 		calls := mockApp.Base.ExecCommandCalls
-		if len(calls) != 3 {
+		if len(calls) != 4 {
 			t.Fatalf(
-				"expected 3 calls (switch-client + select-window + select-pane), got %d: %+v",
+				"expected 4 calls (list-windows + switch-client + select-window + select-pane), got %d: %+v",
 				len(calls),
 				calls,
 			)
 		}
-		if calls[0].Args[0] != "switch-client" {
-			t.Errorf("call[0] = %v, want switch-client", calls[0].Args)
+		if calls[1].Args[0] != "switch-client" {
+			t.Errorf("call[1] = %v, want switch-client", calls[1].Args)
 		}
-		if calls[1].Args[0] != "select-window" {
-			t.Errorf("call[1] = %v, want select-window", calls[1].Args)
+		if calls[2].Args[0] != "select-window" {
+			t.Errorf("call[2] = %v, want select-window", calls[2].Args)
 		}
-		if calls[2].Args[0] != "select-pane" {
-			t.Errorf("call[2] = %v, want select-pane", calls[2].Args)
+		if calls[3].Args[0] != "select-pane" {
+			t.Errorf("call[3] = %v, want select-pane", calls[3].Args)
 		}
-		lastArg := calls[2].Args[len(calls[2].Args)-1]
+		lastArg := calls[3].Args[len(calls[3].Args)-1]
 		if lastArg != "%12" {
 			t.Errorf("select-pane target = %q, want %%12", lastArg)
 		}
@@ -2744,20 +2797,24 @@ func TestSwitchToPane(t *testing.T) {
 
 	t.Run("stops before select-window when switch-client fails", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
-		mockApp.Base.SetExecCommandResult("", "error", errors.New("no server"))
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@4\twt-feature", "", nil),
+			commands.ExecCommandResult("", "error", errors.New("no server")),
+		)
 		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err == nil {
 			t.Fatal("expected error when switch-client fails")
 		}
-		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
-			t.Fatalf("expected 1 call (switch-client only), got %d", calls)
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 2 {
+			t.Fatalf("expected 2 calls (list-windows + switch-client), got %d", calls)
 		}
 	})
 
 	t.Run("stops before select-pane when select-window fails", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("@4\twt-feature", "", nil),
 			commands.ExecCommandResult("", "", nil),
 			commands.ExecCommandResult("", "error", errors.New("no such window")),
 		)
@@ -2766,8 +2823,8 @@ func TestSwitchToPane(t *testing.T) {
 		if err := app.SwitchToPane("my-session", "wt-feature", "%12"); err == nil {
 			t.Fatal("expected error when select-window fails")
 		}
-		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 2 {
-			t.Fatalf("expected 2 calls (switch-client + select-window), got %d", calls)
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 3 {
+			t.Fatalf("expected 3 calls (list-windows + switch-client + select-window), got %d", calls)
 		}
 	})
 }
@@ -2956,4 +3013,75 @@ func TestClearAgentStateForPane(t *testing.T) {
 			t.Fatalf("expected 1 call (scan only), got %d", calls)
 		}
 	})
+}
+
+func TestOriginWindow(t *testing.T) {
+	// Typed into an existing shell: that shell is the pane's first process,
+	// so the dashboard's own window is where the user is.
+	t.Run("a program typed into a shell reports its own window", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("500\twt-repo-feature", "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		got, ok := app.OriginWindow("%3", 777)
+		if !ok || got != "wt-repo-feature" {
+			t.Errorf("expected (wt-repo-feature, true), got (%q, %v)", got, ok)
+		}
+		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 1 {
+			t.Errorf("expected 1 tmux call, got %d", calls)
+		}
+	})
+
+	// Launched as the window's own command (ctrl+t's new-window): the user
+	// came from the session's previously active window.
+	t.Run("a program that owns its window reports the last window", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("777\t[workspace]", "", nil),
+			commands.ExecCommandResult("0\t2.1.282\n1\twt-repo-feature\n0\t[workspace]", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		got, ok := app.OriginWindow("%3", 777)
+		if !ok || got != "wt-repo-feature" {
+			t.Errorf("expected (wt-repo-feature, true), got (%q, %v)", got, ok)
+		}
+	})
+
+	t.Run("no last window means no answer", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("777\t[workspace]", "", nil),
+			commands.ExecCommandResult("0\t[workspace]", "", nil),
+		)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if got, ok := app.OriginWindow("%3", 777); ok {
+			t.Errorf("expected no answer, got %q", got)
+		}
+	})
+
+	t.Run("a failed query means no answer", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "error", errors.New("no server"))
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if got, ok := app.OriginWindow("%3", 777); ok {
+			t.Errorf("expected no answer, got %q", got)
+		}
+	})
+}
+
+func TestKillPane(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult("", "", nil)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.KillPane("%12"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	last := mockApp.Base.GetLastExecCommandCall()
+	if last == nil || !slices.Equal(last.Args, []string{"kill-pane", "-t", "%12"}) {
+		t.Errorf("expected kill-pane -t %%12, got %v", last)
+	}
 }
