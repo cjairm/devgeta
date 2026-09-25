@@ -706,6 +706,16 @@ deletes it anyway` — and `F` `F` is the one forced delete, with an armed hint 
 will be lost. A delete removes the branch git reports for the worktree, never one derived from
 the row's flattened name.
 
+**The dashboard opens on its last worktree list.** Each successful git load and diffstat
+sweep is saved to `$XDG_CACHE_HOME/devgeta/ws-snapshot.json`, and the next open draws those
+rows immediately instead of `(loading...)` while the normal loads run and replace them
+([ADR-0054](decisions/ADR-0054-the-dashboard-opens-on-its-last-worktree-list.md)). Only git
+fields (repo, name, path, branch) and diffstats are saved; tmux state always comes from the
+live scan: one scan runs before the first frame, so the cursor already opens on the row for
+the session you're in instead of jumping there. A worktree removed outside the dashboard shows
+until the first git load lands. The "no worktrees yet" message still waits for that real load.
+Deleting the file only costs one slow first frame.
+
 **View state is saved** across the dashboard closing and reopening — which folds are
 collapsed and the left-pane width — in one tmux server-global option, `@dg_ws_state`
 ([ADR-0050](decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md)). It

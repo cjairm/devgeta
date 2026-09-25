@@ -202,7 +202,8 @@ type Model struct {
 	// window by name. Replaced wholesale per scan, exactly like sessions above.
 	plainWindowBySession map[string]string
 	loaded               bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
-	sessionsLoaded       bool // true once a session scan has been classified against a loaded worktree list (see applySessions); placeCursorOnActive waits for it
+	seeded               bool // true once the saved snapshot (ADR-0054) filled m.statuses before git answered; a guess good enough to classify sessions and place the cursor against, never a substitute for loaded
+	sessionsLoaded       bool // true once a session scan has been classified against a known worktree list - loaded or seeded (see applySessions); placeCursorOnActive waits for it
 	cursorPlaced         bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
 	rows                 []row
 	cursor               int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
@@ -383,6 +384,10 @@ type Model struct {
 	// wired in newModel like every other injected seam.
 	defaultBranchFn func(path string) string
 	branchStatsFn   func(path, defaultBranch string) (task.BranchStatsResult, error)
+	// saveSnapshotFn writes the saved worktree snapshot (ADR-0054);
+	// writeSnapshotFile in production, nil (no write) in a test model that
+	// doesn't wire one.
+	saveSnapshotFn func(data []byte) error
 }
 
 func newModel(
@@ -452,6 +457,15 @@ func newModel(
 		return task.BranchStatsAt(gitApp, path, defaultBranch)
 	}
 	m.setGlobalOptionFn = tmuxApp.SetGlobalOption
+	// Read synchronously rather than in an Init command (ADR-0054): the first
+	// frame then already has rows and the cursor on the user's session, and a
+	// snapshot can never land after the first tmux scan and wipe the pane
+	// layer it applied. A missing file is the normal first-run case, not an
+	// error. Wired after currentSessionFn/originWindowFn, which placement reads.
+	m.saveSnapshotFn = writeSnapshotFile
+	if data, err := readSnapshotFile(); err == nil {
+		m.primeFirstFrame(data, mgr.ScanTmuxState)
+	}
 	// listSessionNamesFn feeds the blank-name auto-namer's collision check: it
 	// needs every session on the tmux server (not just the standalone ones the
 	// dashboard shows), so it goes through tmuxApp.ListSessions directly rather
@@ -698,8 +712,10 @@ func (m Model) sessionsLoadCmd(gen int) tea.Cmd {
 // load has landed: before that m.statuses is empty because nothing has filled
 // it yet, not because there are no worktrees, and reading those apart is the
 // difference between hiding a repo's session correctly and listing it twice.
+// A seeded snapshot (ADR-0054) counts too: it is the last list git gave, far
+// closer to the truth than "unknown", and the first real load re-classifies.
 func (m Model) worktreeWindows() worktree.WorktreeWindows {
-	if !m.loaded {
+	if !m.loaded && !m.seeded {
 		return worktree.UnknownWorktreeWindows()
 	}
 	return worktree.LiveWorktreeWindows(m.statuses)
@@ -1023,10 +1039,39 @@ func (m *Model) applySessions(sessions []worktree.SessionStatus) {
 	// no worktree windows to match, so it built no repo-session rows, and
 	// placing the cursor on it would miss the session the user is in. The
 	// first worktree load re-dispatches a scan, and that one completes it.
-	if m.loaded {
+	// A seeded snapshot is a worktree list to match against as well (ADR-0054).
+	if m.loaded || m.seeded {
 		m.sessionsLoaded = true
 	}
 	m.refreshView()
+}
+
+// applyScanLayer applies a tmux scan's pane half: the pane layer on the
+// worktree rows, each session's plain window, and the repo-session rows
+// (ADR-0052). All three are read straight off this scan's panes and cannot
+// race a session mutation the way a wholesale session-list replacement can,
+// so callers apply this unconditionally, before any gen check.
+//
+// Repo/Name (what the classification reads) are git-derived and untouched by
+// ApplyTo, so classifying off the just-applied m.statuses or the pre-apply
+// one is equivalent - see ApplyTo.
+func (m *Model) applyScanLayer(layer worktree.StateLayer) {
+	m.statuses = layer.ApplyTo(m.statuses)
+	backed := m.worktreeWindows()
+	m.plainWindowBySession = layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
+	m.repoSessions = worktree.RepoSessionStatuses(
+		m.statuses,
+		layer,
+		backed,
+		os.Getenv("TMUX_PANE"),
+	)
+}
+
+// applySessionScan applies a whole scan - pane half and session list - for a
+// caller that has already checked its gen stamp.
+func (m *Model) applySessionScan(layer worktree.StateLayer) {
+	m.applyScanLayer(layer)
+	m.applySessions(layer.SessionStatuses(m.worktreeWindows()))
 }
 
 // dropWorktree returns statuses without the repo/name row, leaving the input
@@ -1098,25 +1143,35 @@ func (m *Model) dispatchSessionsLoad() tea.Cmd {
 // sessions hold repo windows, so its rows lack the repo-session row the user
 // is most likely sitting in.
 func (m *Model) placeCursorOnActive() {
-	if m.cursorPlaced || !m.loaded || !m.sessionsLoaded {
+	if m.cursorPlaced || !m.sessionsLoaded || (!m.loaded && !m.seeded) {
 		return
 	}
-	// From here this runs exactly once, so it either lands on the current
-	// session's row or gives up for good — a missing match means the session
-	// genuinely isn't in the dashboard, not that rows are still filling in.
-	m.cursorPlaced = true
+	i, ok := m.activeRow()
+	if ok {
+		m.cursor = i
+	}
+	// Against real rows this runs exactly once: it lands or gives up for good,
+	// since a miss means the session genuinely isn't in the dashboard. Against
+	// snapshot rows (ADR-0054) only a hit is final - a miss may just mean the
+	// snapshot is behind git, so the real load gets its own try.
+	m.cursorPlaced = ok || m.loaded
+}
+
+// activeRow finds the row for the session this dashboard runs in, reporting
+// whether one exists.
+func (m *Model) activeRow() (int, bool) {
 	current, ok := m.currentSessionFn()
 	if !ok {
-		return
+		return 0, false
 	}
 	// The worktree the user came from wins over its session: from inside a
 	// worktree window, that worktree is where they are. Matched on the pane's
 	// real session as well, since window names can repeat across sessions.
 	if origin, ok := m.originWindowFn(); ok {
-		if m.focusWorktreeRowIn(current, func(s worktree.WorktreeStatus) bool {
+		if i, ok := m.worktreeRowIn(current, func(s worktree.WorktreeStatus) bool {
 			return s.TmuxWindow == origin
-		}) {
-			return
+		}); ok {
+			return i, true
 		}
 	}
 	// Matched by REAL session name only (B8): a repo-session row carries the
@@ -1127,31 +1182,28 @@ func (m *Model) placeCursorOnActive() {
 		switch {
 		case r.kind == rowSession && r.session.Name == current,
 			r.kind == rowRepoSession && r.repoSession.Name == current:
-			m.cursor = i
-			return
+			return i, true
 		}
 	}
 	// A session holding only worktree windows has no row of its own, so land
 	// on its first worktree row instead - that window is what the session is.
-	m.focusWorktreeRowIn(current, func(worktree.WorktreeStatus) bool { return true })
+	return m.worktreeRowIn(current, func(worktree.WorktreeStatus) bool { return true })
 }
 
-// focusWorktreeRowIn moves the cursor to the first worktree row that match
-// accepts and whose window has a pane in session, reporting whether it found
-// one.
-func (m *Model) focusWorktreeRowIn(session string, match func(worktree.WorktreeStatus) bool) bool {
+// worktreeRowIn returns the first worktree row that match accepts and whose
+// window has a pane in session, reporting whether it found one.
+func (m *Model) worktreeRowIn(session string, match func(worktree.WorktreeStatus) bool) (int, bool) {
 	for i, r := range m.rows {
 		if r.kind != rowWorktree || !match(r.status) {
 			continue
 		}
 		for _, p := range r.status.Panes {
 			if p.Session == session {
-				m.cursor = i
-				return true
+				return i, true
 			}
 		}
 	}
-	return false
+	return 0, false
 }
 
 // navigableIndices returns row indices that j/k visit: all worktree rows,
@@ -1341,12 +1393,19 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Whether this is the load that first gave the dashboard a worktree
 		// list to judge windows against — read before applyStatuses sets it.
 		firstLoad := !m.loaded
+		if firstLoad {
+			// A scan classified against the seeded snapshot (ADR-0054) was a
+			// guess this load may contradict, so cursor placement - if the
+			// snapshot rows didn't already settle it - waits for the scan
+			// re-dispatched below, exactly as it would with no snapshot.
+			m.sessionsLoaded = false
+		}
 		m.applyStatuses(msg.statuses)
 		// The diffstat sweep (ADR-0051) runs against THIS fresh list, stamped
 		// with the same generation as the load that produced it, so a
 		// snapshot a newer load has already superseded is dropped identically
 		// to statusesMsg's own check.
-		statsCmd := m.loadStatsCmd(msg.gen)
+		statsCmd := tea.Batch(m.loadStatsCmd(msg.gen), m.saveSnapshotCmd())
 		if firstLoad {
 			// Any session rows already on screen were classified without a
 			// worktree list (see worktreeWindows), so they are a guess this
@@ -1369,23 +1428,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// to whatever m.statuses holds right now. ApplyTo returns a new slice
 		// and treats its input as read-only, so this cannot disturb a list a
 		// slow load produced.
-		m.statuses = msg.layer.ApplyTo(m.statuses)
-		// Repo/Name (what the classification reads) are git-derived and
-		// untouched by ApplyTo, so taking this off the just-applied m.statuses
-		// or the pre-apply one is equivalent - see ApplyTo.
-		backed := m.worktreeWindows()
-		// Pane-derived like the line above, so it applies unconditionally too:
-		// it is read straight off this scan's panes and cannot race a session
-		// mutation the way a wholesale session-list replacement can.
-		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
-		// Repo-session rows (ADR-0052): read off this same scan, like
-		// plainWindowBySession above, so it applies unconditionally too.
-		m.repoSessions = worktree.RepoSessionStatuses(
-			m.statuses,
-			msg.layer,
-			backed,
-			os.Getenv("TMUX_PANE"),
-		)
+		m.applyScanLayer(msg.layer)
 		if msg.gen != m.sessionGen {
 			// Session half is stale — a newer scan, a session load, or a
 			// session mutation has superseded it. The pane half above still
@@ -1393,7 +1436,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshView()
 			return m, nil
 		}
-		m.applySessions(msg.layer.SessionStatuses(backed))
+		m.applySessions(msg.layer.SessionStatuses(m.worktreeWindows()))
 		return m, nil
 
 	case sessionsMsg:
@@ -1407,16 +1450,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// this is usually the message that completes the first load, and
 		// placeCursorOnActive's worktree-row fallback reads each status's
 		// Panes to find the one in the current session.
-		m.statuses = msg.layer.ApplyTo(m.statuses)
-		backed := m.worktreeWindows()
-		m.plainWindowBySession = msg.layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
-		m.repoSessions = worktree.RepoSessionStatuses(
-			m.statuses,
-			msg.layer,
-			backed,
-			os.Getenv("TMUX_PANE"),
-		)
-		m.applySessions(msg.layer.SessionStatuses(backed))
+		m.applySessionScan(msg.layer)
 		return m, nil
 
 	case deleteRefusedMsg:
@@ -1496,7 +1530,7 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.diffStats = msg.stats
-		return m, nil
+		return m, m.saveSnapshotCmd()
 
 	case prTitleMsg:
 		m.prTitles[msg.path] = msg.title
