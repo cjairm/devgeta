@@ -114,7 +114,7 @@ evidence above. Kept out even as a supplementary signal, because a pane whose ag
 never taken a turn (the `opencode` row above) is genuinely stateless, and inventing a
 "probably an agent" tier would make the dot mean two different things.
 
-> **Revision (2026-09-28, proposed with ADR-0055).** This still stands for _detecting_ an
+> **Revision (2026-09-28, with ADR-0055).** This still stands for _detecting_ an
 > agent: ADR-0055 makes the coder write its own name (`@dg_agent_kind`), and that alone
 > marks a pane as an agent. `pane_current_command` is used only to _rule a pane out_ when
 > it's back to a plain shell, which means the coder has exited and its kind is left over.

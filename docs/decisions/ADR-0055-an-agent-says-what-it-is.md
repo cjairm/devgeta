@@ -1,7 +1,7 @@
 # ADR-0055 — An agent says what it is, separately from what it's doing
 
 **Date:** 2026-09-28
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

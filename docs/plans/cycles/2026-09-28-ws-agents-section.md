@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28
 **Estimated Duration:** ~3–4 days (12 steps, most of them in the 110 KB `model.go`)
-**Status:** Draft (awaiting approval)
+**Status:** Approved (not started)
 
 Decisions: [ADR-0055](../../decisions/ADR-0055-an-agent-says-what-it-is.md) ·
 [ADR-0056](../../decisions/ADR-0056-the-dashboard-lists-agents-in-their-own-section.md) ·
@@ -115,7 +115,7 @@ tmux/Neovim.
 | Modify | `internal/tui/worktree/model.go`                                                                                                    | Two sections: cursor, scroll, folds, split, filter scope, keys, rendering                                                                                                                              |
 | Modify | `internal/tui/worktree/viewstate.go` (+ test)                                                                                       | Optional `expanded`, `agentsFolded`, `spacesFolded`, `split` fields                                                                                                                                    |
 | Modify | `configs/tmux/tmux.conf.tmpl` (+ golden, + test)                                                                                    | `is_dgws` check next to `is_vim` in the four `C-h/j/k/l` bindings                                                                                                                                      |
-| Modify | `docs/decisions/ADR-0008-…`, `docs/decisions/ADR-0050-…`                                                                            | Revision notes (already written with the proposal; flip to accepted with the ADRs)                                                                                                                     |
+| Modify | `docs/decisions/ADR-0008-…`, `docs/decisions/ADR-0050-…`                                                                            | Revision notes (written with the proposal)                                                                                                                     |
 | Modify | `docs/spec.md`, `docs/apps/claude.md`, `docs/apps/opencode.md`, `docs/guides/agent-sync.md`, `docs/recent-changes.md`, `ROADMAP.md` | Document the section, the kind option, the keys; ROADMAP line for alerts / error logs                                                                                                                  |
 
 ### Step-by-Step

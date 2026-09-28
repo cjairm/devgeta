@@ -1,7 +1,7 @@
 # ADR-0056 — The dashboard lists agents in their own section
 
 **Date:** 2026-09-28
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 

@@ -1,7 +1,7 @@
 # ADR-0057 — The dashboard takes its pane-move keys from tmux
 
 **Date:** 2026-09-28
-**Status:** PROPOSED
+**Status:** ACCEPTED
 
 ## Context
 
