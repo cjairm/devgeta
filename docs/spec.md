@@ -673,6 +673,10 @@ share the same name — and, since repo-session and standalone rows key off the 
 `sess:<name>` identity, renaming a session (see `$` below) carries its fold along.
 
 Attaching to a row, or switching to a pane (`enter`), clears its state — attaching is the user acknowledging it.
+Reaching the pane any other way counts too: the shipped tmux config clears a pane's `idle` /
+`blocked` / `error` state whenever the pane gains or loses focus, whether that came from tmux
+keys, the mouse, or `switch-client`. `busy` is never cleared this way. Without the shipped tmux
+config, only the dashboard's own `enter` clears state.
 tmux's own status bar (`configs/tmux/tmux.conf.tmpl`) separately flags any other window in the
 current session whose coder wants attention while you're looking elsewhere, so `dg ws`
 doesn't have to stay open to notice. That status bar only paints windows of the **attached**

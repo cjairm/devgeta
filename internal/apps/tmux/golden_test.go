@@ -46,13 +46,11 @@ func repoDefaultTmuxPalette(t *testing.T) (repoRoot string, p theme.Palette) {
 	return repoRoot, p
 }
 
-// TestForceConfigureTheme_MatchesGoldenRender renders the real shipped
-// tmux.conf.tmpl with the real "default" theme's real palette and compares
-// it byte-for-byte against a committed golden. A change to either the
-// template or configs/themes/default.yaml that moves the rendered output
-// fails this test rather than only "looking right" by eye; update
-// testdata/golden_tmux.conf deliberately when the change is intended.
-func TestForceConfigureTheme_MatchesGoldenRender(t *testing.T) {
+// renderShippedTmuxConf renders the real shipped tmux.conf.tmpl with the real
+// "default" theme's palette and returns the result, so tests assert against
+// what `dg configure tmux` actually writes rather than a fixture.
+func renderShippedTmuxConf(t *testing.T) []byte {
+	t.Helper()
 	repoRoot, p := repoDefaultTmuxPalette(t)
 
 	out := filepath.Join(t.TempDir(), ".tmux.conf")
@@ -71,6 +69,17 @@ func TestForceConfigureTheme_MatchesGoldenRender(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return got
+}
+
+// TestForceConfigureTheme_MatchesGoldenRender renders the real shipped
+// tmux.conf.tmpl with the real "default" theme's real palette and compares
+// it byte-for-byte against a committed golden. A change to either the
+// template or configs/themes/default.yaml that moves the rendered output
+// fails this test rather than only "looking right" by eye; update
+// testdata/golden_tmux.conf deliberately when the change is intended.
+func TestForceConfigureTheme_MatchesGoldenRender(t *testing.T) {
+	got := renderShippedTmuxConf(t)
 	goldenPath := filepath.Join("testdata", "golden_tmux.conf")
 	want, err := os.ReadFile(goldenPath)
 	if err != nil {

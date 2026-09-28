@@ -164,6 +164,37 @@ rule (clear on attach, full stop) instead of a special case that has to distingu
 because the user saw it" from "cleared even though the prompt is still open," consistent with
 how `idle` is already cleared the same way.
 
+**Revision (2026-09-28): focus acknowledges, not only `dg ws`.** Attaching from `dg ws`
+used to be the _only_ acknowledgement. Reaching an agent's pane any other way (tmux keys,
+the mouse, `switch-client`) left its state, and its status-bar flag, in place, so a
+dot you had already looked at was still there when you came back to the dashboard. The
+shipped tmux config now runs the same acknowledgement from `pane-focus-in` **and**
+`pane-focus-out`. Focus-out is there for an agent that finishes while you're watching it:
+you've seen it by the time you move on. Verified on tmux 3.7c: `pane-focus-in` fires on
+attach, `select-window`, `select-pane`, `next-window` and `switch-client`, with the
+hook's target set to the newly focused pane.
+
+The rules, and why:
+
+- Only `idle` / `blocked` / `error` are cleared. `busy` is left alone, so an agent you're
+  watching work keeps reporting that it's working. `blocked` is cleared on focus for the
+  same reason attach clears it (above): Claude Code fires no event when a permission
+  prompt is answered, so nothing else would ever lift it.
+- Only the focused pane is acknowledged, not the whole window (ADR-0008's per-pane
+  granularity). The window mirror is cleared only once no pane in that window still holds
+  a "wants you" state. The status bar only tests whether the mirror is set, so leaving it
+  set to a sibling's older value is harmless.
+- It's pure tmux (`if -F` with a `#{P:}` loop over the window's panes), with no
+  `run-shell` and no `dg` call. Hooks run without the user's shell profile, and a focus
+  hook fires on every pane move, so it must neither depend on PATH nor spawn a process.
+  The cost is that the mirror rule now exists in two places: here, and in
+  `ClearAgentStateForPane`. `dg ws` still does its own clear on attach, which keeps
+  working for users who don't run the shipped tmux config.
+
+Not covered: a terminal losing and regaining focus (switching to another app) relies on
+the terminal sending focus reports, which `focus-events on` asks for. That path was not
+exercised in the test above.
+
 ### Rejected alternatives
 
 **A window option with implicit busy** (this ADR's own first draft). Two coders in one
