@@ -74,3 +74,6 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0052](ADR-0052-a-repo-header-is-a-label-and-its-sessions-are-rows.md) — A repo header is a label, and its sessions are rows
 - [ADR-0053](ADR-0053-removing-a-worktree-never-loses-work-unless-forced.md) — Removing a worktree never loses work unless forced
 - [ADR-0054](ADR-0054-the-dashboard-opens-on-its-last-worktree-list.md) — The dashboard opens on its last worktree list
+- [ADR-0055](ADR-0055-an-agent-says-what-it-is.md) — An agent says what it is, separately from what it's doing (proposed)
+- [ADR-0056](ADR-0056-the-dashboard-lists-agents-in-their-own-section.md) — The dashboard lists agents in their own section (proposed)
+- [ADR-0057](ADR-0057-the-dashboard-takes-its-pane-move-keys-from-tmux.md) — The dashboard takes its pane-move keys from tmux (proposed)

@@ -62,6 +62,12 @@ buys little.
 one tmux call per event. The saved state only has to be right once the change
 is finished.
 
+> **Revision (2026-09-28, proposed with ADR-0056).** The value gains four optional fields,
+> still at `"v": 1`: `expanded` (repos the user unfolded although their default is folded),
+> `agentsFolded`, `spacesFolded` and `split`. `json.Unmarshal` ignores unknown fields, so
+> older binaries still read the value. The cursor is still not saved.
+> See [ADR-0056](ADR-0056-the-dashboard-lists-agents-in-their-own-section.md).
+
 ## Consequences
 
 - Easier: no file, no migration, and cleanup comes free with tmux's lifetime.

@@ -114,6 +114,14 @@ evidence above. Kept out even as a supplementary signal, because a pane whose ag
 never taken a turn (the `opencode` row above) is genuinely stateless, and inventing a
 "probably an agent" tier would make the dot mean two different things.
 
+> **Revision (2026-09-28, proposed with ADR-0055).** This still stands for _detecting_ an
+> agent: ADR-0055 makes the coder write its own name (`@dg_agent_kind`), and that alone
+> marks a pane as an agent. `pane_current_command` is used only to _rule a pane out_ when
+> it's back to a plain shell, which means the coder has exited and its kind is left over.
+> [ADR-0055](ADR-0055-an-agent-says-what-it-is.md) explains why that narrower use avoids
+> the problem above. [ADR-0056](ADR-0056-the-dashboard-lists-agents-in-their-own-section.md)
+> also removes the per-pane state glyph this ADR added; the pane rows themselves stay.
+
 **Stop keying worktree rows by window name.** Tempting after diagnosing a name-related bug,
 but the names devgeta creates are stable (explicit `-n` disables automatic-rename) and the
 worktree row's job is to exist even when no window does — it is sourced from the filesystem
