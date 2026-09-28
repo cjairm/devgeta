@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -409,7 +410,8 @@ type PaneState struct {
 	// its own version string, e.g. "2.1.283") and a stateless pane can't be
 	// told apart from a non-agent by name alone. It is only ever used to
 	// RULE ONE OUT: IsAgent treats a plain shell name (ShellCommandNames) as
-	// "the coder has gone", even if Kind is still set from before it exited.
+	// "the coder has gone", even if Kind is still set from before it exited,
+	// and only for a pane that was started as a plain shell (StartCommand).
 	CurrentCommand string
 	State          string // "@dg_agent_state" value; "" means no agent has written to this pane
 	// Kind is "@dg_agent_kind" (ADR-0055) — the coder's own word for what it
@@ -419,12 +421,19 @@ type PaneState struct {
 	// sibling pane in the same window (e.g. an editor pane in a
 	// claude-nvim layout) never picks this up from tmux's option cascade.
 	Kind string
+	// StartCommand is tmux's #{pane_start_command}: what the pane was
+	// created to run, "" for tmux's default shell. It tells a coder wrapped
+	// in `zsh -c '<coder>'` (a worktree layout pane), whose pane reports the
+	// wrapper shell as its current command for the coder's whole life, apart
+	// from an interactive shell the coder was typed into.
+	StartCommand string
 }
 
 // ShellCommandNames lists pane_current_command values that mean "a plain
 // shell is running here, not a program" — the backstop IsAgent uses to rule
 // a pane out per ADR-0055, e.g. after its coder has exited (killed before
-// its end hook ran, or before ADR-0055 shipped) but Kind is still set. Not
+// its end hook ran, or before ADR-0055 shipped) but Kind is still set - for
+// a pane started as a shell only (see startedAsShell). Not
 // exhaustive of every shell that exists, only the ones devgeta's own default
 // pane command (configs/tmux/tmux.conf.tmpl's default-command) and
 // platform installers ship.
@@ -444,7 +453,60 @@ var ShellCommandNames = map[string]bool{
 // so the second half of the rule (ruling out a plain shell) is the only
 // check this method needs to make.
 func (p PaneState) IsAgent() bool {
-	return p.Kind != "" && !ShellCommandNames[p.CurrentCommand]
+	return p.Kind != "" && !(ShellCommandNames[p.CurrentCommand] && startedAsShell(p.StartCommand))
+}
+
+// startedAsShell reports whether a pane drops back to a plain interactive
+// shell when whatever it runs exits - the only kind of pane that can show a
+// shell prompt while its coder's Kind is still set. That is tmux's default
+// (""), the shell by name or $SHELL, or a command whose last step execs one
+// (`<coder>; exec zsh`, tmux-resurrect's `cat <contents>; exec $SHELL`). A
+// pane started to run a command and nothing after (`zsh -c '<coder>'`, or
+// the coder itself) closes when it exits, so a shell as its current command
+// is the wrapper, with the coder running underneath it. tmux reports the
+// value quoted and escaped (`"\${SHELL:-/bin/zsh}"`).
+func startedAsShell(start string) bool {
+	start = strings.Trim(strings.TrimSpace(start), `"`)
+	if start == "" {
+		return true
+	}
+	last := strings.TrimSpace(lastShellStep(start))
+	last = strings.TrimSpace(strings.TrimPrefix(last, "exec "))
+	fields := strings.Fields(last)
+	if len(fields) == 0 || slices.Contains(fields, "-c") {
+		return false
+	}
+	first := strings.Trim(strings.TrimLeft(fields[0], `\`), `'"`)
+	if strings.HasPrefix(first, "$SHELL") || strings.HasPrefix(first, "${SHELL") {
+		return true
+	}
+	return ShellCommandNames[strings.TrimPrefix(filepath.Base(first), "-")]
+}
+
+// lastShellStep returns what follows the last `;` in a shell command line
+// that is not inside quotes or escaped - so a `;` in a quoted argument (a
+// coder's prompt text, say) never splits the line.
+func lastShellStep(line string) string {
+	var quote rune
+	escaped := false
+	cut := 0
+	for i, r := range line {
+		switch {
+		case escaped:
+			escaped = false
+		case r == '\\' && quote != '\'':
+			escaped = true
+		case quote != 0:
+			if r == quote {
+				quote = 0
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case r == ';':
+			cut = i + 1
+		}
+	}
+	return line[cut:]
 }
 
 // SessionWindows returns every (session, window) pair on the tmux server from
@@ -481,9 +543,9 @@ func (t *Tmux) SessionWindows() []SessionWindow {
 // Returns nil when no server is reachable or the query fails, matching SessionWindows's existing
 // tolerance for this same command.
 //
-// The agent kind being LAST in the format (added by ADR-0055, after agent
-// state) and both trailing fields being optionally empty is why a line is
-// accepted at 5, 6, or 7 fields: ExecCommand returns its stdout TrimSpace'd,
+// The start command is LAST in the format, after the agent kind (ADR-0055)
+// and agent state, and all three trailing fields can be empty, which is why
+// a line is accepted at 5 to 8 fields: ExecCommand returns its stdout TrimSpace'd,
 // which eats the final line's trailing tab(s) whenever that pane is missing
 // one or both of these options — one tab lost (kind unset, 6 fields) or two
 // (state AND kind both unset, 5 fields). A 6-field line means "state set,
@@ -501,7 +563,7 @@ func (t *Tmux) PaneStates() []PaneState {
 			"list-panes",
 			"-a",
 			"-F",
-			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}\t#{pane_start_command}",
 		},
 	}
 	stdout, _, err := t.Base.ExecCommand(execCommand)
@@ -511,7 +573,9 @@ func (t *Tmux) PaneStates() []PaneState {
 	var states []PaneState
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 7)
+		// 8, not more: a tab inside the start command (the last field)
+		// stays part of it.
+		parts := strings.SplitN(scanner.Text(), "\t", 8)
 		if len(parts) < 5 {
 			continue
 		}
@@ -520,8 +584,12 @@ func (t *Tmux) PaneStates() []PaneState {
 			state = strings.TrimSpace(parts[5])
 		}
 		kind := ""
-		if len(parts) == 7 {
+		if len(parts) >= 7 {
 			kind = strings.TrimSpace(parts[6])
+		}
+		start := ""
+		if len(parts) == 8 {
+			start = strings.TrimSpace(parts[7])
 		}
 		states = append(
 			states,
@@ -533,6 +601,7 @@ func (t *Tmux) PaneStates() []PaneState {
 				CurrentCommand: strings.TrimSpace(parts[4]),
 				State:          state,
 				Kind:           kind,
+				StartCommand:   start,
 			},
 		)
 	}

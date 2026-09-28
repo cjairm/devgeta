@@ -2655,6 +2655,69 @@ func TestIsAgent(t *testing.T) {
 	}
 }
 
+// A shell as the current command only rules a pane out when the pane falls
+// back to a shell once its program exits. A coder launched as
+// `zsh -c '<coder>'` (worktree layouts) shows the wrapper zsh as its current
+// command for its whole life; hiding it hid a live agent. Start commands are
+// in the quoted, escaped form tmux reports them in.
+func TestIsAgent_ShellCheckDependsOnHowThePaneStarted(t *testing.T) {
+	cases := []struct {
+		name  string
+		start string
+		want  bool
+	}{
+		{"tmux default shell", ``, false},
+		{"$SHELL default-command", `"\${SHELL:-/bin/zsh}"`, false},
+		{"shell by path", `"/bin/zsh"`, false},
+		{"login shell", `"-zsh"`, false},
+		{"coder then exec shell", `"'/Users/me/.opencode/bin/opencode'; exec '/bin/zsh'"`, false},
+		{
+			"tmux-resurrect restore",
+			`"cat '/Users/me/pane-contents'; exec \${SHELL:-/bin/zsh}"`,
+			false,
+		},
+		{
+			"coder wrapped by the default shell",
+			`"CLAUDE_CODE_NO_FLICKER=1 '/Users/me/.local/bin/claude' '/teach issue'"`,
+			true,
+		},
+		{"explicit zsh -c wrapper", `"zsh -c 'claude'"`, true},
+		{"semicolon inside a quoted prompt", `"claude 'fix it; then zsh'"`, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tmux.PaneState{Kind: "claude", CurrentCommand: "zsh", StartCommand: tc.start}
+			if got := p.IsAgent(); got != tc.want {
+				t.Errorf("IsAgent() with StartCommand=%s = %v, want %v", tc.start, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPaneStates_ReadsStartCommandWithATabInIt(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult(
+		"s\tw\t%1\t0\tzsh\tbusy\tclaude\t\"claude 'a\tb'\"\ns\tw\t%2\t1\tzsh\t\tclaude\n",
+		"",
+		nil,
+	)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	states := app.PaneStates()
+	if len(states) != 2 {
+		t.Fatalf("expected 2 panes, got %+v", states)
+	}
+	if want := "\"claude 'a\tb'\""; states[0].StartCommand != want {
+		t.Errorf("StartCommand = %q, want %q", states[0].StartCommand, want)
+	}
+	if !states[0].IsAgent() {
+		t.Errorf("a wrapped coder must be an agent: %+v", states[0])
+	}
+	if states[1].Kind != "claude" || states[1].StartCommand != "" || states[1].IsAgent() {
+		t.Errorf("trimmed last line (no start command) = %+v, want a stale shell pane", states[1])
+	}
+}
+
 func TestPanesInWindow(t *testing.T) {
 	t.Run(
 		"returns only panes belonging to the matching window, with pane_current_command",

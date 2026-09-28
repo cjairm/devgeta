@@ -56,6 +56,16 @@ that directly, including while Claude Code runs a Bash tool command. ADR-0008 ge
 revision note pointing here, and the `CurrentCommand` field comment in
 `internal/apps/tmux/tmux.go` is rewritten to match.
 
+**Revision (2026-09-28, after v1.38.0): the shell check depends on how the pane started.**
+Step 0 missed one case: a coder launched as `zsh -c '<coder>'` (how worktree layouts start
+coders) has the wrapper `zsh` as its pane's current command for its whole life, so the
+check hid live agents. The check now applies only to a pane that falls back to a shell
+when its program exits: one started as tmux's default shell, the shell by name or
+`$SHELL`, or a command whose last step execs one (`<coder>; exec zsh`, tmux-resurrect's
+restores). Any other pane closes when its command exits, so a shell there is a wrapper
+with the coder under it. The fast scan reads `#{pane_start_command}` as its last field for
+this, still in the same single call.
+
 The stored state values don't change. The dashboard maps them to words:
 
 | `@dg_agent_state` | Shown as                                         |

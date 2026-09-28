@@ -642,7 +642,9 @@ has written `@dg_agent_kind` (`claude`/`opencode`) to it — on session start an
 write — **not** derived from its process name, which is unreliable (Claude Code can show up as
 its own version string) and can't say which coder it is. A coder killed before it can clean up
 still drops off the list once its pane reverts to a plain shell (the "is a plain shell"
-backstop; the kind option itself may linger harmlessly).
+backstop; the kind option itself may linger harmlessly). That check only applies to a pane
+that falls back to a shell when its program exits; a coder wrapped in `zsh -c '<coder>'`,
+as worktree layouts start them, reports `zsh` while it runs and is still listed.
 
 Each agent is two lines:
 
