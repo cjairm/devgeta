@@ -21,32 +21,66 @@ const viewStateOptionName = "@dg_ws_state"
 // decodeViewState rejects anything else rather than guess at migrating it.
 const viewStateVersion = 1
 
-// viewStateV1 is @dg_ws_state's JSON shape. Collapsed keys come from the
-// dashboard's own rowKey (B5), so the saved state and the in-memory fold map
-// can never disagree about identity.
+// viewStateV1 is @dg_ws_state's JSON shape. Collapsed/Expanded keys come
+// from the dashboard's own rowKey (B5), so the saved state and the
+// in-memory fold maps can never disagree about identity.
+//
+// Expanded, AgentsFolded, SpacesFolded, and Split are Step 10's additions
+// (ADR-0056), all optional and additive: the version stays 1, since a value
+// missing them decodes as their zero values, which is exactly "both open,
+// default split, no expanded repos" - the desired default. `omitempty` keeps
+// an encoded value's bytes unchanged from before Step 10 whenever none of
+// these differ from that default, so an old and a new binary agree on what
+// the option looks like in the common case.
 type viewStateV1 struct {
-	V         int      `json:"v"`
-	Collapsed []string `json:"collapsed"`
-	Left      int      `json:"left"`
+	V            int      `json:"v"`
+	Collapsed    []string `json:"collapsed"`
+	Left         int      `json:"left"`
+	Expanded     []string `json:"expanded,omitempty"`
+	AgentsFolded bool     `json:"agentsFolded,omitempty"`
+	SpacesFolded bool     `json:"spacesFolded,omitempty"`
+	Split        int      `json:"split,omitempty"`
 }
 
 // encodeViewState builds @dg_ws_state's value from the currently-collapsed
-// keys and the left-pane width. Keys are sorted so the output is
-// deterministic - useful for tests and for not rewriting the option to a
-// byte-different value that means the same thing.
-func encodeViewState(collapsed map[string]bool, left int) (string, error) {
-	keys := make([]string, 0, len(collapsed))
-	for k, v := range collapsed {
+// and currently-expanded keys, the left-pane width, both section folds, and
+// the agents split. Keys are sorted so the output is deterministic - useful
+// for tests and for not rewriting the option to a byte-different value that
+// means the same thing.
+func encodeViewState(
+	collapsed, expanded map[string]bool,
+	left int,
+	agentsFolded, spacesFolded bool,
+	split int,
+) (string, error) {
+	collapsedKeys := sortedTrueKeys(collapsed)
+	expandedKeys := sortedTrueKeys(expanded)
+	data, err := json.Marshal(viewStateV1{
+		V:            viewStateVersion,
+		Collapsed:    collapsedKeys,
+		Left:         left,
+		Expanded:     expandedKeys,
+		AgentsFolded: agentsFolded,
+		SpacesFolded: spacesFolded,
+		Split:        split,
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// sortedTrueKeys returns m's keys whose value is true, sorted - the shape
+// both Collapsed and Expanded persist as.
+func sortedTrueKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for k, v := range m {
 		if v {
 			keys = append(keys, k)
 		}
 	}
 	sort.Strings(keys)
-	data, err := json.Marshal(viewStateV1{V: viewStateVersion, Collapsed: keys, Left: left})
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
+	return keys
 }
 
 // decodeViewState parses raw as a viewStateV1, reporting ok=false for an

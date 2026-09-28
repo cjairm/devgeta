@@ -45,3 +45,28 @@ func TestSoftSelectedLineKeepsBackgroundAcrossResets(t *testing.T) {
 		t.Errorf("width changed: got %d, want %d", w, ansi.StringWidth(line))
 	}
 }
+
+// SoftSelected's background and the dim text color are the same ANSI color
+// (8), so dim text on a raised line is invisible in every terminal theme -
+// an idle agent row, whose every piece is dim, rendered as an empty bar.
+// A raised line must never carry the dim foreground.
+func TestRaisedLineNeverKeepsDimTextOnItsBackground(t *testing.T) {
+	p := NewPalette()
+	dim, _, _ := strings.Cut(p.SectionHead.Render("x"), "x")
+	if dim == "" {
+		t.Fatal("test setup: SectionHead rendered no color sequence")
+	}
+	line := " " + p.NoSession.Render("○ devgeta") + " " + p.SectionHead.Render(":1")
+
+	for name, got := range map[string]string{
+		"SoftSelectedLine": p.SoftSelectedLine(line),
+		"RaisedLine":       p.RaisedLine(line),
+	} {
+		if strings.Contains(got, dim) {
+			t.Errorf("%s kept the dim foreground on the raised background: %q", name, got)
+		}
+		if !strings.Contains(ansi.Strip(got), "○ devgeta :1") {
+			t.Errorf("%s changed the text: %q", name, ansi.Strip(got))
+		}
+	}
+}

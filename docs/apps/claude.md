@@ -564,27 +564,35 @@ command text, so a rewritten `gh pr merge …` no longer matches a
 `docs/plans/cycles/2026-09-10-gh-permission-granularity-probe-notes.md`
 ("1c"). There is no devgeta-owned fix for this on either agent today.
 
-## Agent activity state (Stop / UserPromptSubmit / Notification hooks)
+## Agent activity state (SessionStart / SessionEnd / Stop / UserPromptSubmit / PostToolUse / Notification hooks)
 
-`settings.json` registers three more hooks that report this coder's activity
-into the tmux pane it's running in, so `dg ws`'s status dot and tmux's status
-bar can show working / finished / blocked without switching to the window:
+`settings.json` registers six hooks that report this coder's activity into
+the tmux pane it's running in, so `dg ws`'s status dot, its agents section
+(ADR-0056), and tmux's status bar can show working / finished / blocked
+without switching to the window:
 
-| Hook               | Matcher                       | Writes    |
-| ------------------ | ----------------------------- | --------- |
-| `Stop`             | none — fires every turn end   | `idle`    |
-| `UserPromptSubmit` | none — fires every turn start | `busy`    |
-| `Notification`     | `permission_prompt`           | `blocked` |
+| Hook               | Matcher                       | Writes                                       |
+| ------------------ | ----------------------------- | -------------------------------------------- |
+| `SessionStart`     | none — fires once at start    | `@dg_agent_kind claude` only                 |
+| `Stop`             | none — fires every turn end   | `idle`                                       |
+| `UserPromptSubmit` | none — fires every turn start | `busy`                                       |
+| `PostToolUse`      | none — fires after every tool | `busy`, unless already `busy` (`resume`)     |
+| `Notification`     | `permission_prompt`           | `blocked`                                    |
+| `SessionEnd`       | none — fires once at end      | unsets kind and state, recomputes the mirror |
 
-All three run `~/.claude/agent-state.sh <value>`. Unlike `format.sh` and
-`task-redirect.sh`, this script reads no data from the hook's JSON stdin
-payload — which value to write is fully determined by which hook fired,
-passed as `$1`. It no-ops silently when `$TMUX_PANE` is unset (Claude Code run
-outside tmux) and swallows any `tmux` failure, the same no-op contract the
-other hooks use. `Notification`'s matcher is narrowed specifically to
-`permission_prompt` so it excludes `idle_prompt` and Notification's other
-types — an unfiltered `Notification` hook would map every notification onto
-`blocked`, which is wrong.
+All six run `~/.claude/agent-state.sh <value>` (`start`/`end`/`resume` for the
+newer ones). `resume` exists because Claude Code has no "permission prompt
+answered" event: after you answer one, a tool finishing is the first sign the
+turn is running again. Without it, a pane whose `blocked` was cleared by
+looking at it read as idle until the turn ended. It reads the state first, so
+the usual case (already `busy`) costs one tmux call per tool. Unlike `format.sh` and `task-redirect.sh`, this script reads no data
+from the hook's JSON stdin payload — which value to write is fully determined
+by which hook fired, passed as `$1`. It no-ops silently when `$TMUX_PANE` is
+unset (Claude Code run outside tmux) and swallows any `tmux` failure, the same
+no-op contract the other hooks use. `Notification`'s matcher is narrowed
+specifically to `permission_prompt` so it excludes `idle_prompt` and
+Notification's other types — an unfiltered `Notification` hook would map every
+notification onto `blocked`, which is wrong.
 
 `agent-state.sh` also writes/clears a window-level mirror
 (`@dg_window_agent_state`) alongside its pane-level write, the same way the
@@ -592,17 +600,35 @@ OpenCode plugin does — this is what lets tmux's own status bar flag a window
 nobody is looking at, since the status bar can't read one pane's option
 directly.
 
+**Identity, separately from state ([ADR-0055](../decisions/ADR-0055-an-agent-says-what-it-is.md)).**
+Every state write (`start` included) also stamps `@dg_agent_kind claude`,
+folded into the same `tmux` invocation via `\;` rather than a second process
+spawn — this is what lets `dg ws`'s agents section list a coder that hasn't
+prompted yet, and what survives `@dg_agent_state` being cleared by an
+attach/focus/ack. `end` unsets both options and recomputes
+`@dg_window_agent_state` with the same "any sibling pane still wants you?"
+rule the pane-focus-in/out hooks use. **Verified empirically to be
+unreliable in the one place it matters least:** OpenCode's equivalent
+end-of-life path (`server.instance.disposed` plus a process-exit fallback) does
+not fire on that coder's own quit gesture or a bare `SIGTERM` (Step 0 of
+`docs/plans/cycles/2026-09-28-ws-agents-section.md`) — Claude Code's
+`SessionEnd` does not have this problem (confirmed against a real session: it
+fires reliably on `/exit`, double ctrl-c, and normal completion, always
+carrying `$TMUX_PANE`). Either way, the dashboard's agents list stays correct
+regardless: a pane whose foreground process has reverted to a plain shell is
+never listed, kind option or not (see ADR-0055's shell-name backstop).
+
 See [ADR-0005](../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
 for the full design and value table. The OpenCode plugin equivalent
-(`~/.config/opencode/plugin/notify.js`) writes the same pane option, keeping
-both coders behaviourally matched for `busy`/`idle`/`blocked` — but not for
-`error`: Claude's three registered hooks above have no counterpart for
-OpenCode's `session.error` event. Claude Code does have a `StopFailure` event
-("when the turn ends due to an API error") that could serve this purpose, but
-it isn't wired up — it was out of scope for this cycle. A Claude Code coder
-that errors out currently surfaces as an ordinary `Stop`/`idle` transition,
-not as the red `✕` state. This is a real, current asymmetry between the two
-coders, not a hypothetical one.
+(`~/.config/opencode/plugin/notify.js`) writes the same pane options, keeping
+both coders behaviourally matched for `busy`/`idle`/`blocked` and for the kind
+option — but not for `error`: Claude's registered hooks above have no
+counterpart for OpenCode's `session.error` event. Claude Code does have a
+`StopFailure` event ("when the turn ends due to an API error") that could
+serve this purpose, but it isn't wired up — it was out of scope for this
+cycle. A Claude Code coder that errors out currently surfaces as an ordinary
+`Stop`/`idle` transition, not as the red `✕` state. This is a real, current
+asymmetry between the two coders, not a hypothetical one.
 
 ## Statusline
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/theme"
@@ -90,5 +91,35 @@ func TestForceConfigureTheme_MatchesGoldenRender(t *testing.T) {
 			"rendered tmux config differs from %s\n--- got ---\n%s\n--- want ---\n%s",
 			goldenPath, got, want,
 		)
+	}
+}
+
+// TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs is a structural
+// check (not just the byte-for-byte golden above) that each of the four
+// C-h/j/k/l bindings passes the key through when the pane runs `devgeta ws`,
+// per ADR-0057 (Step 9 of docs/plans/cycles/2026-09-28-ws-agents-section.md):
+// a substring check alone would pass even if is_dgws's condition were wrong
+// or a binding's nested if-shell were malformed, so this asserts the exact
+// per-key relationship between the binding and the shared is_dgws check.
+func TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs(t *testing.T) {
+	got := string(renderShippedTmuxConf(t))
+
+	if !strings.Contains(got, `is_dgws="ps -o state= -o args= -t '#{pane_tty}'`) {
+		t.Fatalf("expected an is_dgws check reading pane_tty's args, got:\n%s", got)
+	}
+	if !strings.Contains(got, `devgeta ws`) {
+		t.Fatalf("expected is_dgws's pattern to match \"devgeta ws\", got:\n%s", got)
+	}
+
+	for _, key := range []string{"C-h", "C-j", "C-k", "C-l"} {
+		wantBinding := `bind -n ` + key + ` if-shell "$is_vim" "send-keys ` + key +
+			`"  "if-shell \"$is_dgws\" \"send-keys ` + key + `\"  \"select-pane -`
+		if !strings.Contains(got, wantBinding) {
+			t.Errorf(
+				"expected %s to fall through is_vim into an is_dgws-gated pass-through, "+
+					"got no match for %q in:\n%s",
+				key, wantBinding, got,
+			)
+		}
 	}
 }

@@ -109,8 +109,11 @@ inferred."
 
 The three items below come from a July 2026 review of herdr.dev, a standalone (non-tmux)
 multiplexer built specifically for orchestrating coding agents. Its headline feature —
-per-agent state (blocked/working/done/idle) surfaced at a glance — is already covered by
-[ADR-0005](docs/decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md); herdr's
+per-agent state (blocked/working/done/idle) surfaced at a glance — is covered by
+[ADR-0005](docs/decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)'s underlying
+signal and, since September 2026, by `dg ws`'s own dedicated agents section
+([ADR-0055](docs/decisions/ADR-0055-an-agent-says-what-it-is.md),
+[ADR-0056](docs/decisions/ADR-0056-the-dashboard-lists-agents-in-their-own-section.md)); herdr's
 persistent sidebar isn't something tmux panes can replicate (a pane belongs to one window,
 full stop — herdr can only do it because it's its own multiplexer, not a tmux client), so
 these lean on tmux's own idioms (status bar, popups) instead of chasing that literally.
@@ -129,6 +132,13 @@ these lean on tmux's own idioms (status bar, popups) instead of chasing that lit
   last output), so an agent or wrapper script can drive `dg ws` the way herdr's socket API
   lets agents drive it. Highest-value gap versus herdr; most of the underlying plumbing
   already exists.
+- ⚪ **Agent alert history / saved error logs** — `dg ws`'s agents section (ADR-0056) shows
+  live state only; it keeps no history of past blocked/error events and never writes an
+  error's output to a file. Explicitly out of scope for that cycle
+  (`docs/plans/cycles/2026-09-28-ws-agents-section.md`) — worth a dedicated design pass on
+  its own: how much history to keep, where to persist it (a tmux option has the same
+  server-lifetime limits `@dg_ws_state` already accepts), and whether a saved error log
+  belongs next to the worktree or in a devgeta-owned location.
 
 ---
 

@@ -468,6 +468,14 @@ func TestPlaceCursorOnActiveUsesSessionRowFromPlainWindow(t *testing.T) {
 func TestPlacementYieldsToNavigationBeforeLoad(t *testing.T) {
 	m := makeTestModel(nil)
 	m.currentSessionFn = func() (string, bool) { return "misc", true }
+	// Exempted from the windowless-repo default fold (ADR-0056, a separate
+	// concern with its own dedicated tests in default_fold_test.go): the
+	// scan layer built below has no window for repo-a's worktree, so
+	// ApplyTo would otherwise report it windowless and fold it away right
+	// when sessionsLoaded becomes true - exactly the kind of background
+	// reclassification this test exists to prove does NOT override the
+	// user's own navigation.
+	m.expanded[repoKey("repo-a")] = true
 	sessions := []worktree.SessionStatus{{Name: "alpha"}, {Name: "misc"}}
 	statuses := []worktree.WorktreeStatus{{Name: "feature-a", Repo: "repo-a"}}
 

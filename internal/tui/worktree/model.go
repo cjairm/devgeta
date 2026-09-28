@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -208,6 +209,45 @@ type Model struct {
 	rows                 []row
 	cursor               int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
 	collapsed            map[string]bool
+	// expanded records a repo explicitly unfolded by the user (ADR-0056),
+	// distinct from the mere ABSENCE of a collapsed entry: it's how
+	// applyDefaultFolds tells "the user chose to open this" apart from "no
+	// choice has been made yet" for the windowless-repo default fold below.
+	// Not yet persisted in @dg_ws_state (viewStateV1 gains the field in
+	// Step 10 of docs/plans/cycles/2026-09-28-ws-agents-section.md); until
+	// then this only survives the current launch.
+	expanded map[string]bool
+	// defaultFoldSeen marks every repo whose windowless-default-fold
+	// decision (applyDefaultFolds) has already been made THIS launch, so a
+	// later rebuildRows (the 3-second tick, a filter keystroke, a repo
+	// losing its last window) never re-applies or reverses it - only an
+	// explicit user fold/unfold can change it again after that point.
+	defaultFoldSeen map[string]bool
+
+	// agentRows holds the dashboard's flat agents-section rows (ADR-0056),
+	// rebuilt alongside rows in every rebuildRows call. section says which
+	// of the two lists the cursor is logically in; agentCursor is the index
+	// into agentRows, meaningful only while section == sectionAgents (m.cursor
+	// keeps its own last spaces position, frozen, the same way it already
+	// survives a collapse elsewhere in this struct).
+	agentRows   []agentRow
+	section     focusSection
+	agentCursor int
+	// spacesCount/spacesTotal and agentsTotal are the section headers'
+	// counts (ADR-0056): how many spaces (worktrees and standalone sessions)
+	// the filter kept and how many there are, and how many agents there are
+	// before the filter (len(agentRows) is the kept count). Set by
+	// rebuildRows.
+	spacesCount int
+	spacesTotal int
+	agentsTotal int
+	// agentsFolded/spacesFolded are Step 7's fold state (ADR-0056): a folded
+	// section collapses to a one-line bar at the bottom of the column. The
+	// last open section can never fold - see toggleAgentsFold/
+	// toggleSpacesFold, the only two places that set these. Not yet
+	// persisted in @dg_ws_state (viewStateV1 gains the fields in Step 10).
+	agentsFolded bool
+	spacesFolded bool
 
 	// stateGen orders the wholesale replacements of m.statuses against each
 	// other. Update bumps it whenever it dispatches a slow load, the load
@@ -290,6 +330,29 @@ type Model struct {
 	dragging   bool
 	dragStartX int
 
+	// split is Step 8's adjustable agents-section height (ADR-0056), in
+	// agent ROWS (not lines) - 0 means "never adjusted, use the default
+	// heuristic" (computeLeftLayout falls back to it), matching how
+	// leftPaneWidth's own default constant works. Not yet persisted in
+	// @dg_ws_state (viewStateV1 gains the field in Step 10).
+	split int
+	// splitDragging/splitDragStartY/splitDragBase back the AGENTS header
+	// drag, mirroring dragging/dragStartX's pattern for the vertical
+	// divider - a SEPARATE set of fields because this drag moves a
+	// horizontal boundary (mouse Y) by a relative delta from where the drag
+	// started, not the vertical divider's direct "mouse.X IS the new width"
+	// mapping (the header's own row position isn't a 1:1 function of split
+	// once scrolling is involved).
+	splitDragging   bool
+	splitDragStartY int
+	splitDragBase   int
+
+	// paneMoveKeys is Step 9's ADR-0057 read-from-tmux pane-move keys
+	// (tmux.RootPaneMoveKeys), resolved once at startup in newModel and
+	// checked on every keypress that isn't already claimed by a text input
+	// or overlay - see handlePaneMoveKey.
+	paneMoveKeys tmux.PaneMoveKeys
+
 	pendingDelete        string // "repo/name" or ""
 	pendingSessionDelete string // "repo/name" or ""
 	pendingForceDelete   string // "repo/name" armed for F F, or ""
@@ -361,6 +424,10 @@ type Model struct {
 	switchToSessionFn        func(name string) error
 	switchToPaneFn           func(session, window, paneID string) error
 	clearAgentStateForPaneFn func(paneID string) error
+	// selectPaneDirectionFn backs tmuxApp.SelectPaneInDirection - ADR-0057's
+	// edge hand-off, when one of the four pane-move keys reaches an edge of
+	// the dashboard's own two sections.
+	selectPaneDirectionFn    func(dir string) error
 	killSessionFn            func(name string) error
 	killPaneFn               func(paneID string) error
 	renameSessionFn          func(old, newName string) error
@@ -397,16 +464,18 @@ func newModel(
 	gc *config.GlobalConfig,
 ) Model {
 	m := Model{
-		mgr:            mgr,
-		tmuxApp:        tmuxApp,
-		gitApp:         gitApp,
-		gc:             gc,
-		collapsed:      map[string]bool{},
-		palette:        tuicomponents.NewPalette(),
-		leftPaneWidth:  defaultLeftPaneWidth,
-		prTitles:       map[string]string{},
-		prTitlePending: map[string]bool{},
-		diffStats:      map[string]task.BranchStatsResult{},
+		mgr:             mgr,
+		tmuxApp:         tmuxApp,
+		gitApp:          gitApp,
+		gc:              gc,
+		collapsed:       map[string]bool{},
+		expanded:        map[string]bool{},
+		defaultFoldSeen: map[string]bool{},
+		palette:         tuicomponents.NewPalette(),
+		leftPaneWidth:   defaultLeftPaneWidth,
+		prTitles:        map[string]string{},
+		prTitlePending:  map[string]bool{},
+		diffStats:       map[string]task.BranchStatsResult{},
 	}
 	m.diffFn = func(path string) (task.BranchDiffResult, error) {
 		return task.BranchDiffAt(gitApp, path)
@@ -447,6 +516,12 @@ func newModel(
 	m.switchToSessionFn = tmuxApp.SwitchToSession
 	m.switchToPaneFn = tmuxApp.SwitchToPane
 	m.clearAgentStateForPaneFn = tmuxApp.ClearAgentStateForPane
+	m.selectPaneDirectionFn = tmuxApp.SelectPaneInDirection
+	// Resolved once, synchronously, here rather than via an async Cmd/Msg
+	// (ADR-0057: "At startup it asks tmux..."): a single cheap list-keys
+	// call, and every keypress needs a fully-resolved answer immediately -
+	// there is no sensible "still loading" state for a keybinding.
+	m.paneMoveKeys = tmuxApp.RootPaneMoveKeys()
 	m.killSessionFn = tmuxApp.KillSession
 	m.killPaneFn = tmuxApp.KillPane
 	m.renameSessionFn = tmuxApp.RenameSession
@@ -619,7 +694,17 @@ func (m *Model) saveViewState() {
 			delete(m.collapsed, k)
 		}
 	}
-	raw, err := encodeViewState(m.collapsed, m.leftPaneWidth)
+	// Same pruning rule for expanded (ADR-0056): its keys are always repo
+	// keys, a subset of what validCollapseKeys already answers "still
+	// exists" for.
+	for k := range m.expanded {
+		if !valid[k] {
+			delete(m.expanded, k)
+		}
+	}
+	raw, err := encodeViewState(
+		m.collapsed, m.expanded, m.leftPaneWidth, m.agentsFolded, m.spacesFolded, m.split,
+	)
 	if err != nil {
 		logger.L().Debugw("worktree: failed to encode ws dashboard view state", "err", err)
 		return
@@ -871,7 +956,23 @@ func (m Model) selectedPath() string {
 // diff. This deliberately does not change selectedStatus itself: d/D/r/R stay
 // inert on a pane row, only this identity used for diff bookkeeping is
 // resolved through to the parent.
+//
+// ADR-0056 (Step 5): while the cursor is in the agents section, this
+// resolves to the selected agent's own worktree back-reference instead of
+// touching m.rows/m.cursor at all — "the right pane shows the agent's
+// worktree diff", ok=false for a repo-session or standalone-session agent,
+// which has no diff to show, same as a plain session row today.
 func (m Model) selectedDiffStatus() (worktree.WorktreeStatus, bool) {
+	if m.section == sectionAgents {
+		if m.agentCursor < 0 || m.agentCursor >= len(m.agentRows) {
+			return worktree.WorktreeStatus{}, false
+		}
+		r := m.agentRows[m.agentCursor]
+		if !r.isWorktree {
+			return worktree.WorktreeStatus{}, false
+		}
+		return r.worktree, true
+	}
 	if sel, ok := m.selectedStatus(); ok {
 		return sel, true
 	}
@@ -897,7 +998,16 @@ func (m *Model) armDiffDebounce() tea.Cmd {
 	})
 }
 
+// selectedStatus reports ok=false while the cursor is in the agents section
+// (ADR-0056): m.cursor keeps its own frozen last-spaces position while the
+// user browses agents (see the Model struct's own comment on agentCursor),
+// so without this gate a mutating key like d/r/R/$ that reads
+// m.rows[m.cursor] directly would act on that stale, invisible spaces row
+// instead of being inert, which the section split requires.
 func (m Model) selectedStatus() (worktree.WorktreeStatus, bool) {
+	if m.section != sectionSpaces {
+		return worktree.WorktreeStatus{}, false
+	}
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return worktree.WorktreeStatus{}, false
 	}
@@ -911,8 +1021,12 @@ func (m Model) selectedStatus() (worktree.WorktreeStatus, bool) {
 // selectedSession mirrors selectedStatus for rowSession rows: it reports the
 // cursor's session (ok=true) only when the cursor sits on a rowSession leaf,
 // so handleKey can branch enter/d on row kind the same way selectedStatus lets
-// it branch on rowWorktree today.
+// it branch on rowWorktree today. Gated to the spaces section for the same
+// reason selectedStatus is.
 func (m Model) selectedSession() (worktree.SessionStatus, bool) {
+	if m.section != sectionSpaces {
+		return worktree.SessionStatus{}, false
+	}
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return worktree.SessionStatus{}, false
 	}
@@ -926,8 +1040,12 @@ func (m Model) selectedSession() (worktree.SessionStatus, bool) {
 // selectedSessionName reports the tmux session under the cursor for either
 // kind of session row - standalone or a repo's own - since the session-level
 // actions ($ rename, d kill) act on the session itself, whichever list it
-// came from.
+// came from. Gated to the spaces section for the same reason selectedStatus
+// is - an agent row is never a session-kill/rename target.
 func (m Model) selectedSessionName() (string, bool) {
+	if m.section != sectionSpaces {
+		return "", false
+	}
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return "", false
 	}
@@ -955,7 +1073,19 @@ func (m Model) repoSessionNamed(name string) (worktree.RepoSessionStatus, bool) 
 // reports the cursor's pane (ok=true) only when the cursor sits on a rowPane
 // leaf, so handleKey can branch enter to handleSwitchToPane the same way it
 // branches to handleSwitchToSession/handleAttach today.
+//
+// ADR-0056 (Step 5): while the cursor is in the agents section, this
+// resolves to the selected agent's own pane instead — the entire mechanism
+// behind "↵ on an agent row uses the pane-row switch": enter's dispatch
+// checks selectedPane() first and already calls handleSwitchToPane
+// unconditionally on success, so neither needs to change.
 func (m Model) selectedPane() (tmux.PaneState, bool) {
+	if m.section == sectionAgents {
+		if m.agentCursor < 0 || m.agentCursor >= len(m.agentRows) {
+			return tmux.PaneState{}, false
+		}
+		return m.agentRows[m.agentCursor].pane, true
+	}
 	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return tmux.PaneState{}, false
 	}
@@ -964,6 +1094,83 @@ func (m Model) selectedPane() (tmux.PaneState, bool) {
 		return tmux.PaneState{}, false
 	}
 	return r.pane, true
+}
+
+// applyDefaultFolds folds a repo with no open window, exactly once per repo
+// per launch (ADR-0056), unless the saved state already has an explicit
+// choice for it (m.collapsed or m.expanded already has an entry). Called
+// from rebuildRows before buildRows, so the decision is baked into
+// m.collapsed by the time buildRows reads it - buildRows itself stays a pure
+// function of the current fold map, unaware that any entry in it came from
+// a default rather than a user choice.
+//
+// defaultFoldSeen gates this PER REPO, permanently for the launch: once a
+// repo has been decided (folded or left alone), a later rebuild - the
+// 3-second tick, a filter keystroke, or the repo losing its last window -
+// never revisits that decision. That's what makes "the user unfolds it, the
+// tick rebuilds, and it stays open" and "a repo that loses its last window
+// mid-launch is not re-folded" both true without special-casing either one.
+func (m *Model) applyDefaultFolds() {
+	// Wait for sessions to be classified against the worktree list
+	// (m.sessionsLoaded - the same guard placeCursorOnActive already waits
+	// on, for the same reason): repoHasOpenWindow reads m.repoSessions,
+	// which a session scan that lands before the worktree list classifies
+	// as empty (see applySessions). Deciding - and PERMANENTLY locking via
+	// defaultFoldSeen - on that incomplete data would fold a repo that
+	// genuinely has an open window, with no way to undo it once
+	// sessionsLoaded catches up.
+	if !m.sessionsLoaded {
+		return
+	}
+	seenThisCall := map[string]bool{}
+	for _, s := range m.statuses {
+		if seenThisCall[s.Repo] {
+			continue
+		}
+		seenThisCall[s.Repo] = true
+		if m.defaultFoldSeen[s.Repo] {
+			continue
+		}
+		m.defaultFoldSeen[s.Repo] = true
+		key := repoKey(s.Repo)
+		if m.collapsed[key] || m.expanded[key] {
+			continue // saved state already has an explicit choice
+		}
+		if !m.repoHasOpenWindow(s.Repo) {
+			m.collapsed[key] = true
+		}
+	}
+}
+
+// repoHasOpenWindow reports whether repo currently has any live tmux window:
+// either a worktree with an active window, or a repo-session (ADR-0052),
+// which only ever exists when the repo has at least one live window of its
+// own.
+func (m *Model) repoHasOpenWindow(repo string) bool {
+	for _, s := range m.statuses {
+		if s.Repo == repo && s.WindowActive {
+			return true
+		}
+	}
+	for _, rs := range m.repoSessions {
+		if rs.Repo == repo {
+			return true
+		}
+	}
+	return false
+}
+
+// unfoldRepo clears repo's collapsed flag and records the choice in expanded
+// (ADR-0056): a repo unfolded by the user, whether it was folded by the
+// windowless-repo default or by an earlier explicit fold, must never be
+// re-decided by applyDefaultFolds again — and, once Step 10 wires
+// persistence, must survive the NEXT launch too. Shared by every key that
+// can unfold a repo header (enter/l via expandCollapsedRepoHeader, z) so
+// they can't drift on this rule.
+func (m *Model) unfoldRepo(repo string) {
+	key := repoKey(repo)
+	m.collapsed[key] = false
+	m.expanded[key] = true
 }
 
 // rebuildRows rebuilds the row list and relocates the cursor by identity
@@ -978,11 +1185,26 @@ func (m Model) selectedPane() (tmux.PaneState, bool) {
 // (deleted, filtered out, folded away) does the numeric index take over, and
 // even then only as ClampCursor's fallback.
 func (m *Model) rebuildRows() {
+	m.applyDefaultFolds()
+
+	// Step 10 (ADR-0056): "/ searches only the open sections" - a folded
+	// section is built as if no filter were active at all, so its folded
+	// bar keeps its normal, unfiltered counts, and unfolding it later shows
+	// the full list rather than a stale filtered one.
+	spacesFilter := m.filter.Value()
+	if m.spacesFolded {
+		spacesFilter = ""
+	}
+	agentsFilter := m.filter.Value()
+	if m.agentsFolded {
+		agentsFilter = ""
+	}
+
 	var selectedKey string
 	if m.cursor >= 0 && m.cursor < len(m.rows) {
 		selectedKey = rowKey(m.rows[m.cursor])
 	}
-	m.rows = buildRows(m.statuses, m.sessions, m.repoSessions, m.collapsed, m.filter.Value())
+	m.rows = buildRows(m.statuses, m.sessions, m.repoSessions, m.collapsed, spacesFilter)
 	if selectedKey != "" {
 		for i, r := range m.rows {
 			if rowKey(r) == selectedKey {
@@ -998,6 +1220,53 @@ func (m *Model) rebuildRows() {
 	// seconds after they land on it. That was live for repo headers, which
 	// navigableIndices admits and the old leaf-only set did not.
 	m.cursor = tuicomponents.ClampCursor(m.navigableIndices(), m.cursor)
+
+	// Agents section (ADR-0056, Step 5): same identity-relocation rule as
+	// spaces above, keyed by pane id (agentRow's own identity) instead of
+	// rowKey - a rebuild runs on the same 3-second tick and can reorder the
+	// urgency-sorted list (a sibling agent's state changing shifts everyone
+	// after it), so relocating by the OLD numeric index would silently slide
+	// the cursor onto a different agent, exactly the bug rowKey relocation
+	// exists to prevent for spaces.
+	var selectedPaneID string
+	if m.agentCursor >= 0 && m.agentCursor < len(m.agentRows) {
+		selectedPaneID = m.agentRows[m.agentCursor].pane.PaneID
+	}
+	m.agentRows = buildAgentRows(m.statuses, m.sessions, m.repoSessions, agentsFilter)
+	m.spacesCount = countSpaces(m.rows)
+	m.spacesTotal = len(m.statuses) + len(m.sessions)
+	m.agentsTotal = len(m.agentRows)
+	if agentsFilter != "" {
+		m.agentsTotal = len(buildAgentRows(m.statuses, m.sessions, m.repoSessions, ""))
+	}
+	if selectedPaneID != "" {
+		for i, r := range m.agentRows {
+			if r.pane.PaneID == selectedPaneID {
+				m.agentCursor = i
+				break
+			}
+		}
+	}
+	if len(m.agentRows) == 0 {
+		m.agentCursor = 0
+	} else if m.agentCursor >= len(m.agentRows) {
+		m.agentCursor = len(m.agentRows) - 1
+	}
+	m.settleSection()
+}
+
+// settleSection keeps the cursor out of a section it can't be seen in: a
+// folded one, or agents while it has no rows. Every path that folds, loads
+// or rebuilds ends here, so no order of events (the saved state landing
+// before the first scan, a filter emptying agents) can leave the cursor
+// moving invisibly inside a closed section.
+func (m *Model) settleSection() {
+	switch {
+	case m.section == sectionAgents && (m.agentsFolded || len(m.agentRows) == 0):
+		m.section = sectionSpaces
+	case m.section == sectionSpaces && m.spacesFolded && len(m.agentRows) > 0:
+		m.section = sectionAgents
+	}
 }
 
 // refreshView rebuilds the row list from the current m.statuses/m.sessions and
@@ -1150,6 +1419,11 @@ func (m *Model) placeCursorOnActive() {
 	if ok {
 		m.cursor = i
 	}
+	// The agents cursor lands the same way: on the agent in the window you
+	// came from, so reopening after jumping to an agent finds it selected.
+	if j, found := m.activeAgentRow(); found {
+		m.agentCursor = j
+	}
 	// Against real rows this runs exactly once: it lands or gives up for good,
 	// since a miss means the session genuinely isn't in the dashboard. Against
 	// snapshot rows (ADR-0054) only a hit is final - a miss may just mean the
@@ -1190,9 +1464,32 @@ func (m *Model) activeRow() (int, bool) {
 	return m.worktreeRowIn(current, func(worktree.WorktreeStatus) bool { return true })
 }
 
+// activeAgentRow finds the agent running in the window the user opened the
+// dashboard from, reporting whether there is one. When that window runs two
+// agents, the first in the list wins.
+func (m *Model) activeAgentRow() (int, bool) {
+	current, ok := m.currentSessionFn()
+	if !ok {
+		return 0, false
+	}
+	origin, ok := m.originWindowFn()
+	if !ok {
+		return 0, false
+	}
+	for i, r := range m.agentRows {
+		if r.pane.Session == current && r.pane.Window == origin {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
 // worktreeRowIn returns the first worktree row that match accepts and whose
 // window has a pane in session, reporting whether it found one.
-func (m *Model) worktreeRowIn(session string, match func(worktree.WorktreeStatus) bool) (int, bool) {
+func (m *Model) worktreeRowIn(
+	session string,
+	match func(worktree.WorktreeStatus) bool,
+) (int, bool) {
 	for i, r := range m.rows {
 		if r.kind != rowWorktree || !match(r.status) {
 			continue
@@ -1227,8 +1524,207 @@ func (m *Model) navigableIndices() []int {
 // startup placement: once the user has chosen where to be, the load that
 // completes a moment later must not pull the cursor back.
 func (m *Model) moveCursor(delta int) {
-	m.cursor = tuicomponents.MoveCursor(m.navigableIndices(), m.cursor, delta)
+	if len(m.agentRows) == 0 {
+		// No agents section to cross into - preserve the exact spaces-only
+		// wrap-around behavior every existing j/k test depends on.
+		m.cursor = tuicomponents.MoveCursor(m.navigableIndices(), m.cursor, delta)
+		m.cursorPlaced = true
+		return
+	}
+	m.moveCursorAcrossSections(delta)
 	m.cursorPlaced = true
+}
+
+// moveCursorAcrossSections is moveCursor's ADR-0056 path, taken only when
+// there's an agents section to walk into (moveCursor's zero-agents branch
+// keeps today's plain wrap-around otherwise). It treats spaces' navigable
+// rows followed by the agents list as ONE combined sequence, but CLAMPS at
+// both true ends instead of wrapping — "the cursor clamps within visible
+// rows" (Step 5's own text) — since wrapping would make it impossible to
+// ever walk from the bottom of spaces into agents (or back) with a single
+// j/k in the intended direction. Only ever called with delta == ±1 in
+// practice (handleKey's j/k), so it moves exactly one row/agent at a time
+// rather than implementing an arbitrary-delta jump.
+func (m *Model) moveCursorAcrossSections(delta int) {
+	indices := m.navigableIndices()
+
+	if m.section == sectionSpaces {
+		pos := -1
+		for i, idx := range indices {
+			if idx == m.cursor {
+				pos = i
+				break
+			}
+		}
+		if delta > 0 {
+			if pos == -1 || pos == len(indices)-1 {
+				// At (or past) the last spaces row - fall into agents, unless
+				// agents is folded: a folded section is an edge, the same rule
+				// the pane-move keys follow (ADR-0057).
+				if !m.agentsFolded {
+					m.section = sectionAgents
+					m.agentCursor = 0
+				}
+				return
+			}
+			m.cursor = indices[pos+1]
+			return
+		}
+		// delta < 0: moving up. Clamp at the first row - there is nothing
+		// above spaces to fall into.
+		if pos <= 0 {
+			if len(indices) > 0 {
+				m.cursor = indices[0]
+			}
+			return
+		}
+		m.cursor = indices[pos-1]
+		return
+	}
+
+	// section == sectionAgents
+	if delta > 0 {
+		if m.agentCursor < len(m.agentRows)-1 {
+			m.agentCursor++
+		}
+		// Else: already at the last agent row - clamp (stay put).
+		return
+	}
+	if m.agentCursor > 0 {
+		m.agentCursor--
+		return
+	}
+	// At the first agent row - fall back into spaces, landing on its last
+	// navigable row, unless spaces is folded (an edge, as above).
+	if m.spacesFolded {
+		return
+	}
+	m.section = sectionSpaces
+	if len(indices) > 0 {
+		m.cursor = indices[len(indices)-1]
+	}
+}
+
+// toggleAgentsFold is 'a' (ADR-0056): folds or unfolds the agents section,
+// from anywhere, in any order with 'w'. Refuses if agents is already open
+// and spaces is already folded - the last open section can't fold, and its
+// key does nothing. Folding the section the cursor is currently in moves the
+// cursor to the other (now necessarily open) section.
+func (m *Model) toggleAgentsFold() {
+	if !m.agentsFolded && m.spacesFolded {
+		return
+	}
+	m.agentsFolded = !m.agentsFolded
+	m.settleSection()
+	m.saveViewState()
+}
+
+// toggleSpacesFold is 'w' (ADR-0056), toggleAgentsFold's mirror image for
+// spaces. Moving the cursor into agents on fold only happens when there is
+// at least one agent row to land on - the same invariant moveCursor already
+// protects (section only ever becomes sectionAgents when agentRows is
+// non-empty).
+func (m *Model) toggleSpacesFold() {
+	if !m.spacesFolded && m.agentsFolded {
+		return
+	}
+	m.spacesFolded = !m.spacesFolded
+	m.settleSection()
+	m.saveViewState()
+}
+
+// adjustSplit is Step 8's +/- keys: changes the agents section's height by
+// delta rows, clamped to [1, maxSplit] so each open section always keeps at
+// least one row. A no-op while either section is folded or there are no
+// agents - there is nothing to resize. Starts from the CURRENT visible count
+// the first time it's touched, mirroring leftPaneWidth's own "clamp the
+// existing value" pattern rather than jumping from an unrelated baseline.
+func (m *Model) adjustSplit(delta int) {
+	if m.agentsFolded || m.spacesFolded || len(m.agentRows) == 0 {
+		return
+	}
+	m.setSplit(m.computeLeftLayout().agentsVisible + delta)
+	m.saveViewState()
+}
+
+// setSplit stores rows as the agents' share of the split, clamped to
+// [1, maxSplit].
+func (m *Model) setSplit(rows int) {
+	m.split = min(max(rows, 1), m.maxSplit())
+}
+
+// paneMoveDirection reports whether key is one of the four keys tmux
+// reports for pane moves (m.paneMoveKeys, ADR-0057), and if so, which
+// direction ("L"/"D"/"U"/"R" - select-pane's own flag letters). When two
+// directions somehow share the same key string, the first checked (L, D, U,
+// R) wins - deterministic, though not a configuration any real tmux setup
+// would produce.
+func (m Model) paneMoveDirection(key string) (dir string, ok bool) {
+	switch key {
+	case m.paneMoveKeys.Left:
+		return "L", true
+	case m.paneMoveKeys.Down:
+		return "D", true
+	case m.paneMoveKeys.Up:
+		return "U", true
+	case m.paneMoveKeys.Right:
+		return "R", true
+	}
+	return "", false
+}
+
+// handlePaneMoveKey implements ADR-0057's movement table for one of the
+// four tmux pane-move keys, from wherever the cursor currently is - the
+// list (spaces or agents) or the diff pane. A folded section counts as
+// absent for this purpose: moving toward one is an edge, same as if it
+// didn't exist.
+func (m Model) handlePaneMoveKey(dir string) (tea.Model, tea.Cmd) {
+	if m.diffFocused {
+		if dir == "L" {
+			m.diffFocused = false
+			return m, nil
+		}
+		// down/up/right from the diff pane: always an edge.
+		return m.edgeHandoff(dir)
+	}
+
+	switch dir {
+	case "D":
+		if m.section == sectionSpaces && len(m.agentRows) > 0 && !m.agentsFolded {
+			m.section = sectionAgents
+			return m, nil
+		}
+		return m.edgeHandoff(dir)
+	case "U":
+		if m.section == sectionAgents && !m.spacesFolded {
+			m.section = sectionSpaces
+			return m, nil
+		}
+		return m.edgeHandoff(dir)
+	case "R":
+		// "-> diff pane (what space does today)" - never an edge from the
+		// list, even when there's no diff content to show.
+		if m.diffContent != "" {
+			m.diffFocused = true
+		}
+		return m, nil
+	default: // "L": always an edge from the list.
+		return m.edgeHandoff(dir)
+	}
+}
+
+// edgeHandoff is ADR-0057's edge hand-off: at an edge, the dashboard hands
+// the move back to tmux via select-pane in that direction, exactly the way
+// vim-tmux-navigator does from Neovim - moving the ATTACHED CLIENT, not
+// anything within the dashboard itself.
+func (m Model) edgeHandoff(dir string) (tea.Model, tea.Cmd) {
+	selectFn := m.selectPaneDirectionFn
+	return m, func() tea.Msg {
+		if err := selectFn(dir); err != nil {
+			return statusMsg("pane move failed: " + err.Error())
+		}
+		return nil
+	}
 }
 
 // expandCollapsedRepoHeader expands the repo header at the cursor, if there
@@ -1252,7 +1748,7 @@ func (m *Model) expandCollapsedRepoHeader() {
 	if !m.collapsed[repoKey(repo)] {
 		return
 	}
-	m.collapsed[repoKey(repo)] = false
+	m.unfoldRepo(repo)
 	m.rebuildRows()
 	m.focusRow(func(r row) bool { return r.kind == rowWorktree && r.repo == repo })
 	m.saveViewState()
@@ -1344,6 +1840,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dragging = true
 			m.dragStartX = mouse.X
 		}
+		if mouse.Button == tea.MouseLeft {
+			if row, ok := m.agentsHeaderRow(); ok && mouse.Y == row {
+				m.splitDragging = true
+				m.splitDragStartY = mouse.Y
+				m.splitDragBase = m.computeLeftLayout().agentsVisible
+			}
+		}
 		return m, nil
 
 	case tea.MouseMotionMsg:
@@ -1353,11 +1856,22 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			newWidth := min(max(mouse.X, minLeftPaneWidth), maxLeft)
 			m.leftPaneWidth = newWidth
 		}
+		if m.splitDragging {
+			mouse := msg.Mouse()
+			// Dragging the header UP (Y decreases) grows the agents
+			// section; dragging it DOWN shrinks it - a relative delta from
+			// where the drag started (splitDragBase), not the vertical
+			// divider's direct "mouse.X IS the new width" mapping. Agent
+			// rows are two lines tall, so the header follows the pointer
+			// one row per two lines.
+			m.setSplit(m.splitDragBase + (m.splitDragStartY-mouse.Y)/2)
+		}
 		return m, nil
 
 	case tea.MouseReleaseMsg:
-		wasDragging := m.dragging
+		wasDragging := m.dragging || m.splitDragging
 		m.dragging = false
+		m.splitDragging = false
 		if wasDragging {
 			// Written once, here, not on every MouseMotionMsg during the drag
 			// (ADR-0050): the saved state only has to be right once the drag
@@ -1378,6 +1892,15 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for _, k := range msg.state.Collapsed {
 			m.collapsed[k] = true
 		}
+		for _, k := range msg.state.Expanded {
+			m.expanded[k] = true
+		}
+		m.agentsFolded = msg.state.AgentsFolded
+		m.spacesFolded = msg.state.SpacesFolded
+		m.split = msg.state.Split
+		// rebuildRows ends in settleSection, which moves the cursor to agents
+		// when spaces loads folded (ADR-0056); placeCursorOnActive picks the
+		// agent.
 		m.rebuildRows()
 		return m, nil
 
@@ -1705,6 +2228,17 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// ADR-0057: checked before diffFocused's own dispatch, since a pane-move
+	// key means something different (and always something, per the
+	// direction table) in EITHER context - handlePaneMoveKey branches on
+	// m.diffFocused itself. Every text-input/overlay state above this point
+	// has already returned, so a pane-move key can only ever reach here when
+	// no text input has focus - "the four keys are not moves" while one
+	// does, and they must never be handed to tmux either.
+	if dir, ok := m.paneMoveDirection(key); ok {
+		return m.handlePaneMoveKey(dir)
+	}
+
 	if m.diffFocused {
 		return m.handleDiffKey(key)
 	}
@@ -1848,13 +2382,33 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		for repo := range repos {
-			m.collapsed[repoKey(repo)] = collapseAll
+			if collapseAll {
+				m.collapsed[repoKey(repo)] = true
+			} else {
+				m.unfoldRepo(repo)
+			}
 		}
 		m.rebuildRows()
 		if collapseAll && len(m.rows) > 0 {
 			m.cursor = 0 // first visible row is a repo header when all collapsed
 		}
 		m.saveViewState()
+		return m, nil
+
+	case "a":
+		m.toggleAgentsFold()
+		return m, nil
+
+	case "w":
+		m.toggleSpacesFold()
+		return m, nil
+
+	case "+":
+		m.adjustSplit(1)
+		return m, nil
+
+	case "-":
+		m.adjustSplit(-1)
 		return m, nil
 
 	case "/":
@@ -2375,43 +2929,285 @@ func (m Model) renderDashboard() string {
 	return body + "\n" + hint + "\n" + status
 }
 
-func (m Model) renderLeft(width int) string {
-	// Scroll viewport: only rows[start:end] are rendered, so a list longer
-	// than the pane's height no longer hides its tail nor lets the cursor
-	// move into it.
-	viewportHeight := max(m.height-2, 0)
-	start, end := tuicomponents.VisibleWindow(len(m.rows), m.cursor, viewportHeight)
+// leftLayout is the current height budget of the left column (ADR-0056),
+// computed once by computeLeftLayout and shared by renderLeft (what to draw)
+// and agentsHeaderRow (where a header drag can start), so the two can never
+// disagree about where the boundary is.
+type leftLayout struct {
+	spacesHeight  int // spaces rows shown (0 while spaces is folded)
+	agentsVisible int // agent rows (two lines each) shown (0 while agents is folded)
+}
 
-	var sb strings.Builder
-	for i, r := range m.rows[start:end] {
-		idx := start + i
-		selected := idx == m.cursor
-		var line string
-		switch r.kind {
-		case rowRepo:
-			line = m.renderRepoHeaderRow(r, width, selected)
-		case rowRepoSession:
-			line = m.renderSessionLikeRow(
-				r, r.repoSession.Name, r.repoSession.Attached, r.repoSession.AgentState,
-				width, selected, m.pendingKillSession == r.repoSession.Name,
-			)
-		case rowSession:
-			armed := m.pendingKillSession == r.session.Name
-			line = m.renderSessionLikeRow(
-				r, r.session.Name, r.session.Attached, r.session.AgentState,
-				width, selected, armed,
-			)
-		case rowSessionsHeader:
-			line = ansi.Truncate(m.palette.SectionHead.Render("sessions"), width, "")
-		case rowPane:
-			line = m.renderPaneRow(r, width, selected)
-		default: // rowWorktree
-			line = m.renderWorktreeRow(r, width, selected)
+// Lines the left column spends on section chrome rather than rows: with both
+// sections open, the SPACES header, the rule above AGENTS, and the AGENTS
+// header; with one folded, the open section's header and the folded bar at
+// the bottom.
+const (
+	bothOpenChrome  = 3
+	oneFoldedChrome = 2
+)
+
+// splitBodyLines is how many lines both open sections share between their
+// rows.
+func (m Model) splitBodyLines() int {
+	return max(m.height-2-bothOpenChrome, 0)
+}
+
+// maxSplit is the most agent rows the split may give agents while spaces
+// keeps at least one row (Step 8: "each open section keeps at least one
+// row").
+func (m Model) maxSplit() int {
+	return max((m.splitBodyLines()-1)/2, 1)
+}
+
+// computeLeftLayout splits the column between the two sections. A section
+// that needs less than its share gives the rest to the other one, so the
+// split only decides anything when both sections overflow: then agents get
+// m.split rows (Step 8's +/- keys or header drag), or half the column before
+// the user has ever set it.
+func (m Model) computeLeftLayout() leftLayout {
+	total := max(m.height-2, 0)
+	switch {
+	case m.spacesOnly():
+		return leftLayout{spacesHeight: total}
+	case m.agentsFolded:
+		return leftLayout{spacesHeight: max(total-oneFoldedChrome, 0)}
+	case m.spacesFolded:
+		return leftLayout{
+			agentsVisible: min(len(m.agentRows), max(total-oneFoldedChrome, 0)/2),
 		}
-		sb.WriteString(line)
-		sb.WriteString("\n")
 	}
-	return strings.TrimRight(sb.String(), "\n")
+
+	body := m.splitBodyLines()
+	spacesNeed := len(m.rows)
+	agentsNeed := 2 * len(m.agentRows)
+	var agentsLines int
+	if spacesNeed+agentsNeed <= body {
+		agentsLines = agentsNeed
+	} else {
+		share := 2 * m.split
+		if m.split <= 0 {
+			share = body / 2
+		}
+		share = min(max(share, 2), 2*m.maxSplit())
+		switch {
+		case agentsNeed <= share:
+			agentsLines = agentsNeed
+		case spacesNeed <= body-share:
+			agentsLines = body - spacesNeed
+		default:
+			agentsLines = share
+		}
+	}
+	agentsVisible := min(len(m.agentRows), agentsLines/2)
+	return leftLayout{
+		spacesHeight:  min(spacesNeed, max(body-2*agentsVisible, 0)),
+		agentsVisible: agentsVisible,
+	}
+}
+
+// spacesOnly reports whether there is no agents section to show at all: no
+// agent panes (before any filter) and agents not folded. The column is then
+// one plain list, with no section headers, rule or bar - a single section
+// has nothing to be told apart from.
+func (m Model) spacesOnly() bool {
+	return m.agentsTotal == 0 && !m.agentsFolded && !m.spacesFolded
+}
+
+// agentsHeaderRow returns the row (0-indexed within the left column) the
+// AGENTS header sits on - the target for starting a header drag, mirroring
+// how the vertical divider's drag targets mouse.X == m.leftPaneWidth. ok is
+// false when there is no draggable header: either section folded (a folded
+// bar isn't a resize handle) or no agents to show.
+func (m Model) agentsHeaderRow() (row int, ok bool) {
+	if m.agentsFolded || m.spacesFolded || len(m.agentRows) == 0 {
+		return 0, false
+	}
+	// SPACES header, its rows, then the rule, then the AGENTS header.
+	return 1 + m.computeLeftLayout().spacesHeight + 1, true
+}
+
+func (m Model) renderLeft(width int) string {
+	layout := m.computeLeftLayout()
+	var lines []string
+
+	if !m.spacesFolded {
+		if !m.spacesOnly() {
+			lines = append(lines, m.renderSectionHeader(
+				"SPACES", m.spacesCount, m.spacesTotal, m.section == sectionSpaces, width,
+			))
+		}
+		// Scroll viewport: only rows[start:end] are rendered, so a list
+		// longer than its budget no longer hides its tail nor lets the
+		// cursor move into it.
+		start, end := tuicomponents.VisibleWindow(len(m.rows), m.cursor, layout.spacesHeight)
+		for i, r := range m.rows[start:end] {
+			idx := start + i
+			selected := m.section == sectionSpaces && idx == m.cursor
+			var line string
+			switch r.kind {
+			case rowRepo:
+				line = m.renderRepoHeaderRow(r, width, selected)
+			case rowRepoSession:
+				line = m.renderSessionLikeRow(
+					r, r.repoSession.Name, width, selected,
+					m.pendingKillSession == r.repoSession.Name,
+				)
+			case rowSession:
+				armed := m.pendingKillSession == r.session.Name
+				line = m.renderSessionLikeRow(r, r.session.Name, width, selected, armed)
+			case rowSessionsHeader:
+				line = ansi.Truncate(m.palette.SectionHead.Render("sessions"), width, "")
+			case rowPane:
+				line = m.renderPaneRow(r, width, selected)
+			default: // rowWorktree
+				line = m.renderWorktreeRow(r, width, selected)
+			}
+			lines = append(lines, line)
+		}
+	}
+
+	if m.spacesOnly() {
+		return strings.Join(lines, "\n")
+	}
+
+	if !m.spacesFolded && !m.agentsFolded {
+		lines = append(lines, m.palette.Divider.Render(strings.Repeat("─", max(width, 0))))
+	}
+
+	if !m.agentsFolded {
+		lines = append(lines, m.renderSectionHeader(
+			"AGENTS", len(m.agentRows), m.agentsTotal, m.section == sectionAgents, width,
+		))
+		agentStart, agentEnd := tuicomponents.VisibleWindow(
+			len(m.agentRows),
+			m.agentCursor,
+			layout.agentsVisible,
+		)
+		for i, ar := range m.agentRows[agentStart:agentEnd] {
+			idx := agentStart + i
+			selected := m.section == sectionAgents && idx == m.agentCursor
+			// Split so lines counts screen lines: an agent row is two, and
+			// the padding below must know that to put a folded bar on the
+			// last line.
+			lines = append(lines, strings.Split(m.renderAgentRow(ar, width, selected), "\n")...)
+		}
+	}
+
+	// ADR-0056: a folded section drops to a one-line bar at the bottom of
+	// the column, whatever the open section above it holds.
+	if m.agentsFolded || m.spacesFolded {
+		for len(lines) < max(m.height-3, 0) {
+			lines = append(lines, "")
+		}
+		if m.agentsFolded {
+			lines = append(lines, m.renderAgentsFoldedBar(width))
+		} else {
+			lines = append(lines, m.renderSpacesFoldedBar(width))
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderSectionHeader draws a section's header line: the name, and its row
+// count right-aligned ("3 of 12" while a filter narrows it), yellow when the
+// cursor is in that section and dim otherwise (ADR-0056).
+func (m Model) renderSectionHeader(name string, shown, total int, focused bool, width int) string {
+	label := " " + name
+	count := strconv.Itoa(total)
+	if shown != total {
+		count = fmt.Sprintf("%d of %d", shown, total)
+	}
+	pad := strings.Repeat(" ", max(0, width-ansi.StringWidth(label)-ansi.StringWidth(count)))
+	plain := ansi.Truncate(label+pad+count, width, "")
+	if focused {
+		return m.palette.SelectedBar.Render(plain)
+	}
+	return m.palette.SectionHead.Render(plain)
+}
+
+// renderFoldedBar draws a folded section's one-line bar (ADR-0056): what is
+// inside on the left, the key that unfolds it on the right, on the raised
+// background so it reads as a closed section rather than a row.
+func (m Model) renderFoldedBar(summary, key string, width int) string {
+	pad := strings.Repeat(
+		" ", max(0, width-ansi.StringWidth(summary)-ansi.StringWidth(key)-1),
+	)
+	line := ansi.Truncate(summary+pad+m.palette.HintKey.Render(key)+" ", width, "")
+	return m.palette.RaisedLine(line)
+}
+
+// renderAgentsFoldedBar is the agents bar: the total plus a count per state,
+// in urgency order, so a new blocked agent shows while the section is
+// closed. States with no agents are left out rather than shown as 0.
+func (m Model) renderAgentsFoldedBar(width int) string {
+	counts := map[tuicomponents.AgentRowState]int{}
+	for _, r := range m.agentRows {
+		counts[r.state]++
+	}
+	var sb strings.Builder
+	sb.WriteString(m.palette.SectionHead.Render(" ▸ "))
+	sb.WriteString(m.palette.DiffFileHeader.Render("AGENTS"))
+	sb.WriteString(m.palette.SectionHead.Render(fmt.Sprintf("  %d  ", len(m.agentRows))))
+	for _, st := range agentRowStatesByUrgency {
+		if n := counts[st]; n > 0 {
+			sb.WriteString("  " + m.palette.AgentRowDot(st) + strconv.Itoa(n))
+		}
+	}
+	return m.renderFoldedBar(sb.String(), "a", width)
+}
+
+// renderSpacesFoldedBar is the spaces bar: how many spaces, across how many
+// repos and sessions.
+func (m Model) renderSpacesFoldedBar(width int) string {
+	repos := map[string]bool{}
+	for _, s := range m.statuses {
+		repos[s.Repo] = true
+	}
+	summary := m.palette.SectionHead.Render(" ▸ ") +
+		m.palette.DiffFileHeader.Render("SPACES") +
+		m.palette.SectionHead.Render(fmt.Sprintf(
+			"  %d   %d repos · %d sessions", m.spacesTotal, len(repos), len(m.sessions),
+		))
+	return m.renderFoldedBar(summary, "w", width)
+}
+
+// renderAgentRow draws one agents-section row as two lines (ADR-0056): a
+// glyph + location label with the pane index right-aligned, then an indented
+// state word + coder name. selected wraps BOTH lines in the same soft
+// selection stripe, so "the selection bar runs down both lines as one
+// stripe."
+func (m Model) renderAgentRow(r agentRow, width int, selected bool) string {
+	right := ":" + r.pane.PaneIndex
+	rightW := ansi.StringWidth(right)
+	const prefixW = 3                       // margin(1) + glyph(1) + space(1)
+	avail := max(0, width-prefixW-rightW-1) // -1 for the space before the right-aligned index
+	label := ansi.Truncate(r.label, avail, "…")
+	pad1 := strings.Repeat(" ", max(0, width-prefixW-ansi.StringWidth(label)-rightW-1))
+
+	glyph := m.palette.AgentRowDot(r.state)
+	labelText := label
+	// An idle agent's location dims along with its glyph/word - "finished
+	// and seen, or not prompted yet" reads as quieter, not just its state.
+	if r.state == tuicomponents.AgentRowIdle {
+		labelText = m.palette.NoSession.Render(label)
+	}
+	line1 := " " + glyph + " " + labelText + pad1 + " " + m.palette.SectionHead.Render(right)
+
+	kindSuffix := " · " + r.kind
+	line2Plain := "   " + tuicomponents.AgentRowWord(r.state) + kindSuffix
+	pad2 := strings.Repeat(" ", max(0, width-ansi.StringWidth(line2Plain)))
+	line2 := "   " + m.palette.AgentRowWordText(
+		r.state,
+	) + m.palette.SectionHead.Render(
+		kindSuffix,
+	) + pad2
+
+	if selected {
+		return m.softSelectedLine(line1) + "\n" + m.softSelectedLine(line2)
+	}
+	return line1 + "\n" + line2
 }
 
 // softSelectedLine applies layout B's soft-bar selection (ADR: repo header
@@ -2469,17 +3265,19 @@ func (m Model) diffstatSuffix(path string) string {
 }
 
 // renderWorktreeRow draws a worktree row: a leading margin, the pane-expand
-// chevron (ADR-0008), the agent-state glyph, the name cut with "…", and the
-// diffstat pinned to the right edge. The "∕" branch glyph and "└" tree
-// connector are gone (layout B: a flat, clean tree - repo grouping still
-// comes from indentation and the header above).
+// chevron (ADR-0008), the name cut with "…", and the diffstat pinned to the
+// right edge. No status marker at all (Step 6 of
+// docs/plans/cycles/2026-09-28-ws-agents-section.md, superseding ADR-0008's
+// per-row agent-state glyph): agent state is shown only in the dashboard's
+// agents section (ADR-0056). The "∕" branch glyph and "└" tree connector are
+// gone too (layout B: a flat, clean tree - repo grouping still comes from
+// indentation and the header above).
 func (m Model) renderWorktreeRow(r row, width int, selected bool) string {
-	state := tuicomponents.SessionStateFromWorktree(r.status, r.status.AgentState, 0)
 	chevronGlyph := chevronGlyphFor(r, m.collapsed)
 	suffix := m.diffstatSuffix(r.status.Path)
 
-	// prefix = margin(1) + chevron(1) + space(1) + glyph(1) + space(1) = 5 cols
-	const prefixW = 5
+	// prefix = margin(1) + chevron(1) + space(1) = 3 cols
+	const prefixW = 3
 	suffixW := 0
 	if suffix != "" {
 		suffixW = ansi.StringWidth(ansi.Strip(suffix)) + 1 // +1 for its leading space
@@ -2492,17 +3290,15 @@ func (m Model) renderWorktreeRow(r row, width int, selected bool) string {
 	if selected {
 		if m.pendingDelete == pendingKey || m.pendingSessionDelete == pendingKey ||
 			m.pendingForceDelete == pendingKey {
-			// Armed is one solid red: plain glyph and counts, so no inner
-			// color competes with it.
-			plain := " " + chevronGlyph + " " + m.palette.StatusGlyph(state) + " " + name + pad
+			// Armed is one solid red: plain text, no inner color competes with it.
+			plain := " " + chevronGlyph + " " + name + pad
 			if suffix != "" {
 				plain += " " + ansi.Strip(suffix)
 			}
 			return m.palette.Armed.Render(plain)
 		}
 	}
-	dot := m.palette.StatusDot(state)
-	line := " " + chevronGlyph + " " + dot + " " + name + pad
+	line := " " + chevronGlyph + " " + name + pad
 	if suffix != "" {
 		line += " " + suffix
 	}
@@ -2514,45 +3310,29 @@ func (m Model) renderWorktreeRow(r row, width int, selected bool) string {
 }
 
 // renderSessionLikeRow draws a rowSession or rowRepoSession row: the
-// pane-expand chevron, a square glyph (■/□ attached/detached, or the
-// agent-state vocabulary once a pane has reported one), and the name - no
-// trailing "session" label (ADR-0052: standalone sessions read as a group
-// under the dim "sessions" header instead, and a repo-session row already
-// reads as a session from its position under its repo).
+// pane-expand chevron and the name - no status marker at all (Step 6,
+// superseding ADR-0008's agent-state glyph and the earlier attached/detached
+// square) and no trailing "session" label (ADR-0052: standalone sessions
+// read as a group under the dim "sessions" header instead, and a
+// repo-session row already reads as a session from its position under its
+// repo).
 func (m Model) renderSessionLikeRow(
 	r row,
 	name string,
-	attached bool,
-	agentState string,
 	width int,
 	selected bool,
 	armed bool,
 ) string {
 	chevronGlyph := chevronGlyphFor(r, m.collapsed)
-	// prefix = margin(1) + chevron(1) + space(1) + glyph(1) + space(1) = 5 cols
-	const prefixW = 5
+	// prefix = margin(1) + chevron(1) + space(1) = 3 cols
+	const prefixW = 3
 	truncated := ansi.Truncate(name, max(0, width-prefixW), "…")
 	pad := strings.Repeat(" ", max(0, width-prefixW-ansi.StringWidth(truncated)))
 
-	hasAgentState := agentState != ""
-	var state tuicomponents.SessionState
-	if hasAgentState {
-		state = tuicomponents.SessionStateFromAgent(true, agentState, 0)
-	}
-
 	if selected && armed {
-		// Armed is one solid red, so the glyph goes in unstyled.
-		g := m.palette.SessionGlyph(attached)
-		if hasAgentState {
-			g = m.palette.StatusGlyph(state)
-		}
-		return m.palette.Armed.Render(" " + chevronGlyph + " " + g + " " + truncated + pad)
+		return m.palette.Armed.Render(" " + chevronGlyph + " " + truncated + pad)
 	}
-	dot := m.palette.SessionDot(attached)
-	if hasAgentState {
-		dot = m.palette.StatusDot(state)
-	}
-	line := " " + chevronGlyph + " " + dot + " " + truncated + pad
+	line := " " + chevronGlyph + " " + truncated + pad
 	if selected {
 		return m.softSelectedLine(line)
 	}
@@ -2560,21 +3340,15 @@ func (m Model) renderSessionLikeRow(
 }
 
 // renderPaneRow draws one pane under an expanded worktree/session/repo-session
-// row (ADR-0008).
+// row (ADR-0008). No status marker (Step 6, same as its parent rows above).
 func (m Model) renderPaneRow(r row, width int, selected bool) string {
 	// 5-space indent: one column deeper than the worktree/session prefix
 	// above, so pane rows read as nested one level further under either
 	// parent kind.
 	const indent = "     "
-	// windowActive is unconditionally true: a pane row only ever exists
-	// because its pane is live in an existing window/session, so an empty
-	// r.pane.State falls through to StateRunning - consistent with how
-	// worktree/session rows with no agent state are treated.
-	state := tuicomponents.SessionStateFromAgent(true, r.pane.State, 0)
 	suffix := ":" + r.pane.PaneIndex + " " + r.pane.CurrentCommand
 
-	dot := m.palette.StatusDot(state)
-	text := indent + dot + " " + r.pane.Window + suffix
+	text := indent + r.pane.Window + suffix
 	text = ansi.Truncate(text, width, "")
 	text += strings.Repeat(" ", max(0, width-ansi.StringWidth(text)))
 	if selected {
@@ -2614,7 +3388,13 @@ func (m Model) renderRight(width int) string {
 	// selected last instead of something that reflects the current row.
 	// Layout B draws nothing here rather than an explanatory sentence - the
 	// hint bar and help popup already say what each row does.
-	if m.cursor >= 0 && m.cursor < len(m.rows) {
+	// In the agents section the diff is the agent's own worktree
+	// (ADR-0056), and an agent outside a worktree has none.
+	sel, ok := m.selectedDiffStatus()
+	if m.section == sectionAgents && !ok {
+		return ""
+	}
+	if m.section == sectionSpaces && m.cursor >= 0 && m.cursor < len(m.rows) {
 		switch m.rows[m.cursor].kind {
 		case rowRepo, rowSession, rowRepoSession, rowPane:
 			return ""
@@ -2643,12 +3423,12 @@ func (m Model) renderRight(width int) string {
 		m.height-4-extraLines,
 		0,
 	) // height minus hint, status, header, blank line (and title line, if shown)
-	// sel is guaranteed a worktree row: rowRepo/rowSession/rowPane all
-	// returned above. Its path is compared against diffPath (B4) so a diff
-	// still in flight for the row the cursor just left never renders under
-	// the newly selected row - m.diffContent only clears once a fresh diffMsg
-	// lands, so without this check it stays on screen, stale, until then.
-	sel, _ := m.selectedStatus()
+	// sel is guaranteed a worktree (a worktree row, or an agent in one):
+	// every other row returned above. Its path is compared against diffPath
+	// (B4) so a diff still in flight for the row the cursor just left never
+	// renders under the newly selected row - m.diffContent only clears once a
+	// fresh diffMsg lands, so without this check it stays on screen, stale,
+	// until then.
 	content := m.renderDiffContent(width, contentHeight, sel.Path != m.diffPath)
 
 	out := ansi.Truncate(header, width, "") + "\n" + content
@@ -2758,12 +3538,38 @@ func (m Model) renderHint(width int) string {
 		}
 		return m.palette.HintBar(hints, width)
 	}
+	// Step 11 (ADR-0056): with the cursor in the agents section, n/d don't
+	// apply to an agent row - the move keys tmux reports (ADR-0057) and a/w
+	// (fold) take their place instead, matching the mockups' own
+	// agents-section hint bar. A key that would do nothing right now (up
+	// with spaces folded, folding the last open section) is left out.
+	if m.section == sectionAgents {
+		hints := []tuicomponents.KeyHint{{Key: "↵", Desc: "jump to pane"}}
+		if !m.spacesFolded {
+			hints = append(hints, tuicomponents.KeyHint{
+				Key: hintKeyName(m.paneMoveKeys.Up), Desc: "spaces",
+			})
+		}
+		hints = append(hints, tuicomponents.KeyHint{
+			Key: hintKeyName(m.paneMoveKeys.Right), Desc: "diff",
+		})
+		if m.spacesFolded {
+			hints = append(hints, tuicomponents.KeyHint{Key: "w", Desc: "spaces"})
+		} else {
+			hints = append(hints,
+				tuicomponents.KeyHint{Key: "a", Desc: "fold agents"},
+				tuicomponents.KeyHint{Key: "w", Desc: "fold spaces"},
+			)
+		}
+		hints = append(hints, tuicomponents.KeyHint{Key: "?", Desc: "help"})
+		return m.palette.HintBar(hints, width)
+	}
 	// Five keys only (layout B): everything else - n/N/s, h/l/z, D, r, R,
-	// space, e, ctrl+r, q - stays reachable from ? instead of competing for
-	// space here. "d" covers both delete-worktree and kill-session; the
-	// armed-kill/armed-delete highlight already disambiguates the moment a
-	// press actually arms, and the help popup spells out every row-kind
-	// nuance for whoever wants it.
+	// space, e, ctrl+r, q, a/w, +/-, the pane-move keys - stays reachable
+	// from ? instead of competing for space here. "d" covers both
+	// delete-worktree and kill-session; the armed-kill/armed-delete
+	// highlight already disambiguates the moment a press actually arms, and
+	// the help popup spells out every row-kind nuance for whoever wants it.
 	hints := []tuicomponents.KeyHint{
 		{Key: "↵", Desc: "open"},
 		{Key: "n", Desc: "new"},
@@ -2772,6 +3578,15 @@ func (m Model) renderHint(width int) string {
 		{Key: "?", Desc: "help"},
 	}
 	return m.palette.HintBar(hints, width)
+}
+
+// hintKeyName shortens a bubbletea key name for the hint bar, "ctrl+k" to
+// "^k", the same notation the bar already uses for ^d/^u and ^r.
+func hintKeyName(key string) string {
+	if rest, ok := strings.CutPrefix(key, "ctrl+"); ok {
+		return "^" + rest
+	}
+	return key
 }
 
 // renderStatus renders the one-line status message at the bottom of the
@@ -2830,9 +3645,18 @@ func (m Model) renderHelpPopup() string {
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},
 		{Key: "s", Desc: "create a new tmux session (folder picker → name prompt)"},
 		{Key: "$", Desc: "rename the selected session (standalone or repo-session)"},
-		{Key: "j / k  ↓ / ↑", Desc: "move cursor down / up"},
+		{Key: "j / k  ↓ / ↑", Desc: "move cursor down / up (crosses between spaces and agents)"},
 		{Key: "h / l", Desc: "collapse / expand repo, or a worktree/session's panes"},
 		{Key: "z", Desc: "toggle collapse all repos"},
+		{Key: "a", Desc: "fold / unfold the agents section"},
+		{Key: "w", Desc: "fold / unfold the spaces section"},
+		{Key: "+ / -", Desc: "grow / shrink the split (only when both sections are open)"},
+		{
+			Key: "ctrl+h/j/k/l",
+			Desc: "move between spaces, agents, and the diff pane, or hand off to the tmux " +
+				"pane in that direction at an edge - read from your own tmux config " +
+				"(default ctrl+h/j/k/l)",
+		},
 		{
 			Key:  "d d",
 			Desc: "delete worktree (confirm twice); on a session row: kill it (confirm twice)",

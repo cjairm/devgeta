@@ -120,3 +120,132 @@ func (p *Palette) SessionDot(attached bool) string {
 	}
 	return p.NoSession.Render(g)
 }
+
+// AgentRowState is the display state for one row in the dashboard's agents
+// section (ADR-0055) — distinct from SessionState, which governs space rows
+// (worktree/session/pane): an agent row's five states come from a raw
+// @dg_agent_state value (via AgentRowStateFor) rather than the window/dirty
+// inputs SessionStateFromAgent uses, and "done" (finished, unseen) is
+// deliberately a different state from "idle" (finished and seen, or never
+// prompted) even though both derive from an otherwise-quiet pane — collapsing
+// them the way SessionStateFromAgent's default branch does would lose
+// exactly the distinction the agents section exists to show.
+type AgentRowState int
+
+const (
+	AgentRowBlocked AgentRowState = iota
+	AgentRowError
+	AgentRowDone
+	AgentRowWorking
+	AgentRowIdle
+)
+
+// AgentRowStateFor maps an agent pane's raw @dg_agent_state value to its
+// AgentRowState, per ADR-0055's table. Callers first confirm the pane IS an
+// agent (tmux.PaneState.IsAgent) — this only maps the state string. Any
+// value outside ADR-0005's vocabulary (including "") falls back to
+// AgentRowIdle, the same "unrecognized reads as unset" tolerance
+// tmux.AggregateAgentState already uses for the same raw values.
+func AgentRowStateFor(state string) AgentRowState {
+	switch state {
+	case worktree.AgentStateBlocked:
+		return AgentRowBlocked
+	case worktree.AgentStateError:
+		return AgentRowError
+	case worktree.AgentStateIdle:
+		return AgentRowDone
+	case worktree.AgentStateBusy:
+		return AgentRowWorking
+	default:
+		return AgentRowIdle
+	}
+}
+
+// AgentRowWord returns state's display word, exactly ADR-0055's table.
+func AgentRowWord(state AgentRowState) string {
+	switch state {
+	case AgentRowBlocked:
+		return "blocked"
+	case AgentRowError:
+		return "error"
+	case AgentRowDone:
+		return "done"
+	case AgentRowWorking:
+		return "working"
+	default:
+		return "idle"
+	}
+}
+
+// AgentStateWord maps an agent pane's (isAgent, state) directly to its
+// display word, for a caller that has not already filtered to agent-only
+// panes. A non-agent pane has no agent row to show a word on, so this
+// returns "" for isAgent == false regardless of state — rather than leaving
+// that decision to every caller — instead of AgentRowStateFor/AgentRowWord's
+// state-only mapping.
+func AgentStateWord(isAgent bool, state string) string {
+	if !isAgent {
+		return ""
+	}
+	return AgentRowWord(AgentRowStateFor(state))
+}
+
+// AgentRowWordText returns state's display word, styled in the SAME color
+// AgentRowDot uses for its glyph, so a row's glyph and word can never
+// visually disagree.
+func (p *Palette) AgentRowWordText(state AgentRowState) string {
+	word := AgentRowWord(state)
+	switch state {
+	case AgentRowBlocked:
+		return p.Blocked.Render(word)
+	case AgentRowError:
+		return p.Error.Render(word)
+	case AgentRowDone:
+		return p.NeedsReview.Render(word)
+	case AgentRowWorking:
+		return p.Running.Render(word)
+	default:
+		return p.NoSession.Render(word)
+	}
+}
+
+// AgentRowGlyph returns the raw glyph character with no ANSI styling for an
+// agent row's state. Use when the caller wraps the result in a parent style
+// (e.g. the selection stripe); use AgentRowDot for a standalone styled
+// glyph. Reuses StatusGlyph's shapes (!/✕/◆/●/○) so the two sections read as
+// the same visual language, distinguished by their words, not by a second
+// glyph set to learn.
+func (p *Palette) AgentRowGlyph(state AgentRowState) string {
+	switch state {
+	case AgentRowBlocked:
+		return "!"
+	case AgentRowError:
+		return "✕"
+	case AgentRowDone:
+		return "◆"
+	case AgentRowWorking:
+		return "●"
+	default:
+		return "○"
+	}
+}
+
+// AgentRowDot returns a styled glyph string with ANSI color codes for an
+// agent row's state, reusing the same palette colors StatusDot maps its
+// equivalent space-row states to. Do NOT nest inside a parent
+// style.Render() — use AgentRowGlyph instead.
+func (p *Palette) AgentRowDot(state AgentRowState) string {
+	g := p.AgentRowGlyph(state)
+	switch state {
+	case AgentRowBlocked:
+		return p.Blocked.Render(g)
+	case AgentRowError:
+		return p.Error.Render(g)
+	case AgentRowDone:
+		return p.NeedsReview.Render(g)
+	case AgentRowWorking:
+		return p.Running.Render(g)
+	default:
+		return p.NoSession.Render(g)
+	}
+}

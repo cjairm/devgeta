@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -50,13 +51,16 @@ func writeFakeTmux(
 	t *testing.T,
 	dir, recordPath string,
 	exitCode int,
-	notifySound, activeClients, paneTTY string,
+	notifySound, activeClients, paneTTY, listPanesOutput, paneState string,
 ) {
 	t.Helper()
-	// recordPath, notifySound, activeClients, and paneTTY are always
-	// test-controlled literals in this file, never containing a single
-	// quote, so the naive quoting below is safe for that reason, not
-	// because it is general-purpose shell quoting.
+	// recordPath, notifySound, activeClients, paneTTY, and listPanesOutput
+	// are always test-controlled literals in this file, never containing a
+	// single quote, so the naive quoting below is safe for that reason, not
+	// because it is general-purpose shell quoting. listPanesOutput may
+	// contain embedded real newlines (one per pane) - a single-quoted shell
+	// literal tolerates that fine, since a newline inside single quotes is
+	// just another literal character, not a line terminator.
 	script := "#!/bin/sh\n" +
 		"printf '%s\\n' \"$*\" >> '" + recordPath + "'\n" +
 		"case \"$1\" in\n" +
@@ -64,9 +68,11 @@ func writeFakeTmux(
 		"display-message)\n" +
 		"case \"$5\" in\n" +
 		"'#{pane_tty}') printf '%s\\n' '" + paneTTY + "' ;;\n" +
+		"'#{@dg_agent_state}') printf '%s\\n' '" + paneState + "' ;;\n" +
 		"*) printf '%s\\n' '" + activeClients + "' ;;\n" +
 		"esac\n" +
 		";;\n" +
+		"list-panes) printf '%s\\n' '" + listPanesOutput + "' ;;\n" +
 		"esac\n" +
 		"exit " + strconv.Itoa(exitCode) + "\n"
 	fakeTmuxPath := filepath.Join(dir, "tmux")
@@ -129,6 +135,16 @@ type hookEnv struct {
 	// exists anywhere in the child's PATH — used to exercise the "player
 	// missing entirely" fallback to the terminal bell.
 	players []string
+	// listPanesStates is what the fake tmux answers `list-panes -t <pane> -F
+	// '#{@dg_agent_state}'` with, one entry per pane in the window — only
+	// consulted by the `end` case's window-mirror recompute. An empty
+	// element represents a pane with no @dg_agent_state set, matching real
+	// tmux's format-string expansion of an unset option to "".
+	listPanesStates []string
+	// paneState is what the fake tmux answers `display-message -p -t <pane>
+	// '#{@dg_agent_state}'` with - this pane's current state, read by the
+	// `resume` case before it decides whether to write.
+	paneState string
 }
 
 // runAgentStateHook extracts configs/claude/agent-state.sh from the embedded
@@ -197,6 +213,8 @@ func runAgentStateHook(
 		env.notifySound,
 		env.activeClients,
 		env.paneTTY,
+		strings.Join(env.listPanesStates, "\n"),
+		env.paneState,
 	)
 
 	playerRecPath := filepath.Join(t.TempDir(), "player-args.txt")
@@ -337,7 +355,11 @@ func TestAgentStateHook_WritesGivenValue(t *testing.T) {
 				)
 			}
 
-			wantPaneWrite := "set-option -p -t %3 @dg_agent_state " + value
+			// ADR-0055: every state write also sets @dg_agent_kind, folded
+			// into the SAME tmux invocation via `\;` rather than a second
+			// process spawn.
+			wantPaneWrite := "set-option -p -t %3 @dg_agent_state " + value +
+				" ; set-option -p -t %3 @dg_agent_kind claude"
 			if calls[0] != wantPaneWrite {
 				t.Errorf("first (pane-level) call = %q, want %q", calls[0], wantPaneWrite)
 			}
@@ -380,15 +402,168 @@ func TestAgentStateHook_NoOpsWithoutTmuxPane(t *testing.T) {
 		"empty": {set: true, value: ""},
 	}
 	for name, pane := range cases {
-		t.Run(name, func(t *testing.T) {
-			code, recorded, playerRecPath := runAgentStateHook(t, "idle", pane, hookEnv{})
+		for _, arg := range []string{"idle", "start", "end"} {
+			t.Run(name+"/"+arg, func(t *testing.T) {
+				code, recorded, playerRecPath := runAgentStateHook(t, arg, pane, hookEnv{})
+				if code != 0 {
+					t.Fatalf("expected exit 0, got %d", code)
+				}
+				if recorded != "" {
+					t.Errorf("expected tmux to never be invoked, but it recorded: %q", recorded)
+				}
+				assertPlayerNeverInvoked(t, playerRecPath)
+			})
+		}
+	}
+}
+
+// TestAgentStateHook_Start_WritesOnlyKind confirms ADR-0055's "Agent starts"
+// row: `start` writes @dg_agent_kind alone - no @dg_agent_state write, no
+// window-mirror write, no sound-gate probe (a fresh agent has no state to
+// report yet, and ADR-0009's sound only ever fires for idle/blocked/error).
+func TestAgentStateHook_Start_WritesOnlyKind(t *testing.T) {
+	code, recorded, playerRecPath := runAgentStateHook(
+		t, "start", paneEnv{set: true, value: "%3"}, hookEnv{},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+
+	calls := callLines(recorded)
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 tmux invocation, got %d: %q", len(calls), recorded)
+	}
+	want := "set-option -p -t %3 @dg_agent_kind claude"
+	if calls[0] != want {
+		t.Errorf("call = %q, want %q", calls[0], want)
+	}
+	assertPlayerNeverInvoked(t, playerRecPath)
+}
+
+// TestAgentStateHook_Resume_NoWriteWhenAlreadyBusy: PostToolUse runs after
+// every tool, so the common case (the turn is already busy) must stop at the
+// one read.
+func TestAgentStateHook_Resume_NoWriteWhenAlreadyBusy(t *testing.T) {
+	code, recorded, playerRecPath := runAgentStateHook(
+		t, "resume", paneEnv{set: true, value: "%3"}, hookEnv{paneState: "busy"},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+	calls := callLines(recorded)
+	if want := []string{"display-message -p -t %3 #{@dg_agent_state}"}; !slices.Equal(calls, want) {
+		t.Errorf("calls = %q, want only the state read %q", calls, want)
+	}
+	assertPlayerNeverInvoked(t, playerRecPath)
+}
+
+// TestAgentStateHook_Resume_WritesBusyAfterAPause: a tool finishing after a
+// permission prompt (state blocked, or already cleared by looking at the
+// pane) means the agent is working again - Claude Code has no "prompt
+// answered" event, so this is the only place busy comes back.
+func TestAgentStateHook_Resume_WritesBusyAfterAPause(t *testing.T) {
+	for _, before := range []string{"blocked", ""} {
+		t.Run("from "+strconv.Quote(before), func(t *testing.T) {
+			code, recorded, playerRecPath := runAgentStateHook(
+				t, "resume", paneEnv{set: true, value: "%3"},
+				hookEnv{paneState: before, listPanesStates: []string{"busy"}},
+			)
 			if code != 0 {
 				t.Fatalf("expected exit 0, got %d", code)
 			}
-			if recorded != "" {
-				t.Errorf("expected tmux to never be invoked, but it recorded: %q", recorded)
+			want := []string{
+				"display-message -p -t %3 #{@dg_agent_state}",
+				"set-option -p -t %3 @dg_agent_state busy ; set-option -p -t %3 @dg_agent_kind claude",
+				"list-panes -t %3 -F #{@dg_agent_state}",
+				"set-option -w -u -t %3 @dg_window_agent_state",
+			}
+			if calls := callLines(recorded); !slices.Equal(calls, want) {
+				t.Errorf("calls = %q, want %q", calls, want)
 			}
 			assertPlayerNeverInvoked(t, playerRecPath)
+		})
+	}
+}
+
+// TestAgentStateHook_Resume_LeavesMirrorWhenSiblingStillWantsYou: going
+// busy clears only this pane's claim on the window's status-bar flag.
+func TestAgentStateHook_Resume_LeavesMirrorWhenSiblingStillWantsYou(t *testing.T) {
+	_, recorded, _ := runAgentStateHook(
+		t, "resume", paneEnv{set: true, value: "%3"},
+		hookEnv{paneState: "blocked", listPanesStates: []string{"busy", "blocked"}},
+	)
+	for _, call := range callLines(recorded) {
+		if strings.Contains(call, "-w -u") {
+			t.Errorf("mirror unset although a sibling pane is blocked: %q", recorded)
+		}
+	}
+}
+
+// TestAgentStateHook_End_UnsetsKindAndState confirms ADR-0055's "Agent ends"
+// row: `end` unsets both @dg_agent_kind and @dg_agent_state on this pane, in
+// one folded tmux invocation (same `\;` pattern as every state write, per
+// CLAUDE.md's "reuse before writing"). No sibling pane still wants attention
+// here (listPanesStates has none), so the window mirror is also unset.
+func TestAgentStateHook_End_UnsetsKindAndState(t *testing.T) {
+	code, recorded, playerRecPath := runAgentStateHook(
+		t, "end", paneEnv{set: true, value: "%3"},
+		hookEnv{listPanesStates: []string{""}},
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d", code)
+	}
+
+	calls := callLines(recorded)
+	if len(calls) != 3 {
+		t.Fatalf(
+			"expected the unset call, the list-panes query, and the mirror unset, got %d: %q",
+			len(calls), recorded,
+		)
+	}
+	wantUnset := "set-option -p -u -t %3 @dg_agent_state ; set-option -p -u -t %3 @dg_agent_kind"
+	if calls[0] != wantUnset {
+		t.Errorf("first (unset) call = %q, want %q", calls[0], wantUnset)
+	}
+	wantQuery := "list-panes -t %3 -F #{@dg_agent_state}"
+	if calls[1] != wantQuery {
+		t.Errorf("second (list-panes) call = %q, want %q", calls[1], wantQuery)
+	}
+	wantMirror := "set-option -w -u -t %3 @dg_window_agent_state"
+	if calls[2] != wantMirror {
+		t.Errorf("third (mirror) call = %q, want %q", calls[2], wantMirror)
+	}
+	assertPlayerNeverInvoked(t, playerRecPath)
+}
+
+// TestAgentStateHook_End_LeavesMirrorWhenSiblingStillWantsYou confirms the
+// other half of the focus hooks' rule (configs/tmux/tmux.conf.tmpl's
+// "ackAgentState"): if ANY other pane in the window still holds idle/
+// blocked/error after this pane's own state is cleared, the window mirror is
+// left untouched (no unset call at all) rather than force-cleared.
+func TestAgentStateHook_End_LeavesMirrorWhenSiblingStillWantsYou(t *testing.T) {
+	for _, siblingState := range []string{"idle", "blocked", "error"} {
+		t.Run(siblingState, func(t *testing.T) {
+			code, recorded, _ := runAgentStateHook(
+				t, "end", paneEnv{set: true, value: "%3"},
+				// "" represents this pane's own entry, already cleared by
+				// the unset call above by the time list-panes would
+				// re-scan in real tmux; siblingState represents a
+				// different pane in the same window still wanting
+				// attention.
+				hookEnv{listPanesStates: []string{"", siblingState}},
+			)
+			if code != 0 {
+				t.Fatalf("expected exit 0, got %d", code)
+			}
+
+			calls := callLines(recorded)
+			if len(calls) != 2 {
+				t.Fatalf(
+					"expected only the unset call and the list-panes query (no mirror "+
+						"unset, a sibling still wants you), got %d: %q",
+					len(calls), recorded,
+				)
+			}
 		})
 	}
 }
@@ -420,7 +595,8 @@ func TestAgentStateHook_SwallowsTmuxFailure(t *testing.T) {
 			len(calls), recorded,
 		)
 	}
-	wantPaneWrite := "set-option -p -t %3 @dg_agent_state idle"
+	wantPaneWrite := "set-option -p -t %3 @dg_agent_state idle" +
+		" ; set-option -p -t %3 @dg_agent_kind claude"
 	wantMirror := "set-option -w -t %3 @dg_window_agent_state idle"
 	wantGate := "show-option -gqv @dg_notify_sound"
 	if calls[0] != wantPaneWrite {

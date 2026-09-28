@@ -404,9 +404,47 @@ type PaneState struct {
 	// PaneIndex is tmux's #{pane_index} — the pane's position within its window.
 	PaneIndex string
 	// CurrentCommand is tmux's #{pane_current_command} — the running program's
-	// name (informational only; do NOT use it to detect agents, see ADR-0008).
+	// name. Per ADR-0055 (narrowing ADR-0008), this is still never used to
+	// DETECT an agent — the name is unreliable (Claude Code can show up as
+	// its own version string, e.g. "2.1.283") and a stateless pane can't be
+	// told apart from a non-agent by name alone. It is only ever used to
+	// RULE ONE OUT: IsAgent treats a plain shell name (ShellCommandNames) as
+	// "the coder has gone", even if Kind is still set from before it exited.
 	CurrentCommand string
 	State          string // "@dg_agent_state" value; "" means no agent has written to this pane
+	// Kind is "@dg_agent_kind" (ADR-0055) — the coder's own word for what it
+	// is ("claude", "opencode"), written on start and every state write, and
+	// unset on end. "" means no coder has ever identified itself on this
+	// pane. Never inherited from the window (written with `-p` only), so a
+	// sibling pane in the same window (e.g. an editor pane in a
+	// claude-nvim layout) never picks this up from tmux's option cascade.
+	Kind string
+}
+
+// ShellCommandNames lists pane_current_command values that mean "a plain
+// shell is running here, not a program" — the backstop IsAgent uses to rule
+// a pane out per ADR-0055, e.g. after its coder has exited (killed before
+// its end hook ran, or before ADR-0055 shipped) but Kind is still set. Not
+// exhaustive of every shell that exists, only the ones devgeta's own default
+// pane command (configs/tmux/tmux.conf.tmpl's default-command) and
+// platform installers ship.
+var ShellCommandNames = map[string]bool{
+	"sh":   true,
+	"bash": true,
+	"zsh":  true,
+	"fish": true,
+	"dash": true,
+}
+
+// IsAgent reports whether this pane is running an AI coder, per ADR-0055: a
+// pane is an agent when Kind is set AND CurrentCommand is not a plain shell.
+// Kind alone never says a pane IS an agent by itself in the abstract — but
+// for this type, which only ever holds what the fast scan actually read
+// back from tmux, "Kind set" already means a coder wrote it there for real,
+// so the second half of the rule (ruling out a plain shell) is the only
+// check this method needs to make.
+func (p PaneState) IsAgent() bool {
+	return p.Kind != "" && !ShellCommandNames[p.CurrentCommand]
 }
 
 // SessionWindows returns every (session, window) pair on the tmux server from
@@ -438,18 +476,24 @@ func (t *Tmux) SessionWindows() []SessionWindow {
 }
 
 // PaneStates returns every pane on the tmux server with its session, window, pane ID, pane
-// index, current command, and agent state from a single list-panes -a scan. The agent state
-// field may be an empty string when the @dg_agent_state pane option has not yet been set by an
-// agent. Returns nil when no server is reachable or the query fails, matching SessionWindows's
-// existing tolerance for this same command.
+// index, current command, agent state, and agent kind from a single list-panes -a scan. The
+// agent state and kind fields may be empty strings when that pane option has not yet been set.
+// Returns nil when no server is reachable or the query fails, matching SessionWindows's existing
+// tolerance for this same command.
 //
-// The agent state being both LAST in the format and optionally empty is why a
-// line is accepted at 5 fields as well as 6: ExecCommand returns its stdout
-// TrimSpace'd, which eats the final line's trailing tab whenever that pane has
-// no @dg_agent_state set. Requiring 6 dropped that pane outright — and since
-// tmux orders the scan by session name, the victim was whichever session sorts
-// last, making its worktree read as windowless and its session read as
-// standalone (both are derived from this scan; see worktree.StateLayer).
+// The agent kind being LAST in the format (added by ADR-0055, after agent
+// state) and both trailing fields being optionally empty is why a line is
+// accepted at 5, 6, or 7 fields: ExecCommand returns its stdout TrimSpace'd,
+// which eats the final line's trailing tab(s) whenever that pane is missing
+// one or both of these options — one tab lost (kind unset, 6 fields) or two
+// (state AND kind both unset, 5 fields). A 6-field line means "state set,
+// kind unset" — the shape of every pane written by a coder from before
+// ADR-0055, which must parse that way, not as malformed. Requiring 7 (or
+// requiring 6, before this change) dropped the affected pane outright — and
+// since tmux orders the scan by session name, the victim was whichever
+// session sorts last, making its worktree read as windowless and its session
+// read as standalone (both are derived from this scan; see
+// worktree.StateLayer).
 func (t *Tmux) PaneStates() []PaneState {
 	execCommand := cmd.CommandParams{
 		Command: constants.Tmux,
@@ -457,7 +501,7 @@ func (t *Tmux) PaneStates() []PaneState {
 			"list-panes",
 			"-a",
 			"-F",
-			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}",
 		},
 	}
 	stdout, _, err := t.Base.ExecCommand(execCommand)
@@ -467,13 +511,17 @@ func (t *Tmux) PaneStates() []PaneState {
 	var states []PaneState
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
-		parts := strings.SplitN(scanner.Text(), "\t", 6)
+		parts := strings.SplitN(scanner.Text(), "\t", 7)
 		if len(parts) < 5 {
 			continue
 		}
 		state := ""
-		if len(parts) == 6 {
+		if len(parts) >= 6 {
 			state = strings.TrimSpace(parts[5])
+		}
+		kind := ""
+		if len(parts) == 7 {
+			kind = strings.TrimSpace(parts[6])
 		}
 		states = append(
 			states,
@@ -484,6 +532,7 @@ func (t *Tmux) PaneStates() []PaneState {
 				PaneIndex:      strings.TrimSpace(parts[3]),
 				CurrentCommand: strings.TrimSpace(parts[4]),
 				State:          state,
+				Kind:           kind,
 			},
 		)
 	}
@@ -565,6 +614,18 @@ var agentStateRank = map[string]int{
 	AgentStateBlocked: 4,
 }
 
+// wantsYou reports whether state is one an agent asks for you with (idle,
+// blocked, error) - the only states looking at a pane acknowledges. busy is
+// never one: an agent you look at while it works is still working. The
+// shipped tmux focus hooks (configs/tmux/tmux.conf.tmpl) apply the same set.
+func wantsYou(state string) bool {
+	switch state {
+	case AgentStateIdle, AgentStateBlocked, AgentStateError:
+		return true
+	}
+	return false
+}
+
 // AggregateAgentState reduces one window's (or session's) pane states to the
 // single value a row should report, per ADR-0005's precedence. Pure function
 // of the pane states so it's testable without a live tmux server. Returns ""
@@ -583,7 +644,8 @@ func AggregateAgentState(states []string) string {
 }
 
 // ClearAgentStateForWindow unsets @dg_agent_state on every pane belonging to
-// the named window, across all sessions (mirroring WindowSession's "search
+// the named window that is asking for you (idle/blocked/error - see
+// wantsYou; a busy pane keeps its state), across all sessions (mirroring WindowSession's "search
 // every session" semantics - a window name is unique in practice, but this
 // doesn't assume it). Called when the user attaches to a window: attaching is
 // the user acknowledging whatever state was showing, and the next real turn
@@ -604,6 +666,9 @@ func (t *Tmux) ClearAgentStateForWindow(window string) error {
 			continue
 		}
 		matchedPaneID = ps.PaneID
+		if !wantsYou(ps.State) {
+			continue
+		}
 		if err := t.ExecuteCommand(
 			"set-option", "-p", "-u", "-t", ps.PaneID, "@dg_agent_state",
 		); err != nil && firstErr == nil {
@@ -627,7 +692,9 @@ func (t *Tmux) ClearAgentStateForWindow(window string) error {
 	return firstErr
 }
 
-// ClearAgentStateForPane unsets @dg_agent_state on exactly one pane, leaving
+// ClearAgentStateForPane unsets @dg_agent_state on exactly one pane, when it
+// is asking for you (idle/blocked/error - see wantsYou; for a busy pane, or
+// one with no state, it does nothing at all), leaving
 // every other pane's state untouched (ADR-0008's per-pane granularity - a
 // sibling pane sharing a window must not lose its own state because a
 // different pane was acknowledged). Called when the user selects a specific
@@ -676,7 +743,7 @@ func (t *Tmux) ClearAgentStateForPane(paneID string) error {
 			break
 		}
 	}
-	if target == nil {
+	if target == nil || !wantsYou(target.State) {
 		return nil
 	}
 
@@ -700,8 +767,8 @@ func (t *Tmux) ClearAgentStateForPane(paneID string) error {
 
 	aggregate := AggregateAgentState(remaining)
 	var mirrorErr error
-	switch aggregate {
-	case AgentStateIdle, AgentStateBlocked, AgentStateError:
+	switch {
+	case wantsYou(aggregate):
 		mirrorErr = t.ExecuteCommand(
 			"set-option",
 			"-w",
@@ -1053,6 +1120,15 @@ func (t *Tmux) ActivePaneID(window string) (string, error) {
 // unique server-wide, so no window or session qualification is needed.
 func (t *Tmux) SelectPane(paneID string) error {
 	return t.ExecuteCommand("select-pane", "-t", paneID)
+}
+
+// SelectPaneInDirection moves the ATTACHED CLIENT's own active pane in the
+// given direction ("L", "D", "U", "R") via `select-pane -<dir>`, with no
+// explicit target - ADR-0057's edge hand-off: when the dashboard's own
+// pane-move keys reach an edge of its two sections, it hands the move back
+// to tmux exactly like vim-tmux-navigator does from Neovim.
+func (t *Tmux) SelectPaneInDirection(dir string) error {
+	return t.ExecuteCommand("select-pane", "-"+dir)
 }
 
 // HasWindow checks if a window exists in the current session

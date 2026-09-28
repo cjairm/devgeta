@@ -15,6 +15,46 @@ import (
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 )
 
+// TestViewStateMsgAppliesTheNewStep10Fields confirms expanded, agentsFolded,
+// spacesFolded, and split all get applied, and that spaces starting folded
+// lands the cursor on the first agent (ADR-0056: "the cursor is still not
+// saved... with spaces folded it starts on the first agent").
+func TestViewStateMsgAppliesTheNewStep10Fields(t *testing.T) {
+	statuses := []worktree.WorktreeStatus{
+		withAgentPane(
+			worktree.WorktreeStatus{Repo: "devgeta", Name: "a"},
+			agentPane("%1", "1", "claude", "claude", "blocked"),
+		),
+	}
+	m := makeTestModel(statuses)
+
+	updated, _ := m.Update(viewStateMsg{
+		state: viewStateV1{
+			V: viewStateVersion, Left: 40,
+			Expanded: []string{"repo:devgeta"}, SpacesFolded: true, Split: 3,
+		},
+		ok: true,
+	})
+	m = updated.(Model)
+
+	if !m.expanded[repoKey("devgeta")] {
+		t.Errorf("expected the loaded expanded key repo:devgeta to be applied")
+	}
+	if !m.spacesFolded {
+		t.Errorf("expected spacesFolded=true to be applied")
+	}
+	if m.split != 3 {
+		t.Errorf("expected split=3 to be applied, got %d", m.split)
+	}
+	if m.section != sectionAgents || m.agentCursor != 0 {
+		t.Errorf(
+			"expected the cursor to start on the first agent with spaces folded, got section=%v agentCursor=%d",
+			m.section,
+			m.agentCursor,
+		)
+	}
+}
+
 func TestViewStateMsgAppliesCollapsedAndWidth(t *testing.T) {
 	m := makeTestModel(testStatuses()) // repo-a: feature-a, feature-b; repo-b: feature-x
 

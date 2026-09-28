@@ -87,7 +87,7 @@
 // place of the second argument in every test that calls a handler, so no
 // test ever spawns a real tmux or player process.
 
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 
@@ -117,6 +117,63 @@ async function readTmux(execFn, args) {
     return (await execFn("tmux", args)).trim();
   } catch {
     return null;
+  }
+}
+
+// WANTS_YOU_STATES: the three @dg_agent_state values that mean "an agent is
+// asking for you" - shared by the window mirror's write/clear decision
+// (ADR-0005) and by endAgent's mirror recompute below (ADR-0055), so the two
+// can never drift into checking a different set.
+const WANTS_YOU_STATES = ["idle", "blocked", "error"];
+
+// exitFallbackSync is ADR-0055's "Agent ends" cleanup, attempted from
+// `process.on("exit", ...)` as an absolute last resort. Node's `exit` event
+// forbids async work - every listener must finish synchronously, since the
+// process terminates the instant the last one returns, before any promise
+// or callback it scheduled can ever run (see Node's process docs on the
+// `exit` event) - so this cannot reuse the async execFn seam every other
+// call in this file goes through. It needs its own, clearly-separate
+// synchronous exec function (syncExecFn, real default: execFileSync). This
+// is NOT a violation of the single-seam design the header comment describes
+// for execFn: sync vs. async is a capability the JS runtime itself draws
+// the line on, not the same call injected twice for convenience.
+//
+// Empirically confirmed NOT reliable (Step 0 of
+// docs/plans/cycles/2026-09-28-ws-agents-section.md, recorded in
+// docs/decisions/ADR-0055-an-agent-says-what-it-is.md): a real opencode TUI's
+// own double-ctrl-c quit gesture, and a bare SIGTERM, both exit the process
+// WITHOUT any `exit` listener ever running. It is kept anyway for whatever
+// OTHER termination path does let it run (an uncaught exception, a future
+// OpenCode version's own signal handling) - the shell-name backstop in
+// internal/apps/tmux is what actually keeps the agents list correct
+// regardless of whether this ever fires. Because of that, this deliberately
+// skips the window-mirror recompute endAgent does on the async path: it's
+// already established as non-load-bearing, and recomputing it here would
+// need a second synchronous call (a list-panes read) for a path that may
+// never run at all.
+export function exitFallbackSync(syncExecFn = execFileSync) {
+  const pane = process.env.TMUX_PANE;
+  if (!pane) {
+    return;
+  }
+  try {
+    syncExecFn("tmux", [
+      "set-option",
+      "-p",
+      "-u",
+      "-t",
+      pane,
+      "@dg_agent_state",
+      ";",
+      "set-option",
+      "-p",
+      "-u",
+      "-t",
+      pane,
+      "@dg_agent_kind",
+    ]);
+  } catch {
+    // Swallow: the process is exiting either way; nothing here may throw.
   }
 }
 
@@ -224,10 +281,56 @@ async function firePlayer(execFn, pane, files) {
   }
 }
 
-export const Notify = async (ctx = {}, execFn = execTmux) => {
+// Notify's third parameter, syncExecFn, defaults to a REAL synchronous exec
+// implementation only when execFn ITSELF was left at its real default
+// (execTmux) - i.e. only when the caller passed at most one argument, the
+// exact shape OpenCode's real plugin loader uses (`Notify(ctx)`). Every test
+// in this file passes an explicit stub execFn, so this expression evaluates
+// to `null` for all of them, and Notify never touches `process.on("exit")`
+// during a test run - see ADR-0055 and the "Notify with a stubbed execFn
+// never registers..." test in notify.test.mjs for why that matters: a real
+// default here would let running the test SUITE itself register a live
+// exit handler capable of firing a genuine tmux call against whatever real
+// pane the test process happens to be running in.
+export const Notify = async (
+  ctx = {},
+  execFn = execTmux,
+  syncExecFn = execFn === execTmux ? execFileSync : null,
+) => {
+  // writeKind stamps this pane's coder identity alone - ADR-0055's "Agent
+  // starts" row. Called once below, right after this factory is invoked
+  // (OpenCode calls Notify(ctx) exactly once per session), before any state
+  // has ever been written - a fresh agent has no state yet, so there is
+  // nothing to fold this into.
+  const writeKind = async () => {
+    const pane = process.env.TMUX_PANE;
+    if (!pane) {
+      return;
+    }
+    try {
+      await execFn("tmux", [
+        "set-option",
+        "-p",
+        "-t",
+        pane,
+        "@dg_agent_kind",
+        "opencode",
+      ]);
+    } catch {
+      // Swallow: same rule as every other write in this file.
+    }
+  };
+
   // writeState is the choke point for the pane-level, authoritative write: it
   // is where the "no TMUX_PANE" no-op and the "swallow any failure" rule both
   // live, so no handler can forget either one.
+  //
+  // ADR-0055: every state write also stamps @dg_agent_kind, folded into this
+  // SAME exec call via a literal ";" argv element - tmux's own command
+  // separator, understood identically whether it arrives via a shell or, as
+  // here, via execFile's array argv (no shell is ever involved) - rather
+  // than a second process spawn. Kept fresh on every write so it survives
+  // @dg_agent_state being cleared by an attach/focus/ack.
   const writeState = async (value) => {
     const pane = process.env.TMUX_PANE;
     if (!pane) {
@@ -241,6 +344,13 @@ export const Notify = async (ctx = {}, execFn = execTmux) => {
         pane,
         "@dg_agent_state",
         value,
+        ";",
+        "set-option",
+        "-p",
+        "-t",
+        pane,
+        "@dg_agent_kind",
+        "opencode",
       ]);
     } catch {
       // Swallow: a failed tmux write must never crash the OpenCode session.
@@ -325,6 +435,95 @@ export const Notify = async (ctx = {}, execFn = execTmux) => {
     });
   };
 
+  // endAgent is ADR-0055's "Agent ends" row, on the async path: unsets both
+  // options on this pane in one folded call (same `\;`-via-argv pattern as
+  // writeState), then recomputes the window mirror with the SAME rule the
+  // pane-focus-in/out hooks use (configs/tmux/tmux.conf.tmpl's
+  // "ackAgentState"): unset it only if no pane left in this window still
+  // holds a WANTS_YOU_STATES value. This pane's own state was already
+  // cleared above, so it can't hold the mirror open by itself. Wired to the
+  // `server.instance.disposed` event below - see ADR-0055's Consequences for
+  // why this (and the exit-fallback) are best-effort, not load-bearing.
+  const endAgent = async () => {
+    const pane = process.env.TMUX_PANE;
+    if (!pane) {
+      return;
+    }
+    try {
+      await execFn("tmux", [
+        "set-option",
+        "-p",
+        "-u",
+        "-t",
+        pane,
+        "@dg_agent_state",
+        ";",
+        "set-option",
+        "-p",
+        "-u",
+        "-t",
+        pane,
+        "@dg_agent_kind",
+      ]);
+    } catch {
+      // Swallow: same rule as every other write in this file.
+    }
+
+    await recomputeWindowMirror(pane);
+  };
+
+  // recomputeWindowMirror applies the SAME rule the pane-focus-in/out hooks
+  // use (configs/tmux/tmux.conf.tmpl's "ackAgentState") to the window
+  // mirror: unset it only if no pane in this window still holds a
+  // WANTS_YOU_STATES value. Callers first change this pane's own state, so
+  // it can't hold the mirror open by itself.
+  const recomputeWindowMirror = async (pane) => {
+    const remaining = await readTmux(execFn, [
+      "list-panes",
+      "-t",
+      pane,
+      "-F",
+      "#{@dg_agent_state}",
+    ]);
+    const wantsYou = (remaining ?? "")
+      .split("\n")
+      .map((s) => s.trim())
+      .some((s) => WANTS_YOU_STATES.includes(s));
+    if (!wantsYou) {
+      await mirrorWindowState(null);
+    }
+  };
+
+  // resumeAgent runs after every tool (the `tool.execute.after` hook): a
+  // tool finishing means the turn is still running. It is the one signal
+  // after a permission prompt is answered, so without it a pane whose
+  // `blocked` was cleared by looking at it read as idle for the rest of the
+  // turn. Claude Code's PostToolUse `agent-state.sh resume` is the same
+  // rule. Reads first, so the common case (already busy) is one tmux call.
+  const resumeAgent = async () => {
+    const pane = process.env.TMUX_PANE;
+    if (!pane) {
+      return;
+    }
+    const current = await readTmux(execFn, [
+      "display-message",
+      "-p",
+      "-t",
+      pane,
+      "#{@dg_agent_state}",
+    ]);
+    if (current === "busy") {
+      return;
+    }
+    await writeState("busy");
+    await recomputeWindowMirror(pane);
+  };
+
+  await writeKind();
+  if (syncExecFn) {
+    process.on("exit", () => exitFallbackSync(syncExecFn));
+  }
+
   return {
     event: async ({ event } = {}) => {
       switch (event?.type) {
@@ -343,6 +542,9 @@ export const Notify = async (ctx = {}, execFn = execTmux) => {
           await mirrorWindowState("error");
           await playNotifySound("error");
           break;
+        case "server.instance.disposed":
+          await endAgent();
+          break;
         default:
           // Unrecognized event type: no-op by design (see header comment).
           break;
@@ -351,6 +553,9 @@ export const Notify = async (ctx = {}, execFn = execTmux) => {
     "chat.message": async () => {
       await writeState("busy");
       await mirrorWindowState(null);
+    },
+    "tool.execute.after": async () => {
+      await resumeAgent();
     },
   };
 };

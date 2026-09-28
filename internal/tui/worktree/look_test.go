@@ -12,7 +12,6 @@ import (
 
 	"github.com/cjairm/devgeta/internal/tooling/task"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
-	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
 )
 
 func TestRenderLeftWorktreeRowShowsDiffstatWhenPresent(t *testing.T) {
@@ -138,13 +137,13 @@ func TestSelectedWorktreeRowKeepsItsColors(t *testing.T) {
 	bg, _, _ := strings.Cut(m.palette.SoftSelected.Render("x"), "x")
 	selected := strings.ReplaceAll(m.renderWorktreeRow(r, 60, true), bg, "")
 
-	state := tuicomponents.SessionStateFromWorktree(r.status, r.status.AgentState, 0)
-	for _, want := range []string{m.palette.StatusDot(state), m.diffstatSuffix("/tmp/a")} {
-		if !strings.Contains(unselected, want) {
-			t.Fatalf("test setup: unselected row lacks %q", want)
-		}
-		if !strings.Contains(selected, want) {
-			t.Errorf("selected row lost its colored %q: %q", ansi.Strip(want), selected)
-		}
+	// Step 6 removed the status dot entirely; the diffstat's own color is
+	// the only per-row color left to check survives selection.
+	want := m.diffstatSuffix("/tmp/a")
+	if !strings.Contains(unselected, want) {
+		t.Fatalf("test setup: unselected row lacks %q", want)
+	}
+	if !strings.Contains(selected, want) {
+		t.Errorf("selected row lost its colored %q: %q", ansi.Strip(want), selected)
 	}
 }

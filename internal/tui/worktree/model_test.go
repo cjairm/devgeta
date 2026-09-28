@@ -21,14 +21,16 @@ func init() { testutil.InitLogger() }
 
 func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m := Model{
-		collapsed:      map[string]bool{},
-		palette:        tuicomponents.NewPalette(),
-		leftPaneWidth:  minLeftPaneWidth,
-		width:          120,
-		height:         40,
-		prTitles:       map[string]string{},
-		prTitlePending: map[string]bool{},
-		diffStats:      map[string]task.BranchStatsResult{},
+		collapsed:       map[string]bool{},
+		expanded:        map[string]bool{},
+		defaultFoldSeen: map[string]bool{},
+		palette:         tuicomponents.NewPalette(),
+		leftPaneWidth:   minLeftPaneWidth,
+		width:           120,
+		height:          40,
+		prTitles:        map[string]string{},
+		prTitlePending:  map[string]bool{},
+		diffStats:       map[string]task.BranchStatsResult{},
 	}
 	m.diffFn = func(_ string) (task.BranchDiffResult, error) {
 		return task.BranchDiffResult{Content: "diff content", Files: 1, Added: 5, Removed: 2}, nil
@@ -63,6 +65,16 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	// dispatch scans — the first statusesMsg does — and a nil manager turns
 	// that into a panic in tests that merely drain the commands they get back.
 	m.mgr = quietMgr()
+	// Pre-mark every initial repo as explicitly expanded (ADR-0056's
+	// windowless-repo default fold, Step 6 of
+	// docs/plans/cycles/2026-09-28-ws-agents-section.md): most of this
+	// file's fixtures set neither WindowActive nor Panes, predating that
+	// feature, and expect their repos to render open by default. A test
+	// that wants to exercise the REAL default-fold decision builds its
+	// model without going through this shortcut - see default_fold_test.go.
+	for _, s := range statuses {
+		m.expanded[repoKey(s.Repo)] = true
+	}
 	m.statuses = statuses
 	m.rebuildRows()
 	return m
@@ -802,15 +814,18 @@ func TestRenderLeftPaneRowShowsIndexAndCommand(t *testing.T) {
 // TestRenderLeftPaneRowDotReflectsOwnState verifies each pane row's dot
 // reflects that PANE's own state, not the parent worktree/session's
 // aggregated AgentState — the entire point of drilling down (ADR-0008 §3).
-func TestRenderLeftPaneRowDotReflectsOwnState(t *testing.T) {
+// TestRenderLeftPaneRowNoStatusGlyph confirms Step 6 of
+// docs/plans/cycles/2026-09-28-ws-agents-section.md: a pane row shows no
+// status marker regardless of its own state or its parent's aggregate
+// (superseding ADR-0008's per-pane agent-state glyph; agent state is shown
+// only in the agents section, ADR-0056) - while still identifying each pane
+// distinctly by its own window/index/command text.
+func TestRenderLeftPaneRowNoStatusGlyph(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
 		{
 			Name:       "feature-a",
 			Repo:       "repo-a",
 			TmuxWindow: "wt-feature-a",
-			// Parent's aggregate is deliberately "blocked" (the highest
-			// precedence state) while the individual panes are busy/blocked -
-			// only the second pane should show "!".
 			AgentState: worktree.AgentStateBlocked,
 			Panes: []tmux.PaneState{
 				{
@@ -825,6 +840,7 @@ func TestRenderLeftPaneRowDotReflectsOwnState(t *testing.T) {
 					CurrentCommand: "claude",
 					State:          worktree.AgentStateBlocked,
 				},
+				{PaneID: "%3", PaneIndex: "2", CurrentCommand: "zsh", State: ""},
 			},
 		},
 	}
@@ -833,79 +849,28 @@ func TestRenderLeftPaneRowDotReflectsOwnState(t *testing.T) {
 	out := ansi.Strip(m.renderLeft(60))
 	lines := strings.Split(out, "\n")
 
-	var busyLine, blockedLine string
+	byPane := map[string]string{}
 	for i, r := range m.rows {
-		if r.kind == rowPane && r.pane.PaneID == "%1" {
-			busyLine = lines[i]
-		}
-		if r.kind == rowPane && r.pane.PaneID == "%2" {
-			blockedLine = lines[i]
+		if r.kind == rowPane {
+			byPane[r.pane.PaneID] = lines[i]
 		}
 	}
-	if busyLine == "" || blockedLine == "" {
-		t.Fatalf("expected both pane rows to render, got rows: %+v", m.rows)
+	if len(byPane) != 3 {
+		t.Fatalf("expected 3 pane rows to render, got %d: %+v", len(byPane), m.rows)
 	}
-	if !strings.Contains(busyLine, "●") {
-		t.Errorf("expected the busy pane's own dot (●), got %q", busyLine)
-	}
-	if strings.Contains(busyLine, "!") {
-		t.Errorf(
-			"busy pane must not show the parent's aggregate blocked glyph, got %q",
-			busyLine,
-		)
-	}
-	if !strings.Contains(blockedLine, "!") {
-		t.Errorf("expected the blocked pane's own dot (!), got %q", blockedLine)
-	}
-}
-
-// TestRenderLeftPaneRowEmptyStateRendersRunning verifies that a pane with no
-// agent state ever reported still renders as StateRunning (green ●), per the
-// windowActive=true design: a pane row only exists because its pane is live.
-func TestRenderLeftPaneRowEmptyStateRendersRunning(t *testing.T) {
-	statuses := []worktree.WorktreeStatus{
-		{
-			Name:       "feature-a",
-			Repo:       "repo-a",
-			TmuxWindow: "wt-feature-a",
-			Panes: []tmux.PaneState{
-				{
-					PaneID:         "%1",
-					PaneIndex:      "0",
-					CurrentCommand: "claude",
-					State:          worktree.AgentStateBusy,
-				},
-				{
-					PaneID:         "%2",
-					PaneIndex:      "1",
-					CurrentCommand: "vim",
-					State:          worktree.AgentStateIdle,
-				},
-				{PaneID: "%3", PaneIndex: "2", CurrentCommand: "zsh", State: ""},
-			},
-		},
-	}
-	m := makeTestModel(statuses)
-
-	rawLines := strings.Split(m.renderLeft(60), "\n")
-	strippedLines := strings.Split(ansi.Strip(m.renderLeft(60)), "\n")
-
-	var rawLine, strippedLine string
-	for i, r := range m.rows {
-		if r.kind == rowPane && r.pane.PaneID == "%3" {
-			rawLine = rawLines[i]
-			strippedLine = strippedLines[i]
+	for id, line := range byPane {
+		if strings.ContainsAny(line, "●◆!✕") {
+			t.Errorf("pane %s: expected no status marker, got %q", id, line)
 		}
 	}
-	if rawLine == "" {
-		t.Fatalf("expected the empty-state pane row to render, got rows: %+v", m.rows)
+	if !strings.Contains(byPane["%1"], ":0 claude") {
+		t.Errorf("pane %%1: expected \":0 claude\", got %q", byPane["%1"])
 	}
-	if !strings.Contains(strippedLine, "●") {
-		t.Errorf("expected an empty-state pane to render the running glyph ●, got %q", strippedLine)
+	if !strings.Contains(byPane["%2"], ":1 claude") {
+		t.Errorf("pane %%2: expected \":1 claude\", got %q", byPane["%2"])
 	}
-	runningPrefix := strings.SplitN(m.palette.Running.Render("X"), "X", 2)[0]
-	if !strings.Contains(rawLine, runningPrefix) {
-		t.Errorf("expected an empty-state pane to use the Running (green) style, got %q", rawLine)
+	if !strings.Contains(byPane["%3"], ":2 zsh") {
+		t.Errorf("pane %%3: expected \":2 zsh\", got %q", byPane["%3"])
 	}
 }
 
@@ -2254,7 +2219,13 @@ func TestRenderLeftCollapsedRepoHeaderNeverShowsAgentStateGlyph(t *testing.T) {
 	}
 }
 
-func TestRenderLeftSessionRowShowsGlyphAndLabel(t *testing.T) {
+// TestRenderLeftSessionRowShowsLabel confirms a session row shows its name
+// with no status marker at all (Step 6 supersedes this test's original
+// "sessions use squares" assertion - see TestRenderLeftSessionRowNoStatusGlyph
+// for the dedicated no-glyph coverage) and no trailing "session" label
+// (ADR-0052/step 10): standalone sessions read as a group under the dim
+// "sessions" header instead.
+func TestRenderLeftSessionRowShowsLabel(t *testing.T) {
 	m := makeTestModel(testStatuses())
 	m.sessions = testSessions() // notes: Attached=true, scratch: Attached=false
 	m.rebuildRows()
@@ -2277,19 +2248,9 @@ func TestRenderLeftSessionRowShowsGlyphAndLabel(t *testing.T) {
 	if notesLine == "" || scratchLine == "" {
 		t.Fatalf("expected both session rows to render, got rows: %+v", m.rows)
 	}
-	// Sessions use squares (■ attached / □ detached), a different shape from
-	// the ●/○ circles worktree rows use.
-	if !strings.Contains(notesLine, "■") {
-		t.Errorf("expected attached session 'notes' to show the filled square ■, got %q", notesLine)
-	}
-	if strings.ContainsAny(notesLine, "●○") {
-		t.Errorf("session row must not use a worktree circle glyph, got %q", notesLine)
-	}
-	if !strings.Contains(scratchLine, "□") {
-		t.Errorf(
-			"expected detached session 'scratch' to show the hollow square □, got %q",
-			scratchLine,
-		)
+	if strings.ContainsAny(notesLine, "■□●○") || strings.ContainsAny(scratchLine, "■□●○") {
+		t.Errorf("session rows must not use any status glyph, got notes=%q scratch=%q",
+			notesLine, scratchLine)
 	}
 	// The trailing "session" label is gone (ADR-0052/step 10): standalone
 	// sessions read as a group under the dim "sessions" header instead.
@@ -2358,75 +2319,34 @@ func TestRenderLeftSessionRowCursorAndArmedStyling(t *testing.T) {
 	}
 }
 
-// TestRenderLeftSessionRowNoAgentStateShowsSquare is a regression guard: a
-// session with AgentState == "" (no agent has ever reported on its panes)
-// must keep rendering the original attached-only square glyph (■/□), not the
-// agent-state vocabulary (●/◆/!/✕). This is the "keep today's behavior
-// exactly" branch from ADR-0008 Step 5.
-func TestRenderLeftSessionRowNoAgentStateShowsSquare(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	m.sessions = []worktree.SessionStatus{
-		{Name: "scratch", Attached: false, AgentState: ""},
-		{Name: "notes", Attached: true, AgentState: ""},
-	}
-	m.rebuildRows()
-
-	out := ansi.Strip(m.renderLeft(40))
-	lines := strings.Split(out, "\n")
-
-	var notesLine, scratchLine string
-	for i, r := range m.rows {
-		if r.kind == rowSession && r.session.Name == "notes" {
-			notesLine = lines[i]
-		}
-		if r.kind == rowSession && r.session.Name == "scratch" {
-			scratchLine = lines[i]
-		}
-	}
-	if notesLine == "" || scratchLine == "" {
-		t.Fatalf("expected both session rows to render, got rows: %+v", m.rows)
-	}
-	if !strings.Contains(notesLine, "■") {
-		t.Errorf("expected attached session with no agent state to show ■, got %q", notesLine)
-	}
-	if !strings.Contains(scratchLine, "□") {
-		t.Errorf("expected detached session with no agent state to show □, got %q", scratchLine)
-	}
-	if strings.ContainsAny(notesLine, "●◆!✕") || strings.ContainsAny(scratchLine, "●◆!✕") {
-		t.Errorf(
-			"session rows with AgentState==\"\" must not use the agent-state glyphs, got notes=%q scratch=%q",
-			notesLine,
-			scratchLine,
-		)
-	}
-}
-
-// TestRenderLeftSessionRowShowsAgentStateGlyph verifies that once a session
-// has AgentState set (a pane reported at least once), the row switches to
-// StatusGlyph/StatusDot — the same agent-state vocabulary rowWorktree uses —
-// instead of the SessionGlyph/SessionDot square.
-func TestRenderLeftSessionRowShowsAgentStateGlyph(t *testing.T) {
-	testCases := []struct {
+// TestRenderLeftSessionRowNoStatusGlyph confirms Step 6 of
+// docs/plans/cycles/2026-09-28-ws-agents-section.md: a session row shows NO
+// status marker at all - neither the old attached/detached square (■/□) nor
+// the agent-state vocabulary (●/◆/!/✕) - regardless of AgentState or
+// Attached. Agent state is shown only in the agents section (ADR-0056); this
+// supersedes ADR-0008's per-row agent-state glyph.
+func TestRenderLeftSessionRowNoStatusGlyph(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		attached   bool
 		agentState string
-		wantGlyph  string
 	}{
-		{agentState: worktree.AgentStateIdle, wantGlyph: "◆"},
-		{agentState: worktree.AgentStateBlocked, wantGlyph: "!"},
-		{agentState: worktree.AgentStateError, wantGlyph: "✕"},
-		{agentState: worktree.AgentStateBusy, wantGlyph: "●"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("agentState_%s", tc.agentState), func(t *testing.T) {
+		{"no agent state, attached", true, ""},
+		{"no agent state, detached", false, ""},
+		{"blocked", true, worktree.AgentStateBlocked},
+		{"idle", true, worktree.AgentStateIdle},
+		{"error", true, worktree.AgentStateError},
+		{"busy", true, worktree.AgentStateBusy},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			m := makeTestModel(testStatuses())
 			m.sessions = []worktree.SessionStatus{
-				{Name: "notes", Attached: true, AgentState: tc.agentState},
+				{Name: "notes", Attached: tc.attached, AgentState: tc.agentState},
 			}
 			m.rebuildRows()
 
 			out := ansi.Strip(m.renderLeft(40))
 			lines := strings.Split(out, "\n")
-
 			var notesLine string
 			for i, r := range m.rows {
 				if r.kind == rowSession && r.session.Name == "notes" {
@@ -2436,98 +2356,31 @@ func TestRenderLeftSessionRowShowsAgentStateGlyph(t *testing.T) {
 			if notesLine == "" {
 				t.Fatal("expected a 'notes' session row")
 			}
-			if !strings.Contains(notesLine, tc.wantGlyph) {
-				t.Errorf(
-					"agent state %q: expected glyph %q in session row, got %q",
-					tc.agentState, tc.wantGlyph, notesLine,
-				)
+			if strings.ContainsAny(notesLine, "■□●◆!✕") {
+				t.Errorf("expected no status marker on a session row, got %q", notesLine)
 			}
-			if strings.ContainsAny(notesLine, "■□") {
-				t.Errorf(
-					"agent state %q: session row must not fall back to the square glyph, got %q",
-					tc.agentState, notesLine,
-				)
+			if !strings.Contains(notesLine, "notes") {
+				t.Errorf("expected the session name to still render, got %q", notesLine)
 			}
-			// The trailing "session" label is gone (ADR-0052/step 10).
-			if strings.Contains(notesLine, "session") {
-				t.Errorf(
-					"expected no trailing 'session' label, got %q",
-					notesLine,
-				)
+			// The trailing "session" label is gone (ADR-0052/step 10) -
+			// unrelated to this change, but this fixture already exercises
+			// the same row, so the guard stays here rather than a separate
+			// test.
+			if strings.Contains(notesLine, "notes session") {
+				t.Errorf("expected no trailing 'session' label, got %q", notesLine)
 			}
 		})
 	}
 }
 
-// TestRenderLeftSessionRowAgentStateSelectedStyling mirrors
-// TestRenderLeftSessionRowCursorAndArmedStyling but for a session that has
-// reported an agent state: the cursor branch must swap in StatusGlyph while
-// still nesting inside the soft-bar selection style, and the Armed
-// (pending-kill) styling must behave the same regardless of agent state.
-func TestRenderLeftSessionRowAgentStateSelectedStyling(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	m.sessions = []worktree.SessionStatus{
-		{Name: "notes", Attached: true, AgentState: worktree.AgentStateIdle},
-	}
-	m.rebuildRows()
-
-	idx := -1
-	for i, r := range m.rows {
-		if r.kind == rowSession && r.session.Name == "notes" {
-			idx = i
-		}
-	}
-	if idx == -1 {
-		t.Fatal("expected a 'notes' session row")
-	}
-	m.cursor = idx
-
-	softSelectedPrefix := strings.SplitN(m.palette.SoftSelected.Render("X"), "X", 2)[0]
-	armedPrefix := strings.SplitN(m.palette.Armed.Render("X"), "X", 2)[0]
-
-	rawLines := strings.Split(m.renderLeft(40), "\n")
-	selectedLine := rawLines[idx]
-	strippedLine := ansi.Strip(selectedLine)
-	if !strings.Contains(strippedLine, "◆") {
-		t.Errorf("expected idle session row to show ◆ when selected, got %q", strippedLine)
-	}
-	if !strings.Contains(selectedLine, softSelectedPrefix) {
-		t.Errorf("expected selected session row to use the soft-bar style, got %q", selectedLine)
-	}
-
-	m.pendingKillSession = "notes"
-	rawLines2 := strings.Split(m.renderLeft(40), "\n")
-	armedLine := rawLines2[idx]
-	strippedArmedLine := ansi.Strip(armedLine)
-	if !strings.Contains(strippedArmedLine, "◆") {
-		t.Errorf(
-			"expected armed session row to keep showing the agent-state glyph ◆, got %q",
-			strippedArmedLine,
-		)
-	}
-	if !strings.Contains(armedLine, armedPrefix) {
-		t.Errorf("expected armed session row to use the Armed style, got %q", armedLine)
-	}
-}
-
-// TestRenderLeftWorktreeRowShowsAgentStateGlyph verifies that unselected worktree
-// rows render the correct glyph for each agent state by checking the stripped output.
-// This mirrors TestRenderLeftSessionRowShowsGlyphAndLabel but for worktrees with
-// agent states (blocked, idle, error, busy, or "").
-func TestRenderLeftWorktreeRowShowsAgentStateGlyph(t *testing.T) {
-	testCases := []struct {
-		agentState string
-		wantGlyph  string
-	}{
-		{agentState: worktree.AgentStateBlocked, wantGlyph: "!"},
-		{agentState: worktree.AgentStateIdle, wantGlyph: "◆"},
-		{agentState: worktree.AgentStateError, wantGlyph: "✕"},
-		{agentState: worktree.AgentStateBusy, wantGlyph: "●"},
-		{agentState: "", wantGlyph: "●"}, // No agent state renders as running
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("agentState_%s", tc.agentState), func(t *testing.T) {
+// TestRenderLeftWorktreeRowNoStatusGlyph is TestRenderLeftSessionRowNoStatusGlyph's
+// worktree-row counterpart.
+func TestRenderLeftWorktreeRowNoStatusGlyph(t *testing.T) {
+	for _, agentState := range []string{
+		"", worktree.AgentStateBlocked, worktree.AgentStateIdle,
+		worktree.AgentStateError, worktree.AgentStateBusy,
+	} {
+		t.Run(fmt.Sprintf("agentState_%s", agentState), func(t *testing.T) {
 			statuses := []worktree.WorktreeStatus{
 				{
 					Name:         "test-wt",
@@ -2535,7 +2388,7 @@ func TestRenderLeftWorktreeRowShowsAgentStateGlyph(t *testing.T) {
 					Path:         "/tmp/test",
 					TmuxWindow:   "wt-test",
 					WindowActive: true,
-					AgentState:   tc.agentState,
+					AgentState:   agentState,
 				},
 			}
 			m := makeTestModel(statuses)
@@ -2543,155 +2396,59 @@ func TestRenderLeftWorktreeRowShowsAgentStateGlyph(t *testing.T) {
 
 			out := ansi.Strip(m.renderLeft(40))
 			lines := strings.Split(out, "\n")
-
-			// Find the worktree row (skipping the repo header, which is the first row)
 			var wtLine string
 			for i, r := range m.rows {
-				if r.kind == rowWorktree && r.status.Name == "test-wt" {
-					if i < len(lines) {
-						wtLine = lines[i]
-					}
+				if r.kind == rowWorktree && r.status.Name == "test-wt" && i < len(lines) {
+					wtLine = lines[i]
 				}
 			}
-
 			if wtLine == "" {
 				t.Fatal("expected a worktree row for 'test-wt'")
 			}
-
-			if !strings.Contains(wtLine, tc.wantGlyph) {
-				t.Errorf(
-					"agent state %q: expected glyph %q in unselected worktree row, got %q",
-					tc.agentState, tc.wantGlyph, wtLine,
-				)
+			if strings.ContainsAny(wtLine, "●◆!✕") {
+				t.Errorf("expected no status marker on a worktree row, got %q", wtLine)
+			}
+			if !strings.Contains(wtLine, "test-wt") {
+				t.Errorf("expected the worktree name to still render, got %q", wtLine)
 			}
 		})
 	}
 }
 
-// TestRenderLeftWorktreeRowAgentStateSelectedAndStyling verifies that selected
-// worktree rows (with cursor on them) correctly render agent-state glyphs nested
-// inside the Selected style, matching the unstyled glyph checked above and
-// confirming the Selected prefix is present. This mirrors
-// TestRenderLeftSessionRowCursorAndArmedStyling.
-func TestRenderLeftWorktreeRowAgentStateSelectedAndStyling(t *testing.T) {
-	testCases := []struct {
-		agentState string
-		wantGlyph  string
-	}{
-		{agentState: worktree.AgentStateBlocked, wantGlyph: "!"},
-		{agentState: worktree.AgentStateIdle, wantGlyph: "◆"},
-		{agentState: worktree.AgentStateError, wantGlyph: "✕"},
-		{agentState: worktree.AgentStateBusy, wantGlyph: "●"},
-	}
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("agentState_%s_selected", tc.agentState), func(t *testing.T) {
-			statuses := []worktree.WorktreeStatus{
-				{
-					Name:         "test-wt",
-					Repo:         "test-repo",
-					Path:         "/tmp/test",
-					TmuxWindow:   "wt-test",
-					WindowActive: true,
-					AgentState:   tc.agentState,
-				},
-			}
-			m := makeTestModel(statuses)
-			m.rebuildRows()
-
-			// Find the worktree row index
-			wtIdx := -1
-			for i, r := range m.rows {
-				if r.kind == rowWorktree && r.status.Name == "test-wt" {
-					wtIdx = i
-					break
-				}
-			}
-			if wtIdx == -1 {
-				t.Fatal("expected a worktree row for 'test-wt'")
-			}
-
-			m.cursor = wtIdx
-			softSelectedPrefix := strings.SplitN(m.palette.SoftSelected.Render("X"), "X", 2)[0]
-
-			// Render and check the stripped output contains the expected glyph
-			rawLines := strings.Split(m.renderLeft(40), "\n")
-			strippedLines := strings.Split(ansi.Strip(m.renderLeft(40)), "\n")
-
-			if wtIdx >= len(strippedLines) {
-				t.Fatal("worktree row index out of bounds")
-			}
-
-			strippedLine := strippedLines[wtIdx]
-			rawLine := rawLines[wtIdx]
-
-			// Check that the glyph appears in the stripped output
-			if !strings.Contains(strippedLine, tc.wantGlyph) {
-				t.Errorf(
-					"agent state %q (selected): expected glyph %q in stripped output, got %q",
-					tc.agentState, tc.wantGlyph, strippedLine,
-				)
-			}
-
-			// Check that the raw output contains the soft-selected style
-			// prefix, proving the glyph was successfully nested inside it.
-			if !strings.Contains(rawLine, softSelectedPrefix) {
-				t.Errorf(
-					"agent state %q (selected): expected soft-selected style prefix in raw output, got %q",
-					tc.agentState,
-					rawLine,
-				)
-			}
-		})
-	}
-}
-
-// TestRenderLeftWorktreeRowNoAgentStateRendersDot verifies that a worktree row
-// with WindowActive but no agent state (AgentState == "") still renders the
-// plain running dot "●", guarding against regression on the empty-string fallback.
-func TestRenderLeftWorktreeRowNoAgentStateRendersDot(t *testing.T) {
+// TestRenderLeftWorktreeRowSelectedStillHasNoGlyph confirms selection styling
+// (the soft-bar "▌") still applies to a worktree row with no glyph to nest -
+// removing the glyph must not also remove the selection stripe.
+func TestRenderLeftWorktreeRowSelectedStillHasNoGlyph(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
 		{
-			Name:         "test-wt",
-			Repo:         "test-repo",
-			Path:         "/tmp/test",
-			TmuxWindow:   "wt-test",
-			WindowActive: true,
-			AgentState:   "",
+			Name: "test-wt", Repo: "test-repo", Path: "/tmp/test",
+			TmuxWindow: "wt-test", WindowActive: true,
+			AgentState: worktree.AgentStateBlocked,
 		},
 	}
 	m := makeTestModel(statuses)
 	m.rebuildRows()
-
-	out := ansi.Strip(m.renderLeft(40))
-	lines := strings.Split(out, "\n")
-
-	// Find the worktree row
-	var wtLine string
+	wtIdx := -1
 	for i, r := range m.rows {
 		if r.kind == rowWorktree && r.status.Name == "test-wt" {
-			if i < len(lines) {
-				wtLine = lines[i]
-			}
+			wtIdx = i
+			break
 		}
 	}
-
-	if wtLine == "" {
+	if wtIdx == -1 {
 		t.Fatal("expected a worktree row for 'test-wt'")
 	}
+	m.cursor = wtIdx
 
-	// Must contain the plain running dot, not any of the agent-state glyphs
-	if !strings.Contains(wtLine, "●") {
+	strippedLines := strings.Split(ansi.Strip(m.renderLeft(40)), "\n")
+	if strings.ContainsAny(strippedLines[wtIdx], "●◆!✕") {
 		t.Errorf(
-			"expected unselected row with no agent state to show running dot ●, got %q",
-			wtLine,
+			"expected no status marker on a selected worktree row, got %q",
+			strippedLines[wtIdx],
 		)
 	}
-	if strings.ContainsAny(wtLine, "!◆✕") {
-		t.Errorf(
-			"expected unselected row with no agent state to not show agent-state glyphs, got %q",
-			wtLine,
-		)
+	if !strings.Contains(strippedLines[wtIdx], "▌") {
+		t.Errorf("expected the selection stripe to still render, got %q", strippedLines[wtIdx])
 	}
 }
 
@@ -2715,6 +2472,42 @@ func TestRenderHintDefaultListIsLayoutBsFiveKeys(t *testing.T) {
 	want := "↵ open · n new · d delete · / filter · ? help"
 	if out != want {
 		t.Errorf("expected the default hint bar %q, got %q", want, out)
+	}
+}
+
+// TestRenderHintAgentsSectionListsFoldKeys confirms Step 11 of
+// docs/plans/cycles/2026-09-28-ws-agents-section.md: with the cursor in the
+// agents section, the hint bar surfaces a/w (fold) alongside enter, distinct
+// from the spaces-focused default (which stays exactly as
+// TestRenderHintDefaultListIsLayoutBsFiveKeys already pins - n/d don't apply
+// to an agent row).
+func TestRenderHintAgentsSectionListsFoldKeys(t *testing.T) {
+	m := twoWorktreeTwoAgentsModel(t)
+	m.section = sectionAgents
+
+	out := ansi.Strip(m.renderHint(200))
+
+	if !strings.Contains(out, "a") || !strings.Contains(out, "w") {
+		t.Errorf("expected the agents-section hint bar to mention a and w, got %q", out)
+	}
+	if strings.Contains(out, "n new") || strings.Contains(out, "d delete") {
+		t.Errorf("expected no spaces-only actions (new/delete) in the agents hint bar, got %q", out)
+	}
+}
+
+func TestRenderHelpPopupListsFoldSplitAndMoveKeys(t *testing.T) {
+	m := makeTestModel(testStatuses())
+	out := ansi.Strip(m.renderHelpPopup())
+	for _, want := range []string{"a", "w", "fold"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected help popup to mention %q for the fold keys, got:\n%s", want, out)
+		}
+	}
+	if !strings.Contains(out, "+") || !strings.Contains(out, "split") {
+		t.Errorf("expected help popup to document +/- for the agents split, got:\n%s", out)
+	}
+	if !strings.Contains(out, "ctrl+h") {
+		t.Errorf("expected help popup to document the pane-move keys, got:\n%s", out)
 	}
 }
 

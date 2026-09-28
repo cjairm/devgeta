@@ -2382,13 +2382,43 @@ func TestSelectPane(t *testing.T) {
 	}
 }
 
+// TestSelectPaneInDirection covers ADR-0057's edge hand-off: the dashboard
+// hands a pane-move key back to tmux at an edge via `select-pane -<dir>`,
+// with no explicit target - it moves the ATTACHED client's own active pane,
+// unlike SelectPane's targeted form.
+func TestSelectPaneInDirection(t *testing.T) {
+	for _, dir := range []string{"L", "D", "U", "R"} {
+		t.Run(dir, func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult("", "", nil)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			if err := app.SelectPaneInDirection(dir); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			last := mockApp.Base.GetLastExecCommandCall()
+			want := []string{"select-pane", "-" + dir}
+			if last == nil || len(last.Args) != len(want) {
+				t.Fatalf("expected args %v, got %v", want, last)
+			}
+			for i, w := range want {
+				if last.Args[i] != w {
+					t.Errorf("arg[%d] = %q, want %q", i, last.Args[i], w)
+				}
+			}
+		})
+	}
+}
+
 func TestPaneStates(t *testing.T) {
 	t.Run(
-		"parses tab-separated 6-field pane lines across multiple sessions/windows/panes, including empty last field",
+		"parses tab-separated 7-field pane lines across multiple sessions/windows/panes, including empty state/kind fields",
 		func(t *testing.T) {
 			mockApp := testutil.NewMockApp()
 			mockApp.Base.SetExecCommandResult(
-				"my-session\twt-feature-a\t%1\t0\tclaude\tworking\nmy-session\teditor\t%2\t1\tvim\t\nother\tnotes\t%3\t2\tbash\tblocked\n",
+				"my-session\twt-feature-a\t%1\t0\tclaude\tworking\tclaude\n"+
+					"my-session\teditor\t%2\t1\tvim\t\t\n"+
+					"other\tnotes\t%3\t2\tbash\tblocked\t\n",
 				"",
 				nil,
 			)
@@ -2404,6 +2434,7 @@ func TestPaneStates(t *testing.T) {
 					PaneIndex:      "0",
 					CurrentCommand: "claude",
 					State:          "working",
+					Kind:           "claude",
 				},
 				{
 					Session:        "my-session",
@@ -2412,6 +2443,7 @@ func TestPaneStates(t *testing.T) {
 					PaneIndex:      "1",
 					CurrentCommand: "vim",
 					State:          "",
+					Kind:           "",
 				},
 				{
 					Session:        "other",
@@ -2420,6 +2452,7 @@ func TestPaneStates(t *testing.T) {
 					PaneIndex:      "2",
 					CurrentCommand: "bash",
 					State:          "blocked",
+					Kind:           "",
 				},
 			}
 			if len(states) != len(expected) {
@@ -2433,17 +2466,19 @@ func TestPaneStates(t *testing.T) {
 		},
 	)
 
-	// The real executor returns its stdout TrimSpace'd, so the last line of a
-	// scan arrives WITHOUT its trailing tab whenever that pane has no
-	// @dg_agent_state set. Every other fixture here ends in "\n", which keeps
-	// the final tab inside the string and cannot reproduce that shape — so this
-	// case is written the way production actually sees it.
+	// The real executor returns its stdout TrimSpace'd, so the LAST line of a
+	// scan can lose its trailing tab(s): one (kind unset) or two (state AND
+	// kind both unset). Every other fixture here ends in "\n", which keeps
+	// the trailing tabs inside the string and cannot reproduce either shape —
+	// so these three cases are written the way production actually sees
+	// them. A 7-field last line needs no special case (nothing was trimmed
+	// away), so only the 6-field and 5-field shapes get their own subtests.
 	t.Run(
-		"keeps the last pane when the trimmed stdout dropped its trailing tab",
+		"keeps the last pane when the trimmed stdout dropped both trailing tabs (5 fields: state and kind both unset)",
 		func(t *testing.T) {
 			mockApp := testutil.NewMockApp()
 			mockApp.Base.SetExecCommandResult(
-				"other\tnotes\t%3\t2\tbash\tblocked\nmy-session\twt-feature-a\t%1\t0\tzsh",
+				"other\tnotes\t%3\t2\tbash\tblocked\tclaude\nmy-session\twt-feature-a\t%1\t0\tzsh",
 				"",
 				nil,
 			)
@@ -2459,6 +2494,7 @@ func TestPaneStates(t *testing.T) {
 					PaneIndex:      "2",
 					CurrentCommand: "bash",
 					State:          "blocked",
+					Kind:           "claude",
 				},
 				{
 					Session:        "my-session",
@@ -2467,6 +2503,51 @@ func TestPaneStates(t *testing.T) {
 					PaneIndex:      "0",
 					CurrentCommand: "zsh",
 					State:          "",
+					Kind:           "",
+				},
+			}
+			if len(states) != len(expected) {
+				t.Fatalf("expected %d states, got %d: %+v", len(expected), len(states), states)
+			}
+			for i, exp := range expected {
+				if states[i] != exp {
+					t.Errorf("state[%d] = %+v, want %+v", i, states[i], exp)
+				}
+			}
+		},
+	)
+
+	t.Run(
+		"keeps the last pane when the trimmed stdout dropped only the kind tab (6 fields: state set, kind unset)",
+		func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResult(
+				"other\tnotes\t%3\t2\tbash\tblocked\tclaude\nmy-session\twt-feature-a\t%1\t0\tclaude\tworking",
+				"",
+				nil,
+			)
+			app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			states := app.PaneStates()
+
+			expected := []tmux.PaneState{
+				{
+					Session:        "other",
+					Window:         "notes",
+					PaneID:         "%3",
+					PaneIndex:      "2",
+					CurrentCommand: "bash",
+					State:          "blocked",
+					Kind:           "claude",
+				},
+				{
+					Session:        "my-session",
+					Window:         "wt-feature-a",
+					PaneID:         "%1",
+					PaneIndex:      "0",
+					CurrentCommand: "claude",
+					State:          "working",
+					Kind:           "",
 				},
 			}
 			if len(states) != len(expected) {
@@ -2493,7 +2574,7 @@ func TestPaneStates(t *testing.T) {
 	t.Run("populates PaneIndex and CurrentCommand explicitly", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResult(
-			"my-session\teditor\t%1\t0\tzsh\t\n",
+			"my-session\teditor\t%1\t0\tzsh\t\t\n",
 			"",
 			nil,
 		)
@@ -2509,6 +2590,7 @@ func TestPaneStates(t *testing.T) {
 				PaneIndex:      "0",
 				CurrentCommand: "zsh",
 				State:          "",
+				Kind:           "",
 			},
 		}
 		if len(states) != len(expected) {
@@ -2538,6 +2620,39 @@ func TestPaneStates(t *testing.T) {
 			t.Errorf("expected nil when no panes exist, got %+v", states)
 		}
 	})
+}
+
+// TestIsAgent covers ADR-0055's rule: a pane is an agent when @dg_agent_kind
+// is set AND pane_current_command is not a plain shell. The shell check is
+// only ever used to RULE a pane OUT, never to detect one on its own (ADR-0008
+// narrowed, not contradicted) - so a shell name with no kind set is still not
+// an agent, same as any other non-agent pane.
+func TestIsAgent(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    string
+		command string
+		want    bool
+	}{
+		{"kind set, non-shell command", "claude", "claude", true},
+		{"kind set, non-shell command (opencode)", "opencode", "opencode", true},
+		{"kind set, but current command is sh", "claude", "sh", false},
+		{"kind set, but current command is bash", "claude", "bash", false},
+		{"kind set, but current command is zsh", "claude", "zsh", false},
+		{"kind set, but current command is fish", "claude", "fish", false},
+		{"kind set, but current command is dash", "claude", "dash", false},
+		{"kind unset, non-shell command", "", "claude", false},
+		{"kind unset, shell command", "", "zsh", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := tmux.PaneState{Kind: tc.kind, CurrentCommand: tc.command}
+			if got := p.IsAgent(); got != tc.want {
+				t.Errorf("IsAgent() with Kind=%q CurrentCommand=%q = %v, want %v",
+					tc.kind, tc.command, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestPanesInWindow(t *testing.T) {
@@ -2590,11 +2705,47 @@ func TestPanesInWindow(t *testing.T) {
 	})
 }
 
+// Looking at a working agent must not make it read as idle: acknowledging
+// clears only the states that ask for you, the same rule the tmux focus
+// hooks apply. Before this, jumping to a busy agent from dg ws wiped busy
+// and the agent showed idle until its turn ended.
+func TestClearAgentState_LeavesBusyPanesAlone(t *testing.T) {
+	scan := "s\twt-a\t%1\t0\tclaude\tbusy\ns\twt-a\t%2\t1\tnvim\t\n"
+
+	t.Run("window", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(scan, "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForWindow("wt-a"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		for _, c := range mockApp.Base.ExecCommandCalls {
+			if slices.Contains(c.Args, "@dg_agent_state") && slices.Contains(c.Args, "-p") {
+				t.Errorf("a busy or stateless pane was cleared: %v", c.Args)
+			}
+		}
+	})
+
+	t.Run("pane", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(scan, "", nil)
+		app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if err := app.ClearAgentStateForPane("%1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if calls := mockApp.Base.ExecCommandCalls; len(calls) != 1 {
+			t.Errorf("expected only the scan for a busy pane, got %d calls: %+v", len(calls), calls)
+		}
+	})
+}
+
 func TestClearAgentStateForWindow(t *testing.T) {
 	t.Run("clears every pane belonging to the matching window only", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
 		mockApp.Base.SetExecCommandResult(
-			"my-session\twt-feature-a\t%1\t0\tclaude\tworking\nmy-session\twt-feature-a\t%2\t1\tzsh\tidle\nother\tnotes\t%3\t0\tbash\tblocked\n",
+			"my-session\twt-feature-a\t%1\t0\tclaude\tblocked\nmy-session\twt-feature-a\t%2\t1\tzsh\tidle\nother\tnotes\t%3\t0\tbash\tblocked\n",
 			"",
 			nil,
 		)
@@ -2689,7 +2840,7 @@ func TestClearAgentStateForWindow(t *testing.T) {
 		mockApp.Base.SetExecCommandResults(
 			// scan
 			commands.ExecCommandResult(
-				"s\twt-feature-a\t%1\t0\tclaude\tworking\ns\twt-feature-a\t%2\t1\tclaude\tworking\ns\twt-feature-a\t%3\t2\tclaude\tworking\n",
+				"s\twt-feature-a\t%1\t0\tclaude\tidle\ns\twt-feature-a\t%2\t1\tclaude\tblocked\ns\twt-feature-a\t%3\t2\tclaude\terror\n",
 				"",
 				nil,
 			),
@@ -2824,7 +2975,10 @@ func TestSwitchToPane(t *testing.T) {
 			t.Fatal("expected error when select-window fails")
 		}
 		if calls := mockApp.Base.GetExecCommandCallCount(); calls != 3 {
-			t.Fatalf("expected 3 calls (list-windows + switch-client + select-window), got %d", calls)
+			t.Fatalf(
+				"expected 3 calls (list-windows + switch-client + select-window), got %d",
+				calls,
+			)
 		}
 	})
 }

@@ -616,61 +616,113 @@ unique on the tmux server): both key off `sess:<name>` for folding, pane-row exp
 cursor restore, and both render the same way — a square marker, no trailing label — so they
 read as the same kind of thing to the eye.
 
-Worktree rows and session rows (either kind) carry different marker shapes so they're
-distinguishable at a glance while no agent has ever reported on them: worktree rows use a
-circle (`●` running / `○` not), session rows use a square (`■` attached / `□` detached) — in
-both, a filled glyph means active and the color matches (green active, dim inactive). This
-shape distinction is the "quiet" default; once an agent has reported, the row switches to the
-state vocabulary described next, which is shared across every row kind except the repo header,
-which no longer carries one at all.
+**Space rows carry no status marker at all** ([ADR-0056](decisions/ADR-0056-the-dashboard-lists-agents-in-their-own-section.md),
+supersedes [ADR-0008](decisions/ADR-0008-agent-state-on-every-pane-row.md)'s per-row glyph):
+no agent-state color and no "has a window" dot on a worktree, session (either kind), or pane
+row. A worktree/session row (either kind) with **two or more** panes reporting a non-empty
+agent state still gains its own `▼`/`▶` chevron, and `h`/`l` still reveal or hide its **pane
+rows** — one child row per pane, indented further than the parent, showing the pane's index
+and the command currently running in it, just with no dot of its own either. This answers
+"which pane is which" for `enter`'s sake; "which pane wants attention" now lives entirely in
+the **agents section** below, not on these rows. A repo with no open window starts folded the
+first time this launch sees it (default, not reapplied on every refresh — see "View state is
+saved" below).
 
-The dot on a worktree row and a session row (either kind) reports what the AI coder(s)
-underneath are doing, not just whether something is running. On top of running (`●` green) /
-not-running (`○`/`□` gray, no window or no agent yet), three "wants you" states layer on top
-of a live window: finished and waiting on you (`◆` purple), blocked on a permission prompt
-(`!` red), and errored (`✕` bold red). See
-[ADR-0005](decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md) for the underlying
-signal — each coder writes its activity to a tmux pane option — and
-[ADR-0008](decisions/ADR-0008-agent-state-on-every-pane-row.md) for how that signal was
-extended to every row kind, all sharing one precedence rule
-(`blocked > error > idle > busy > no agent`, most urgent wins):
+The repo header itself carries no glyph either (ADR-0052 — unchanged by ADR-0056): the header
+is a label, not something that competes with its own rows for attention.
 
-- **Worktree rows** aggregate every pane of their `wt-…` window, as before: a window holding
-  more than one coder pane (e.g. a split-pane review beside a working coder) shows the most
-  urgent state, so one finished pane is enough to show `◆` even while its neighbor keeps
-  working.
-- **Standalone session rows** aggregate every pane in that tmux session and show the same
-  state vocabulary (`●`/`◆`/`!`/`✕`) once any agent has reported there, replacing the plain
-  attached/detached square with a colored dot. A session nobody has ever run an agent in —
-  the common case — keeps the plain `■`/`□` square; the shape distinction still applies to
-  that quiet case.
-- **Repo-session rows** aggregate only their **plain-window** panes — the ones that are not
-  one of the repo's own `wt-…` windows. A session holding nothing but worktree windows shows
-  the plain `■`/`□` square, since those windows' own rows already show their state; a session
-  with a plain window too (the `zsh` a repo session was started from, say) picks up the state
-  vocabulary from that window's panes alone, the same aggregation rule as any other session
-  row.
-- **Individual panes**, revealed by expansion (next paragraph), each show their own dot for
-  that one pane's state.
+### The agents section
 
-The repo header itself carries no aggregate glyph at all (ADR-0052): the header is a label,
-and a repo's activity is visible on its session row(s) and worktree rows instead — collapsing
-a repo hides those rows, not an aggregate the header used to show in their place.
+Below spaces, a second, independent section lists **every pane running an AI coder**
+([ADR-0055](decisions/ADR-0055-an-agent-says-what-it-is.md),
+[ADR-0056](decisions/ADR-0056-the-dashboard-lists-agents-in-their-own-section.md)) as one flat
+list across every repo and session — "who needs me" answered by the top of one list, instead
+of scanning dot colors across the whole tree. A pane counts as an agent when the coder itself
+has written `@dg_agent_kind` (`claude`/`opencode`) to it — on session start and every state
+write — **not** derived from its process name, which is unreliable (Claude Code can show up as
+its own version string) and can't say which coder it is. A coder killed before it can clean up
+still drops off the list once its pane reverts to a plain shell (the "is a plain shell"
+backstop; the kind option itself may linger harmlessly).
 
-A worktree row or session row (either kind) with **two or more** panes reporting a non-empty
-agent state gains its own `▼`/`▶` chevron, and `h`/`l` reveal or hide its **pane rows** — one
-child row per pane, indented further than the parent, showing the pane's index, the command
-currently running in it, and that pane's own dot. For a repo-session row, only its
-**plain-window** panes count toward that threshold and appear as children — its repo's own
-worktree panes already have rows of their own. This answers "which pane wants attention," not
-just "which window": a window with a working coder and a finished reviewer side by side shows
-exactly which one is which once expanded. `enter` on a pane row switches the attached tmux
-client straight to that exact pane, not just its window. A parent with zero or one stateful
-pane never gets a chevron — a single pane's state is already exactly what the parent's own dot
-says, so a chevron there would be noise. Collapsing a worktree/session's pane rows is
-independent of collapsing a repo header, even when a repo and a standalone session happen to
-share the same name — and, since repo-session and standalone rows key off the same
-`sess:<name>` identity, renaming a session (see `$` below) carries its fold along.
+Each agent is two lines:
+
+```
+! devgeta/fix-stale-notify      :1
+  blocked · claude
+```
+
+The first line is the state glyph, where the pane lives (`repo/worktree` for a pane in a
+worktree window, otherwise the session name), and `:N` (the pane index, for when one window
+runs two coders side by side). The second line is the state word and the coder's own name. The
+selection bar runs down both lines as one stripe. Sorted by urgency, most urgent first —
+`blocked > error > done > working > idle`, ADR-0005's aggregation order with `idle` split into
+**done** and **idle** — ties broken by location, then by pane index. State words:
+
+| Glyph | Word      | Means                                          |
+| ----- | --------- | ---------------------------------------------- |
+| `!`   | `blocked` | Waiting on your answer (permission, question)  |
+| `✕`   | `error`   | Turn ended with an error                       |
+| `◆`   | `done`    | Finished, and you haven't looked yet           |
+| `●`   | `working` | Agent is running a turn                        |
+| `○`   | `idle`    | Finished and seen, or hasn't been prompted yet |
+
+`enter` on an agent row switches the tmux client straight to that exact pane — the same
+pane-row switch worktree/session pane rows already use, and the same per-pane acknowledgement
+(reaching a pane any way — these keys, the mouse, `switch-client`, or the dashboard — clears
+its `idle`/`blocked`/`error` state, never `busy`; see the shipped tmux config's
+`pane-focus-in`/`pane-focus-out` hooks). The right pane shows what that pane's own worktree row
+would show: the branch diff for a worktree-backed agent, nothing for a repo-session or
+standalone-session one.
+
+**Folding.** `a` folds or unfolds agents, `w` folds or unfolds spaces (`s` still means "new
+session"), from anywhere, in any order. A folded section collapses to a one-line bar on the
+**last line of the column**, with its unfold key on the right: the agents bar keeps a per-state
+count for every state with at least one agent (`!1  ◆1  ●1`), so a new blocked agent stays
+visible while the section is closed; the spaces bar shows how many spaces, repos and sessions
+there are. The **last open section can't fold** — its key does nothing — and folding the
+section the cursor is in moves the cursor to the other one.
+
+**Headers.** Each open section has a header line, `SPACES` or `AGENTS`, with its count on the
+right (`1 of 4` while a filter narrows it), yellow for the section the cursor is in. A rule
+separates the two sections. With no agent panes at all, there is nothing to separate: the
+column is the plain spaces list, with no headers.
+
+**Split.** With both sections open, a section that needs less than its share gives the rest to
+the other, so agents sit right under the spaces rows and the split only matters once both
+outgrow the column. Then agents get half the column by default, adjustable with `+`/`-`, or by
+dragging the `AGENTS` header line with the mouse (the same drag-then-commit-on-release pattern
+as the left/right divider). Each section scrolls on its own once its content outgrows its share.
+
+**Filter scope.** `/` searches only the sections that are currently open. In agents, it matches
+the location, the coder's name, and the state word, so `/blocked` and `/opencode` both narrow
+the list; a folded section is skipped entirely and its bar keeps its normal, unfiltered count.
+
+`j`/`k` walk across the boundary between spaces and agents, clamping at the true top (spaces)
+and bottom (agents) of the combined list rather than wrapping — a folded section counts as
+absent, so moving toward one just clamps at the edge instead.
+
+### Moving with your own tmux keys
+
+The dashboard reads its pane-move keys from tmux itself rather than hard-coding a copy
+([ADR-0057](decisions/ADR-0057-the-dashboard-takes-its-pane-move-keys-from-tmux.md)): at
+startup it asks tmux which keys run `select-pane -L/-D/-U/-R` (`tmux list-keys -T root`),
+directly or as the fallback branch of an `if-shell` (the shipped `is_vim`-style bindings), and
+uses those — falling back to `ctrl+h/j/k/l` when there's no tmux, no such binding, or nothing
+parses. Change the binding in tmux and the dashboard follows the next time it opens.
+
+| Direction | From the list (spaces or agents)      | From the diff pane |
+| --------- | ------------------------------------- | ------------------ |
+| down      | spaces → agents; from agents: edge    | edge               |
+| up        | agents → spaces; from spaces: edge    | edge               |
+| right     | → diff pane (what `space` does today) | edge               |
+| left      | edge                                  | → list             |
+
+At an edge, the dashboard hands the move back to tmux with `select-pane` in that direction —
+the same way vim-tmux-navigator does from Neovim — so the same keys keep working seamlessly
+when the dashboard runs alongside another pane. While a text input has focus (the `/` filter, a
+rename, the create flow's prompts), these keys are not moves; they go to the input exactly as
+today. The shipped tmux config passes them through to the dashboard the same way it already
+does for Vim, recognizing it by process (a `ps` match for `devgeta ws` on the pane's tty).
 
 Attaching to a row, or switching to a pane (`enter`), clears its state — attaching is the user acknowledging it.
 Reaching the pane any other way counts too: the shipped tmux config clears a pane's `idle` /
@@ -684,7 +736,7 @@ session, though, and gives no signal at all when the terminal itself isn't the f
 an agent blocked in another session, or in any window while you're looking at a different
 application, has nothing visual reaching you.
 [ADR-0009](decisions/ADR-0009-audible-agent-notifications.md) adds an audible signal for
-exactly that gap: the same two hooks that write `@dg_agent_state` also play a sound for the
+exactly that gap: the same hooks that write `@dg_agent_state` also play a sound for the
 same three "wants you" states (`idle`, `blocked`, `error`) at the moment they write them —
 never for `busy`, since an agent starting work isn't an event you asked to hear — gated on
 `window_active_clients == 0`, the identical predicate the status-bar flag above already uses,
@@ -693,11 +745,13 @@ is off by default and opt-in (see `notify_sound` above), each state has a distin
 the three are told apart without looking, and a missing sound player or audio device is
 silence rather than an error or a blocked hook.
 
-Every row kind shares the base keys (`j`/`k` nav, `h`/`l` fold, `z` toggle-all, `n`/`N` create a
-worktree, `/` filter, `?` help, `q` quit), plus `e` (toggle the left pane between its default
-width, 40 columns, and double that, both clamped to 60% of the terminal) and `ctrl+r`
-(recompute the branch diff for the currently selected row, in both the list and the
-diff-focused view — diff-only, it deliberately does not re-read git worktree state,
+Every row kind shares the base keys (`j`/`k` nav — crossing between spaces and agents —, `h`/`l`
+fold a repo/pane-group, `z` toggle-all-repos, `a`/`w` fold agents/spaces, `+`/`-` adjust the
+split, `n`/`N` create a worktree, `/` filter, `?` help, `q` quit, and the tmux-read pane-move
+keys above), plus `e` (toggle the left pane between its default width, 40 columns, and double
+that, both clamped to 60% of the terminal) and `ctrl+r` (recompute the branch diff for the
+currently selected row, in both the list and the diff-focused view — diff-only, it
+deliberately does not re-read git worktree state,
 [ADR-0024](decisions/ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md)).
 
 **Deleting a worktree never loses work unless forced**
@@ -720,14 +774,20 @@ the session you're in instead of jumping there. A worktree removed outside the d
 until the first git load lands. The "no worktrees yet" message still waits for that real load.
 Deleting the file only costs one slow first frame.
 
-**View state is saved** across the dashboard closing and reopening — which folds are
-collapsed and the left-pane width — in one tmux server-global option, `@dg_ws_state`
-([ADR-0050](decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md)). It
-lasts as long as the tmux server (gone after `tmux kill-server` or a reboot, same as the
-sessions it describes) and is written only when one of those actually changes (a fold, `e`, or
-a drag ending), never on every tick or mouse-motion event. The cursor itself is **not** saved:
-the dashboard always opens on the row for the tmux session you're actually in (or, when that
-session holds only worktree windows and so has no row, on its first worktree row), which is the
+**View state is saved** across the dashboard closing and reopening — which repo/pane folds are
+collapsed, the left-pane width, and (since ADR-0056) which repos were explicitly unfolded out
+of their windowless default, whether each section is folded, and the agents split — in one
+tmux server-global option, `@dg_ws_state`
+([ADR-0050](decisions/ADR-0050-dashboard-view-state-lives-in-a-tmux-server-option.md); its
+2026-09-28 revision adds the four new fields, all optional, so the value's version stays `1` —
+an older value reads as "both sections open, default split, no windowless repo explicitly
+unfolded"). It lasts as long as the tmux server (gone after `tmux kill-server` or a reboot,
+same as the sessions it describes) and is written only when one of those actually changes (a
+fold, `e`, a drag ending, or `+`/`-`), never on every tick or mouse-motion event. The cursor
+itself is still **not** saved: the dashboard always opens on the row for the tmux session
+you're actually in (or, when that session holds only worktree windows and so has no row, on
+its first worktree row) — or, if spaces loads folded, on the agent in the window you came from
+(the first agent when that window runs none) — which is the
 more useful default when `ctrl+t` is pressed from inside a session, and a saved cursor would
 compete with that.
 

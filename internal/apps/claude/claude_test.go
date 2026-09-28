@@ -438,6 +438,8 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 			}{
 				{"Stop", "agent-state.sh idle"},
 				{"UserPromptSubmit", "agent-state.sh busy"},
+				{"SessionStart", "agent-state.sh start"},
+				{"SessionEnd", "agent-state.sh end"},
 			} {
 				entry := firstHookEntry(t, tt.event)
 				if _, hasMatcher := entry["matcher"]; hasMatcher {

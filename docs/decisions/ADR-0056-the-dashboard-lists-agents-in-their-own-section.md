@@ -72,8 +72,10 @@ coder name, and the state word, so `/blocked` and `/opencode` work.
 **Saved view state** (ADR-0050) gains four optional fields: `expanded` (above),
 `agentsFolded`, `spacesFolded` and `split`. **The cursor is still not saved**, for
 ADR-0050's reason: the dashboard opens on the row for the session you're in, and a saved
-cursor would compete with that. If spaces is folded, the cursor starts on the first agent
-instead.
+cursor would compete with that. If spaces is folded, the cursor starts on the agent in the
+window you came from, by the same rule, or on the first agent when that window runs none.
+Either way the cursor never sits in a folded section: walking into one stops at its edge, as
+ADR-0057 already says for the pane-move keys.
 
 The version stays `1`, because every new field is optional and additive. A value without
 them reads as "both open, default split, no expanded repos". An older binary's decoder

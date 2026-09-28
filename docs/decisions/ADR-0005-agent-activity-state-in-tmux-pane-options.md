@@ -84,13 +84,13 @@ Constraints the storage choice has to satisfy:
 Record agent activity in a **tmux pane user option**, `@dg_agent_state`, on the pane the
 agent is running in.
 
-| Value             | Meaning                               | Written by                                     |
-| ----------------- | ------------------------------------- | ---------------------------------------------- |
-| _(unset / empty)_ | **no agent in this pane** — e.g. nvim | never written; this is the absence of a writer |
-| `busy`            | an agent is working                   | `chat.message` / Claude `UserPromptSubmit`     |
-| `idle`            | finished a turn; your move            | `session.idle` / Claude `Stop`                 |
-| `blocked`         | waiting on a permission answer        | `permission.updated` / Claude `Notification`   |
-| `error`           | the turn failed                       | `session.error`                                |
+| Value             | Meaning                               | Written by                                                                                                      |
+| ----------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| _(unset / empty)_ | **no agent in this pane** — e.g. nvim | never written; this is the absence of a writer                                                                  |
+| `busy`            | an agent is working                   | `chat.message` / Claude `UserPromptSubmit`; again after each tool (`tool.execute.after` / Claude `PostToolUse`) |
+| `idle`            | finished a turn; your move            | `session.idle` / Claude `Stop`                                                                                  |
+| `blocked`         | waiting on a permission answer        | `permission.updated` / Claude `Notification`                                                                    |
+| `error`           | the turn failed                       | `session.error`                                                                                                 |
 
 `busy` is an **explicit value, not the absence of one**. Distinguishing "an agent is
 working" from "there is no agent here" is what lets a row aggregate correctly: a
@@ -194,6 +194,16 @@ The rules, and why:
 Not covered: a terminal losing and regaining focus (switching to another app) relies on
 the terminal sending focus reports, which `focus-events on` asks for. That path was not
 exercised in the test above.
+
+**Revision (2026-09-28, later): busy comes back after a permission prompt.** Clearing
+`blocked` on focus left the pane with no state at all while the agent carried on with its
+turn, so the dashboard showed a working agent as idle until the turn ended. Nothing wrote
+`busy` again, since the only `busy` writer was the prompt submit. Both coders now write it
+again after every tool (`PostToolUse` → `agent-state.sh resume`, and the plugin's
+`tool.execute.after`): a tool finishing is the first sign that the turn is running again.
+Each reads the state first and writes only when it isn't already `busy`, so the usual case
+costs one tmux call per tool. The gap left: between answering and the approved tool
+finishing (a long build, say), the pane still reads as idle.
 
 ### Rejected alternatives
 

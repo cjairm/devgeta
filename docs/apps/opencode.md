@@ -143,23 +143,52 @@ Two tiers are worth having underneath that:
 
 `~/.config/opencode/plugin/notify.js` reports this coder's activity into the
 tmux pane it's running in — working / finished / blocked / errored — so
-`dg ws`'s status dot and tmux's status bar can show it without switching
-windows.
+`dg ws`'s status dot, its agents section (ADR-0056), and tmux's status bar can
+show it without switching windows.
 
 Event mapping:
 
-| Event                | Writes    |
-| -------------------- | --------- |
-| `chat.message`       | `busy`    |
-| `session.idle`       | `idle`    |
-| `permission.updated` | `blocked` |
-| `session.error`      | `error`   |
+| Event                      | Writes                                       |
+| -------------------------- | -------------------------------------------- |
+| plugin load                | `@dg_agent_kind opencode` only               |
+| `chat.message`             | `busy`                                       |
+| `tool.execute.after`       | `busy`, unless already `busy`                |
+| `session.idle`             | `idle`                                       |
+| `permission.updated`       | `blocked`                                    |
+| `session.error`            | `error`                                      |
+| `server.instance.disposed` | unsets kind and state, recomputes the mirror |
 
 It writes via `tmux set-option -p -t "$TMUX_PANE" @dg_agent_state <value>`,
 plus a window-level mirror (`@dg_window_agent_state`) that tmux's status bar
 reads to flag a window nobody is looking at. It no-ops silently outside tmux
 (`TMUX_PANE` unset) — running `opencode` without tmux produces no error and
 no output about tmux.
+
+**Identity, separately from state ([ADR-0055](../decisions/ADR-0055-an-agent-says-what-it-is.md)).**
+Every state write also stamps `@dg_agent_kind opencode`, folded into the same
+exec call via a literal `;` argv element (tmux's own command separator,
+understood identically whether it arrives via a shell or, as here, via
+`execFile`'s array argv) — this is what lets `dg ws`'s agents section list a
+coder that hasn't prompted yet, and what survives `@dg_agent_state` being
+cleared by an attach/focus/ack. A process-exit fallback
+(`process.on("exit", ...)`) is wired too, but **only when both the plugin's
+exec function and this fallback's own sync exec function are left at their
+real defaults** — never during a test run, which always stubs the exec
+function — so importing this file for tests can never register a listener
+capable of touching a real pane.
+
+**Verified empirically to be unreliable, on the one path that matters most.**
+Neither `server.instance.disposed` nor the process-exit fallback fires on
+OpenCode's own double-ctrl-c quit gesture or on a bare `SIGTERM` (Step 0 of
+`docs/plans/cycles/2026-09-28-ws-agents-section.md`, against a real `opencode`
+v1.18.33 TUI in a scripted tmux pane) — confirmed the process fully exited
+both times, with the pane's foreground command correctly reverting to a
+shell. This is why the fallback is best-effort, not load-bearing: the
+dashboard's agents list stays correct regardless, since a pane whose
+foreground process has reverted to a plain shell is never listed, kind
+option or not (see ADR-0055's shell-name backstop). Claude Code's equivalent
+lifecycle hooks (`SessionStart`/`SessionEnd`) do not share this problem — see
+[claude.md](claude.md)'s own note.
 
 See [ADR-0005](../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
 for the full design.

@@ -146,6 +146,14 @@
             "command": "~/.claude/format.sh"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh resume"
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -190,6 +198,26 @@
           {
             "type": "command",
             "command": "~/.claude/suppression-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh start"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh end"
           }
         ]
       }

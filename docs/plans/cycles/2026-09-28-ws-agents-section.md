@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-28
 **Estimated Duration:** ~3–4 days (12 steps, most of them in the 110 KB `model.go`)
-**Status:** Approved (not started)
+**Status:** Done
 
 Decisions: [ADR-0055](../../decisions/ADR-0055-an-agent-says-what-it-is.md) ·
 [ADR-0056](../../decisions/ADR-0056-the-dashboard-lists-agents-in-their-own-section.md) ·
@@ -73,18 +73,18 @@ tmux/Neovim.
 
 ### In Scope
 
-- [ ] Coders write `@dg_agent_kind` on start and every state write, and unset it on end (ADR-0055)
-- [ ] The fast scan reads the kind; "is an agent" = kind set and not a plain shell
-- [ ] Agents section: flat list, urgency sort, two-line rows, `↵` jumps to the pane, diff on the right
-- [ ] State words: blocked / error / done / working / idle (display only; stored values unchanged)
-- [ ] Spaces: no status markers on worktree, session or pane rows; repos with no open window start folded, and an explicit unfold is saved
-- [ ] Fold keys `a` (agents) / `w` (spaces); folded bar at the bottom, with per-state counts for agents
-- [ ] Split: `+` / `-` and mouse drag on the agents header; each section scrolls on its own
-- [ ] Filter searches only open sections; agents match location, coder name, state word
-- [ ] Saved view state: `expanded`, both section folds, split (ADR-0050, still `v: 1`; the cursor is still not saved)
-- [ ] Pane-move keys read from `tmux list-keys`; in-dashboard moves plus edge hand-off; never while a text input has focus (ADR-0057)
-- [ ] Shipped tmux bindings pass the keys through to `devgeta ws`
-- [ ] Help popup, hint bar, and the docs listed in File Changes
+- [x] Coders write `@dg_agent_kind` on start and every state write, and unset it on end (ADR-0055)
+- [x] The fast scan reads the kind; "is an agent" = kind set and not a plain shell
+- [x] Agents section: flat list, urgency sort, two-line rows, `↵` jumps to the pane, diff on the right
+- [x] State words: blocked / error / done / working / idle (display only; stored values unchanged)
+- [x] Spaces: no status markers on worktree, session or pane rows; repos with no open window start folded, and an explicit unfold is saved
+- [x] Fold keys `a` (agents) / `w` (spaces); folded bar at the bottom, with per-state counts for agents
+- [x] Split: `+` / `-` and mouse drag on the agents header; each section scrolls on its own
+- [x] Filter searches only open sections; agents match location, coder name, state word
+- [x] Saved view state: `expanded`, both section folds, split (ADR-0050, still `v: 1`; the cursor is still not saved)
+- [x] Pane-move keys read from `tmux list-keys`; in-dashboard moves plus edge hand-off; never while a text input has focus (ADR-0057)
+- [x] Shipped tmux bindings pass the keys through to `devgeta ws`
+- [x] Help popup, hint bar, and the docs listed in File Changes
 
 ### Explicitly Out of Scope
 
@@ -115,7 +115,7 @@ tmux/Neovim.
 | Modify | `internal/tui/worktree/model.go`                                                                                                    | Two sections: cursor, scroll, folds, split, filter scope, keys, rendering                                                                                                                              |
 | Modify | `internal/tui/worktree/viewstate.go` (+ test)                                                                                       | Optional `expanded`, `agentsFolded`, `spacesFolded`, `split` fields                                                                                                                                    |
 | Modify | `configs/tmux/tmux.conf.tmpl` (+ golden, + test)                                                                                    | `is_dgws` check next to `is_vim` in the four `C-h/j/k/l` bindings                                                                                                                                      |
-| Modify | `docs/decisions/ADR-0008-…`, `docs/decisions/ADR-0050-…`                                                                            | Revision notes (written with the proposal)                                                                                                                     |
+| Modify | `docs/decisions/ADR-0008-…`, `docs/decisions/ADR-0050-…`                                                                            | Revision notes (written with the proposal)                                                                                                                                                             |
 | Modify | `docs/spec.md`, `docs/apps/claude.md`, `docs/apps/opencode.md`, `docs/guides/agent-sync.md`, `docs/recent-changes.md`, `ROADMAP.md` | Document the section, the kind option, the keys; ROADMAP line for alerts / error logs                                                                                                                  |
 
 ### Step-by-Step

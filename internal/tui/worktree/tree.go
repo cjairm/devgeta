@@ -167,6 +167,22 @@ func sameParentRow(a, b row) bool {
 	return false
 }
 
+// countSpaces counts the spaces buildRows kept: every worktree that passed
+// the filter, including those hidden under a folded repo (a repo header
+// carries its post-filter count), plus every standalone session row.
+func countSpaces(rows []row) int {
+	n := 0
+	for _, r := range rows {
+		switch r.kind {
+		case rowRepo:
+			n += r.worktreeCount
+		case rowSession:
+			n++
+		}
+	}
+	return n
+}
+
 // buildRows groups statuses by repo (alpha-sorted), applies filter, respects
 // collapsed map, then appends sessions (standalone tmux sessions with no
 // worktree-backed window) as leaf rows after every repo group — one flat

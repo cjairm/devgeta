@@ -85,7 +85,22 @@ needs a new rule per coder. The kind is the coder's own word.
 - Harder: both coders' integrations change together (CLAUDE.md, "Keeping the two AI
   agents in sync"). The kind is written on every state write, which adds one `tmux` call
   per hook run unless it's folded into the state write's call (`\;`), and it should be.
-- Accepted: a coder killed with `SIGKILL` leaves its kind behind until the shell check hides
-  it, or until the pane closes. A pane whose foreground program is some other non-shell
-  command (for example `less` started after the agent died) would still be listed until it
-  exits. That's rare, and harmless apart from a stale row.
+- Accepted: OpenCode's `server.instance.disposed` event and a plugin's own `process.on('exit')`
+  handler are **unreliable in practice, not just in theory** — verified against a real
+  `opencode` TUI (v1.18.33) in a scripted tmux pane: neither fired on a bare `SIGTERM`, nor
+  on the documented double-ctrl-c quit gesture, even though the process fully exited both
+  times and the pane's foreground command correctly became the shell. So "unset kind + state
+  ... on `server.instance.disposed`, plus a process-exit fallback" (the cycle's Step 1) is
+  best-effort belt-and-suspenders, not the mechanism this design actually depends on. The
+  shell-name backstop above is what keeps the agents list correct once a coder exits by any
+  means — `@dg_agent_kind` staying set no longer matters the moment `pane_current_command`
+  reads back as a shell. What the disposed/exit path failing to fire actually costs: (1)
+  `@dg_agent_kind` itself lingers as a dead pane option until the pane closes — harmless
+  unless a later non-shell program (e.g. `less`) runs in that same pane, which would then
+  read as an agent until it exits, same as the already-accepted `SIGKILL` case; (2) the
+  window-level status-bar mirror (`@dg_window_agent_state`) doesn't get recomputed on quit
+  specifically — but it never did before this cycle either, since there was no `SessionEnd`-
+  equivalent hook; it's still cleaned up by the pane-focus-in/out hooks (`3013bd0`), unchanged
+  from today. Claude Code's hooks do not share this problem: `SessionStart`/`SessionEnd`
+  reliably inherit `$TMUX_PANE` and `SessionEnd` fires with `reason: prompt_input_exit` on
+  both `/exit` and double ctrl-c — verified the same way, against a real `claude` session.

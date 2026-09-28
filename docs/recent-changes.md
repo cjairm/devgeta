@@ -11,11 +11,36 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-22
+**Last updated:** 2026-09-28
 
 ---
 
 ## Recent changes
+
+- `dg ws` splits into a spaces section and an agents section (2026-09-28).
+  Every worktree/session/pane row used to carry its own agent-state glyph
+  (ADR-0008); most rows aren't agents, so the tree was mostly noise, and
+  answering "who needs me" meant scanning dot colors across every repo.
+  ADR-0055 has each coder write its own identity (`@dg_agent_kind`) alongside
+  the state it already wrote, separately from whether that state has been
+  seen — so an agent stays listed even right after you look at it. ADR-0056
+  moves all agent-state display into a new, second section below spaces: one
+  flat, urgency-sorted list across every repo and session, two lines per
+  agent (glyph + location, then state word + coder name), with its own fold
+  (`a`/`w`), adjustable split (`+`/`-`, or drag the header), and filter scope
+  (only open sections are searched). Space rows lost their status markers
+  entirely. ADR-0057 has the dashboard read its own pane-move keys from tmux
+  (`list-keys -T root`) instead of hard-coding a copy, falling back to
+  `ctrl+h/j/k/l`; at an edge of the two sections it hands the move back to
+  tmux's own `select-pane`, the same way vim-tmux-navigator does from Neovim.
+  A real, empirically-confirmed surprise from the investigation: OpenCode's
+  `server.instance.disposed` event and even its own process `exit` handler
+  do not fire on that coder's real double-ctrl-c quit gesture or a bare
+  `SIGTERM` — the dashboard's agents list stays correct anyway, since a pane
+  whose foreground process has reverted to a plain shell is never listed
+  regardless of whether the identity option was ever explicitly unset. See
+  `docs/plans/cycles/2026-09-28-ws-agents-section.md` and
+  ADR-0055/0056/0057.
 
 - `devgeta` was invisible to anything that did not read `~/.zshrc`
   (2026-09-22). An AI coding agent reported `devgeta is not available on PATH`

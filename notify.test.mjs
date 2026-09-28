@@ -55,7 +55,15 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Notify } from "./configs/opencode/plugin/notify.js";
+import { Notify, exitFallbackSync } from "./configs/opencode/plugin/notify.js";
+
+// The suite usually runs inside a real tmux pane, often one running a coder.
+// Any code path that reaches the plugin's real exec with TMUX_PANE set
+// writes to THAT pane: the load-time kind write once stamped a running
+// Claude Code pane as "opencode". Dropping the variable for the whole
+// process makes every such path a no-op, whatever an individual test does;
+// tests that need a pane set a fake one with withTmuxPane.
+delete process.env.TMUX_PANE;
 
 // withTmuxPane sets process.env.TMUX_PANE for the duration of fn and restores
 // the previous value afterward (even if fn throws), the same env-save/restore
@@ -103,6 +111,12 @@ function makeExecStub(impl) {
   return exec;
 }
 
+// ADR-0055: every state write also stamps @dg_agent_kind, folded into this
+// SAME exec call via a literal ";" argv element (tmux's own command
+// separator, understood identically whether it arrives via a shell or, as
+// here, via execFile's array argv - no shell is involved either way) rather
+// than a second process spawn. Kept fresh on every write so it survives
+// @dg_agent_state being cleared by an attach/focus/ack.
 const paneWrite = (pane, value) => [
   "tmux",
   "set-option",
@@ -111,6 +125,46 @@ const paneWrite = (pane, value) => [
   pane,
   "@dg_agent_state",
   value,
+  ";",
+  "set-option",
+  "-p",
+  "-t",
+  pane,
+  "@dg_agent_kind",
+  "opencode",
+];
+const kindWrite = (pane) => [
+  "tmux",
+  "set-option",
+  "-p",
+  "-t",
+  pane,
+  "@dg_agent_kind",
+  "opencode",
+];
+const unsetBoth = (pane) => [
+  "tmux",
+  "set-option",
+  "-p",
+  "-u",
+  "-t",
+  pane,
+  "@dg_agent_state",
+  ";",
+  "set-option",
+  "-p",
+  "-u",
+  "-t",
+  pane,
+  "@dg_agent_kind",
+];
+const listPanesQuery = (pane) => [
+  "tmux",
+  "list-panes",
+  "-t",
+  pane,
+  "-F",
+  "#{@dg_agent_state}",
 ];
 const mirrorSet = (pane, value) => [
   "tmux",
@@ -242,6 +296,12 @@ test("session.idle writes idle to the pane and sets the window mirror", async ()
     // before any player is invoked — off by default.
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.idle", properties: { sessionID: "s1" } },
     });
@@ -257,6 +317,12 @@ test("permission.updated writes blocked to the pane and sets the window mirror",
   await withTmuxPane("%7", async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: {
         type: "permission.updated",
@@ -275,6 +341,12 @@ test("session.error writes error to the pane and sets the window mirror", async 
   await withTmuxPane("%1", async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.error", properties: {} },
     });
@@ -290,6 +362,12 @@ test("chat.message writes busy to the pane and CLEARS the window mirror", async 
   await withTmuxPane("%9", async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin["chat.message"](
       { sessionID: "s1" },
       { message: {}, parts: [] },
@@ -300,10 +378,82 @@ test("chat.message writes busy to the pane and CLEARS the window mirror", async 
   });
 });
 
+// tool.execute.after runs after every tool. A tool finishing means the turn
+// is still running, and it is the only signal after a permission prompt is
+// answered - Claude Code's PostToolUse `agent-state.sh resume` is the same
+// rule.
+const stateRead = (pane) => [
+  "tmux",
+  "display-message",
+  "-p",
+  "-t",
+  pane,
+  "#{@dg_agent_state}",
+];
+const listStates = (pane) => [
+  "tmux",
+  "list-panes",
+  "-t",
+  pane,
+  "-F",
+  "#{@dg_agent_state}",
+];
+
+test("tool.execute.after stops at the read when the pane is already busy", async () => {
+  await withTmuxPane("%9", async () => {
+    const exec = makeExecStub(async () => "busy");
+    const plugin = await Notify({}, exec);
+    exec.calls.length = 0;
+    await plugin["tool.execute.after"]({ tool: "bash" }, {});
+    assert.deepEqual(exec.calls, [stateRead("%9")]);
+  });
+});
+
+for (const before of ["blocked", ""]) {
+  test(`tool.execute.after writes busy again after a pause (from ${JSON.stringify(before)})`, async () => {
+    await withTmuxPane("%9", async () => {
+      const exec = makeExecStub(async (_cmd, args) =>
+        args[0] === "display-message" ? before : "busy",
+      );
+      const plugin = await Notify({}, exec);
+      exec.calls.length = 0;
+      await plugin["tool.execute.after"]({ tool: "bash" }, {});
+      assert.deepEqual(exec.calls, [
+        stateRead("%9"),
+        paneWrite("%9", "busy"),
+        listStates("%9"),
+        mirrorClear("%9"),
+      ]);
+    });
+  });
+}
+
+test("tool.execute.after leaves the mirror when a sibling pane still wants you", async () => {
+  await withTmuxPane("%9", async () => {
+    const exec = makeExecStub(async (_cmd, args) =>
+      args[0] === "display-message" ? "blocked" : "busy\nblocked",
+    );
+    const plugin = await Notify({}, exec);
+    exec.calls.length = 0;
+    await plugin["tool.execute.after"]({ tool: "bash" }, {});
+    assert.deepEqual(exec.calls, [
+      stateRead("%9"),
+      paneWrite("%9", "busy"),
+      listStates("%9"),
+    ]);
+  });
+});
+
 test("an unrecognized event type is a no-op: no write, no throw", async () => {
   await withTmuxPane("%2", async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.compacted", properties: {} },
@@ -317,6 +467,12 @@ test("TMUX_PANE unset: no error, no write attempted (pane or mirror)", async () 
   await withTmuxPane(undefined, async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
 
     await assert.doesNotReject(() =>
       plugin.event({
@@ -336,6 +492,12 @@ test("TMUX_PANE empty string: no error, no write attempted (pane or mirror)", as
   await withTmuxPane("", async () => {
     const exec = makeExecStub();
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.error", properties: {} },
@@ -351,6 +513,12 @@ test("a rejected exec call is swallowed for BOTH the pane write and the mirror w
       throw new Error("tmux: no server running on /tmp/tmux-501/default");
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.idle", properties: { sessionID: "s1" } },
@@ -375,6 +543,12 @@ test("a rejected exec call is swallowed for BOTH the pane write and the mirror c
       throw new Error("ENOENT: tmux not found");
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin["chat.message"]({ sessionID: "s1" }, { message: {}, parts: [] }),
     );
@@ -386,6 +560,12 @@ test("sound: silence when @dg_notify_sound is unset (empty stdout)", async () =>
   await withTmuxPane("%10", async () => {
     const exec = makeSoundStub({ soundOn: "" });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.idle", properties: {} },
     });
@@ -401,6 +581,12 @@ test("sound: silence when @dg_notify_sound is explicitly off", async () => {
   await withTmuxPane("%11", async () => {
     const exec = makeSoundStub({ soundOn: "off" });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.idle", properties: {} },
     });
@@ -416,6 +602,12 @@ test("sound: silence when window_active_clients != 0 (window is attended)", asyn
   await withTmuxPane("%12", async () => {
     const exec = makeSoundStub({ soundOn: "on", activeClients: "1" });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.idle", properties: {} },
     });
@@ -434,6 +626,12 @@ test("sound: busy never dings, even with the option on and the window unattended
   await withTmuxPane("%13", async () => {
     const exec = makeSoundStub({ soundOn: "on", activeClients: "0" });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin["chat.message"](
       { sessionID: "s1" },
       { message: {}, parts: [] },
@@ -456,6 +654,12 @@ test("sound: distinct sound file per state (idle, blocked, error) via afplay", a
     await withTmuxPane("%20", async () => {
       const exec = makeSoundStub({ soundOn: "on", activeClients: "0" });
       const plugin = await Notify({}, exec);
+      // Plugin load itself now writes the kind (ADR-0055) - clear that one
+      // recorded call so this test's assertions, which are about the HANDLER
+      // under test, don't all need a leading kindWrite(pane) entry. The
+      // dedicated "plugin load writes the kind" test below asserts that write
+      // directly, against an unmodified exec.calls.
+      exec.calls.length = 0;
       await plugin.event({ event: { type: eventType, properties: {} } });
       assert.deepEqual(exec.calls, [
         paneWrite("%20", state),
@@ -476,6 +680,12 @@ test("sound: falls through to paplay when afplay is missing (ENOENT)", async () 
       playerBehavior: { afplay: "missing" },
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await plugin.event({
       event: { type: "session.idle", properties: {} },
     });
@@ -505,6 +715,12 @@ test("sound: does NOT fall through to paplay when afplay EXISTS but fails at run
       playerBehavior: { afplay: "fail" },
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.idle", properties: {} },
@@ -531,6 +747,12 @@ test("sound: does NOT fall through to the bell when paplay EXISTS but fails at r
       playerBehavior: { afplay: "missing", paplay: "fail" },
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.idle", properties: {} },
@@ -559,6 +781,12 @@ test("sound: still resolves without throwing when the player is missing entirely
         playerBehavior: { afplay: "missing", paplay: "missing" },
       });
       const plugin = await Notify({}, exec);
+      // Plugin load itself now writes the kind (ADR-0055) - clear that one
+      // recorded call so this test's assertions, which are about the HANDLER
+      // under test, don't all need a leading kindWrite(pane) entry. The
+      // dedicated "plugin load writes the kind" test below asserts that write
+      // directly, against an unmodified exec.calls.
+      exec.calls.length = 0;
 
       await assert.doesNotReject(() =>
         plugin.event({
@@ -608,6 +836,12 @@ test("sound: still resolves without throwing when pane_tty cannot be resolved (e
       playerBehavior: { afplay: "missing", paplay: "missing" },
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
     await assert.doesNotReject(() =>
       plugin.event({
         event: { type: "session.error", properties: {} },
@@ -641,6 +875,12 @@ test("sound: the event handler resolves promptly even when the player promise ne
       return "";
     });
     const plugin = await Notify({}, exec);
+    // Plugin load itself now writes the kind (ADR-0055) - clear that one
+    // recorded call so this test's assertions, which are about the HANDLER
+    // under test, don't all need a leading kindWrite(pane) entry. The
+    // dedicated "plugin load writes the kind" test below asserts that write
+    // directly, against an unmodified exec.calls.
+    exec.calls.length = 0;
 
     const start = Date.now();
     await Promise.race([
@@ -661,13 +901,144 @@ test("sound: the event handler resolves promptly even when the player promise ne
   });
 });
 
+// --- ADR-0055: identity (@dg_agent_kind) and end-of-life cleanup ---
+
+test("plugin load writes the kind to the pane", async () => {
+  await withTmuxPane("%30", async () => {
+    const exec = makeExecStub();
+    await Notify({}, exec);
+    // Nothing else has run yet (no handler invoked), so this is the ONLY
+    // recorded call - the load-time write, not folded with anything else
+    // (there is no state yet to fold it into; ADR-0055: "a fresh agent has
+    // no state yet").
+    assert.deepEqual(exec.calls, [kindWrite("%30")]);
+  });
+});
+
+test("plugin load without TMUX_PANE is a no-op for the kind write", async () => {
+  await withTmuxPane(undefined, async () => {
+    const exec = makeExecStub();
+    await Notify({}, exec);
+    assert.deepEqual(exec.calls, []);
+  });
+});
+
+test("server.instance.disposed unsets kind and state, and clears the window mirror when no sibling pane still wants you", async () => {
+  await withTmuxPane("%31", async () => {
+    const exec = makeExecStub(async (cmd, args) => {
+      if (cmd === "tmux" && args[0] === "list-panes") {
+        // This pane's own entry is already "" (cleared by the unset call
+        // just before this query, matching real tmux's read-after-write
+        // ordering), and there is no other pane in the window.
+        return "";
+      }
+      return "";
+    });
+    exec.calls.length = 0; // drop the plugin-load kindWrite - see above
+    const plugin = await Notify({}, exec);
+    exec.calls.length = 0;
+    await plugin.event({ event: { type: "server.instance.disposed" } });
+    assert.deepEqual(exec.calls, [
+      unsetBoth("%31"),
+      listPanesQuery("%31"),
+      mirrorClear("%31"),
+    ]);
+  });
+});
+
+test("server.instance.disposed leaves the window mirror untouched when a sibling pane still wants you", async () => {
+  for (const siblingState of ["idle", "blocked", "error"]) {
+    await withTmuxPane("%32", async () => {
+      const exec = makeExecStub(async (cmd, args) => {
+        if (cmd === "tmux" && args[0] === "list-panes") {
+          return `\n${siblingState}`;
+        }
+        return "";
+      });
+      const plugin = await Notify({}, exec);
+      exec.calls.length = 0;
+      await plugin.event({ event: { type: "server.instance.disposed" } });
+      assert.deepEqual(exec.calls, [unsetBoth("%32"), listPanesQuery("%32")]);
+    });
+  }
+});
+
+test("server.instance.disposed without TMUX_PANE is a no-op", async () => {
+  await withTmuxPane(undefined, async () => {
+    const exec = makeExecStub();
+    const plugin = await Notify({}, exec);
+    await assert.doesNotReject(() =>
+      plugin.event({ event: { type: "server.instance.disposed" } }),
+    );
+    assert.deepEqual(exec.calls, []);
+  });
+});
+
+test("exitFallbackSync: no-op without TMUX_PANE", async () => {
+  await withTmuxPane(undefined, async () => {
+    const calls = [];
+    exitFallbackSync((cmd, args) => calls.push([cmd, ...args]));
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("exitFallbackSync: attempts the folded unset synchronously when TMUX_PANE is set", async () => {
+  await withTmuxPane("%33", async () => {
+    const calls = [];
+    exitFallbackSync((cmd, args) => calls.push([cmd, ...args]));
+    assert.deepEqual(calls, [unsetBoth("%33")]);
+  });
+});
+
+test("exitFallbackSync: swallows a synchronous throw rather than propagating it", async () => {
+  await withTmuxPane("%34", async () => {
+    assert.doesNotThrow(() =>
+      exitFallbackSync(() => {
+        throw new Error("tmux: no server running");
+      }),
+    );
+  });
+});
+
+test("Notify with a stubbed execFn never registers the real process-exit fallback (no listener leak across every other test in this file)", async () => {
+  const before = process.listenerCount("exit");
+  const exec = makeExecStub();
+  await Notify({}, exec);
+  assert.equal(
+    process.listenerCount("exit"),
+    before,
+    "Notify must only register process.on('exit', ...) when BOTH execFn and " +
+      "syncExecFn are left at their real defaults (see notify.js) - never " +
+      "when execFn is stubbed, which is every test in this file except the " +
+      "'no injected exec' shape test below (which neutralizes it with an " +
+      "explicit no-op syncExecFn).",
+  );
+});
+
 test("Notify(ctx) with no injected exec still returns hooks (real invocation shape)", async () => {
   // OpenCode calls Notify(ctx) with exactly one argument; the exec parameter
   // must default so that shape keeps working. We don't exercise the real
   // execTmux path here (that would spawn a real process) — just confirm the
-  // factory doesn't require the second argument. No handler is invoked, so
-  // this test cannot reach the real tmux binary.
-  const plugin = await Notify({ directory: process.cwd() });
+  // factory doesn't require the second argument. The factory itself writes
+  // the kind through the real execFn, so this test relies on TMUX_PANE being
+  // unset (see the top of this file), which turns that write into a no-op.
+  //
+  // Leaving execFn at its real default (execTmux) makes Notify's own
+  // "was execFn overridden?" check see the real function, which is also how
+  // it decides whether to default the THIRD parameter (syncExecFn, the
+  // process-exit fallback's synchronous exec) to a real, working
+  // implementation — see notify.js's own comment on that derivation, and
+  // ADR-0055 on why the fallback is opt-in-only rather than automatic. A
+  // real syncExecFn here would register a REAL `process.on("exit", ...)`
+  // that could fire a genuine tmux call whenever THIS test process itself
+  // exits, entirely independent of whether a handler was invoked — so this
+  // test explicitly passes a no-op stub for syncExecFn to neutralize that,
+  // while still exercising the real one-argument call shape.
+  const plugin = await Notify(
+    { directory: process.cwd() },
+    undefined,
+    () => {},
+  );
   assert.equal(typeof plugin.event, "function");
   assert.equal(typeof plugin["chat.message"], "function");
 });

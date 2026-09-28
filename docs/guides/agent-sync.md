@@ -85,3 +85,19 @@ Deliberate — do not "fix" these by halves.
   [ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md)
   and its 2026-09-10 correction for what this gap means in practice on both
   agents.
+- **The "agent ends" lifecycle hook is reliable on Claude Code, best-effort on
+  OpenCode — the code is symmetric, the runtime isn't.** Both
+  `agent-state.sh`'s `end` case and `notify.js`'s `server.instance.disposed` +
+  process-exit fallback unset `@dg_agent_kind`/`@dg_agent_state` and
+  recompute the window mirror ([ADR-0055](../decisions/ADR-0055-an-agent-says-what-it-is.md)).
+  Verified empirically (Step 0 of
+  `docs/plans/cycles/2026-09-28-ws-agents-section.md`, against real sessions of
+  both coders): Claude Code's `SessionEnd` fires reliably — `/exit`, double
+  ctrl-c, and normal completion all trigger it, always with `$TMUX_PANE` set.
+  OpenCode's equivalent fires on **neither** its own double-ctrl-c quit
+  gesture nor a bare `SIGTERM`. This is not something a devgeta-owned fix can
+  close — it's a real difference in what each coder's own process lifecycle
+  exposes. It costs nothing in practice: the dashboard's agents list stays
+  correct either way, since ADR-0055's shell-name backstop removes a pane
+  the moment its foreground process reverts to a plain shell, independent of
+  whether the identity option was ever explicitly unset.
