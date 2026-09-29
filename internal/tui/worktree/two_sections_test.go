@@ -174,9 +174,9 @@ func TestSelectedDiffStatus_ResolvesAgentsWorktree(t *testing.T) {
 		Panes: []tmux.PaneState{agentPane("%1", "1", "claude", "claude", "blocked")},
 	}
 	m := makeTestModel([]worktree.WorktreeStatus{wtStatus})
-	m.repoSessions = []worktree.RepoSessionStatus{
+	m.repoWindows = []worktree.RepoWindowStatus{
 		{
-			Repo: "devgeta", Name: "devgeta-main",
+			Repo: "devgeta", Session: "devgeta-main", Window: "notes", WindowID: "@2",
 			Panes: []tmux.PaneState{agentPane("%2", "1", "opencode", "opencode", "busy")},
 		},
 	}
@@ -197,7 +197,7 @@ func TestSelectedDiffStatus_ResolvesAgentsWorktree(t *testing.T) {
 
 	m.agentCursor = byPane["%2"]
 	if _, ok := m.selectedDiffStatus(); ok {
-		t.Errorf("selectedDiffStatus() for the repo-session agent = ok, want false (no diff)")
+		t.Errorf("selectedDiffStatus() for the repo-window agent = ok, want false (no diff)")
 	}
 }
 

@@ -100,3 +100,30 @@ the list read as a duplicate.
   reachable from the dashboard for it until it gains a plain window. Accepted:
   the name is visible in tmux itself, and the moment a second real window
   exists the row comes back.
+
+## Amendment (2026-09-29): rows are windows, not sessions
+
+In use, the session row hid the windows it stood for. A repo with a `node`
+window (three panes), a `zsh` window and a worktree showed one row named after
+the session — the same name as the repo — and enter on it went to only the
+first window. The other windows could not be seen or chosen.
+
+- **A repo's rows are its plain windows**, one per window, named by the
+  window and listed before the worktree rows. There is no session row and the
+  session's name is not shown. Which session a window lives in stays invisible,
+  including when a repo's windows are spread across two.
+- **A window is identified by tmux's window id** (`@7`), read in the same pane
+  scan. Names are not unique — automatic-rename gives two shells the same
+  `zsh` — and the row key, the fold key (`win:<id>`) and the switch all use the
+  id. Enter switches to that window by id.
+- **Kept:** worktree-only sessions get no rows, the dashboard's own
+  `[workspace]` window is never listed, and 2+ stateful panes still give a
+  window row a pane-row fold.
+- **`d d` closes that one window** (two-press confirm), by id. It replaces
+  the old "close the session's plain windows", which was session-level. The
+  session and its other windows stay.
+- **Dropped:** `$` (rename session) no longer acts on these rows; a window
+  row is not the session. It still works on standalone session rows. Renaming
+  one window from the dashboard is a separate change; tmux's own key works.
+- **Startup cursor:** the dashboard opens on the window you came from, matched
+  by session and window name, since the origin is only known by name.

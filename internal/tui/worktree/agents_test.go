@@ -23,8 +23,8 @@ func agentPane(id, index, kind, command, state string) tmux.PaneState {
 }
 
 // TestBuildAgentRows_Labels confirms ADR-0056's label rule: "repo/worktree"
-// for a pane in a worktree window, otherwise the session name (whether the
-// session is a repo-session or a standalone one).
+// for a pane in a worktree window, "repo/window" for a pane in a plain window
+// of a repo's session, and the session name for a standalone session.
 func TestBuildAgentRows_Labels(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
 		{
@@ -32,9 +32,9 @@ func TestBuildAgentRows_Labels(t *testing.T) {
 			Panes: []tmux.PaneState{agentPane("%1", "1", "claude", "claude", "idle")},
 		},
 	}
-	repoSessions := []worktree.RepoSessionStatus{
+	repoWindows := []worktree.RepoWindowStatus{
 		{
-			Repo: "devgeta", Name: "devgeta-main",
+			Repo: "devgeta", Session: "devgeta-main", Window: "notes", WindowID: "@2",
 			Panes: []tmux.PaneState{agentPane("%2", "1", "opencode", "opencode", "busy")},
 		},
 	}
@@ -45,7 +45,7 @@ func TestBuildAgentRows_Labels(t *testing.T) {
 		},
 	}
 
-	rows := buildAgentRows(statuses, sessions, repoSessions, "")
+	rows := buildAgentRows(statuses, sessions, repoWindows, "")
 
 	byPane := map[string]agentRow{}
 	for _, r := range rows {
@@ -57,8 +57,8 @@ func TestBuildAgentRows_Labels(t *testing.T) {
 	if got, want := byPane["%1"].label, "devgeta/fix-stale-notify"; got != want {
 		t.Errorf("worktree pane label = %q, want %q", got, want)
 	}
-	if got, want := byPane["%2"].label, "devgeta-main"; got != want {
-		t.Errorf("repo-session pane label = %q, want %q", got, want)
+	if got, want := byPane["%2"].label, "devgeta/notes"; got != want {
+		t.Errorf("repo window pane label = %q, want %q", got, want)
 	}
 	if got, want := byPane["%3"].label, "scratch"; got != want {
 		t.Errorf("standalone session pane label = %q, want %q", got, want)
@@ -188,7 +188,7 @@ func TestBuildAgentRows_Ordering(t *testing.T) {
 // TestBuildAgentRows_WorktreeBackReference confirms a worktree-sourced agent
 // row carries the WorktreeStatus it came from (isWorktree=true), for the
 // right pane's diff (ADR-0056: "the right pane shows the agent's worktree
-// diff"), while a repo-session or standalone-session pane carries none
+// diff"), while a repo-window or standalone-session pane carries none
 // (isWorktree=false) — those have no diff to show.
 func TestBuildAgentRows_WorktreeBackReference(t *testing.T) {
 	wtStatus := worktree.WorktreeStatus{
@@ -196,9 +196,9 @@ func TestBuildAgentRows_WorktreeBackReference(t *testing.T) {
 		Panes: []tmux.PaneState{agentPane("%1", "1", "claude", "claude", "idle")},
 	}
 	statuses := []worktree.WorktreeStatus{wtStatus}
-	repoSessions := []worktree.RepoSessionStatus{
+	repoWindows := []worktree.RepoWindowStatus{
 		{
-			Repo: "devgeta", Name: "devgeta-main",
+			Repo: "devgeta", Session: "devgeta-main", Window: "notes", WindowID: "@2",
 			Panes: []tmux.PaneState{agentPane("%2", "1", "opencode", "opencode", "busy")},
 		},
 	}
@@ -209,7 +209,7 @@ func TestBuildAgentRows_WorktreeBackReference(t *testing.T) {
 		},
 	}
 
-	rows := buildAgentRows(statuses, sessions, repoSessions, "")
+	rows := buildAgentRows(statuses, sessions, repoWindows, "")
 
 	byPane := map[string]agentRow{}
 	for _, r := range rows {
@@ -220,7 +220,7 @@ func TestBuildAgentRows_WorktreeBackReference(t *testing.T) {
 			got.isWorktree, got.worktree, wtStatus)
 	}
 	if got := byPane["%2"]; got.isWorktree {
-		t.Errorf("repo-session pane: isWorktree=true, want false (got worktree=%+v)", got.worktree)
+		t.Errorf("repo-window pane: isWorktree=true, want false (got worktree=%+v)", got.worktree)
 	}
 	if got := byPane["%3"]; got.isWorktree {
 		t.Errorf(

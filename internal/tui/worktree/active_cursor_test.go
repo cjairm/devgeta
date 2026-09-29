@@ -40,42 +40,45 @@ func TestPlaceCursorOnActiveLandsOnCurrentStandaloneSession(t *testing.T) {
 	}
 }
 
-// TestPlaceCursorOnActiveLandsOnRepoSessionRow is B8's fix: placement matches
-// the current session against session rows by their REAL name - repo-session
-// rows included - rather than a worktree row's derived TmuxSessionName(repo),
-// which the dashboard's own repo-session feature already proved can be wrong
-// (a repo's windows can live in a session named anything at all).
-func TestPlaceCursorOnActiveLandsOnRepoSessionRow(t *testing.T) {
+// TestPlaceCursorOnActiveLandsOnTheWindowYouCameFrom is B8's fix: placement
+// matches the window the user came from, in the session the scan really
+// reported, rather than a worktree row's derived TmuxSessionName(repo), which
+// the dashboard's window rows already proved can be wrong (a repo's windows
+// can live in a session named anything at all).
+func TestPlaceCursorOnActiveLandsOnTheWindowYouCameFrom(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{
 		{Name: "feature-a", Repo: "repo-a", WindowActive: true},
 		{Name: "feature-b", Repo: "repo-b", WindowActive: true},
 	}
 	m := makeTestModel(statuses)
-	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "repo-b", Name: "repo-b-nicknamed"}}
+	m.repoWindows = []worktree.RepoWindowStatus{
+		{Repo: "repo-b", Session: "repo-b-nicknamed", Window: "zsh", WindowID: "@2"},
+	}
 	m.rebuildRows()
 	m.currentSessionFn = func() (string, bool) { return "repo-b-nicknamed", true }
+	m.originWindowFn = func() (string, bool) { return "zsh", true }
 	m.loaded = true
 	m.sessionsLoaded = true
 	m.cursor = 0
 	m.placeCursorOnActive()
 
 	got := m.rows[m.cursor]
-	if got.kind != rowRepoSession || got.repoSession.Name != "repo-b-nicknamed" {
-		t.Errorf("expected cursor on repo-b's session row 'repo-b-nicknamed', got %+v", got)
+	if got.kind != rowWindow || got.window.WindowID != "@2" {
+		t.Errorf("expected cursor on repo-b's zsh window row, got %+v", got)
 	}
 	if !m.cursorPlaced {
-		t.Error("expected cursorPlaced to be true after landing on the current session's row")
+		t.Error("expected cursorPlaced to be true after landing on the window's row")
 	}
 }
 
 // TestPlaceCursorOnActiveDoesNotMatchAWorktreeRowsDerivedName pins B8's
 // negative case: a worktree row's TmuxSessionName(repo) coincidentally
 // matching the current session must NOT be enough on its own - only an
-// actual session row (repo-session or standalone) with that real name is.
+// actual session row with that real name is.
 func TestPlaceCursorOnActiveDoesNotMatchAWorktreeRowsDerivedName(t *testing.T) {
 	statuses := []worktree.WorktreeStatus{{Name: "feature-a", Repo: "repo-a", WindowActive: true}}
 	m := makeTestModel(statuses)
-	// No repoSessions entry: nothing backs TmuxSessionName("repo-a") as a real
+	// No repoWindows entry: nothing backs TmuxSessionName("repo-a") as a real
 	// session row.
 	m.currentSessionFn = func() (string, bool) { return worktree.TmuxSessionName("repo-a"), true }
 	m.loaded = true
@@ -95,8 +98,8 @@ func TestPlaceCursorOnActiveDoesNotMatchAWorktreeRowsDerivedName(t *testing.T) {
 	}
 }
 
-// A session holding only worktree windows has no row (see
-// worktree.RepoSessionStatuses), so opening the dashboard from inside it lands
+// A session holding only worktree windows has no window rows (see
+// worktree.RepoWindowStatuses), so opening the dashboard from inside it lands
 // on the worktree row whose window lives there - matched by the pane's REAL
 // session, never the derived name the test above rejects.
 func TestPlaceCursorOnActiveFallsBackToWorktreeRowInCurrentSession(t *testing.T) {
@@ -264,14 +267,15 @@ func TestPlacementSurvivesStatusesMsgArrivingFirst(t *testing.T) {
 	}
 }
 
-// The real startup order for a repo session: the session scan lands first,
-// before any worktree window is known, so it builds no repo-session row. The
+// The real startup order for a repo's windows: the session scan lands first,
+// before any worktree window is known, so it builds no window rows. The
 // worktree load must not place the cursor on those rows - it would miss the
-// session and land on its worktree row instead. Placement waits for the
+// window and land on its worktree row instead. Placement waits for the
 // re-dispatched scan, which does see the row.
-func TestPlacementWaitsForRepoSessionRowWhenSessionsArriveFirst(t *testing.T) {
+func TestPlacementWaitsForWindowRowWhenSessionsArriveFirst(t *testing.T) {
 	m := makeTestModel(nil)
 	m.currentSessionFn = func() (string, bool) { return "devgeta-yamcha", true }
+	m.originWindowFn = func() (string, bool) { return "2.1.282", true }
 
 	statuses := []worktree.WorktreeStatus{{Name: "ws-dashboard-refresh", Repo: "devgeta"}}
 	window := worktree.GetWindowName("devgeta", "ws-dashboard-refresh")
@@ -282,7 +286,7 @@ func TestPlacementWaitsForRepoSessionRowWhenSessionsArriveFirst(t *testing.T) {
 		PanesBySession: map[string][]tmux.PaneState{
 			"devgeta-yamcha": {
 				wtPane,
-				{Session: "devgeta-yamcha", Window: "2.1.282", PaneID: "%2"},
+				{Session: "devgeta-yamcha", Window: "2.1.282", WindowID: "@2", PaneID: "%2"},
 			},
 		},
 	}
@@ -303,22 +307,23 @@ func TestPlacementWaitsForRepoSessionRowWhenSessionsArriveFirst(t *testing.T) {
 	m = mi.(Model)
 
 	got := m.rows[m.cursor]
-	if got.kind != rowRepoSession || got.repoSession.Name != "devgeta-yamcha" {
-		t.Errorf("expected cursor on session row 'devgeta-yamcha', got %+v", got)
+	if got.kind != rowWindow || got.window.Window != "2.1.282" {
+		t.Errorf("expected cursor on window row '2.1.282', got %+v", got)
 	}
 }
 
-// A worktree-backed repo-session row, mixed with standalone sessions: the
-// repo-session row must win over any standalone session row (ADR-0052/B8),
-// and the trailing standalone rows must not pull the cursor off it.
+// A repo's window row, mixed with standalone sessions: the window row must
+// win over any standalone session row (ADR-0052/B8), and the trailing
+// standalone rows must not pull the cursor off it.
 //
 // This drives statusesMsg BEFORE sessionsMsg, unlike the "arriving first"
-// pair above: RepoSessionStatuses (computed inside the sessionsMsg handler)
+// pair above: RepoWindowStatuses (computed inside the sessionsMsg handler)
 // reads m.statuses' Repo/Name to derive each window name, so it only finds
-// repo-b's session once the worktree list has actually landed.
-func TestPlacementLandsOnRepoSessionRowWhenMixedWithStandaloneSessions(t *testing.T) {
+// repo-b's windows once the worktree list has actually landed.
+func TestPlacementLandsOnWindowRowWhenMixedWithStandaloneSessions(t *testing.T) {
 	m := makeTestModel(nil)
 	m.currentSessionFn = func() (string, bool) { return "repo-b-nicknamed", true }
+	m.originWindowFn = func() (string, bool) { return "zsh", true }
 
 	statuses := []worktree.WorktreeStatus{
 		{Name: "feature-a", Repo: "repo-a"},
@@ -334,7 +339,7 @@ func TestPlacementLandsOnRepoSessionRowWhenMixedWithStandaloneSessions(t *testin
 			"repo-b-nicknamed": {
 				{Session: "repo-b-nicknamed", Window: window, PaneID: "%1"},
 				// A plain window: without one the session gets no row at all.
-				{Session: "repo-b-nicknamed", Window: "zsh", PaneID: "%2"},
+				{Session: "repo-b-nicknamed", Window: "zsh", WindowID: "@2", PaneID: "%2"},
 			},
 		},
 	}
@@ -345,13 +350,13 @@ func TestPlacementLandsOnRepoSessionRowWhenMixedWithStandaloneSessions(t *testin
 	m = mi.(Model)
 
 	got := m.rows[m.cursor]
-	if got.kind != rowRepoSession || got.repoSession.Name != "repo-b-nicknamed" {
-		t.Errorf("expected cursor on repo-b's session row, got %+v", got)
+	if got.kind != rowWindow || got.window.Window != "zsh" {
+		t.Errorf("expected cursor on repo-b's zsh window row, got %+v", got)
 	}
 }
 
 // The same startup sequence for a session holding only its worktree window:
-// no session row exists, so placement must land on that worktree's row. The
+// no window row exists, so placement must land on that worktree's row. The
 // sessionsMsg carries the only scan the model has seen at this point, so it
 // has to be what tells the fallback which session each worktree lives in.
 func TestPlacementLandsOnWorktreeRowForWorktreeOnlySession(t *testing.T) {
@@ -376,8 +381,8 @@ func TestPlacementLandsOnWorktreeRowForWorktreeOnlySession(t *testing.T) {
 	m = mi.(Model)
 
 	for _, r := range m.rows {
-		if r.kind == rowRepoSession {
-			t.Fatalf("expected no session row for a worktree-only session, got %+v", r)
+		if r.kind == rowWindow {
+			t.Fatalf("expected no window row for a worktree-only session, got %+v", r)
 		}
 	}
 	got := m.rows[m.cursor]
@@ -420,7 +425,7 @@ func TestPlacementIgnoresPeriodicRefreshAfterPlacing(t *testing.T) {
 }
 
 // originModel is devgeta-yamcha as it really is: a worktree window and a
-// plain window in one session, so the session has its own row too.
+// plain window in one session, so the plain window has its own row too.
 func originModel(t *testing.T, origin string) Model {
 	t.Helper()
 	window := worktree.GetWindowName("devgeta", "ws-dashboard-refresh")
@@ -431,7 +436,9 @@ func originModel(t *testing.T, origin string) Model {
 		Panes:      []tmux.PaneState{{Session: "devgeta-yamcha", Window: window, PaneID: "%1"}},
 	}}
 	m := makeTestModel(statuses)
-	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "devgeta", Name: "devgeta-yamcha"}}
+	m.repoWindows = []worktree.RepoWindowStatus{
+		{Repo: "devgeta", Session: "devgeta-yamcha", Window: "2.1.282", WindowID: "@2"},
+	}
 	m.rebuildRows()
 	m.currentSessionFn = func() (string, bool) { return "devgeta-yamcha", true }
 	m.originWindowFn = func() (string, bool) { return origin, true }
@@ -452,14 +459,33 @@ func TestPlaceCursorOnActivePrefersOriginWorktreeWindow(t *testing.T) {
 	}
 }
 
-// Coming from a plain window in the same session, the session row wins.
-func TestPlaceCursorOnActiveUsesSessionRowFromPlainWindow(t *testing.T) {
+// Coming from a plain window in the same session, that window's row wins.
+func TestPlaceCursorOnActiveUsesWindowRowFromPlainWindow(t *testing.T) {
 	m := originModel(t, "2.1.282")
 	m.placeCursorOnActive()
 
 	got := m.rows[m.cursor]
-	if got.kind != rowRepoSession || got.repoSession.Name != "devgeta-yamcha" {
-		t.Errorf("expected cursor on session row 'devgeta-yamcha', got %+v", got)
+	if got.kind != rowWindow || got.window.WindowID != "@2" {
+		t.Errorf("expected cursor on window row '2.1.282', got %+v", got)
+	}
+}
+
+// Two plain windows both named zsh: the cursor lands on the right one only if
+// it is matched by more than the name - but the origin is a name, so the
+// first zsh in the current session is the documented answer.
+func TestPlaceCursorOnActiveWindowRowIsTheFirstMatchingName(t *testing.T) {
+	m := originModel(t, "zsh")
+	m.repoWindows = []worktree.RepoWindowStatus{
+		{Repo: "devgeta", Session: "other", Window: "zsh", WindowID: "@1"},
+		{Repo: "devgeta", Session: "devgeta-yamcha", Window: "zsh", WindowID: "@5"},
+	}
+	m.rebuildRows()
+	m.cursor = 0
+	m.placeCursorOnActive()
+
+	got := m.rows[m.cursor]
+	if got.kind != rowWindow || got.window.WindowID != "@5" {
+		t.Errorf("expected the zsh in devgeta-yamcha (@5), not another session's, got %+v", got)
 	}
 }
 

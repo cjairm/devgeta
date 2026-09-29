@@ -32,8 +32,9 @@ const (
 type agentRow struct {
 	pane  tmux.PaneState
 	state tuicomponents.AgentRowState
-	// label is "repo/worktree" for a pane in a worktree window, otherwise
-	// the session name (repo-session or standalone) that owns the pane.
+	// label is "repo/worktree" for a pane in a worktree window, "repo/window"
+	// for one in a repo's plain window, and the session's name for a
+	// standalone session.
 	label string
 	// kind is the coder's own word for what it is ("claude", "opencode") —
 	// tmux.PaneState.Kind, copied here so a caller never has to reach back
@@ -42,7 +43,7 @@ type agentRow struct {
 	// worktree is the WorktreeStatus this pane's window belongs to, for the
 	// right pane's diff (ADR-0056: "the right pane shows the agent's
 	// worktree diff"). isWorktree is false (worktree left at its zero
-	// value) for a repo-session or standalone-session pane, which has no
+	// value) for a repo-window or standalone-session pane, which has no
 	// diff to show.
 	worktree   worktree.WorktreeStatus
 	isWorktree bool
@@ -81,7 +82,7 @@ func paneIndexNum(s string) int {
 
 // buildAgentRows builds the dashboard's flat agents-section rows from the
 // same pane layer the fast tick already scans (ADR-0024: no new exec here),
-// across every repo's worktrees, every repo's live sessions (ADR-0052), and
+// across every repo's worktrees, every repo's plain windows (ADR-0052), and
 // every standalone session. A pane that fails tmux.PaneState.IsAgent() (no
 // kind, or a stale kind left behind by a coder that has since exited into a
 // plain shell — ADR-0055) is skipped entirely; it has no agent row.
@@ -98,7 +99,7 @@ func paneIndexNum(s string) int {
 func buildAgentRows(
 	statuses []worktree.WorktreeStatus,
 	sessions []worktree.SessionStatus,
-	repoSessions []worktree.RepoSessionStatus,
+	repoWindows []worktree.RepoWindowStatus,
 	filter string,
 ) []agentRow {
 	filter = strings.ToLower(filter)
@@ -121,15 +122,15 @@ func buildAgentRows(
 		}
 	}
 
-	for _, rs := range repoSessions {
-		for _, p := range rs.Panes {
+	for _, w := range repoWindows {
+		for _, p := range w.Panes {
 			if !p.IsAgent() {
 				continue
 			}
 			rows = append(rows, agentRow{
 				pane:  p,
 				state: tuicomponents.AgentRowStateFor(p.State),
-				label: rs.Name,
+				label: w.Repo + "/" + w.Window,
 				kind:  p.Kind,
 			})
 		}

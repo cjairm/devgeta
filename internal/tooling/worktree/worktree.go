@@ -1045,7 +1045,7 @@ func (l StateLayer) ApplyTo(statuses []WorktreeStatus) []WorktreeStatus {
 }
 
 // WorktreeWindows answers, for the windows in one tmux scan, which of them a
-// worktree row already covers. SessionStatuses and PlainWindowBySession
+// worktree row already covers. SessionStatuses and RepoWindowStatuses
 // classify against it.
 //
 // Why a type rather than a plain set: it has two states that must not be
@@ -1131,74 +1131,21 @@ func (l StateLayer) SessionStatuses(backed WorktreeWindows) []SessionStatus {
 	return statuses
 }
 
-// PlainWindowBySession maps each session to its first window that is NOT
-// worktree-backed, in tmux's own window order. A session with no such window
-// is absent, so a zero value doubles as "nothing here the worktree rows don't
-// already reach".
-//
-// It is the question SessionStatuses above cannot answer. That one drops a
-// session containing a wt- window entirely, which is right for the session
-// ROWS — the worktree rows already reach those windows — but it also throws
-// away the fact that such a session can hold windows of its own that no row
-// reaches.
-//
-// It returns the window NAME rather than a bool because the caller needs to
-// switch to that window specifically. Switching to the session alone lands on
-// whichever window is active there, which is the dashboard's own [workspace]
-// window at the moment of the switch — and once the dashboard exits, that
-// window dies and tmux drops the client onto whatever remains, typically the
-// wt- window the plain window was the alternative to.
-//
-// ignorePaneID excludes the window that pane belongs to, for the caller that
-// is itself one of the windows being counted: `ctrl+t` opens the dashboard as
-// a "[workspace]" window in the CURRENT session (see the tmux binding), so
-// without it a repo session holding nothing but worktree windows looks like it
-// has a plain one the moment the dashboard is opened from inside it — and
-// switching there would land on the dashboard the user is already looking at.
-// The exclusion is pinned to that pane's own session, since window names are
-// not unique across sessions. Pass "" to count every window; a pane id that
-// matches nothing in the scan excludes nothing.
-//
-// backed is the same answer SessionStatuses takes (see WorktreeWindows) - a
-// window whose worktree no longer exists counts as plain here too, for the
-// identical reason.
-func (l StateLayer) PlainWindowBySession(
-	ignorePaneID string,
-	backed WorktreeWindows,
-) map[string]string {
-	ignoreSession, ignoreWindow := l.paneWindow(ignorePaneID)
-	out := map[string]string{}
-	for session, panes := range l.PanesBySession {
-		for _, p := range panes {
-			if backed.backs(p.Window) {
-				continue
-			}
-			if session == ignoreSession && p.Window == ignoreWindow {
-				continue
-			}
-			out[session] = p.Window
-			break
-		}
-	}
-	return out
-}
-
-// paneWindow returns the session and window the pane paneID lives in, or two
-// empty strings when paneID is "" or matches nothing in the scan. Window names
-// are not unique across sessions, so callers excluding "the dashboard's own
-// window" must match on both.
-func (l StateLayer) paneWindow(paneID string) (session, window string) {
+// paneNamed returns the pane paneID in the scan, or false when paneID is ""
+// or matches nothing. Window names are not unique across sessions, so callers
+// excluding "the dashboard's own window" compare with sameWindow.
+func (l StateLayer) paneNamed(paneID string) (tmux.PaneState, bool) {
 	if paneID == "" {
-		return "", ""
+		return tmux.PaneState{}, false
 	}
-	for s, panes := range l.PanesBySession {
+	for _, panes := range l.PanesBySession {
 		for _, p := range panes {
 			if p.PaneID == paneID {
-				return s, p.Window
+				return p, true
 			}
 		}
 	}
-	return "", ""
+	return tmux.PaneState{}, false
 }
 
 // aggregatePaneStates reduces a window's or a session's panes to the single

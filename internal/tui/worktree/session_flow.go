@@ -48,13 +48,47 @@ type sessionCreatedMsg struct {
 // sessionKilledMsg reports a successful killSessionFn call so Update can drop
 // the killed session from m.sessions, rebuild rows, and set a "removed:"
 // confirmation - mirroring deletedMsg's shape for worktree deletes.
-//
-// windowsOnly marks a repo session whose plain windows were closed rather
-// than the session killed (see handleKillSession): the session still exists,
-// holding its worktree windows.
 type sessionKilledMsg struct {
-	name        string
-	windowsOnly bool
+	name string
+}
+
+// windowClosedMsg reports a successful killWindowIDFn call so Update can drop
+// the window's row by identity and rebuild, without waiting for the next scan.
+type windowClosedMsg struct {
+	key  string // windowKey of the closed window
+	name string
+}
+
+// handleCloseWindow is d's window-row counterpart to handleKillSession: a
+// two-press confirmation (arm, then close; any other key cancels, see
+// handleKey's pendingKillWindow clearing block) that closes exactly this
+// window by its id. Only this window: its session, and the other windows in
+// it, stay.
+func (m Model) handleCloseWindow() (tea.Model, tea.Cmd) {
+	w, ok := m.selectedWindow()
+	if !ok {
+		return m, nil
+	}
+	if w.WindowID == "" {
+		m.status = "no window id for " + w.Window
+		return m, nil
+	}
+
+	key := windowKey(w)
+	if m.pendingKillWindow != key {
+		m.pendingKillWindow = key
+		return m, nil
+	}
+
+	m.pendingKillWindow = ""
+	closeFn := m.killWindowIDFn
+	m.status = actionStatus("closing window", w.Window)
+	return m, func() tea.Msg {
+		if err := closeFn(w.WindowID); err != nil {
+			return statusMsg("close window failed: " + err.Error())
+		}
+		return windowClosedMsg{key: key, name: w.Window}
+	}
 }
 
 // handleNewSession opens the folder picker for the s keybinding, from any row.
@@ -263,46 +297,31 @@ func (m Model) handleSwitchToSession() (tea.Model, tea.Cmd) {
 	return m, m.switchToSessionCmd(sel.Name)
 }
 
-// handleSwitchToRepoSessionRow is enter's rowRepoSession counterpart
-// (ADR-0052, replacing ADR-0048's handleSwitchToRepoSession): switches the
-// attached client to the row's session and quits.
+// handleSwitchToWindowRow is enter's rowWindow counterpart (ADR-0052,
+// amended): switches the attached client to that window and quits.
 //
-// The plain window first, by name, because that window is the whole reason a
-// plain switch-client isn't enough: switching to the session alone lands on
-// whichever window is active in it — which is the dashboard's own [workspace]
-// window at the moment of the switch — and once the dashboard exits that
-// window dies and tmux drops the client onto whatever is left, typically a
-// wt- window. A plain window always exists: the row is only built for a
-// session holding one (see worktree.RepoSessionStatuses).
-func (m Model) handleSwitchToRepoSessionRow() (tea.Model, tea.Cmd) {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowRepoSession {
+// The window is targeted by its id, not its name: two windows can share a
+// name, and switching to the session alone would land on whichever window is
+// active there - the dashboard's own [workspace] window at the moment of the
+// switch, which dies when the dashboard exits.
+func (m Model) handleSwitchToWindowRow() (tea.Model, tea.Cmd) {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowWindow {
 		return m, nil
 	}
-	session := m.rows[m.cursor].repoSession.Name
+	w := m.rows[m.cursor].window
 
 	if os.Getenv("TMUX") == "" {
 		m.status = notInsideTmuxStatus
 		return m, nil
 	}
-
-	if window := m.plainWindowBySession[session]; window != "" {
-		return m, m.switchToWindowCmd(session, window)
+	if w.WindowID == "" {
+		m.status = "no window id for " + w.Window
+		return m, nil
 	}
-	// Should not happen: both come from the same scan with the same
-	// exclusions, so a row implies a plain window.
-	m.status = "no window found in " + session
-	return m, nil
-}
 
-// switchToWindowCmd is switchToSessionCmd's window-targeted twin: it moves the
-// client to one specific window and quits, reporting a failure the same way.
-// It reuses attachFn, which is tmuxApp.SwitchToWindow — the same operation a
-// worktree row performs, minus that path's missing-window repair, which cannot
-// apply here because this window came out of a live scan.
-func (m Model) switchToWindowCmd(session, window string) tea.Cmd {
-	switchFn := m.attachFn
-	return func() tea.Msg {
-		if err := switchFn(session, window); err != nil {
+	switchFn := m.attachWindowIDFn
+	return m, func() tea.Msg {
+		if err := switchFn(w.Session, w.WindowID); err != nil {
 			return statusMsg("switch failed: " + err.Error())
 		}
 		return tea.QuitMsg{}
@@ -322,8 +341,8 @@ func (m Model) switchToSessionCmd(name string) tea.Cmd {
 	}
 }
 
-// handleKillSession is d's session-row counterpart to handleDelete (both
-// standalone and repo-session rows - see selectedSessionName): a
+// handleKillSession is d's session-row counterpart to handleDelete (see
+// selectedSessionName): a
 // two-press kill confirmation, armed/confirmed the same way
 // confirmThenRemove is (arm on first press, clear on any other key, confirm
 // on second press - see handleKey's pendingKillSession clearing block), but
@@ -342,29 +361,6 @@ func (m Model) handleKillSession() (tea.Model, tea.Cmd) {
 
 	// Second press: execute
 	m.pendingKillSession = ""
-
-	// A repo's session row stands for that session's PLAIN windows only (see
-	// worktree.RepoSessionStatus.Panes): the repo's worktree windows live in
-	// the same session but belong to their own rows. Killing the session
-	// would close those too, so close only the row's own panes; tmux drops
-	// each window with its last pane, and the session lives on with its
-	// worktree windows. Panes already excludes the dashboard's own window.
-	if rs, ok := m.repoSessionNamed(name); ok {
-		paneIDs := make([]string, 0, len(rs.Panes))
-		for _, p := range rs.Panes {
-			paneIDs = append(paneIDs, p.PaneID)
-		}
-		killPaneFn := m.killPaneFn
-		m.status = actionStatus("closing windows in", name)
-		return m, func() tea.Msg {
-			for _, id := range paneIDs {
-				if err := killPaneFn(id); err != nil {
-					return statusMsg("close windows failed: " + err.Error())
-				}
-			}
-			return sessionKilledMsg{name: name, windowsOnly: true}
-		}
-	}
 
 	killFn := m.killSessionFn
 	m.status = actionStatus("killing session", name)

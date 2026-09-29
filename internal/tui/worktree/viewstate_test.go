@@ -173,17 +173,19 @@ func TestPruneCollapsedDropsKeysForRowsThatNoLongerExist(t *testing.T) {
 	}
 }
 
-// TestValidCollapseKeysIncludesRepoSessions guards a gap caught while
-// implementing rename (ADR-0052 landed repo-session rows after this
-// function was first written): a repo-session row's fold key is
-// "sess:<name>", the exact same namespace a standalone session's pane-fold
-// key uses (ADR-0050's own example JSON persists "sess:misc"), so a
-// repo-session's key must survive pruning too, not just m.sessions'.
-func TestValidCollapseKeysIncludesRepoSessions(t *testing.T) {
-	repoSessions := []worktree.RepoSessionStatus{{Repo: "repo-a", Name: "repo-a-tien"}}
+// TestValidCollapseKeysIncludesRepoWindows guards the same gap for window
+// rows (ADR-0052, amended): a window's pane-fold key is "win:<id>", and it
+// must survive pruning like a standalone session's "sess:<name>" does.
+func TestValidCollapseKeysIncludesRepoWindows(t *testing.T) {
+	repoWindows := []worktree.RepoWindowStatus{
+		{Repo: "repo-a", Session: "repo-a-tien", Window: "node", WindowID: "@1"},
+	}
 
-	valid := validCollapseKeys(nil, nil, repoSessions)
-	if !valid["sess:repo-a-tien"] {
-		t.Errorf("expected a repo-session's fold key to be valid, got %v", valid)
+	valid := validCollapseKeys(nil, nil, repoWindows)
+	if !valid["win:@1"] {
+		t.Errorf("expected a window's fold key to be valid, got %v", valid)
+	}
+	if valid["sess:repo-a-tien"] {
+		t.Errorf("a window row must not keep its session's key alive, got %v", valid)
 	}
 }

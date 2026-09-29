@@ -103,14 +103,12 @@ func decodeViewState(raw string) (viewStateV1, bool) {
 
 // validCollapseKeys returns the rowKey identities that currently exist among
 // statuses (repo headers and worktrees), standalone sessions, and repo
-// sessions - the set saved state is pruned against before every write
+// windows - the set saved state is pruned against before every write
 // (ADR-0050: "keys for rows that no longer exist are dropped on write").
-// Repo sessions share the exact "sess:<name>" namespace standalone sessions
-// use (a session name is unique on the server, ADR-0052), and that key
-// persists real state for either kind: a session's own pane-fold, the only
-// thing paneParentKey ever returns for a rowSession/rowRepoSession (sessions
-// have no collapse of their own beyond that - see ADR-0050's own example
-// value, which persists "sess:misc").
+// A session's "sess:<name>" key persists its own pane-fold, and a window's
+// "win:<id>" key does the same for its panes: the only thing paneParentKey
+// ever returns for a rowSession/rowWindow (see ADR-0050's own example value,
+// which persists "sess:misc").
 //
 // Deliberately excludes rowPane: pane IDs are ephemeral tmux identifiers
 // that get reused across restarts, so persisting a fold for one buys nothing
@@ -119,9 +117,9 @@ func decodeViewState(raw string) (viewStateV1, bool) {
 func validCollapseKeys(
 	statuses []worktree.WorktreeStatus,
 	sessions []worktree.SessionStatus,
-	repoSessions []worktree.RepoSessionStatus,
+	repoWindows []worktree.RepoWindowStatus,
 ) map[string]bool {
-	valid := make(map[string]bool, len(statuses)+len(sessions)+len(repoSessions))
+	valid := make(map[string]bool, len(statuses)+len(sessions)+len(repoWindows))
 	for _, s := range statuses {
 		valid[repoKey(s.Repo)] = true
 		valid["wt:"+s.Path] = true
@@ -129,8 +127,8 @@ func validCollapseKeys(
 	for _, sess := range sessions {
 		valid["sess:"+sess.Name] = true
 	}
-	for _, rs := range repoSessions {
-		valid["sess:"+rs.Name] = true
+	for _, w := range repoWindows {
+		valid[windowKey(w)] = true
 	}
 	return valid
 }

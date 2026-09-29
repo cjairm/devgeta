@@ -2694,10 +2694,65 @@ func TestIsAgent_ShellCheckDependsOnHowThePaneStarted(t *testing.T) {
 	}
 }
 
+func TestPaneStates_ReadsWindowID(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	// Two windows that tmux auto-named the same ("zsh") are told apart only by
+	// their id. The last line is trimmed the way production output is: no
+	// trailing start-command tab.
+	mockApp.Base.SetExecCommandResult(
+		"s\tzsh\t%1\t0\tzsh\t\t\t@4\t\ns\tzsh\t%2\t0\tzsh\t\t\t@7",
+		"",
+		nil,
+	)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	states := app.PaneStates()
+	if len(states) != 2 {
+		t.Fatalf("expected 2 panes, got %+v", states)
+	}
+	if states[0].WindowID != "@4" || states[1].WindowID != "@7" {
+		t.Errorf("WindowIDs = %q, %q; want @4, @7", states[0].WindowID, states[1].WindowID)
+	}
+}
+
+func TestSwitchToWindowID(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.SwitchToWindowID("my-session", "@7"); err != nil {
+		t.Fatalf("SwitchToWindowID: %v", err)
+	}
+
+	if n := mockApp.Base.GetExecCommandCallCount(); n != 2 {
+		t.Fatalf("expected 2 calls (switch-client + select-window), got %d", n)
+	}
+	last := mockApp.Base.GetLastExecCommandCall()
+	if last == nil || !slices.Equal(last.Args, []string{"select-window", "-t", "@7"}) {
+		t.Errorf("expected select-window -t @7, got %v", last)
+	}
+}
+
+func TestKillWindowID(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.KillWindowID("@7"); err != nil {
+		t.Fatalf("KillWindowID: %v", err)
+	}
+
+	if n := mockApp.Base.GetExecCommandCallCount(); n != 1 {
+		t.Fatalf("expected exactly 1 tmux call (no name lookup), got %d", n)
+	}
+	last := mockApp.Base.GetLastExecCommandCall()
+	if last == nil || !slices.Equal(last.Args, []string{"kill-window", "-t", "@7"}) {
+		t.Errorf("expected kill-window -t @7, got %v", last)
+	}
+}
+
 func TestPaneStates_ReadsStartCommandWithATabInIt(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	mockApp.Base.SetExecCommandResult(
-		"s\tw\t%1\t0\tzsh\tbusy\tclaude\t\"claude 'a\tb'\"\ns\tw\t%2\t1\tzsh\t\tclaude\n",
+		"s\tw\t%1\t0\tzsh\tbusy\tclaude\t@1\t\"claude 'a\tb'\"\ns\tw\t%2\t1\tzsh\t\tclaude\n",
 		"",
 		nil,
 	)

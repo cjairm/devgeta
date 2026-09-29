@@ -421,6 +421,11 @@ type PaneState struct {
 	// sibling pane in the same window (e.g. an editor pane in a
 	// claude-nvim layout) never picks this up from tmux's option cascade.
 	Kind string
+	// WindowID is tmux's #{window_id} (e.g. "@7"): the one identity of a
+	// window that survives a rename and is never shared. Window names are
+	// neither - automatic-rename gives two shells the same "zsh" - so a row
+	// that stands for a window is keyed and switched to by this.
+	WindowID string
 	// StartCommand is tmux's #{pane_start_command}: what the pane was
 	// created to run, "" for tmux's default shell. It tells a coder wrapped
 	// in `zsh -c '<coder>'` (a worktree layout pane), whose pane reports the
@@ -563,7 +568,7 @@ func (t *Tmux) PaneStates() []PaneState {
 			"list-panes",
 			"-a",
 			"-F",
-			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}\t#{pane_start_command}",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}\t#{window_id}\t#{pane_start_command}",
 		},
 	}
 	stdout, _, err := t.Base.ExecCommand(execCommand)
@@ -573,9 +578,9 @@ func (t *Tmux) PaneStates() []PaneState {
 	var states []PaneState
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
-		// 8, not more: a tab inside the start command (the last field)
+		// 9, not more: a tab inside the start command (the last field)
 		// stays part of it.
-		parts := strings.SplitN(scanner.Text(), "\t", 8)
+		parts := strings.SplitN(scanner.Text(), "\t", 9)
 		if len(parts) < 5 {
 			continue
 		}
@@ -587,9 +592,13 @@ func (t *Tmux) PaneStates() []PaneState {
 		if len(parts) >= 7 {
 			kind = strings.TrimSpace(parts[6])
 		}
+		windowID := ""
+		if len(parts) >= 8 {
+			windowID = strings.TrimSpace(parts[7])
+		}
 		start := ""
-		if len(parts) == 8 {
-			start = strings.TrimSpace(parts[7])
+		if len(parts) == 9 {
+			start = strings.TrimSpace(parts[8])
 		}
 		states = append(
 			states,
@@ -601,6 +610,7 @@ func (t *Tmux) PaneStates() []PaneState {
 				CurrentCommand: strings.TrimSpace(parts[4]),
 				State:          state,
 				Kind:           kind,
+				WindowID:       windowID,
 				StartCommand:   start,
 			},
 		)
@@ -876,6 +886,16 @@ func (t *Tmux) SwitchToWindow(session, name string) error {
 	if err != nil {
 		return err
 	}
+	if err := t.SwitchToSession(session); err != nil {
+		return err
+	}
+	return t.ExecuteCommand("select-window", "-t", id)
+}
+
+// SwitchToWindowID is SwitchToWindow for a caller that already holds the
+// window's id (PaneState.WindowID): it skips the name lookup, which cannot
+// tell apart two windows that share a name.
+func (t *Tmux) SwitchToWindowID(session, id string) error {
 	if err := t.SwitchToSession(session); err != nil {
 		return err
 	}
@@ -1230,6 +1250,13 @@ func (t *Tmux) KillWindow(name string) error {
 		return t.ExecuteCommand("kill-window", "-t", session+":"+name)
 	}
 	return t.ExecuteCommand("kill-window", "-t", name)
+}
+
+// KillWindowID closes the window with the given id (PaneState.WindowID, e.g.
+// "@7"). Unlike KillWindow it needs no name or session lookup, and it cannot
+// hit a different window that happens to share the name.
+func (t *Tmux) KillWindowID(id string) error {
+	return t.ExecuteCommand("kill-window", "-t", id)
 }
 
 // SendKeysToWindow sends keystrokes to a specific window

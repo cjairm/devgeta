@@ -230,10 +230,10 @@ func TestSnapshotFileRoundTrip(t *testing.T) {
 	}
 }
 
-// repoSessionFixture is the real shape of the common case: the user sits in a
+// repoWindowFixture is the real shape of the common case: the user sits in a
 // repo session that holds a worktree window and a plain window of its own, so
-// the row they belong on is a repo-session row only a classified scan builds.
-func repoSessionFixture() ([]worktree.WorktreeStatus, worktree.StateLayer) {
+// the row they belong on is a window row only a classified scan builds.
+func repoWindowFixture() ([]worktree.WorktreeStatus, worktree.StateLayer) {
 	statuses := []worktree.WorktreeStatus{
 		{Name: "ws-dashboard-refresh", Repo: "devgeta", Path: "/tmp/wt"},
 	}
@@ -245,7 +245,7 @@ func repoSessionFixture() ([]worktree.WorktreeStatus, worktree.StateLayer) {
 		PanesBySession: map[string][]tmux.PaneState{
 			"devgeta-yamcha": {
 				wtPane,
-				{Session: "devgeta-yamcha", Window: "2.1.282", PaneID: "%2"},
+				{Session: "devgeta-yamcha", Window: "2.1.282", WindowID: "@2", PaneID: "%2"},
 			},
 		},
 	}
@@ -253,13 +253,14 @@ func repoSessionFixture() ([]worktree.WorktreeStatus, worktree.StateLayer) {
 }
 
 func TestPrimeFirstFramePlacesCursorOnCurrentSessionBeforeRealLoad(t *testing.T) {
-	statuses, layer := repoSessionFixture()
+	statuses, layer := repoWindowFixture()
 	data, err := encodeSnapshot(statuses, nil)
 	if err != nil {
 		t.Fatalf("encodeSnapshot: %v", err)
 	}
 	m := makeTestModel(nil)
 	m.currentSessionFn = func() (string, bool) { return "devgeta-yamcha", true }
+	m.originWindowFn = func() (string, bool) { return "2.1.282", true }
 
 	m.primeFirstFrame(data, func() (worktree.StateLayer, error) { return layer, nil })
 
@@ -267,8 +268,8 @@ func TestPrimeFirstFramePlacesCursorOnCurrentSessionBeforeRealLoad(t *testing.T)
 		t.Fatal("expected the first frame to place the cursor from the snapshot and one tmux scan")
 	}
 	got := m.rows[m.cursor]
-	if got.kind != rowRepoSession || got.repoSession.Name != "devgeta-yamcha" {
-		t.Errorf("expected the cursor on repo session 'devgeta-yamcha' on the first frame, got %+v", got)
+	if got.kind != rowWindow || got.window.Window != "2.1.282" {
+		t.Errorf("expected the cursor on window '2.1.282' on the first frame, got %+v", got)
 	}
 	if m.loaded {
 		t.Error("the snapshot is still a guess: m.loaded must wait for git")

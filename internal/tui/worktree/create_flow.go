@@ -122,11 +122,12 @@ func (m Model) startNewWorktree(wantsLayoutPick bool) (tea.Model, tea.Cmd) {
 //     that function rather than comparing strings. A session the user made by
 //     hand still resolves whenever its name matches a known repo, which is
 //     the common case for one opened in a project directory.
+//   - a window row carries the repo whose session it sits in.
 //   - a pane row has no repo of its own, so it defers to the worktree or
 //     session row that owns it (enclosingPaneParent, the same backward scan
 //     the chevron and fold logic use) and answers as that row would.
 //
-// Only session rows and pane rows are new here. Before them, hovering a
+// Only session, window and pane rows are new here. Before them, hovering a
 // session left the hint empty, so the picker offered the same top candidate
 // regardless of where the cursor was - the reason this looked broken.
 func (m Model) cursorRepoHint() string {
@@ -146,6 +147,8 @@ func repoHintForRow(rows []row, i int) string {
 		return r.status.Repo
 	case rowRepo:
 		return r.repo
+	case rowWindow:
+		return r.repo
 	case rowSession:
 		return r.session.Name
 	case rowPane:
@@ -153,8 +156,11 @@ func repoHintForRow(rows []row, i int) string {
 		// step; ok=false only if emission order ever changes, and then the
 		// hint is simply absent rather than wrong.
 		if parent, ok := enclosingPaneParent(rows, i); ok {
-			if parent.kind == rowWorktree {
+			switch parent.kind {
+			case rowWorktree:
 				return parent.status.Repo
+			case rowWindow:
+				return parent.repo
 			}
 			return parent.session.Name
 		}

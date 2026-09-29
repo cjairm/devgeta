@@ -38,25 +38,6 @@ func TestPressDollarOnSessionRowOpensRenamePromptPrefilled(t *testing.T) {
 	}
 }
 
-func TestPressDollarOnRepoSessionRowOpensRenamePromptPrefilled(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "repo-a", Name: "repo-a-tien"}}
-	m.rebuildRows()
-	m = focusRepoSessionRow(t, m, "repo-a-tien")
-
-	updated, _ := m.Update(tea.KeyPressMsg{Code: '$'})
-	m = updated.(Model)
-
-	if !m.renaming || m.renameOldName != "repo-a-tien" || m.renameInput.Value != "repo-a-tien" {
-		t.Errorf(
-			"expected the rename prompt open and prefilled with repo-a-tien, got renaming=%v old=%q value=%q",
-			m.renaming,
-			m.renameOldName,
-			m.renameInput.Value,
-		)
-	}
-}
-
 func TestPressDollarOnWorktreeRowIsNoOp(t *testing.T) {
 	m := makeTestModel(testStatuses()) // cursor on a worktree row
 
@@ -72,7 +53,7 @@ func TestRenameEscCancels(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = testSessions()
 	m.rebuildRows()
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 	updated, _ := m.Update(tea.KeyPressMsg{Code: '$'})
 	m = updated.(Model)
 
@@ -88,13 +69,11 @@ func TestRenameEscCancels(t *testing.T) {
 	}
 }
 
-// focusRepoSessionRowOrSessionRow is a small helper for tests that don't care
-// which kind of session row they land on.
-func focusRepoSessionRowOrSessionRow(t *testing.T, m Model, name string) Model {
+// focusSessionRow puts the cursor on the standalone session row called name.
+func focusSessionRow(t *testing.T, m Model, name string) Model {
 	t.Helper()
 	if _, ok := m.focusRow(func(r row) bool {
-		return (r.kind == rowSession && r.session.Name == name) ||
-			(r.kind == rowRepoSession && r.repoSession.Name == name)
+		return r.kind == rowSession && r.session.Name == name
 	}); !ok {
 		t.Fatalf("test setup: no session row named %q", name)
 	}
@@ -113,7 +92,7 @@ func TestRenameEnterFlattensNameAndCallsRenameSessionFn(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = testSessions()
 	m.rebuildRows()
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 	updated, _ := m.Update(tea.KeyPressMsg{Code: '$'})
 	m = updated.(Model)
 
@@ -164,7 +143,7 @@ func TestRenameBlankNameIsRejected(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = testSessions()
 	m.rebuildRows()
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 	updated, _ := m.Update(tea.KeyPressMsg{Code: '$'})
 	m = updated.(Model)
 	for range m.renameInput.Value {
@@ -195,7 +174,7 @@ func TestRenamePreChecksDuplicateAgainstLiveSessions(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = testSessions() // "scratch", "notes"
 	m.rebuildRows()
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 	m.listSessionNamesFn = func() ([]string, error) { return []string{"scratch", "notes"}, nil }
 	renameCalled := false
 	m.renameSessionFn = func(_, _ string) error {
@@ -228,7 +207,7 @@ func TestRenameSurfacesTmuxsOwnDuplicateRejection(t *testing.T) {
 	m := makeTestModel(nil)
 	m.sessions = testSessions()
 	m.rebuildRows()
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 	// The pre-check is raced: the live list doesn't (yet) show the duplicate.
 	m.listSessionNamesFn = func() ([]string, error) { return []string{"notes"}, nil }
 	m.renameSessionFn = func(_, _ string) error {
@@ -261,7 +240,7 @@ func TestSessionRenamedMsgMovesFoldAndCursorToNewName(t *testing.T) {
 	m.rebuildRows()
 	// Fold "notes"'s pane rows (its collapse-map key is its rowKey, sess:notes).
 	m.collapsed["sess:notes"] = true
-	m = focusRepoSessionRowOrSessionRow(t, m, "notes")
+	m = focusSessionRow(t, m, "notes")
 
 	updated, _ := m.Update(sessionRenamedMsg{oldName: "notes", newName: "journal"})
 	m = updated.(Model)
@@ -278,31 +257,5 @@ func TestSessionRenamedMsgMovesFoldAndCursorToNewName(t *testing.T) {
 	}
 	if !strings.Contains(m.status, "notes") || !strings.Contains(m.status, "journal") {
 		t.Errorf("expected a status naming both the old and new name, got %q", m.status)
-	}
-}
-
-func TestSessionRenamedMsgUpdatesRepoSessionRow(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "repo-a", Name: "repo-a-tien"}}
-	m.rebuildRows()
-	m = focusRepoSessionRow(t, m, "repo-a-tien")
-
-	updated, _ := m.Update(sessionRenamedMsg{oldName: "repo-a-tien", newName: "repo-a-v2"})
-	m = updated.(Model)
-
-	found := false
-	for _, r := range m.rows {
-		if r.kind == rowRepoSession && r.repoSession.Name == "repo-a-v2" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("expected the repo-session row to reflect the new name")
-	}
-	if m.rows[m.cursor].kind != rowRepoSession || m.rows[m.cursor].repoSession.Name != "repo-a-v2" {
-		t.Errorf(
-			"expected the cursor to land on the renamed repo-session row, got %+v",
-			m.rows[m.cursor],
-		)
 	}
 }

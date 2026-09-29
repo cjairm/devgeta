@@ -72,7 +72,7 @@ type (
 	//
 	// It carries the raw layer, not finished lists, for the same reason
 	// tmuxStateMsg does: both halves it feeds (the session rows and
-	// plainWindowBySession) have to be classified against the worktree list,
+	// the repo window rows) have to be classified against the worktree list,
 	// and the only correct one is whatever m.statuses holds when this LANDS.
 	// Classifying in the command instead pinned the answer to the list that
 	// existed when Init() dispatched it — empty — so every repo's own session
@@ -183,34 +183,25 @@ type Model struct {
 	// sessions holds standalone tmux sessions with no worktree-backed window;
 	// see sessionsLoadCmd for refresh cadence and failure handling.
 	sessions []worktree.SessionStatus
-	// repoSessions holds, per repo, the live sessions holding that repo's
-	// worktree windows (ADR-0052) - the rows buildRows draws under each repo
-	// header, before its worktree rows. Computed alongside plainWindowBySession
-	// below (same scan, same fast-tick cadence): both answer "what does this
-	// scan's panes say about which session a repo lives in," just shaped
-	// differently for their two call sites.
-	repoSessions []worktree.RepoSessionStatus
+	// repoWindows holds, per repo, the plain windows of the sessions holding
+	// that repo's worktree windows (ADR-0052, amended) - the rows buildRows
+	// draws under each repo header, before its worktree rows. Computed from
+	// the same scan and fast-tick cadence as the pane layer on the worktrees.
+	repoWindows []worktree.RepoWindowStatus
 	// diffStats maps a worktree's path to its diffstat (ADR-0051), for the
 	// dim "+A -R" every worktree row draws. Filled wholesale by the slow
 	// refresh's diffStatsMsg, and kept current for the selected row between
 	// refreshes by every diffMsg landing for it - both write the same
 	// task.BranchStatsResult shape so a row's number and the diff pane's own
 	// header can never disagree.
-	diffStats map[string]task.BranchStatsResult
-	// plainWindowBySession maps a tmux session to its first window that is NOT
-	// worktree-backed, from the last scan. It answers the one thing
-	// SessionStatuses throws away (see its doc comment): whether a repo's
-	// session holds anything the repo's own worktree rows do not already reach,
-	// and if so which window that is — enter on a repo header switches to that
-	// window by name. Replaced wholesale per scan, exactly like sessions above.
-	plainWindowBySession map[string]string
-	loaded               bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
-	seeded               bool // true once the saved snapshot (ADR-0054) filled m.statuses before git answered; a guess good enough to classify sessions and place the cursor against, never a substitute for loaded
-	sessionsLoaded       bool // true once a session scan has been classified against a known worktree list - loaded or seeded (see applySessions); placeCursorOnActive waits for it
-	cursorPlaced         bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
-	rows                 []row
-	cursor               int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
-	collapsed            map[string]bool
+	diffStats      map[string]task.BranchStatsResult
+	loaded         bool // true once the first List() result is in, so an empty dashboard shows guidance instead of a permanent "(loading...)"
+	seeded         bool // true once the saved snapshot (ADR-0054) filled m.statuses before git answered; a guess good enough to classify sessions and place the cursor against, never a substitute for loaded
+	sessionsLoaded bool // true once a session scan has been classified against a known worktree list - loaded or seeded (see applySessions); placeCursorOnActive waits for it
+	cursorPlaced   bool // true once placeCursorOnActive has landed the cursor on the attached row (or given up) — guards against a later periodic refresh re-running it and fighting the user's own navigation
+	rows           []row
+	cursor         int // index into rows (a leaf row — rowWorktree or rowSession — or a collapsed rowRepo header)
+	collapsed      map[string]bool
 	// expanded records a repo explicitly unfolded by the user (ADR-0056),
 	// distinct from the mere ABSENCE of a collapsed entry: it's how
 	// applyDefaultFolds tells "the user chose to open this" apart from "no
@@ -362,6 +353,7 @@ type Model struct {
 	// said is at stake, so F F's hint can name it.
 	refusedRisk        map[string]string
 	pendingKillSession string // armed session name (sessions have no repo) or ""
+	pendingKillWindow  string // armed window row key (windowKey) or ""
 	pendingCloseAgent  string // armed agent row's pane id (d on an agent row) or ""
 	showHelp           bool
 
@@ -378,7 +370,7 @@ type Model struct {
 	sessionNameInput    tuicomponents.TextInput
 
 	// renaming, renameOldName and renameInput back the $ → rename-prompt flow
-	// (ADR-0052), for the selected session row (standalone or repo-session).
+	// (ADR-0052), for the selected standalone session row.
 	// renaming is a bare bool, not an enum like sessionMode/createMode: the
 	// flow is a single prompt step with no picker or multi-step machinery in
 	// front of it. renameOldName is captured when the prompt opens, since the
@@ -413,6 +405,7 @@ type Model struct {
 	// Injected I/O seams (overridable in tests)
 	diffFn            func(path string) (task.BranchDiffResult, error)
 	attachFn          func(session, window string) error
+	attachWindowIDFn  func(session, windowID string) error
 	removeFn          func(repo, name string, force bool) error
 	removeSessionFn   func(repo, name string) error
 	repairFn          func(repo, name string, layout worktree.Layout) error
@@ -433,6 +426,7 @@ type Model struct {
 	selectPaneDirectionFn    func(dir string) error
 	killSessionFn            func(name string) error
 	killPaneFn               func(paneID string) error
+	killWindowIDFn           func(windowID string) error
 	renameSessionFn          func(old, newName string) error
 	hasSessionFn             func(name string) bool
 	listSessionNamesFn       func() ([]string, error)
@@ -486,6 +480,7 @@ func newModel(
 	m.attachFn = func(session, window string) error {
 		return tmuxApp.SwitchToWindow(session, window)
 	}
+	m.attachWindowIDFn = tmuxApp.SwitchToWindowID
 	m.removeFn = func(repo, name string, force bool) error {
 		return mgr.RemoveInRepo(repo, name, force)
 	}
@@ -527,6 +522,7 @@ func newModel(
 	m.paneMoveKeys = tmuxApp.RootPaneMoveKeys()
 	m.killSessionFn = tmuxApp.KillSession
 	m.killPaneFn = tmuxApp.KillPane
+	m.killWindowIDFn = tmuxApp.KillWindowID
 	m.renameSessionFn = tmuxApp.RenameSession
 	m.hasSessionFn = tmuxApp.HasSession
 	m.globalOptionFn = tmuxApp.GlobalOption
@@ -691,7 +687,7 @@ func (m *Model) saveViewState() {
 	if m.setGlobalOptionFn == nil {
 		return
 	}
-	valid := validCollapseKeys(m.statuses, m.sessions, m.repoSessions)
+	valid := validCollapseKeys(m.statuses, m.sessions, m.repoWindows)
 	for k := range m.collapsed {
 		if !valid[k] {
 			delete(m.collapsed, k)
@@ -776,9 +772,9 @@ func (m Model) scanTmuxCmd(gen int) tea.Cmd {
 // applies with no status warning.
 // It takes the scan itself rather than calling mgr.ListSessions(), which is
 // that same scan reduced to one of its two halves. The dashboard needs both —
-// the standalone session rows AND which sessions hold a non-worktree window
-// (see the plainWindowSessions field) — and taking the scan here gets the
-// second for free instead of paying for another list-sessions plus list-panes.
+// the standalone session rows AND each repo's plain windows (see the
+// repoWindows field) — and taking the scan here gets the second for free
+// instead of paying for another list-sessions plus list-panes.
 //
 // It returns the layer untouched and leaves the classifying to Update. No
 // model-owned memory crosses into this goroutine, so there is nothing to race,
@@ -963,7 +959,7 @@ func (m Model) selectedPath() string {
 // ADR-0056 (Step 5): while the cursor is in the agents section, this
 // resolves to the selected agent's own worktree back-reference instead of
 // touching m.rows/m.cursor at all — "the right pane shows the agent's
-// worktree diff", ok=false for a repo-session or standalone-session agent,
+// worktree diff", ok=false for a repo-window or standalone-session agent,
 // which has no diff to show, same as a plain session row today.
 func (m Model) selectedDiffStatus() (worktree.WorktreeStatus, bool) {
 	if m.section == sectionAgents {
@@ -1040,10 +1036,21 @@ func (m Model) selectedSession() (worktree.SessionStatus, bool) {
 	return r.session, true
 }
 
-// selectedSessionName reports the tmux session under the cursor for either
-// kind of session row - standalone or a repo's own - since the session-level
-// actions ($ rename, d kill) act on the session itself, whichever list it
-// came from. Gated to the spaces section for the same reason selectedStatus
+// selectedWindow reports the plain window under the cursor, in the spaces
+// section only, for the same reason selectedSessionName is gated.
+func (m Model) selectedWindow() (worktree.RepoWindowStatus, bool) {
+	if m.section != sectionSpaces || m.cursor < 0 || m.cursor >= len(m.rows) {
+		return worktree.RepoWindowStatus{}, false
+	}
+	if r := m.rows[m.cursor]; r.kind == rowWindow {
+		return r.window, true
+	}
+	return worktree.RepoWindowStatus{}, false
+}
+
+// selectedSessionName reports the standalone tmux session under the cursor,
+// the target of the session-level actions ($ rename, d kill). A repo's window
+// row is not one: it stands for a window, not the session around it. Gated to the spaces section for the same reason selectedStatus
 // is - an agent row is never a session-kill/rename target.
 func (m Model) selectedSessionName() (string, bool) {
 	if m.section != sectionSpaces {
@@ -1055,21 +1062,8 @@ func (m Model) selectedSessionName() (string, bool) {
 	switch r := m.rows[m.cursor]; r.kind {
 	case rowSession:
 		return r.session.Name, true
-	case rowRepoSession:
-		return r.repoSession.Name, true
 	}
 	return "", false
-}
-
-// repoSessionNamed returns the repo-session row data for session name, if the
-// dashboard currently shows it as one of a repo's sessions.
-func (m Model) repoSessionNamed(name string) (worktree.RepoSessionStatus, bool) {
-	for _, rs := range m.repoSessions {
-		if rs.Name == name {
-			return rs, true
-		}
-	}
-	return worktree.RepoSessionStatus{}, false
 }
 
 // selectedPane mirrors selectedStatus/selectedSession for rowPane rows: it
@@ -1116,7 +1110,7 @@ func (m Model) selectedPane() (tmux.PaneState, bool) {
 func (m *Model) applyDefaultFolds() {
 	// Wait for sessions to be classified against the worktree list
 	// (m.sessionsLoaded - the same guard placeCursorOnActive already waits
-	// on, for the same reason): repoHasOpenWindow reads m.repoSessions,
+	// on, for the same reason): repoHasOpenWindow reads m.repoWindows,
 	// which a session scan that lands before the worktree list classifies
 	// as empty (see applySessions). Deciding - and PERMANENTLY locking via
 	// defaultFoldSeen - on that incomplete data would fold a repo that
@@ -1146,17 +1140,16 @@ func (m *Model) applyDefaultFolds() {
 }
 
 // repoHasOpenWindow reports whether repo currently has any live tmux window:
-// either a worktree with an active window, or a repo-session (ADR-0052),
-// which only ever exists when the repo has at least one live window of its
-// own.
+// either a worktree with an active window, or a plain window of its own
+// (ADR-0052).
 func (m *Model) repoHasOpenWindow(repo string) bool {
 	for _, s := range m.statuses {
 		if s.Repo == repo && s.WindowActive {
 			return true
 		}
 	}
-	for _, rs := range m.repoSessions {
-		if rs.Repo == repo {
+	for _, w := range m.repoWindows {
+		if w.Repo == repo {
 			return true
 		}
 	}
@@ -1207,7 +1200,7 @@ func (m *Model) rebuildRows() {
 	if m.cursor >= 0 && m.cursor < len(m.rows) {
 		selectedKey = rowKey(m.rows[m.cursor])
 	}
-	m.rows = buildRows(m.statuses, m.sessions, m.repoSessions, m.collapsed, spacesFilter)
+	m.rows = buildRows(m.statuses, m.sessions, m.repoWindows, m.collapsed, spacesFilter)
 	if selectedKey != "" {
 		for i, r := range m.rows {
 			if rowKey(r) == selectedKey {
@@ -1235,12 +1228,12 @@ func (m *Model) rebuildRows() {
 	if m.agentCursor >= 0 && m.agentCursor < len(m.agentRows) {
 		selectedPaneID = m.agentRows[m.agentCursor].pane.PaneID
 	}
-	m.agentRows = buildAgentRows(m.statuses, m.sessions, m.repoSessions, agentsFilter)
+	m.agentRows = buildAgentRows(m.statuses, m.sessions, m.repoWindows, agentsFilter)
 	m.spacesCount = countSpaces(m.rows)
 	m.spacesTotal = len(m.statuses) + len(m.sessions)
 	m.agentsTotal = len(m.agentRows)
 	if agentsFilter != "" {
-		m.agentsTotal = len(buildAgentRows(m.statuses, m.sessions, m.repoSessions, ""))
+		m.agentsTotal = len(buildAgentRows(m.statuses, m.sessions, m.repoWindows, ""))
 	}
 	if selectedPaneID != "" {
 		for i, r := range m.agentRows {
@@ -1308,7 +1301,7 @@ func (m *Model) applySessions(sessions []worktree.SessionStatus) {
 	m.sessions = sessions
 	// Only a scan classified against the worktree list counts as loaded. One
 	// that lands first (the usual race, see placeCursorOnActive) was run with
-	// no worktree windows to match, so it built no repo-session rows, and
+	// no worktree windows to match, so it built no window rows, and
 	// placing the cursor on it would miss the session the user is in. The
 	// first worktree load re-dispatches a scan, and that one completes it.
 	// A seeded snapshot is a worktree list to match against as well (ADR-0054).
@@ -1319,10 +1312,10 @@ func (m *Model) applySessions(sessions []worktree.SessionStatus) {
 }
 
 // applyScanLayer applies a tmux scan's pane half: the pane layer on the
-// worktree rows, each session's plain window, and the repo-session rows
-// (ADR-0052). All three are read straight off this scan's panes and cannot
-// race a session mutation the way a wholesale session-list replacement can,
-// so callers apply this unconditionally, before any gen check.
+// worktree rows and each repo's plain-window rows (ADR-0052). Both are read
+// straight off this scan's panes and cannot race a session mutation the way a
+// wholesale session-list replacement can, so callers apply this
+// unconditionally, before any gen check.
 //
 // Repo/Name (what the classification reads) are git-derived and untouched by
 // ApplyTo, so classifying off the just-applied m.statuses or the pre-apply
@@ -1330,8 +1323,7 @@ func (m *Model) applySessions(sessions []worktree.SessionStatus) {
 func (m *Model) applyScanLayer(layer worktree.StateLayer) {
 	m.statuses = layer.ApplyTo(m.statuses)
 	backed := m.worktreeWindows()
-	m.plainWindowBySession = layer.PlainWindowBySession(os.Getenv("TMUX_PANE"), backed)
-	m.repoSessions = worktree.RepoSessionStatuses(
+	m.repoWindows = worktree.RepoWindowStatuses(
 		m.statuses,
 		layer,
 		backed,
@@ -1412,7 +1404,7 @@ func (m *Model) dispatchSessionsLoad() tea.Cmd {
 // give-up condition: one attempt happens, against complete rows, and stands.
 // "Both in" means a session scan classified against the worktree list (see
 // applySessions): a scan that beat the worktree load could not know which
-// sessions hold repo windows, so its rows lack the repo-session row the user
+// sessions hold repo windows, so its rows lack the window row the user
 // is most likely sitting in.
 func (m *Model) placeCursorOnActive() {
 	if m.cursorPlaced || !m.sessionsLoaded || (!m.loaded && !m.seeded) {
@@ -1451,14 +1443,18 @@ func (m *Model) activeRow() (int, bool) {
 			return i, true
 		}
 	}
-	// Matched by REAL session name only (B8): a repo-session row carries the
-	// name the scan actually reported, not TmuxSessionName(repo) - the derived
-	// name a repo's windows are not guaranteed to live under (see
-	// worktree.RepoSessionStatuses).
+	// A plain window the user came from wins over its session too. Matched
+	// on the real session and window name the scan reported (B8), never on a
+	// name derived from the repo.
+	if origin, ok := m.originWindowFn(); ok {
+		for i, r := range m.rows {
+			if r.kind == rowWindow && r.window.Session == current && r.window.Window == origin {
+				return i, true
+			}
+		}
+	}
 	for i, r := range m.rows {
-		switch {
-		case r.kind == rowSession && r.session.Name == current,
-			r.kind == rowRepoSession && r.repoSession.Name == current:
+		if r.kind == rowSession && r.session.Name == current {
 			return i, true
 		}
 	}
@@ -1507,14 +1503,14 @@ func (m *Model) worktreeRowIn(
 }
 
 // navigableIndices returns row indices that j/k visit: all worktree rows,
-// all session and repo-session rows, all pane rows, plus a repo header row
+// all session and window rows, all pane rows, plus a repo header row
 // only while it's collapsed. Expanded, a header is a label (ADR-0052): it
 // never leads anywhere its own child rows don't already reach, so stopping
 // there would cost a keypress on every trip down the list and buy nothing.
 func (m *Model) navigableIndices() []int {
 	var out []int
 	for i, r := range m.rows {
-		if r.kind == rowWorktree || r.kind == rowRepoSession || r.kind == rowSession ||
+		if r.kind == rowWorktree || r.kind == rowWindow || r.kind == rowSession ||
 			r.kind == rowPane ||
 			(r.kind == rowRepo && m.collapsed[rowKey(r)]) {
 			out = append(out, i)
@@ -2181,18 +2177,21 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.sessions = updated
-		var updatedRepo []worktree.RepoSessionStatus
-		for _, rs := range m.repoSessions {
-			if rs.Name != msg.name {
-				updatedRepo = append(updatedRepo, rs)
-			}
-		}
-		m.repoSessions = updatedRepo
 		m.rebuildRows()
 		m.status = "removed: " + msg.name
-		if msg.windowsOnly {
-			m.status = "closed windows in " + msg.name + " (worktree windows kept)"
+		return m, nil
+
+	case windowClosedMsg:
+		var kept []worktree.RepoWindowStatus
+		for _, w := range m.repoWindows {
+			if windowKey(w) != msg.key {
+				kept = append(kept, w)
+			}
 		}
+		m.repoWindows = kept
+		m.pendingKillWindow = ""
+		m.rebuildRows()
+		m.status = "closed: " + msg.name
 		return m, nil
 
 	case sessionRenamedMsg:
@@ -2323,6 +2322,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key != "d" && m.pendingKillSession != "" {
 		m.pendingKillSession = ""
 	}
+	if key != "d" && m.pendingKillWindow != "" {
+		m.pendingKillWindow = ""
+	}
 	if key != "d" && m.pendingCloseAgent != "" {
 		m.pendingCloseAgent = ""
 	}
@@ -2384,8 +2386,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if sel, ok := m.selectedStatus(); ok {
 			collapseRepo = sel.Repo
 		} else if m.cursor >= 0 && m.cursor < len(m.rows) &&
-			(m.rows[m.cursor].kind == rowRepo || m.rows[m.cursor].kind == rowRepoSession) {
-			// A repo's session row sits inside its group just like a
+			(m.rows[m.cursor].kind == rowRepo || m.rows[m.cursor].kind == rowWindow) {
+			// A repo's window row sits inside its group just like a
 			// worktree row, so h folds that group from here too.
 			collapseRepo = m.rows[m.cursor].repo
 		}
@@ -2512,8 +2514,8 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if _, ok := m.selectedPane(); ok {
 			return m.handleSwitchToPane()
 		}
-		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowRepoSession {
-			return m.handleSwitchToRepoSessionRow()
+		if m.cursor >= 0 && m.cursor < len(m.rows) && m.rows[m.cursor].kind == rowWindow {
+			return m.handleSwitchToWindowRow()
 		}
 		if _, ok := m.selectedSession(); ok {
 			return m.handleSwitchToSession()
@@ -2529,6 +2531,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "d":
 		if m.section == sectionAgents {
 			return m.handleCloseAgentPane()
+		}
+		if _, ok := m.selectedWindow(); ok {
+			return m.handleCloseWindow()
 		}
 		if _, ok := m.selectedSessionName(); ok {
 			return m.handleKillSession()
@@ -3121,11 +3126,9 @@ func (m Model) renderLeft(width int) string {
 			switch r.kind {
 			case rowRepo:
 				line = m.renderRepoHeaderRow(r, width, selected)
-			case rowRepoSession:
-				line = m.renderSessionLikeRow(
-					r, r.repoSession.Name, width, selected,
-					m.pendingKillSession == r.repoSession.Name,
-				)
+			case rowWindow:
+				armed := m.pendingKillWindow == windowKey(r.window)
+				line = m.renderSessionLikeRow(r, r.window.Window, width, selected, armed)
 			case rowSession:
 				armed := m.pendingKillSession == r.session.Name
 				line = m.renderSessionLikeRow(r, r.session.Name, width, selected, armed)
@@ -3389,13 +3392,12 @@ func (m Model) renderWorktreeRow(r row, width int, selected bool) string {
 	return line
 }
 
-// renderSessionLikeRow draws a rowSession or rowRepoSession row: the
-// pane-expand chevron and the name - no status marker at all (Step 6,
-// superseding ADR-0008's agent-state glyph and the earlier attached/detached
-// square) and no trailing "session" label (ADR-0052: standalone sessions
-// read as a group under the dim "sessions" header instead, and a
-// repo-session row already reads as a session from its position under its
-// repo).
+// renderSessionLikeRow draws a rowSession or rowWindow row: the pane-expand
+// chevron and the name - no status marker at all (Step 6, superseding
+// ADR-0008's agent-state glyph and the earlier attached/detached square) and
+// no trailing "session" label (ADR-0052: standalone sessions read as a group
+// under the dim "sessions" header instead, and a window row reads as a window
+// from its position under its repo).
 func (m Model) renderSessionLikeRow(
 	r row,
 	name string,
@@ -3420,7 +3422,7 @@ func (m Model) renderSessionLikeRow(
 	return line
 }
 
-// renderPaneRow draws one pane under an expanded worktree/session/repo-session
+// renderPaneRow draws one pane under an expanded worktree/session/window
 // row (ADR-0008). No status marker (Step 6, same as its parent rows above).
 func (m Model) renderPaneRow(r row, width int, selected bool) string {
 	// 5-space indent: one column deeper than the worktree/session prefix
@@ -3463,7 +3465,7 @@ func (m Model) renderRight(width int) string {
 		)
 	}
 
-	// Repo, session, repo-session and pane rows have no diff: selectedStatus
+	// Repo, session, window and pane rows have no diff: selectedStatus
 	// (and so selectionChangedCmd) never fires for any of them, so without
 	// this check the pane would keep showing whichever worktree's diff was
 	// selected last instead of something that reflects the current row.
@@ -3477,7 +3479,7 @@ func (m Model) renderRight(width int) string {
 	}
 	if m.section == sectionSpaces && m.cursor >= 0 && m.cursor < len(m.rows) {
 		switch m.rows[m.cursor].kind {
-		case rowRepo, rowSession, rowRepoSession, rowPane:
+		case rowRepo, rowSession, rowWindow, rowPane:
 			return ""
 		}
 	}
@@ -3558,16 +3560,12 @@ func (m Model) renderHint(width int) string {
 		return m.palette.HintDesc.Render(ansi.Truncate(hint, width, ""))
 	}
 	if m.pendingKillSession != "" {
-		if _, ok := m.repoSessionNamed(m.pendingKillSession); ok {
-			return m.armedDeleteHint(
-				m.pendingKillSession,
-				"d",
-				"close the windows in",
-				" (worktree windows stay)",
-				width,
-			)
-		}
 		return m.armedDeleteHint(m.pendingKillSession, "d", "kill", "", width)
+	}
+	if m.pendingKillWindow != "" {
+		if w, ok := m.selectedWindow(); ok && windowKey(w) == m.pendingKillWindow {
+			return m.armedDeleteHint(w.Window, "d", "close", "", width)
+		}
 	}
 	if m.pendingForceDelete != "" {
 		lost := m.refusedRisk[m.pendingForceDelete]
@@ -3747,12 +3745,12 @@ func (m Model) renderHelpPopup() string {
 	entries := []tuicomponents.WhichKeyEntry{
 		{
 			Key:  "enter",
-			Desc: "attach (auto-repairs missing window); on a session or repo-session row: switch to it; on a pane row: switch to that exact pane; on a collapsed repo header: expand it",
+			Desc: "attach (auto-repairs missing window); on a session row: switch to it; on a window row: switch to that window; on a pane row: switch to that exact pane; on a collapsed repo header: expand it",
 		},
 		{Key: "n", Desc: "create a new worktree (repo picker → name prompt)"},
 		{Key: "N", Desc: "create a new worktree (repo picker → name prompt → layout picker)"},
 		{Key: "s", Desc: "create a new tmux session (folder picker → name prompt)"},
-		{Key: "$", Desc: "rename the selected session (standalone or repo-session)"},
+		{Key: "$", Desc: "rename the selected session"},
 		{Key: "j / k  ↓ / ↑", Desc: "move cursor down / up (crosses between spaces and agents)"},
 		{Key: "h / l", Desc: "collapse / expand repo, or a worktree/session's panes"},
 		{Key: "z", Desc: "toggle collapse all repos"},
@@ -3767,7 +3765,7 @@ func (m Model) renderHelpPopup() string {
 		},
 		{
 			Key:  "d d",
-			Desc: "delete worktree (confirm twice); on a session row: kill it; on an agent row: close that agent's pane only",
+			Desc: "delete worktree (confirm twice); on a session row: kill it; on a window row: close that window only; on an agent row: close that agent's pane only",
 		},
 		{Key: "D D", Desc: "delete worktree + kill its session"},
 		{

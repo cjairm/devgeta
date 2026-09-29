@@ -1,6 +1,4 @@
-// The $ → rename-prompt flow (ADR-0052), for a session row - standalone or
-// repo-session alike, since both key their fold/identity off the same
-// "sess:<name>" prefix (a session name is unique on the server). Unlike
+// The $ → rename-prompt flow (ADR-0052), for a standalone session row. Unlike
 // kill-session and rename-session, RenameSession runs against the server
 // directly and needs no attached client, so this flow has no $TMUX guard.
 
@@ -13,8 +11,8 @@ import (
 )
 
 // sessionRenamedMsg reports a successful renameSessionFn call so Update can
-// update whichever list (m.sessions or m.repoSessions) held the old name,
-// move its fold key, and land the cursor back on it - mirroring
+// update the standalone session that held the old name, move its fold key,
+// and land the cursor back on it - mirroring
 // sessionKilledMsg/deletedMsg's shape for the same reason: identity, not a
 // position, survives a rebuild.
 type sessionRenamedMsg struct {
@@ -22,8 +20,7 @@ type sessionRenamedMsg struct {
 	newName string
 }
 
-// handleRename opens the $ prompt for the selected session row (standalone
-// or repo-session), prefilled with its current name so a partial edit is the
+// handleRename opens the $ prompt for the selected session row, prefilled with its current name so a partial edit is the
 // common case rather than retyping the whole thing.
 func (m Model) handleRename() (tea.Model, tea.Cmd) {
 	oldName, ok := m.selectedSessionName()
@@ -108,10 +105,8 @@ func (m Model) dispatchRename() (tea.Model, tea.Cmd) {
 	}
 }
 
-// applySessionRenamed is sessionRenamedMsg's handler: update whichever list
-// (or both - a repo's own session can also appear were it ever a standalone
-// one, though that never happens today) held the old name, move its fold key
-// from "sess:<old>" to "sess:<new>", rebuild, and land the cursor back on the
+// applySessionRenamed is sessionRenamedMsg's handler: update the standalone
+// session that held the old name, move its fold key from "sess:<old>" to "sess:<new>", rebuild, and land the cursor back on the
 // renamed row by its NEW identity - rebuildRows' own cursor-restore looks up
 // the OLD key, which no longer exists in the fresh rows the instant the name
 // changes.
@@ -121,11 +116,6 @@ func (m *Model) applySessionRenamed(msg sessionRenamedMsg) {
 			m.sessions[i].Name = msg.newName
 		}
 	}
-	for i := range m.repoSessions {
-		if m.repoSessions[i].Name == msg.oldName {
-			m.repoSessions[i].Name = msg.newName
-		}
-	}
 	oldKey, newKey := "sess:"+msg.oldName, "sess:"+msg.newName
 	if v, ok := m.collapsed[oldKey]; ok {
 		delete(m.collapsed, oldKey)
@@ -133,8 +123,7 @@ func (m *Model) applySessionRenamed(msg sessionRenamedMsg) {
 	}
 	m.rebuildRows()
 	m.focusRow(func(r row) bool {
-		return (r.kind == rowSession && r.session.Name == msg.newName) ||
-			(r.kind == rowRepoSession && r.repoSession.Name == msg.newName)
+		return r.kind == rowSession && r.session.Name == msg.newName
 	})
 	m.status = "renamed: " + msg.oldName + " -> " + msg.newName
 	m.saveViewState()

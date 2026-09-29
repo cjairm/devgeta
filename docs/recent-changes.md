@@ -11,11 +11,22 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-28
+**Last updated:** 2026-09-29
 
 ---
 
 ## Recent changes
+
+- `dg ws` lists a repo's plain windows, not its session (2026-09-29). The
+  repo-session row (ADR-0052) stood for every plain window in the session but
+  showed only the session's name, usually the repo's own, and enter reached
+  only the first window. Each plain window now gets its own row, named by the
+  window, and `d d` on it closes just that window. The non-obvious part: rows
+  are keyed and switched by tmux's window id (`@7`), read in the same pane
+  scan, because automatic-rename gives every shell the name `zsh`, and a name
+  lookup would switch to or close the wrong one. `$` no longer acts on these
+  rows, since it renames a whole session. ADR-0052's 2026-09-29 amendment has
+  the rest.
 
 - `dg ws` splits into a spaces section and an agents section (2026-09-28).
   Every worktree/session/pane row used to carry its own agent-state glyph
@@ -58,20 +69,6 @@ why it no longer lives in `CLAUDE.md`.
   and the script have to name the same place and nothing else would notice if
   one of them moved. Still zsh-only: `setupZshenv` skips bash users and bash
   has no unconditional equivalent (`$BASH_ENV` must be exported by the parent).
-
-- A repo header in `dg ws` reaches the plain windows in its session
-  (2026-09-22). A repo session holds a `wt-` window per worktree plus whatever
-  the user opened there; ADR-0003 excluded such a session from the session rows
-  wholesale, so those plain windows had no row and the header row itself did
-  nothing. Making it work took four corrections, each a bug on its own, and the
-  reasoning is in ADR-0048. The two worth knowing without reading it: switching
-  to a **session** is not switching to a **window** — tmux lands on the
-  session's active window, which at that moment is the dashboard's own
-  `[workspace]` window, so the dashboard exits, that window dies and tmux drops
-  you on the `wt-` window, which reads exactly like the header ignoring you; and
-  the same `[workspace]` window made sessions look like they had a plain window
-  when they did not, so the header became selectable depending on which session
-  you had opened the dashboard from.
 
 - One definition of where the cursor may sit in `dg ws` (2026-09-22). Movement
   used `navigableIndices`; the post-rebuild clamp used `leafIndices`, which

@@ -36,6 +36,8 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 		return task.BranchDiffResult{Content: "diff content", Files: 1, Added: 5, Removed: 2}, nil
 	}
 	m.attachFn = func(_, _ string) error { return nil }
+	m.attachWindowIDFn = func(_, _ string) error { return nil }
+	m.killWindowIDFn = func(_ string) error { return nil }
 	m.removeFn = func(_, _ string, _ bool) error { return nil }
 	m.removeSessionFn = func(_, _ string) error { return nil }
 	m.repairFn = func(_, _ string, _ worktree.Layout) error { return nil }
@@ -415,31 +417,38 @@ func TestRenderLeftSessionRowShowsName(t *testing.T) {
 	}
 }
 
-// TestRenderLeftRepoSessionRowShowsName is the rowRepoSession twin of the
-// test above (ADR-0052, Step 7): it must render r.repoSession.Name through
-// its own branch rather than falling through to the rowWorktree one, whose
-// zero-valued r.status would render a blank name and a stray "└" connector.
-func TestRenderLeftRepoSessionRowShowsName(t *testing.T) {
+// TestRenderLeftWindowRowShowsTheWindowNameNotTheSession is the rowWindow twin
+// of the test above (ADR-0052, amended): it must render r.window.Window
+// through its own branch rather than falling through to the rowWorktree one,
+// whose zero-valued r.status would render a blank name and a stray "└"
+// connector - and it must not print the session, which the repo header
+// already implies.
+func TestRenderLeftWindowRowShowsTheWindowNameNotTheSession(t *testing.T) {
 	m := makeTestModel(testStatuses())
-	m.repoSessions = []worktree.RepoSessionStatus{{Repo: "repo-a", Name: "repo-a-tien"}}
+	m.repoWindows = []worktree.RepoWindowStatus{
+		{Repo: "repo-a", Session: "repo-a-tien", Window: "node", WindowID: "@1"},
+	}
 	m.rebuildRows()
 
 	out := ansi.Strip(m.renderLeft(40))
 	var ownLine string
 	for _, line := range strings.Split(out, "\n") {
-		if strings.Contains(line, "repo-a-tien") {
+		if strings.Contains(line, "node") {
 			ownLine = line
+		}
+		if strings.Contains(line, "repo-a-tien") {
+			t.Errorf("the session name must not be shown on any row, got %q", line)
 		}
 	}
 	if ownLine == "" {
 		t.Fatalf(
-			"expected renderLeft output to contain repo-session name %q, got:\n%s",
-			"repo-a-tien", out,
+			"expected renderLeft output to contain window name %q, got:\n%s",
+			"node", out,
 		)
 	}
 	if strings.Contains(ownLine, "└") {
 		t.Errorf(
-			"expected no stray worktree tree-connector on the repo-session row itself, got %q",
+			"expected no stray worktree tree-connector on the window row itself, got %q",
 			ownLine,
 		)
 	}
