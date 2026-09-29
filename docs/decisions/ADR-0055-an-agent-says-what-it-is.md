@@ -66,6 +66,15 @@ restores). Any other pane closes when its command exits, so a shell there is a w
 with the coder under it. The fast scan reads `#{pane_start_command}` as its last field for
 this, still in the same single call.
 
+**Revision (2026-09-29): a `; exec <shell>` pane needs a child process to count.**
+The revision above treated `<coder>; exec zsh` as a pane that falls back to a shell, so
+its shell name hid the agent. But worktree layouts start coders exactly that way, so the
+wrapper shell shows as the current command for the coder's whole life and live agents
+vanished from the list. tmux's fields can't tell that wrapper from a prompt left after
+the coder exited, so for that one case the fast scan now asks `ps` (once per scan, and
+only when such a pane exists) whether the pane's process has a child. A child means the
+coder is still running; none means a leftover prompt.
+
 The stored state values don't change. The dashboard maps them to words:
 
 | `@dg_agent_state` | Shown as                                         |

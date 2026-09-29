@@ -432,6 +432,15 @@ type PaneState struct {
 	// wrapper shell as its current command for the coder's whole life, apart
 	// from an interactive shell the coder was typed into.
 	StartCommand string
+	// HasChildProcess is whether the pane's own process (#{pane_pid}) has a
+	// child. It settles the one case the other fields cannot: a pane started
+	// as `<coder>; exec <shell>` reports a shell as its current command both
+	// while the coder runs under the wrapper (it has a child) and after the
+	// coder has exited and the wrapper became a prompt (it has none). It is
+	// only looked up for such panes; false everywhere else.
+	HasChildProcess bool
+	// PID is #{pane_pid}; "" when the scan did not report it.
+	PID string
 }
 
 // ShellCommandNames lists pane_current_command values that mean "a plain
@@ -458,7 +467,16 @@ var ShellCommandNames = map[string]bool{
 // so the second half of the rule (ruling out a plain shell) is the only
 // check this method needs to make.
 func (p PaneState) IsAgent() bool {
-	return p.Kind != "" && !(ShellCommandNames[p.CurrentCommand] && startedAsShell(p.StartCommand))
+	if p.Kind == "" {
+		return false
+	}
+	if !ShellCommandNames[p.CurrentCommand] || !startedAsShell(p.StartCommand) {
+		return true
+	}
+	// A shell that a pane falls back to. It is a leftover prompt unless the
+	// pane's process still has a child: `<coder>; exec zsh` shows the wrapper
+	// shell for the coder's whole life.
+	return p.HasChildProcess
 }
 
 // startedAsShell reports whether a pane drops back to a plain interactive
@@ -568,7 +586,7 @@ func (t *Tmux) PaneStates() []PaneState {
 			"list-panes",
 			"-a",
 			"-F",
-			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}\t#{window_id}\t#{pane_start_command}",
+			"#{session_name}\t#{window_name}\t#{pane_id}\t#{pane_index}\t#{pane_current_command}\t#{@dg_agent_state}\t#{@dg_agent_kind}\t#{window_id}\t#{pane_pid}\t#{pane_start_command}",
 		},
 	}
 	stdout, _, err := t.Base.ExecCommand(execCommand)
@@ -578,9 +596,9 @@ func (t *Tmux) PaneStates() []PaneState {
 	var states []PaneState
 	scanner := bufio.NewScanner(strings.NewReader(stdout))
 	for scanner.Scan() {
-		// 9, not more: a tab inside the start command (the last field)
+		// 10, not more: a tab inside the start command (the last field)
 		// stays part of it.
-		parts := strings.SplitN(scanner.Text(), "\t", 9)
+		parts := strings.SplitN(scanner.Text(), "\t", 10)
 		if len(parts) < 5 {
 			continue
 		}
@@ -596,9 +614,12 @@ func (t *Tmux) PaneStates() []PaneState {
 		if len(parts) >= 8 {
 			windowID = strings.TrimSpace(parts[7])
 		}
-		start := ""
-		if len(parts) == 9 {
-			start = strings.TrimSpace(parts[8])
+		pid, start := "", ""
+		if len(parts) >= 9 {
+			pid = strings.TrimSpace(parts[8])
+		}
+		if len(parts) == 10 {
+			start = strings.TrimSpace(parts[9])
 		}
 		states = append(
 			states,
@@ -612,10 +633,51 @@ func (t *Tmux) PaneStates() []PaneState {
 				Kind:           kind,
 				WindowID:       windowID,
 				StartCommand:   start,
+				PID:            pid,
 			},
 		)
 	}
+	t.markPanesWithChildren(states)
 	return states
+}
+
+// markPanesWithChildren sets HasChildProcess on the panes IsAgent cannot
+// decide from tmux's own fields: a coder's pane showing a shell that the pane
+// falls back to (see PaneState.HasChildProcess). One `ps` for the whole scan,
+// and none at all when no pane is in that state, which is nearly always. A
+// failed lookup leaves every pane false, so those panes read as a leftover
+// prompt, the answer before this check existed.
+func (t *Tmux) markPanesWithChildren(states []PaneState) {
+	need := false
+	for i := range states {
+		p := &states[i]
+		if p.Kind != "" && p.PID != "" && ShellCommandNames[p.CurrentCommand] &&
+			startedAsShell(p.StartCommand) {
+			need = true
+			break
+		}
+	}
+	if !need {
+		return
+	}
+	stdout, _, err := t.Base.ExecCommand(cmd.CommandParams{
+		Command: "ps",
+		Args:    []string{"-A", "-o", "ppid="},
+	})
+	if err != nil {
+		return
+	}
+	parents := make(map[string]bool)
+	for _, f := range strings.Fields(stdout) {
+		parents[f] = true
+	}
+	for i := range states {
+		p := &states[i]
+		if p.Kind != "" && p.PID != "" && ShellCommandNames[p.CurrentCommand] &&
+			startedAsShell(p.StartCommand) {
+			p.HasChildProcess = parents[p.PID]
+		}
+	}
 }
 
 // WindowPane holds one pane's identity and current foreground command within

@@ -2752,7 +2752,7 @@ func TestKillWindowID(t *testing.T) {
 func TestPaneStates_ReadsStartCommandWithATabInIt(t *testing.T) {
 	mockApp := testutil.NewMockApp()
 	mockApp.Base.SetExecCommandResult(
-		"s\tw\t%1\t0\tzsh\tbusy\tclaude\t@1\t\"claude 'a\tb'\"\ns\tw\t%2\t1\tzsh\t\tclaude\n",
+		"s\tw\t%1\t0\tzsh\tbusy\tclaude\t@1\t100\t\"claude 'a\tb'\"\ns\tw\t%2\t1\tzsh\t\tclaude\n",
 		"",
 		nil,
 	)
@@ -3355,5 +3355,57 @@ func TestKillPane(t *testing.T) {
 	last := mockApp.Base.GetLastExecCommandCall()
 	if last == nil || !slices.Equal(last.Args, []string{"kill-pane", "-t", "%12"}) {
 		t.Errorf("expected kill-pane -t %%12, got %v", last)
+	}
+}
+
+// `<coder>; exec <shell>` (how worktree layouts start coders) shows a shell as
+// the current command while the coder runs under the wrapper and after it has
+// exited. Only a child process of the pane tells the two apart.
+func TestIsAgent_ExecShellPaneNeedsAChildProcess(t *testing.T) {
+	start := `"'/Users/me/.local/bin/claude' 'go'; exec '/bin/zsh'"`
+	p := tmux.PaneState{Kind: "claude", CurrentCommand: "zsh", StartCommand: start}
+	if p.IsAgent() {
+		t.Errorf("no child process: the coder has exited, want not an agent")
+	}
+	p.HasChildProcess = true
+	if !p.IsAgent() {
+		t.Errorf("child process under the wrapper: want an agent")
+	}
+}
+
+func TestPaneStates_MarksExecShellPanesThatStillHaveAChild(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	start := `"claude 'go'; exec '/bin/zsh'"`
+	scan := "s\tw\t%1\t0\tzsh\tbusy\tclaude\t@1\t100\t" + start + "\n" +
+		"s\tw\t%2\t1\tzsh\t\tclaude\t@1\t200\t" + start
+	mockApp.Base.SetExecCommandResults(
+		commands.ExecCommandResult(scan, "", nil),
+		commands.ExecCommandResult("1\n100\n", "", nil),
+	)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	states := app.PaneStates()
+	if len(states) != 2 {
+		t.Fatalf("expected 2 panes, got %+v", states)
+	}
+	if !states[0].IsAgent() {
+		t.Errorf("pane 100 has a child: want an agent, got %+v", states[0])
+	}
+	if states[1].IsAgent() {
+		t.Errorf("pane 200 has no child: want a leftover prompt, got %+v", states[1])
+	}
+}
+
+func TestPaneStates_SkipsProcessListWhenNoPaneIsAmbiguous(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.SetExecCommandResult(
+		"s\tw\t%1\t0\t2.1.284\tbusy\tclaude\t@1\t100\t\"\\${SHELL:-/bin/zsh}\"",
+		"",
+		nil,
+	)
+	app := &tmux.Tmux{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	app.PaneStates()
+	if n := len(mockApp.Base.ExecCommandCalls); n != 1 {
+		t.Errorf("ExecCommand calls = %d, want 1 (tmux only)", n)
 	}
 }
