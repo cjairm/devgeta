@@ -78,3 +78,12 @@ be stuck unable to leave the pane.
   `select-pane` won't reach the dashboard with those keys. The dashboard keeps working for
   them with its own keys (`space`/`esc` for the diff, `a`/`w` for folds, `j`/`k` to walk
   across sections).
+
+**Revision (2026-09-28, after v1.38.1): one if-shell, not two.** v1.38.0 shipped the
+pass-through as a second `if-shell` nested in `is_vim`'s else branch. tmux unescapes a
+nested command string once more, so `is_dgws`'s `\\S` reached `grep` as a plain `S` and the
+pattern never matched a real `devgeta ws` path: the keys never reached the dashboard. The
+bindings now test `"$is_vim || $is_dgws"` in a single `if-shell`, since both cases get the
+same action (pass the key through), and the shell's `||` still skips the second `ps` for a
+Vim pane. Verified by replaying each binding's check against live panes: a dashboard and a
+Neovim pane pass through, a plain shell moves panes.

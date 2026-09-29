@@ -676,6 +676,11 @@ its `idle`/`blocked`/`error` state, never `busy`; see the shipped tmux config's
 would show: the branch diff for a worktree-backed agent, nothing for a repo-session or
 standalone-session one.
 
+`d d` on an agent row closes **that agent's pane only** (same two-press confirm as every other
+`d`, and any other key cancels). A split's other panes, such as the Neovim beside a coder,
+stay open; tmux closes the window with its last pane and the session with its last window.
+It never deletes a worktree or kills a session by itself; use `d` on the space row for that.
+
 **Folding.** `a` folds or unfolds agents, `w` folds or unfolds spaces (`s` still means "new
 session"), from anywhere, in any order. A folded section collapses to a one-line bar on the
 **last line of the column**, with its unfold key on the right: the agents bar keeps a per-state
@@ -693,11 +698,14 @@ column is the plain spaces list, with no headers.
 the other, so agents sit right under the spaces rows and the split only matters once both
 outgrow the column. Then agents get half the column by default, adjustable with `+`/`-`, or by
 dragging the `AGENTS` header line with the mouse (the same drag-then-commit-on-release pattern
-as the left/right divider). Each section scrolls on its own once its content outgrows its share.
+as the left/right divider). Each section scrolls on its own once its content outgrows its share. The mouse
+wheel scrolls whatever is under the pointer: over a section it moves that section's cursor
+(focusing it, and stopping at its ends), over the diff it scrolls the diff three lines a notch.
 
 **Filter scope.** `/` searches only the sections that are currently open. In agents, it matches
 the location, the coder's name, and the state word, so `/blocked` and `/opencode` both narrow
-the list; a folded section is skipped entirely and its bar keeps its normal, unfiltered count.
+the list; a folded section is skipped entirely and its bar keeps its normal, unfiltered count. The
+text each row matched on is highlighted (reverse video) in both sections.
 
 `j`/`k` walk across the boundary between spaces and agents, clamping at the true top (spaces)
 and bottom (agents) of the combined list rather than wrapping — a folded section counts as

@@ -69,6 +69,11 @@ nothing about text selection.
 **Filter.** `/` searches only the open sections. In agents, it matches the location, the
 coder name, and the state word, so `/blocked` and `/opencode` work.
 
+**`d d` on an agent row** (added after v1.38.1) closes that agent's pane and nothing else,
+with the same two-press confirm as every other `d`. An agent row is one pane, so that is the
+thing it deletes. Deleting what the agent lives in (its worktree, or its session) stays on
+the space row, where the rest of that thing is visible before you confirm.
+
 **Saved view state** (ADR-0050) gains four optional fields: `expanded` (above),
 `agentsFolded`, `spacesFolded` and `split`. **The cursor is still not saved**, for
 ADR-0050's reason: the dashboard opens on the row for the session you're in, and a saved

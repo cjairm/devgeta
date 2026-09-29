@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	lip "charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/cjairm/devgeta/internal/apps/git"
@@ -360,6 +362,7 @@ type Model struct {
 	// said is at stake, so F F's hint can name it.
 	refusedRisk        map[string]string
 	pendingKillSession string // armed session name (sessions have no repo) or ""
+	pendingCloseAgent  string // armed agent row's pane id (d on an agent row) or ""
 	showHelp           bool
 
 	// sessionMode and its companion fields back the s → folder-pick →
@@ -1605,6 +1608,59 @@ func (m *Model) moveCursorAcrossSections(delta int) {
 	}
 }
 
+// wheelDiffLines is how far one wheel notch scrolls the diff.
+const wheelDiffLines = 3
+
+// handleWheel is the mockups' "wheel scrolls whichever section or pane is
+// under the pointer". Over the diff it scrolls the diff. Over the list it
+// moves the cursor of the section under the pointer - both lists scroll by
+// following their cursor (VisibleWindow) - and focuses that section. It
+// stops at the section's ends rather than wrapping or crossing into the
+// other section, the way a scrolled view stops.
+func (m *Model) handleWheel(mouse tea.Mouse) {
+	delta := 0
+	switch mouse.Button {
+	case tea.MouseWheelUp:
+		delta = -1
+	case tea.MouseWheelDown:
+		delta = 1
+	default:
+		return
+	}
+
+	if m.rightPaneWidth() > 0 && mouse.X > m.leftPaneWidth {
+		m.diffScroll = min(max(m.diffScroll+delta*wheelDiffLines, 0), m.maxDiffScroll())
+		return
+	}
+
+	overAgents := m.spacesFolded
+	if header, ok := m.agentsHeaderRow(); ok {
+		overAgents = mouse.Y >= header
+	}
+	if overAgents && !m.agentsFolded && len(m.agentRows) > 0 {
+		m.section = sectionAgents
+		m.agentCursor = min(max(m.agentCursor+delta, 0), len(m.agentRows)-1)
+		m.cursorPlaced = true
+		return
+	}
+	if m.spacesFolded {
+		return
+	}
+	m.section = sectionSpaces
+	indices := m.navigableIndices()
+	if len(indices) == 0 {
+		return
+	}
+	pos := slices.Index(indices, m.cursor)
+	if pos < 0 {
+		pos = 0
+	} else {
+		pos = min(max(pos+delta, 0), len(indices)-1)
+	}
+	m.cursor = indices[pos]
+	m.cursorPlaced = true
+}
+
 // toggleAgentsFold is 'a' (ADR-0056): folds or unfolds the agents section,
 // from anywhere, in any order with 'w'. Refuses if agents is already open
 // and spaces is already folded - the last open section can't fold, and its
@@ -1847,6 +1903,10 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.splitDragBase = m.computeLeftLayout().agentsVisible
 			}
 		}
+		return m, nil
+
+	case tea.MouseWheelMsg:
+		m.handleWheel(msg.Mouse())
 		return m, nil
 
 	case tea.MouseMotionMsg:
@@ -2101,6 +2161,13 @@ func (m Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		load := m.dispatchSessionsLoad()
 		return m, load
 
+	case agentPaneClosedMsg:
+		// Rescan now rather than wait for the next tick, and bump sessionGen
+		// so a scan started before the pane closed can't bring its row back.
+		m.status = "closed agent: " + msg.label
+		m.sessionGen++
+		return m, m.scanTmuxCmd(m.sessionGen)
+
 	case sessionKilledMsg:
 		// Removal by identity plus a sessionGen bump, the same division of
 		// labor deletedMsg uses: the identity removal handles a second kill
@@ -2255,6 +2322,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if key != "d" && m.pendingKillSession != "" {
 		m.pendingKillSession = ""
+	}
+	if key != "d" && m.pendingCloseAgent != "" {
+		m.pendingCloseAgent = ""
 	}
 
 	switch key {
@@ -2457,6 +2527,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleAttach()
 
 	case "d":
+		if m.section == sectionAgents {
+			return m.handleCloseAgentPane()
+		}
 		if _, ok := m.selectedSessionName(); ok {
 			return m.handleKillSession()
 		}
@@ -3187,12 +3260,13 @@ func (m Model) renderAgentRow(r agentRow, width int, selected bool) string {
 	pad1 := strings.Repeat(" ", max(0, width-prefixW-ansi.StringWidth(label)-rightW-1))
 
 	glyph := m.palette.AgentRowDot(r.state)
-	labelText := label
 	// An idle agent's location dims along with its glyph/word - "finished
 	// and seen, or not prompted yet" reads as quieter, not just its state.
+	labelStyle := plainStyle
 	if r.state == tuicomponents.AgentRowIdle {
-		labelText = m.palette.NoSession.Render(label)
+		labelStyle = m.palette.NoSession
 	}
+	labelText := m.palette.HighlightMatch(label, m.agentsQuery(), labelStyle)
 	line1 := " " + glyph + " " + labelText + pad1 + " " + m.palette.SectionHead.Render(right)
 
 	kindSuffix := " · " + r.kind
@@ -3204,6 +3278,12 @@ func (m Model) renderAgentRow(r agentRow, width int, selected bool) string {
 		kindSuffix,
 	) + pad2
 
+	if selected && m.pendingCloseAgent == r.pane.PaneID {
+		// Armed is one solid red, as on every other row kind: plain text,
+		// no inner color competes with it.
+		return m.palette.Armed.Render(ansi.Strip(line1)) + "\n" +
+			m.palette.Armed.Render(ansi.Strip(line2))
+	}
 	if selected {
 		return m.softSelectedLine(line1) + "\n" + m.softSelectedLine(line2)
 	}
@@ -3298,7 +3378,7 @@ func (m Model) renderWorktreeRow(r row, width int, selected bool) string {
 			return m.palette.Armed.Render(plain)
 		}
 	}
-	line := " " + chevronGlyph + " " + name + pad
+	line := " " + chevronGlyph + " " + m.palette.HighlightMatch(name, m.spacesQuery(), plainStyle) + pad
 	if suffix != "" {
 		line += " " + suffix
 	}
@@ -3332,7 +3412,8 @@ func (m Model) renderSessionLikeRow(
 	if selected && armed {
 		return m.palette.Armed.Render(" " + chevronGlyph + " " + truncated + pad)
 	}
-	line := " " + chevronGlyph + " " + truncated + pad
+	line := " " + chevronGlyph + " " +
+		m.palette.HighlightMatch(truncated, m.spacesQuery(), plainStyle) + pad
 	if selected {
 		return m.softSelectedLine(line)
 	}
@@ -3470,6 +3551,12 @@ func (m Model) armedDeleteHint(pending, key, verb, suffix string, width int) str
 }
 
 func (m Model) renderHint(width int) string {
+	if m.pendingCloseAgent != "" && m.agentCursor < len(m.agentRows) {
+		r := m.agentRows[m.agentCursor]
+		hint := "press d again to close " + r.label + " :" + r.pane.PaneIndex +
+			" (" + r.kind + ") · any other key cancels"
+		return m.palette.HintDesc.Render(ansi.Truncate(hint, width, ""))
+	}
 	if m.pendingKillSession != "" {
 		if _, ok := m.repoSessionNamed(m.pendingKillSession); ok {
 			return m.armedDeleteHint(
@@ -3544,7 +3631,7 @@ func (m Model) renderHint(width int) string {
 	// agents-section hint bar. A key that would do nothing right now (up
 	// with spaces folded, folding the last open section) is left out.
 	if m.section == sectionAgents {
-		hints := []tuicomponents.KeyHint{{Key: "↵", Desc: "jump to pane"}}
+		hints := []tuicomponents.KeyHint{{Key: "↵", Desc: "jump to pane"}, {Key: "d", Desc: "close"}}
 		if !m.spacesFolded {
 			hints = append(hints, tuicomponents.KeyHint{
 				Key: hintKeyName(m.paneMoveKeys.Up), Desc: "spaces",
@@ -3578,6 +3665,27 @@ func (m Model) renderHint(width int) string {
 		{Key: "?", Desc: "help"},
 	}
 	return m.palette.HintBar(hints, width)
+}
+
+// plainStyle renders text with no styling, for HighlightMatch's base on rows
+// whose names carry no color of their own.
+var plainStyle = lip.NewStyle()
+
+// spacesQuery and agentsQuery are the filter text each section highlights
+// in its rows: the live filter for a section it searches, "" for a folded
+// one, which the filter skips (ADR-0056).
+func (m Model) spacesQuery() string {
+	if m.spacesFolded {
+		return ""
+	}
+	return m.filter.Value()
+}
+
+func (m Model) agentsQuery() string {
+	if m.agentsFolded {
+		return ""
+	}
+	return m.filter.Value()
 }
 
 // hintKeyName shortens a bubbletea key name for the hint bar, "ctrl+k" to
@@ -3659,7 +3767,7 @@ func (m Model) renderHelpPopup() string {
 		},
 		{
 			Key:  "d d",
-			Desc: "delete worktree (confirm twice); on a session row: kill it (confirm twice)",
+			Desc: "delete worktree (confirm twice); on a session row: kill it; on an agent row: close that agent's pane only",
 		},
 		{Key: "D D", Desc: "delete worktree + kill its session"},
 		{

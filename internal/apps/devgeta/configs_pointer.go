@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cjairm/devgeta/internal/embedded"
 	"github.com/cjairm/devgeta/pkg/buildinfo"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/logger"
@@ -97,15 +98,23 @@ func sanitizeStamp(s string) string {
 	return mapped
 }
 
-// buildStamp identifies the running binary's embedded config content.
-//
-// Accepted trade-off (deliberate, not an oversight): a plain `go build` with no
-// ldflags leaves buildinfo.Version == "dev" and Commit == "unknown", so two
-// different local builds share one stamp and InstallIfStale treats the second
-// as already current. `dg configure --force` re-extracts unconditionally and is
-// the repair path for exactly that case.
+// buildStamp identifies the running binary's embedded config content: the
+// version and commit, plus a fingerprint of the configs themselves when the
+// main package provides one (embedded.ContentStamp). Version and commit
+// alone are not enough: every local build of one commit with uncommitted
+// changes shares them (`v1.37.0-3-gabc-dirty`, or `dev`/`unknown` with no
+// ldflags), so a later build found an earlier build's extract, treated it as
+// current, and `dg configure <app> --force` deployed that build's stale
+// hooks and templates. With the fingerprint, changed configs always get a
+// fresh extract; unchanged ones still skip it.
 func buildStamp() string {
-	return sanitizeStamp(buildinfo.Version) + "-" + sanitizeStamp(buildinfo.Commit)
+	stamp := sanitizeStamp(buildinfo.Version) + "-" + sanitizeStamp(buildinfo.Commit)
+	if embedded.ContentStamp != nil {
+		if content := embedded.ContentStamp(); content != "" {
+			stamp += "-" + sanitizeStamp(content)
+		}
+	}
+	return stamp
 }
 
 // stampedDirName is the basename of the current build's extracted tree.

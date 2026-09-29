@@ -28,8 +28,9 @@ var getAppFn = func(name string) (apps.App, error) {
 
 // refreshEmbeddedConfigs re-extracts embedded configs so templates match the
 // running binary. It is a no-op when the published tree already belongs to this
-// build, so configuring one app no longer rewrites the whole tree first;
-// --force still re-extracts unconditionally via the app's ForceConfigure.
+// build - same version, commit and config content (see buildStamp) - so
+// configuring one app no longer rewrites the whole tree first. An app's own
+// --force does not re-extract; this check is what keeps its templates current.
 // Overridden in tests to avoid nil ExtractEmbedded.
 var refreshEmbeddedConfigs = func() error {
 	return devgeta.New().InstallIfStale()

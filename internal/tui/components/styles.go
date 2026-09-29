@@ -38,6 +38,11 @@ type Palette struct {
 	SoftSelected lip.Style // bg ANSI 8
 	SelectedBar  lip.Style // bold ANSI 3 - the "▌" glyph itself
 
+	// Match marks the text a filter matched (HighlightMatch). Reverse video
+	// reads in every terminal theme and can't be mistaken for the
+	// SoftSelected background a selected row sits on.
+	Match lip.Style
+
 	// Tabs
 	TabActive   lip.Style // bold + underline + ANSI 15
 	TabInactive lip.Style // ANSI 8
@@ -94,6 +99,7 @@ func NewPalette() *Palette {
 
 		SoftSelected: lip.NewStyle().Background(lip.Color("8")),
 		SelectedBar:  lip.NewStyle().Bold(true).Foreground(lip.Color("3")),
+		Match:        lip.NewStyle().Reverse(true),
 
 		TabActive:   lip.NewStyle().Bold(true).Underline(true).Foreground(lip.Color("15")),
 		TabInactive: lip.NewStyle().Foreground(lip.Color("8")),

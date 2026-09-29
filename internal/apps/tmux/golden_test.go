@@ -97,10 +97,12 @@ func TestForceConfigureTheme_MatchesGoldenRender(t *testing.T) {
 // TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs is a structural
 // check (not just the byte-for-byte golden above) that each of the four
 // C-h/j/k/l bindings passes the key through when the pane runs `devgeta ws`,
-// per ADR-0057 (Step 9 of docs/plans/cycles/2026-09-28-ws-agents-section.md):
-// a substring check alone would pass even if is_dgws's condition were wrong
-// or a binding's nested if-shell were malformed, so this asserts the exact
-// per-key relationship between the binding and the shared is_dgws check.
+// per ADR-0057. It pins the flat form - one if-shell testing
+// "$is_vim || $is_dgws" - and rejects the nested one v1.38.0 shipped: tmux
+// unescapes a nested if-shell's string a second time, so is_dgws's `\\S`
+// reached grep as a plain `S` and the pass-through never fired. The escaping
+// itself can only be seen by running tmux, which tests must not do; keeping
+// is_dgws at is_vim's (working) nesting level is what this can enforce.
 func TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs(t *testing.T) {
 	got := string(renderShippedTmuxConf(t))
 
@@ -111,12 +113,15 @@ func TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs(t *testing.T) {
 		t.Fatalf("expected is_dgws's pattern to match \"devgeta ws\", got:\n%s", got)
 	}
 
+	if strings.Contains(got, `if-shell \"$is_dgws\"`) {
+		t.Errorf("is_dgws must not be tested in a nested if-shell (tmux strips its escapes):\n%s", got)
+	}
 	for _, key := range []string{"C-h", "C-j", "C-k", "C-l"} {
-		wantBinding := `bind -n ` + key + ` if-shell "$is_vim" "send-keys ` + key +
-			`"  "if-shell \"$is_dgws\" \"send-keys ` + key + `\"  \"select-pane -`
+		wantBinding := `bind -n ` + key + ` if-shell "$is_vim || $is_dgws" "send-keys ` + key +
+			`"  "select-pane -`
 		if !strings.Contains(got, wantBinding) {
 			t.Errorf(
-				"expected %s to fall through is_vim into an is_dgws-gated pass-through, "+
+				"expected %s to pass through when the pane runs Vim or devgeta ws, "+
 					"got no match for %q in:\n%s",
 				key, wantBinding, got,
 			)

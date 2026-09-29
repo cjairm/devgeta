@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"os"
@@ -72,4 +74,36 @@ func ExtractEmbeddedConfigs(destDir string) error {
 
 	logger.L().Infow("Successfully extracted embedded configs", "destination", destDir)
 	return nil
+}
+
+// configsContentHash fingerprints every embedded path and its bytes, in
+// fs.WalkDir's fixed lexical order, so the same configs always hash the same
+// and any change to a file, or a file added, removed or renamed, changes it.
+// 12 hex characters is plenty to tell builds apart and keeps the directory
+// name short. Returns "" if the walk fails, which leaves the stamp at
+// version+commit rather than failing a configure over a fingerprint.
+func configsContentHash() string {
+	h := sha256.New()
+	err := fs.WalkDir(ConfigsFS, "configs", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		h.Write([]byte(path))
+		h.Write([]byte{0})
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(ConfigsFS, path)
+		if err != nil {
+			return err
+		}
+		h.Write(data)
+		h.Write([]byte{0})
+		return nil
+	})
+	if err != nil {
+		logger.L().Debugw("Could not fingerprint embedded configs", "err", err)
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil))[:12]
 }

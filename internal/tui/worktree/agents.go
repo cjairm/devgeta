@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
 	tuicomponents "github.com/cjairm/devgeta/internal/tui/components"
@@ -172,4 +173,34 @@ func buildAgentRows(
 	})
 
 	return rows
+}
+
+// agentPaneClosedMsg reports that an agent row's pane was closed.
+type agentPaneClosedMsg struct{ label string }
+
+// handleCloseAgentPane is d on an agent row: a two-press confirm, armed and
+// cleared the same way handleKillSession is, that closes that agent's pane
+// and nothing else. An agent row is one pane (ADR-0056), so a split's other
+// panes (an editor next to the coder) stay; tmux drops the window with its
+// last pane, and the session with its last window.
+func (m Model) handleCloseAgentPane() (tea.Model, tea.Cmd) {
+	if m.agentCursor < 0 || m.agentCursor >= len(m.agentRows) {
+		return m, nil
+	}
+	r := m.agentRows[m.agentCursor]
+	if m.pendingCloseAgent != r.pane.PaneID {
+		m.pendingCloseAgent = r.pane.PaneID
+		return m, nil
+	}
+	m.pendingCloseAgent = ""
+
+	killPaneFn := m.killPaneFn
+	paneID, label := r.pane.PaneID, r.label
+	m.status = actionStatus("closing agent", label)
+	return m, func() tea.Msg {
+		if err := killPaneFn(paneID); err != nil {
+			return statusMsg("close agent failed: " + err.Error())
+		}
+		return agentPaneClosedMsg{label: label}
+	}
 }

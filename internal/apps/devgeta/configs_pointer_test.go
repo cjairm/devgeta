@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/embedded"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/buildinfo"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -828,6 +829,48 @@ func TestSoftInstall_SkipsWhenTheStampMatches(t *testing.T) {
 		t.Errorf("expected repeated calls on one build to extract once, got %d", got)
 	}
 	assertPointsAt(t, "configs-v1.0.0-aaaaaaa")
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// setContentStamp pins embedded.ContentStamp for one test and restores it.
+func setContentStamp(t *testing.T, content string) {
+	t.Helper()
+	orig := embedded.ContentStamp
+	t.Cleanup(func() { embedded.ContentStamp = orig })
+	embedded.ContentStamp = func() string { return content }
+}
+
+// Two local builds of one commit share version and commit. When their
+// configs differ, the second must still get a fresh extract; before the
+// content fingerprint it found the first build's tree, took it as current,
+// and `dg configure <app> --force` deployed that build's stale hooks.
+func TestInstallIfStale_ReExtractsWhenOnlyTheConfigsChange(t *testing.T) {
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	setBuildStamp(t, "v1.37.0-3-g6ee861f-dirty", "6ee861f")
+	setContentStamp(t, "aaaaaaaaaaaa")
+
+	var runs int32
+	dg := &Devgeta{Base: tc.MockApp.Base, ExtractEmbedded: countingExtractor(&runs)}
+	if err := dg.InstallIfStale(); err != nil {
+		t.Fatalf("InstallIfStale() failed: %v", err)
+	}
+	if err := dg.InstallIfStale(); err != nil {
+		t.Fatalf("InstallIfStale() failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&runs); got != 1 {
+		t.Fatalf("unchanged configs should extract once, got %d extracts", got)
+	}
+
+	setContentStamp(t, "bbbbbbbbbbbb")
+	if err := dg.InstallIfStale(); err != nil {
+		t.Fatalf("InstallIfStale() after the configs changed failed: %v", err)
+	}
+	if got := atomic.LoadInt32(&runs); got != 2 {
+		t.Errorf("changed configs must re-extract, got %d extracts total", got)
+	}
+	assertPointsAt(t, "configs-v1.37.0-3-g6ee861f-dirty-6ee861f-bbbbbbbbbbbb")
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
