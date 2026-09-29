@@ -10,10 +10,15 @@
 //   1. Every export is a function (a non-function export would crash
 //      OpenCode's config load entirely).
 //   2. Calling that function with a plausible plugin ctx does not throw
-//      synchronously (a helper written for internal reuse — like
-//      isDevgetaRepo or splitCommandSegments — must tolerate being
-//      accidentally invoked this way; see task-redirect.js's export
-//      comments).
+//      (a helper written for internal reuse — like isDevgetaRepo or
+//      splitCommandSegments — must tolerate being accidentally invoked this
+//      way; see task-redirect.js's export comments).
+//   3. The awaited result is not undefined or null. The loader reads
+//      `.config` (and the other hook names) off whatever each export
+//      returns, so a helper returning nothing crashes OpenCode's startup
+//      with "evaluating 'N.config'" — exactly what an exported
+//      exitFallbackSync in notify.js once did. A boolean, string or array
+//      result is harmless: reading a property off one yields undefined.
 //
 // A future contributor who adds a new shared-helpers file to plugin/ (the
 // exact mistake ADR-0006 warns against) will trip rule 1 immediately.
@@ -56,9 +61,16 @@ for (const file of pluginFiles) {
       // Call it the way the loader would: with a single ctx-shaped argument.
       // Some exports (isDevgetaRepo) expect a plain string instead of a
       // ctx object — either call shape must not throw synchronously.
+      let result;
       await assert.doesNotReject(
-        (async () => value({ directory: DEVGETA_DIR }))(),
+        (async () => {
+          result = await value({ directory: DEVGETA_DIR });
+        })(),
         `${file}'s export "${name}" threw when called with a ctx object`,
+      );
+      assert.ok(
+        result !== undefined && result !== null,
+        `${file}'s export "${name}" returned ${result} — OpenCode's plugin loader reads .config on every export's result and would crash at startup; stop exporting it or return a hooks object`,
       );
     }
   });

@@ -55,7 +55,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { Notify, exitFallbackSync } from "./configs/opencode/plugin/notify.js";
+import { Notify } from "./configs/opencode/plugin/notify.js";
 
 // The suite usually runs inside a real tmux pane, often one running a coder.
 // Any code path that reaches the plugin's real exec with TMUX_PANE set
@@ -974,28 +974,52 @@ test("server.instance.disposed without TMUX_PANE is a no-op", async () => {
   });
 });
 
-test("exitFallbackSync: no-op without TMUX_PANE", async () => {
+// exitFallbackSync is not exported (an export would be invoked as a plugin
+// by OpenCode's loader - see notify.js), so these tests reach it the way
+// production does: Notify registers it as a process "exit" listener when
+// given a syncExecFn. withExitFallback captures that one listener, hands it
+// to fn, and always removes it so it never fires when the test process exits.
+async function withExitFallback(syncExecFn, fn) {
+  const before = new Set(process.listeners("exit"));
+  await Notify({}, makeExecStub(), syncExecFn);
+  const added = process.listeners("exit").filter((l) => !before.has(l));
+  assert.equal(added.length, 1, "Notify must register exactly one exit listener");
+  try {
+    await fn(added[0]);
+  } finally {
+    process.removeListener("exit", added[0]);
+  }
+}
+
+test("exit fallback: no-op without TMUX_PANE", async () => {
   await withTmuxPane(undefined, async () => {
     const calls = [];
-    exitFallbackSync((cmd, args) => calls.push([cmd, ...args]));
+    await withExitFallback(
+      (cmd, args) => calls.push([cmd, ...args]),
+      (onExit) => onExit(),
+    );
     assert.deepEqual(calls, []);
   });
 });
 
-test("exitFallbackSync: attempts the folded unset synchronously when TMUX_PANE is set", async () => {
+test("exit fallback: attempts the folded unset synchronously when TMUX_PANE is set", async () => {
   await withTmuxPane("%33", async () => {
     const calls = [];
-    exitFallbackSync((cmd, args) => calls.push([cmd, ...args]));
+    await withExitFallback(
+      (cmd, args) => calls.push([cmd, ...args]),
+      (onExit) => onExit(),
+    );
     assert.deepEqual(calls, [unsetBoth("%33")]);
   });
 });
 
-test("exitFallbackSync: swallows a synchronous throw rather than propagating it", async () => {
+test("exit fallback: swallows a synchronous throw rather than propagating it", async () => {
   await withTmuxPane("%34", async () => {
-    assert.doesNotThrow(() =>
-      exitFallbackSync(() => {
+    await withExitFallback(
+      () => {
         throw new Error("tmux: no server running");
-      }),
+      },
+      (onExit) => assert.doesNotThrow(() => onExit()),
     );
   });
 });

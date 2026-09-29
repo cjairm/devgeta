@@ -151,7 +151,13 @@ const WANTS_YOU_STATES = ["idle", "blocked", "error"];
 // already established as non-load-bearing, and recomputing it here would
 // need a second synchronous call (a list-panes read) for a path that may
 // never run at all.
-export function exitFallbackSync(syncExecFn = execFileSync) {
+//
+// Deliberately NOT exported: OpenCode's plugin loader invokes every exported
+// function in this file as a plugin factory and reads `.config` on what it
+// returns, so an export that returns undefined crashes OpenCode at startup
+// (ADR-0006; enforced by plugin-loader-safety.test.mjs). Tests reach it
+// through Notify's syncExecFn seam instead.
+function exitFallbackSync(syncExecFn = execFileSync) {
   const pane = process.env.TMUX_PANE;
   if (!pane) {
     return;
