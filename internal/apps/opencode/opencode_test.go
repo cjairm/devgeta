@@ -163,6 +163,13 @@ func setupSharedDir(t *testing.T, baseDir string) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(
+		filepath.Join(sharedDir, baseapp.InstructionsFileName),
+		[]byte("# instructions fixture\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
 	oldShared := paths.Paths.App.Configs.Shared
 	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
 	paths.Paths.App.Configs.Shared = sharedDir
@@ -1732,4 +1739,64 @@ func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
 	if strings.Contains(string(regenerated), "stale") {
 		t.Error("opencode.json was preserved but devgeta generates it — it must be regenerated")
 	}
+}
+
+// TestForceConfigure_PointsInstructionsAtDeployedFile checks that OpenCode
+// loads devgeta's instructions: the file is deployed into the config dir and
+// opencode.json lists that exact path under "instructions" (ADR-0058).
+func TestForceConfigure_PointsInstructionsAtDeployedFile(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
+	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
+	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(appConfigDir, "opencode.json.tmpl"),
+		[]byte(`{"instructions": [{{ .InstructionsPath }}]}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
+	setupSharedDir(t, tc.AppDir)
+	setupOutputBudgetRunnerSource(t, tc.AppDir)
+	setupThemeFixture(t, "#ebdbb2")
+
+	oldAppConfigs := paths.Paths.App.Configs.OpenCode
+	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
+	paths.Paths.App.Configs.OpenCode = appConfigDir
+
+	oldConfigOpenCode := paths.Paths.Config.OpenCode
+	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
+	paths.Paths.Config.OpenCode = userConfigDir
+	isolateOpenCodeInstallPrefix(t)
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	rendered, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("opencode.json missing: %v", err)
+	}
+	var cfg struct {
+		Instructions []string `json:"instructions"`
+	}
+	if err := json.Unmarshal(rendered, &cfg); err != nil {
+		t.Fatalf("rendered opencode.json is not valid JSON: %v\n%s", err, rendered)
+	}
+	wantPath := filepath.Join(userConfigDir, baseapp.InstructionsFileName)
+	if len(cfg.Instructions) != 1 || cfg.Instructions[0] != wantPath {
+		t.Fatalf("instructions = %v, want [%q]", cfg.Instructions, wantPath)
+	}
+	if _, err := os.Stat(wantPath); err != nil {
+		t.Errorf("instructions file not deployed: %v", err)
+	}
+
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }

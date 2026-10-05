@@ -207,9 +207,21 @@ func (o *OpenCode) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to encode scratch dir: %w", err)
 	}
 
+	instructionsPath, err := baseapp.DeployInstructions(paths.Paths.Config.OpenCode)
+	if err != nil {
+		return fmt.Errorf("failed to deploy opencode instructions: %w", err)
+	}
+	// JSON-encoded for the same reason as ScratchDirGlob: the path is derived
+	// from XDG_CONFIG_HOME and the template does no escaping of its own.
+	instructionsPathJSON, err := json.Marshal(instructionsPath)
+	if err != nil {
+		return fmt.Errorf("failed to encode instructions path: %w", err)
+	}
+
 	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
-		"Theme":          def.Name,
-		"ScratchDirGlob": string(scratchDirGlobJSON),
+		"Theme":            def.Name,
+		"ScratchDirGlob":   string(scratchDirGlobJSON),
+		"InstructionsPath": string(instructionsPathJSON),
 	}); err != nil {
 		return fmt.Errorf("failed to generate opencode configuration: %w", err)
 	}
@@ -484,7 +496,7 @@ var pluginLockfiles = []string{"package-lock.json", "bun.lock", "bun.lockb"}
 //
 // Keep this in step with what ForceConfigureTheme writes.
 var devgetaManagedEntries = append(
-	[]string{"opencode.json", "themes", "plugin"},
+	[]string{"opencode.json", "themes", "plugin", baseapp.InstructionsFileName},
 	baseapp.SharedConfigParts...,
 )
 

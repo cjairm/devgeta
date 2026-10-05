@@ -77,3 +77,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0055](ADR-0055-an-agent-says-what-it-is.md) — An agent says what it is, separately from what it's doing
 - [ADR-0056](ADR-0056-the-dashboard-lists-agents-in-their-own-section.md) — The dashboard lists agents in their own section
 - [ADR-0057](ADR-0057-the-dashboard-takes-its-pane-move-keys-from-tmux.md) — The dashboard takes its pane-move keys from tmux
+- [ADR-0058](ADR-0058-devgeta-instructions-live-in-their-own-file.md) — Devgeta's agent instructions live in their own file

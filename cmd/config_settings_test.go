@@ -29,6 +29,11 @@ var knownStateFields = map[string]string{
 		"also re-renders settings.json. A bare `set` here would desync the " +
 		"recorded flag from what's actually deployed, so it is refused as a " +
 		"settable key rather than exposed.",
+	"integrations.claude_instructions_imported": "a deploy record, not a " +
+		"preference: `dg configure claude` sets it the first time it adds the " +
+		"@DEVGETA.md import to ~/.claude/CLAUDE.md, so a user who deletes that " +
+		"line does not get it back (ADR-0058). Opting out means deleting the " +
+		"line, not flipping this flag.",
 }
 
 // settingsBearingStructs pairs each struct this completeness test reflects

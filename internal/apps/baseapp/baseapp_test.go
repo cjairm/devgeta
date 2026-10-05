@@ -289,3 +289,34 @@ func TestMaintainScratchDir(t *testing.T) {
 		}
 	})
 }
+
+func TestDeployInstructions_CopiesSharedFileAndOverwritesOldCopy(t *testing.T) {
+	sharedDir := t.TempDir()
+	previousShared := paths.Paths.App.Configs.Shared
+	t.Cleanup(func() { paths.Paths.App.Configs.Shared = previousShared })
+	paths.Paths.App.Configs.Shared = sharedDir
+
+	const shippedContent = "# shipped instructions\n"
+	if err := os.WriteFile(filepath.Join(sharedDir, InstructionsFileName), []byte(shippedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentConfigDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(agentConfigDir, InstructionsFileName), []byte("outdated"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deployedPath, err := DeployInstructions(agentConfigDir)
+	if err != nil {
+		t.Fatalf("DeployInstructions error: %v", err)
+	}
+	if want := filepath.Join(agentConfigDir, InstructionsFileName); deployedPath != want {
+		t.Errorf("deployed path = %q, want %q", deployedPath, want)
+	}
+	got, err := os.ReadFile(deployedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != shippedContent {
+		t.Errorf("deployed content = %q, want %q", got, shippedContent)
+	}
+}

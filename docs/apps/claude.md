@@ -53,6 +53,7 @@ for those projects along with the chats.
 | `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly                                            |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
 | `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                                                              |
+| `configs/shared/DEVGETA.md`                | `~/.claude/DEVGETA.md`                | response style and coding defaults; shared with OpenCode, see below               |
 
 `settings.json` is rendered from a template so tracked opt-ins survive a
 `--force` re-render: when `integrations.rtk_claude_hook` is set in
@@ -60,6 +61,21 @@ for those projects along with the chats.
 explicit opt-in required by [ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md)),
 the rendered file includes rtk's `PreToolUse` hook entry alongside devgeta's
 own hooks. `dg uninstall rtk` clears the flag. See [rtk.md](rtk.md).
+
+### Response style and coding defaults (`DEVGETA.md`)
+
+`DEVGETA.md` holds devgeta's default instructions: answers that fit the task
+(a quick answer, an investigation, an explanation of something new) without
+filler; reuse before writing; short, readable functions; and names that stay
+meaningful over time. Devgeta owns this file and overwrites it on every
+configure. Put your own rules in `~/.claude/CLAUDE.md`, not here.
+
+Claude Code loads it through a single `@DEVGETA.md` line that devgeta appends
+to `~/.claude/CLAUDE.md` the **first** time you configure Claude. Nothing else
+in that file is touched. To opt out, delete the line. Devgeta records in
+`global_config.yaml` (`integrations.claude_instructions_imported`) that it
+already added the line once, so it does not add it back. See
+[ADR-0058](../decisions/ADR-0058-devgeta-instructions-live-in-their-own-file.md).
 
 ## Permissions model
 

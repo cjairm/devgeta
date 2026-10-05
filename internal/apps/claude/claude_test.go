@@ -636,6 +636,13 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if err := os.WriteFile(
+		filepath.Join(sharedDir, baseapp.InstructionsFileName),
+		[]byte("# instructions fixture\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	// The output-budget runner's own source dir — agent-neutral, like its
 	// deploy destination, not configs/claude/ (see EnsureAgentRuntime).
@@ -732,9 +739,101 @@ func TestForceConfigure(t *testing.T) {
 		}
 	}
 
+	// devgeta's instructions deployed and imported from the user's CLAUDE.md
+	if _, err := os.Stat(filepath.Join(userConfigDir, baseapp.InstructionsFileName)); err != nil {
+		t.Errorf("Expected %s: %v", baseapp.InstructionsFileName, err)
+	}
+	userInstructions, err := os.ReadFile(filepath.Join(userConfigDir, "CLAUDE.md"))
+	if err != nil {
+		t.Fatalf("Expected CLAUDE.md: %v", err)
+	}
+	if !strings.Contains(string(userInstructions), instructionsImportLine) {
+		t.Errorf("expected CLAUDE.md to import %s, got: %q", instructionsImportLine, userInstructions)
+	}
+
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	testutil.VerifyNoRealConfigChanges(t)
 }
+
+// isolateClaudeConfigDir points paths.Paths.Config.Claude at a fresh
+// directory for the duration of the test and returns that directory.
+func isolateClaudeConfigDir(t *testing.T) string {
+	t.Helper()
+	claudeConfigDir := t.TempDir()
+	previous := paths.Paths.Config.Claude
+	t.Cleanup(func() { paths.Paths.Config.Claude = previous })
+	paths.Paths.Config.Claude = claudeConfigDir
+	return claudeConfigDir
+}
+
+func TestImportInstructionsOnce(t *testing.T) {
+	tests := []struct {
+		name             string
+		existingContent  *string
+		alreadyImported  bool
+		wantContent      string
+		wantImportedFlag bool
+	}{
+		{
+			name:             "creates CLAUDE.md with the import when there is none",
+			wantContent:      "\n@DEVGETA.md",
+			wantImportedFlag: true,
+		},
+		{
+			name:             "appends the import and keeps the user's content",
+			existingContent:  stringPointer("# My rules\nBe brief."),
+			wantContent:      "# My rules\nBe brief.\n@DEVGETA.md",
+			wantImportedFlag: true,
+		},
+		{
+			name:             "does not add a second import when the line is already there",
+			existingContent:  stringPointer("@RTK.md\n@DEVGETA.md\n"),
+			wantContent:      "@RTK.md\n@DEVGETA.md\n",
+			wantImportedFlag: true,
+		},
+		{
+			name:             "does not re-add an import the user deleted",
+			existingContent:  stringPointer("# My rules\n"),
+			alreadyImported:  true,
+			wantContent:      "# My rules\n",
+			wantImportedFlag: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			claudeConfigDir := isolateClaudeConfigDir(t)
+			userInstructions := filepath.Join(claudeConfigDir, "CLAUDE.md")
+			if tt.existingContent != nil {
+				if err := os.WriteFile(userInstructions, []byte(*tt.existingContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			gc := &config.GlobalConfig{}
+			gc.Integrations.ClaudeInstructionsImported = tt.alreadyImported
+
+			if err := importInstructionsOnce(gc); err != nil {
+				t.Fatalf("importInstructionsOnce error: %v", err)
+			}
+
+			got, err := os.ReadFile(userInstructions)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.wantContent {
+				t.Errorf("CLAUDE.md = %q, want %q", got, tt.wantContent)
+			}
+			if gc.Integrations.ClaudeInstructionsImported != tt.wantImportedFlag {
+				t.Errorf(
+					"ClaudeInstructionsImported = %v, want %v",
+					gc.Integrations.ClaudeInstructionsImported,
+					tt.wantImportedFlag,
+				)
+			}
+		})
+	}
+}
+
+func stringPointer(s string) *string { return &s }
 
 func TestSoftConfigure_AlreadyConfigured(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)

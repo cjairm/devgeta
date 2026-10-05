@@ -60,6 +60,15 @@ ls ~/.config/opencode/
 
 ---
 
+## Response style and coding defaults
+
+`dg configure opencode` deploys `~/.config/opencode/DEVGETA.md`, an identical
+copy of the file Claude Code gets (see [claude.md](claude.md#response-style-and-coding-defaults-devgetamd)),
+and lists it under `instructions` in `opencode.json`. OpenCode loads it **in
+addition to** your own `~/.config/opencode/AGENTS.md`, which devgeta never
+touches. Put your own rules in `AGENTS.md`. See
+[ADR-0058](../decisions/ADR-0058-devgeta-instructions-live-in-their-own-file.md).
+
 ## Provider
 
 Use **[OpenRouter](https://openrouter.ai)** — one API key, access to all models below.

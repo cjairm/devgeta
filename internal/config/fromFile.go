@@ -70,6 +70,10 @@ type IntegrationsConfig struct {
 	// plain bool cannot tell "never configured" apart from "explicitly
 	// false".
 	OutputBudget *bool `yaml:"output_budget,omitempty"`
+	// ClaudeInstructionsImported records that devgeta has already added its
+	// `@DEVGETA.md` import to ~/.claude/CLAUDE.md once. It stays true after
+	// that, so a user who deletes the line does not get it back (ADR-0058).
+	ClaudeInstructionsImported bool `yaml:"claude_instructions_imported,omitempty"`
 }
 
 // FailedInstallation tracks packages that failed to install

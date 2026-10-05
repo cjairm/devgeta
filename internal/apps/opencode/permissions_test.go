@@ -42,8 +42,9 @@ func renderedOpenCodeConfig(t *testing.T) []byte {
 		tmplPath,
 		out,
 		map[string]string{
-			"Theme":          DEFAULT_THEME_NAME,
-			"ScratchDirGlob": `"/tmp/placeholder-scratch/**"`,
+			"Theme":            DEFAULT_THEME_NAME,
+			"ScratchDirGlob":   `"/tmp/placeholder-scratch/**"`,
+			"InstructionsPath": `"/tmp/placeholder-config/DEVGETA.md"`,
 		},
 	); err != nil {
 		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
@@ -1129,8 +1130,9 @@ func TestScratchDirGrantParity(t *testing.T) {
 	openCodeTmplPath := filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl")
 	openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
 	if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
-		"Theme":          DEFAULT_THEME_NAME,
-		"ScratchDirGlob": mustJSONString(t, wantRoot+"/**"),
+		"Theme":            DEFAULT_THEME_NAME,
+		"ScratchDirGlob":   mustJSONString(t, wantRoot+"/**"),
+		"InstructionsPath": mustJSONString(t, wantRoot+"/DEVGETA.md"),
 	}); err != nil {
 		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
 	}
@@ -1217,8 +1219,9 @@ func TestScratchDirGrantRendersValidJSONForHostilePaths(t *testing.T) {
 
 			openCodeOut := filepath.Join(t.TempDir(), "opencode.json")
 			if err := files.GenerateFromTemplate(openCodeTmplPath, openCodeOut, map[string]string{
-				"Theme":          DEFAULT_THEME_NAME,
-				"ScratchDirGlob": mustJSONString(t, root+"/**"),
+				"Theme":            DEFAULT_THEME_NAME,
+				"ScratchDirGlob":   mustJSONString(t, root+"/**"),
+				"InstructionsPath": mustJSONString(t, root+"/DEVGETA.md"),
 			}); err != nil {
 				t.Fatalf("failed to render opencode.json.tmpl: %v", err)
 			}

@@ -23,6 +23,7 @@ deliberate.
 | Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                                      |
 | rtk hook wiring         | `configs/claude/rtk-shim.sh` (devgeta-owned)                      | rtk's own plugin (`~/.config/opencode/plugins/rtk.ts`) — devgeta never touches it |
 | Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                                |
+| Global instructions     | `configs/shared/DEVGETA.md`, imported from `~/.claude/CLAUDE.md`  | `configs/shared/DEVGETA.md`, listed in `instructions` in `opencode.json.tmpl`     |
 
 `configs/shared/skills/` is synced to both agents too, but it is **not** a place
 to put devgeta policy: those skills run in every user's other repositories, and
