@@ -44,6 +44,8 @@ Notable choices, mapped from the Alacritty template devgeta already shipped:
 | `[terminal.shell] program`          | `command`                        | Both point at the same shared launcher script, `configs/terminal/starter.sh` (see below).                                                                                          |
 | `[colors.normal]`/`[colors.bright]` | `palette = N=#RRGGBB` (N = 0-15) | Same Gruvbox Material values as Alacritty's template, so the two never drift — see [docs/guides/theming.md](../guides/theming.md).                                                 |
 
+`confirm-close-surface = false` has no Alacritty counterpart. Ghostty skips its close prompt only when shell integration sees an idle shell prompt, and every devgeta window runs tmux through `starter.sh`, so with the default (`true`) it asked on every close. The prompt protected nothing: closing a window only detaches tmux. Users who want it back set the option to `true`.
+
 The `.Theme` template value stays pinned to `"default"` — Ghostty's built-in `theme` option is deliberately unused so the palette can't drift from tmux/Neovim, which don't have theme-switching wired up either (see the theming guide's "Known gaps").
 
 ### The shared launcher script
