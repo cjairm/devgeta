@@ -76,6 +76,15 @@ Hard constraints that override all other considerations:
 - User home directory must never be assumed writable in global locations; respect XDG Base Directory if needed
 - Config files installed by devgeta must be distinguishable from user edits (version markers, checksums)
 
+### The maintainer's machine is production
+
+The machine you are working on is the maintainer's real setup, not a test box. Running devgeta against it has already wiped local config edits more than once.
+
+- **Never run anything that changes the real machine without asking first** and getting a yes for that specific command. That means any `dg`/`devgeta` command that writes (`install`, `uninstall`, `configure`, `update`, `theme`, `import`, …), installing or replacing the binary, `brew`/`apt` installs, and any write outside the repo and the scratch directory (`~/.config`, `~/.claude`, shell rc files, …). A yes covers that one command, not later ones.
+- Reading is always fine: inspecting files under `~`, `--help`, `--version`, and dry or read-only commands.
+- Inside the repo, work freely: edit, build, run tests (they are sandboxed, see above), commit when asked.
+- When a doc below says to deploy, reinstall, or verify on the real machine, that is a step for the maintainer. Name the exact command and ask; never run it on your own.
+
 ### Platform Support
 
 - macOS 13+ (Ventura or newer) must be supported; don't use features that break on older versions
@@ -161,7 +170,7 @@ Key principles:
 Follow this order for every non-trivial change:
 
 1. **Implement** the feature or fix.
-2. **Verify manually** that it works end-to-end (run the binary, use the UI, confirm the golden path).
+2. **Verify manually** that it works end-to-end (run the binary, use the UI, confirm the golden path). Anything that writes to the real machine needs the maintainer's yes first — see [The maintainer's machine is production](#the-maintainers-machine-is-production).
 3. **Add or update tests** — only after the feature is confirmed working. Tests written against a broken feature encode the wrong behavior.
 4. **Commit** once manual verification passes and the **targeted tests** for what you changed are green (see below — not the whole suite).
 
@@ -531,7 +540,7 @@ Where to find and add code:
 
 1. Edit the file under `configs/`
 2. Rebuild and reinstall the binary before deploying — `dg configure` extracts configs from the running binary, so an old binary silently deploys the old config
-3. Deploy with `dg configure <app> --force`
+3. Deploy with `dg configure <app> --force` — the maintainer runs steps 2 and 3, or you run them only after asking
 4. If the config must satisfy a constraint imposed by an external tool (a plugin or program that parses, splices, or re-executes the value), enforce that constraint with a test against the embedded configs FS — a comment in the config alone will not survive future edits
 5. If the config governs an AI coding agent, apply the change to **both** agents — see below
 6. If the file lives under `configs/shared/skills/`, stop and read the next section first — it is almost certainly the wrong file to change
@@ -569,8 +578,8 @@ behave the same. **Never add a deny/ask rule, a formatter language, or any other
 policy to one agent only** — `internal/apps/opencode/permissions_test.go` fails
 the build on asymmetry in either direction, and weakening it to land a one-sided
 change is not an option. If a rule can't be expressed in one agent, drop it from
-both. Deploy both after any change: `dg configure claude --force` **and**
-`dg configure opencode --force`.
+both. Both must be deployed after any change: `dg configure claude --force`
+**and** `dg configure opencode --force` — ask before running them.
 
 Two traps that have each cost a debugging session:
 
