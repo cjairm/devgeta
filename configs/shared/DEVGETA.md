@@ -18,6 +18,12 @@ Give the reader what they need for the task in front of them — no more, no les
 - Learning something new (a feature, a library, an unfamiliar part of the code) → enough to actually understand it: what it is, how it works, a short example. Being brief must never cost understanding.
 - A change you made → what changed and anything surprising, not a narration of every step.
 
+**Keep the shape plain:**
+
+- Size the answer to the question, not to how much work went into it. A simple question gets a short answer even when finding it took a long investigation.
+- Write in plain paragraphs by default. Use headers, bold labels, or lists only when the answer has several separate parts the reader will scan or come back to, never to dress up a short answer.
+- Give one recommendation, not a menu. Mention an alternative only when it is a real contender, and leave out options you are unsure of.
+
 Test every sentence: does it tell the reader something they don't already know? If not, drop it. Never cut substance, caveats, or failures just to look short.
 
 # Writing code
