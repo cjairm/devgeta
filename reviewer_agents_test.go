@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
+	"gopkg.in/yaml.v3"
 )
 
 // TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles is the companion to
@@ -42,6 +43,42 @@ func TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles(t *testing.T) {
 				"reviewer agent %q has no matching file in embedded configs/shared/agents",
 				name,
 			)
+		}
+	}
+}
+
+// Claude Code skips a subagent file whose frontmatter has no `name`, while
+// OpenCode takes the name from the filename — so an agent without the key
+// works in OpenCode and silently never appears in Claude Code. A `name` that
+// differs from the filename would split the two agents the other way.
+func TestSharedAgentsDeclareTheirFilenameAsName(t *testing.T) {
+	entries, err := fs.ReadDir(ConfigsFS, "configs/shared/agents")
+	if err != nil {
+		t.Fatalf("failed to read embedded configs/shared/agents: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".md" {
+			continue
+		}
+		content, err := fs.ReadFile(ConfigsFS, "configs/shared/agents/"+entry.Name())
+		if err != nil {
+			t.Fatalf("failed to read %s: %v", entry.Name(), err)
+		}
+		parts := strings.SplitN(string(content), "---\n", 3)
+		if len(parts) != 3 || parts[0] != "" {
+			t.Errorf("%s: expected a frontmatter block delimited by --- lines", entry.Name())
+			continue
+		}
+		var frontmatter struct {
+			Name string `yaml:"name"`
+		}
+		if err := yaml.Unmarshal([]byte(parts[1]), &frontmatter); err != nil {
+			t.Errorf("%s: frontmatter is not valid YAML: %v", entry.Name(), err)
+			continue
+		}
+		want := strings.TrimSuffix(entry.Name(), ".md")
+		if frontmatter.Name != want {
+			t.Errorf("%s: frontmatter name = %q, want %q", entry.Name(), frontmatter.Name, want)
 		}
 	}
 }

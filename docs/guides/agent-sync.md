@@ -53,6 +53,10 @@ or a guide. That holds for everything else in this table as well — see CLAUDE.
 
 Deliberate — do not "fix" these by halves.
 
+- **Every agent file needs `name:` equal to its filename.** Claude Code skips
+  an agent without it; OpenCode takes the name from the filename, so the gap
+  only shows in Claude Code. `TestSharedAgentsDeclareTheirFilenameAsName`
+  enforces it.
 - **Agent frontmatter is enforced by OpenCode only; command frontmatter is
   ignored by both.** Agent `.md` files use OpenCode's `permission:` schema;
   Claude Code ignores it. OpenCode's `tools:` is `object<string, boolean>`,

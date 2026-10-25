@@ -1,4 +1,5 @@
 ---
+name: document-reviewer
 description: Reviews implementation plans and technical documents for completeness, soundness, and feasibility. Use whenever a plan, cycle doc, ADR, spec, or guide is written or edited and needs checking before work starts against it.
 temperature: 0.1
 permission:

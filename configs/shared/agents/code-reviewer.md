@@ -1,4 +1,5 @@
 ---
+name: code-reviewer
 description: Reviews code for bugs, performance, security, and repo-convention violations. Use whenever code needs checking before it merges — a feature branch, a PR, named files or a directory, or uncommitted work in progress.
 temperature: 0.1
 permission:

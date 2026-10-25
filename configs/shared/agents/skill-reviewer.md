@@ -1,4 +1,5 @@
 ---
+name: skill-reviewer
 description: Reviews agent, command, and skill prompt files — triggering, structure, permissions, truthfulness across states, and testability. Use whenever a change adds or edits files under agents/, commands/, or a SKILL.md.
 temperature: 0.1
 permission:
