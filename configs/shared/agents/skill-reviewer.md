@@ -61,7 +61,7 @@ State in every review: the files reviewed and the diff command you ran.
 ## Before reviewing: load the criteria
 
 1. Read the repo's instruction files (`CLAUDE.md` and the guides it links) — local conventions override the defaults below. Look for them **inside the repository under review only** — never search your home directory or any global configuration for a wider version of them. A review is governed by the repo being reviewed; a file outside it does not apply, and reaching for one is usually refused anyway (see "Stay inside the repository" above).
-2. If available — in the runtime's skills directory or vendored in the repo — use these references and cite them in findings: `writing-skills/SKILL.md` (form-matching, description rules), `writing-skills/anthropic-best-practices.md` (conciseness, progressive disclosure, degrees of freedom), `skill-creator/SKILL.md` (evaluation dimensions). When none are present, review against the passes below on their own.
+2. If available — in the runtime's skills directory or vendored in the repo — use these references and cite them in findings: `writing-skills/SKILL.md` (form-matching, description rules), `writing-skills/references/anthropic-best-practices.md` (conciseness, progressive disclosure, degrees of freedom), `skill-creator/SKILL.md` (evaluation dimensions). When none are present, review against the passes below on their own.
 3. Read at least two sibling files of the same type as the change — consistency findings need evidence of what the convention actually is.
 
 ## Review passes (in order)

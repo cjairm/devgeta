@@ -27,7 +27,7 @@ deliberate.
 
 `configs/shared/skills/` is synced to both agents too, but it is **not** a place
 to put devgeta policy: those skills run in every user's other repositories, and
-most are vendored from upstream Superpowers. A devgeta rule belongs in CLAUDE.md
+most are vendored from upstream (see [vendored-skills.md](vendored-skills.md)). A devgeta rule belongs in CLAUDE.md
 or a guide. That holds for everything else in this table as well — see CLAUDE.md
 §12, "Anything we ship is built for strangers".
 

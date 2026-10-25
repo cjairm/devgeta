@@ -139,6 +139,16 @@ differs from how they read:
 
 ---
 
+### [Vendored Skills](vendored-skills.md) — Where each upstream skill came from, and how to sync it
+
+- The manifest: which skills under `configs/shared/skills/` are copied from Superpowers, anthropics/skills, and Ponytail, pinned to which commit
+- The known local differences a sync must carry forward
+- The step-by-step sync procedure
+
+**When to read:** Before editing any vendored skill, and when syncing one with its upstream
+
+---
+
 ### [Agent Sync](agent-sync.md) — Which file holds which concern, for both agents
 
 The detail behind CLAUDE.md's one-line rule that a policy change goes into both

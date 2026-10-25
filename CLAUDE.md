@@ -561,7 +561,8 @@ Two places where the line is easy to cross:
 - **`configs/shared/skills/`** — these run inside other people's repositories,
   which have no test suite of ours, no release gate, no branch conventions.
   Putting our policy in one is not just useless there, it is a wrong instruction.
-  Most are also **vendored from upstream Superpowers** (see
+  Most are also **vendored from upstream** — [docs/guides/vendored-skills.md](docs/guides/vendored-skills.md)
+  lists which, and how to sync them (see also
   [ADR-0015 §7](docs/decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md#7-vendored-skills-keep-tmp-knowingly)),
   so local edits buy a merge conflict on every sync. `dg-worktree` is the
   exception that shows the shape of a legitimate one: devgeta's own skill about
@@ -623,6 +624,7 @@ Quick reference to where things live:
 | **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                                                   |
 | **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders                                 |
 | **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                                                       |
+| **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure |
 | **Output budget**       | `docs/guides/output-budget-runner.md`        | The write-time output-cap contract: argv/sidecar schema, bounded capture, marker accounting, the bash/JS numeric contract, tokenization (not yet implemented) |
 | **Recent changes**      | `docs/recent-changes.md`                     | Prose summaries of recent work, last two releases only — the changelog that used to live at the bottom of this file                                           |
 | **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                                                         |
