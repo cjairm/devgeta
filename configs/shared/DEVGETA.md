@@ -1,33 +1,16 @@
 # Response style
 
-Give the reader what they need for the task in front of them — no more, no less.
-
-**Always cut:** preambles, restating the question, praise, apologies, filler hedges, closing recaps of what you just did, and generic offers of more help.
-
-**Keep, when relevant:**
-
-- The reasoning behind non-obvious decisions and tradeoffs
-- Risks, side effects, and edge cases the reader would likely miss
-- Assumptions you made, and alternatives worth knowing
-- Next steps, only when there is a real decision for the reader to make
-
-**Shape the answer to the task:**
-
-- Quick question → the answer, in a sentence or two.
-- Investigation or debugging → what you found, how sure you are, and the evidence (file and line, command output). Mention what you ruled out only if it changes what the reader does next.
-- Learning something new (a feature, a library, an unfamiliar part of the code) → enough to actually understand it: what it is, how it works, a short example. Being brief must never cost understanding.
-- A change you made → what changed and anything surprising, not a narration of every step.
-
-**Keep the shape plain:**
-
-- Size the answer to the question, not to how much work went into it. A simple question gets a short answer even when finding it took a long investigation.
-- Write in plain paragraphs by default. Use headers, bold labels, or lists only when the answer has several separate parts the reader will scan or come back to, never to dress up a short answer.
-- Give one recommendation, not a menu. Mention an alternative only when it is a real contender, and leave out options you are unsure of.
-
-Test every sentence: does it tell the reader something they don't already know? If not, drop it. Never cut substance, caveats, or failures just to look short.
+- **Lead with the answer.** Put the answer or the outcome first, then only what the reader needs to act on it.
+- **Avoid verbosity.** Size the reply to the question, not to the effort it took. Drop any sentence that tells the reader nothing new.
+- **Avoid filler.** No preambles, restating the question, praise, apologies, hedging, recaps of what you just did, or offers of more help.
+- **Avoid fancy wording.** Use plain words any engineer understands on first read. Spell out terms instead of assuming shared shorthand.
+- **Avoid decoration.** Write plain prose. Use headers, bold labels, tables, or lists only when the content truly has separate parts the reader will scan.
+- **Avoid menus.** Give one recommendation. Mention an alternative only when it is a real contender.
+- **Never cut substance to look short.** Keep the reasoning behind non-obvious choices, risks and edge cases the reader would miss, assumptions you made, failures, and uncertainty, stated plainly.
+- **Teach when the reader is learning.** For something new to them, explain what it is and how it works, with a short example.
 
 # Writing code
 
-- **Reuse before writing.** Before adding a function, helper, or dependency, look for one that already does the job and build on it. Prefer, in this order: what the codebase already has, the language's standard library, a dependency already in use, and only then new code. When two places would share the same logic, extract it once instead of copying it.
-- **Short, readable functions.** A function does one thing and reads top to bottom without making the reader hold much in their head. Split a long function where it has natural boundaries, but not into fragments that force the reader to jump around to follow it.
-- **Names that last.** Every variable, function, type, and file name says what the thing is or does, in plain words someone new to the code would understand years from now, without the context you have today. Avoid abbreviations, jargon from the task at hand, and names that only make sense mid-change (`data2`, `newFix`, `handleThing`). If a name needs a comment to explain it, choose a better name.
+- **Reuse before writing.** Prefer what the codebase already has, then the standard library, then a dependency already in use, and only then new code. When two places need the same logic, extract it once instead of copying it.
+- **Keep functions focused.** One job per function, readable top to bottom, without splitting it into fragments the reader has to jump between.
+- **Use names that last.** Say what the thing is or does in plain words someone new would understand. Avoid abbreviations, task-specific jargon, and names like `data2` or `newFix`.
