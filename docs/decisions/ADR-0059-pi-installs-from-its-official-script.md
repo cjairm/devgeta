@@ -67,7 +67,9 @@ the version-drift problems ADR-0047 closed.
 themes, no shared skills, no agent-sync entries, no `coder_launch` wiring. The
 two-agent sync contract (`internal/apps/opencode/permissions_test.go`) is
 deliberately not extended; how devgeta should configure Pi is undecided until a
-later cycle.
+later cycle. *(Amended by [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md):
+Pi now installs a curated extension set at configure time. Everything else in
+this decision still stands.)*
 
 **7. Devgeta validates Node.js ≥ 22.19 and npm before running the script.**
 Terminal apps install before the language phase, so a clean-machine full

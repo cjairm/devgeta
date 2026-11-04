@@ -78,3 +78,5 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0056](ADR-0056-the-dashboard-lists-agents-in-their-own-section.md) — The dashboard lists agents in their own section
 - [ADR-0057](ADR-0057-the-dashboard-takes-its-pane-move-keys-from-tmux.md) — The dashboard takes its pane-move keys from tmux
 - [ADR-0058](ADR-0058-devgeta-instructions-live-in-their-own-file.md) — Devgeta's agent instructions live in their own file
+- [ADR-0059](ADR-0059-pi-installs-from-its-official-script.md) — Pi installs from its official script, keyed on the managed-install root
+- [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md) — Pi extensions install through Pi's own package manager, at configure time

@@ -2,15 +2,18 @@
 //
 // Pi (@earendil-works/pi-coding-agent) is a terminal AI-coding harness. This
 // module provides installation and state management for Pi with devgeta
-// integration. Configuration (themes, skills, shared config) is deliberately
-// out of scope for now — see ADR-0059 decision 6.
+// integration. Configuration is limited to a curated extension set installed
+// through Pi's own package manager; themes, skills and two-agent parity stay
+// out of scope (ADR-0059 decision 6, ADR-0060).
 //
 // References:
 // - Official installer: https://pi.dev/install.sh
+// - Package commands: `pi install <source>` / `pi remove <source>` / `pi list`
 
 package pi
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -48,6 +51,22 @@ func New() *Pi {
 // successful install. Unlike opencode's, its shebang is `#!/bin/sh` — POSIX —
 // so it runs under `sh` (dash on Debian), not bash.
 const piInstallScriptURL = "https://pi.dev/install.sh"
+
+// piExtensions is the curated set Pi is configured with, installed through Pi's
+// own package manager (`pi install <npm source>`). Pi owns the versions, the
+// npm tree and the settings entries; devgeta only states which sources it
+// wants present (ADR-0060). Add an extension here and to the list in
+// docs/apps/pi.md.
+var piExtensions = []string{
+	"npm:pi-subagents",
+	"npm:pi-web-access",
+	"npm:pi-schedule-prompt",
+	"npm:pi-powerline-footer",
+	"npm:pi-openrouter-advanced-provider",
+	"npm:pi-openrouter-request-details",
+	"npm:pi-stalled-agent-recovery",
+	"npm:pi-thinking-reformatter",
+}
 
 // piMinNodeVersion is what the official script demands in its own preflight:
 // Node.js 22.19.0 or newer plus npm. Validating it here — before the download
@@ -152,16 +171,137 @@ func (p *Pi) SoftInstall() error {
 	return p.Install()
 }
 
-// Uninstall removes only the managed install root. ~/.pi/agent is Pi's own
-// config/session home — sessions, agent state, skills — and must survive
-// (ADR-0059 decision 3). os.RemoveAll rather than a shelled `rm -rf` so
-// pkg/paths' test sandbox contains it, and because RemoveAll deletes a
-// symlinked root itself rather than following it into whatever it points at.
-// ForceConfigure registers pi in the installed list and nothing else.
-// There are no themes, no shared skills and no generated config files: how
-// devgeta should configure Pi is undecided until a later cycle (ADR-0059
-// decision 6).
-func (p *Pi) ForceConfigure() error {
+// piAgentDir is Pi's own config home. Pi relocates it when
+// PI_CODING_AGENT_DIR is set, and both the settings file and the npm tree move
+// with it, so devgeta has to read the same directory Pi writes — reading
+// ~/.pi/agent while Pi writes elsewhere would make every soft configure
+// reinstall the whole set. Without the override it is the managed install
+// root's parent, which is ~/.pi/agent by construction (ADR-0059).
+func piAgentDir() string {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir == "" {
+		return filepath.Dir(paths.Paths.Home.PiInstall)
+	}
+	// Pi expands a leading tilde itself (expandTildePath), so match it rather
+	// than treating "~/x" as a path relative to the working directory.
+	if dir == "~" {
+		return paths.Paths.Home.Root
+	}
+	if rest, ok := strings.CutPrefix(dir, "~/"); ok {
+		return filepath.Join(paths.Paths.Home.Root, rest)
+	}
+	return dir
+}
+
+// piSettingsPath is where `pi install` records the package sources it has
+// installed: <agent dir>/settings.json.
+func piSettingsPath() string {
+	return filepath.Join(piAgentDir(), "settings.json")
+}
+
+// readInstalledExtensions returns the package sources Pi's settings already
+// declare. A missing settings file means nothing is installed yet. An entry is
+// either a bare source string or an object carrying one under "source" — Pi's
+// own settings accepts both — so both shapes are read; anything else in the
+// file is left to Pi.
+func readInstalledExtensions() (map[string]bool, error) {
+	installed := map[string]bool{}
+	settingsPath := piSettingsPath()
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return installed, nil
+		}
+		return nil, fmt.Errorf("failed to read %s: %w", settingsPath, err)
+	}
+	var settings struct {
+		Packages []json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(data, &settings); err != nil {
+		return nil, fmt.Errorf("failed to parse %s: %w", settingsPath, err)
+	}
+	for _, raw := range settings.Packages {
+		var source string
+		if err := json.Unmarshal(raw, &source); err == nil {
+			installed[source] = true
+			continue
+		}
+		var entry struct {
+			Source string `json:"source"`
+		}
+		if err := json.Unmarshal(raw, &entry); err == nil && entry.Source != "" {
+			installed[entry.Source] = true
+		}
+	}
+	return installed, nil
+}
+
+// configureExtensions installs the curated extensions Pi does not already
+// declare. The soft path (install) skips what settings already list, so a
+// re-run costs no network; force re-runs every install, which is how Pi picks
+// up newer versions of an already-declared source.
+func (p *Pi) configureExtensions(force bool) error {
+	installed, err := readInstalledExtensions()
+	if err != nil {
+		return err
+	}
+	var pending []string
+	for _, source := range piExtensions {
+		if !force && installed[source] {
+			continue
+		}
+		pending = append(pending, source)
+	}
+	if len(pending) == 0 {
+		return nil
+	}
+	if _, err := cmd.LookPathFn(constants.Pi); err != nil {
+		return fmt.Errorf(
+			"configuring pi extensions needs the pi binary; install pi first (dg install --only pi), then re-run: %w",
+			err,
+		)
+	}
+	// A partial set is not an acceptable end state (§4, atomic installation),
+	// so track what this run added and undo it if a later install fails. Only
+	// sources that were not already declared count: a force re-install of an
+	// extension Pi already listed is not ours to remove.
+	var added []string
+	for _, source := range pending {
+		if err := p.ExecuteCommand("install", source); err != nil {
+			return p.rollbackExtensions(source, err, added)
+		}
+		if !installed[source] {
+			added = append(added, source)
+		}
+	}
+	return nil
+}
+
+// rollbackExtensions uninstalls what this run installed, newest first. A
+// removal that fails does not stop the rest from being undone — the goal is as
+// close to the original state as possible, and every failure is named so the
+// user can finish the job with `pi remove`. pi install records a package only
+// after it installs successfully, so the failing source itself needs no removal
+// (ADR-0060).
+func (p *Pi) rollbackExtensions(failed string, cause error, added []string) error {
+	var failures []string
+	for i := len(added) - 1; i >= 0; i-- {
+		if err := p.ExecuteCommand("remove", added[i]); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", added[i], err))
+		}
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf(
+			"failed to install pi extension %s: %w; rollback could not remove %s — remove these with `pi remove <package>`",
+			failed, cause, strings.Join(failures, "; "),
+		)
+	}
+	return fmt.Errorf("failed to install pi extension %s: %w", failed, cause)
+}
+
+// registerInstalled records pi in the installed list, after the extensions
+// have landed so a failed install does not mark pi as configured.
+func (p *Pi) registerInstalled() error {
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
 		return fmt.Errorf("failed to create global config: %w", err)
@@ -173,12 +313,32 @@ func (p *Pi) ForceConfigure() error {
 	return gc.Save()
 }
 
-// SoftConfigure is the same registration: with no config files, there is no
-// marker to check before writing the installed list.
-func (p *Pi) SoftConfigure() error {
-	return p.ForceConfigure()
+// ForceConfigure installs every curated extension (re-installing the ones
+// already declared) and registers pi in the installed list. Themes, shared
+// skills and agent-config parity remain out of scope (ADR-0059 decision 6).
+func (p *Pi) ForceConfigure() error {
+	if err := p.configureExtensions(true); err != nil {
+		return err
+	}
+	return p.registerInstalled()
 }
 
+// SoftConfigure installs only the extensions Pi's settings do not already
+// declare, then registers pi. No config files are written, so there is no
+// marker to check beyond Pi's own settings.
+func (p *Pi) SoftConfigure() error {
+	if err := p.configureExtensions(false); err != nil {
+		return err
+	}
+	return p.registerInstalled()
+}
+
+// Uninstall removes only the managed install root. ~/.pi/agent is Pi's own
+// config/session home — sessions, agent state, skills — and must survive
+// (ADR-0059 decision 3). os.RemoveAll rather than a shelled `rm -rf` so
+// pkg/paths' test sandbox contains it, and because RemoveAll deletes a
+// symlinked root itself rather than following it into whatever it points at.
+// Installed extensions are Pi's own state and stay put (ADR-0060).
 func (p *Pi) Uninstall() error {
 	gc := &config.GlobalConfig{}
 	if err := gc.Load(); err != nil {
