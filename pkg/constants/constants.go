@@ -135,6 +135,7 @@ const (
 	Nvim               = "nvim"
 	Claude             = "claude"
 	OpenCode           = "opencode"
+	Pi                 = "pi"
 	Shared             = "shared"
 	OpenSSL            = "openssl"
 	PkgConfig          = "pkg-config"

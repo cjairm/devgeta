@@ -23,6 +23,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/mise"
 	"github.com/cjairm/devgeta/internal/apps/neovim"
 	"github.com/cjairm/devgeta/internal/apps/opencode"
+	"github.com/cjairm/devgeta/internal/apps/pi"
 	"github.com/cjairm/devgeta/internal/apps/raycast"
 	"github.com/cjairm/devgeta/internal/apps/rtk"
 	"github.com/cjairm/devgeta/internal/apps/shottr"
@@ -72,6 +73,7 @@ var Meta = map[string]AppMeta{
 	constants.Mise:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Neovim:     {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.OpenCode:   {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
+	constants.Pi:         {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
 	constants.Raycast:    {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Rtk:        {Coordinator: "ai-tools", ItemType: "package", HasShellFeature: false},
 	constants.Shottr:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
@@ -141,6 +143,7 @@ var factories = map[string]func() apps.App{
 	constants.Mise:       func() apps.App { return mise.New() },
 	constants.Neovim:     func() apps.App { return neovim.New() },
 	constants.OpenCode:   func() apps.App { return opencode.New() },
+	constants.Pi:         func() apps.App { return pi.New() },
 	constants.Raycast:    func() apps.App { return raycast.New() },
 	constants.Rtk:        func() apps.App { return rtk.New() },
 	constants.Shottr:     func() apps.App { return shottr.New() },

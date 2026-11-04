@@ -259,6 +259,10 @@ var Paths = struct {
 		// opencode's install, idempotency check and uninstall all key on it
 		// (ADR-0047).
 		OpenCode string
+		// PiInstall is the managed-install root Pi's official script creates
+		// under ~/.pi/agent. ~/.pi/agent itself is Pi's own config/session
+		// home and is NOT devgeta's — see ADR-0059.
+		PiInstall string
 	}
 	System struct {
 		Applications string
@@ -387,9 +391,14 @@ var Paths = struct {
 	Home: struct {
 		Root     string
 		OpenCode string
+		// PiInstall is the managed-install root Pi's official script creates,
+		// under ~/.pi/agent. ~/.pi/agent itself is Pi's own config/session
+		// home and is NOT devgeta's — see ADR-0059.
+		PiInstall string
 	}{
-		Root:     GetHomeDir(),
-		OpenCode: GetHomeDir(".opencode"),
+		Root:      GetHomeDir(),
+		OpenCode:  GetHomeDir(".opencode"),
+		PiInstall: GetHomeDir(".pi/agent/install"),
 	},
 	System: struct {
 		Applications string

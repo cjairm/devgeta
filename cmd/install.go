@@ -42,6 +42,7 @@ var appToCoordinator = map[string]string{
 	"mise":       "terminal",
 	"neovim":     "terminal",
 	"opencode":   "terminal",
+	"pi":         "terminal",
 	"tmux":       "terminal",
 	"alacritty":  "desktop",
 	"aerospace":  "desktop",

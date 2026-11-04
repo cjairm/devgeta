@@ -88,7 +88,7 @@ dg install --only neovim --only docker    # neovim (terminal) + docker (desktop)
 
 | Coordinator | Apps                                                                                          |
 | ----------- | --------------------------------------------------------------------------------------------- |
-| terminal    | claude, fastfetch, git, lazydocker, lazygit, mise, neovim, opencode, tmux                     |
+| terminal    | claude, fastfetch, git, lazydocker, lazygit, mise, neovim, opencode, pi, tmux                 |
 | desktop     | aerospace, alacritty, brave, docker, flameshot, ghostty, gimp, i3, raycast, shottr, ulauncher |
 | ai-tools    | rtk                                                                                           |
 
@@ -243,7 +243,7 @@ dg configure <app> [--force] [--only=<parts>]
 
 **Behavior**:
 
-- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `raycast`, `rtk`, `shottr`, `tmux`, `ulauncher`.
+- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `pi`, `raycast`, `rtk`, `shottr`, `tmux`, `ulauncher`.
 - Apps that have no configuration to deploy (e.g., `brave`) return `ErrConfigureNotSupported` — the command prints an info message and exits zero.
 - Unknown app names print a sorted list of supported apps and exit non-zero.
 - Unknown `--only` values list the app's valid parts and exit non-zero; `--only` without `--force` is an error; apps without parts reject `--only`.

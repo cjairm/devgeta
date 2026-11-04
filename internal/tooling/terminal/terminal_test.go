@@ -45,7 +45,7 @@ func TestInstallTerminalApps_NoFilter(t *testing.T) {
 	allApps := []string{
 		constants.Fastfetch, constants.Git, constants.Mise,
 		constants.Neovim, constants.Tmux, constants.OpenCode,
-		constants.Claude, constants.LazyDocker, constants.LazyGit,
+		constants.Claude, constants.Pi, constants.LazyDocker, constants.LazyGit,
 	}
 	entries, mocks := buildOverride(allApps...)
 	term := &Terminal{appsOverride: entries}

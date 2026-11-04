@@ -11,287 +11,32 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-09-29
+**Last updated:** 2026-11-04
 
 ---
 
 ## Recent changes
 
-- `dg ws` lists a repo's plain windows, not its session (2026-09-29). The
-  repo-session row (ADR-0052) stood for every plain window in the session but
-  showed only the session's name, usually the repo's own, and enter reached
-  only the first window. Each plain window now gets its own row, named by the
-  window, and `d d` on it closes just that window. The non-obvious part: rows
-  are keyed and switched by tmux's window id (`@7`), read in the same pane
-  scan, because automatic-rename gives every shell the name `zsh`, and a name
-  lookup would switch to or close the wrong one. `$` no longer acts on these
-  rows, since it renames a whole session. ADR-0052's 2026-09-29 amendment has
-  the rest.
-
-- `dg ws` splits into a spaces section and an agents section (2026-09-28).
-  Every worktree/session/pane row used to carry its own agent-state glyph
-  (ADR-0008); most rows aren't agents, so the tree was mostly noise, and
-  answering "who needs me" meant scanning dot colors across every repo.
-  ADR-0055 has each coder write its own identity (`@dg_agent_kind`) alongside
-  the state it already wrote, separately from whether that state has been
-  seen — so an agent stays listed even right after you look at it. ADR-0056
-  moves all agent-state display into a new, second section below spaces: one
-  flat, urgency-sorted list across every repo and session, two lines per
-  agent (glyph + location, then state word + coder name), with its own fold
-  (`a`/`w`), adjustable split (`+`/`-`, or drag the header), and filter scope
-  (only open sections are searched). Space rows lost their status markers
-  entirely. ADR-0057 has the dashboard read its own pane-move keys from tmux
-  (`list-keys -T root`) instead of hard-coding a copy, falling back to
-  `ctrl+h/j/k/l`; at an edge of the two sections it hands the move back to
-  tmux's own `select-pane`, the same way vim-tmux-navigator does from Neovim.
-  A real, empirically-confirmed surprise from the investigation: OpenCode's
-  `server.instance.disposed` event and even its own process `exit` handler
-  do not fire on that coder's real double-ctrl-c quit gesture or a bare
-  `SIGTERM` — the dashboard's agents list stays correct anyway, since a pane
-  whose foreground process has reverted to a plain shell is never listed
-  regardless of whether the identity option was ever explicitly unset. See
-  `docs/plans/cycles/2026-09-28-ws-agents-section.md` and
-  ADR-0055/0056/0057.
-
-- `devgeta` was invisible to anything that did not read `~/.zshrc`
-  (2026-09-22). An AI coding agent reported `devgeta is not available on PATH`
-  and went looking for a missing install, while the binary sat working in
-  `~/.local/bin`. `install.sh` writes its PATH entry into the user's **shell
-  config** — `~/.zshrc` for zsh — and that file is read by interactive shells
-  only. Anything that shells out without a profile (an agent running `zsh -c`,
-  a git or editor hook, cron, launchd, an app started from Finder) inherits a
-  PATH without it. `~/.zshenv`, the one file every zsh reads, already carried
-  devgeta's `path_helper` repair for a neighbouring problem, but that block
-  guards on `/usr/bin` being absent and so no-ops on a PATH that is merely
-  missing `~/.local/bin`. It now also puts the install directory on PATH when
-  it is not already there. The directory is asserted against `install.sh`'s own
-  `INSTALL_DIR` in `embedded_test.go` rather than copied, because the installer
-  and the script have to name the same place and nothing else would notice if
-  one of them moved. Still zsh-only: `setupZshenv` skips bash users and bash
-  has no unconditional equivalent (`$BASH_ENV` must be exported by the parent).
-
-- One definition of where the cursor may sit in `dg ws` (2026-09-22). Movement
-  used `navigableIndices`; the post-rebuild clamp used `leafIndices`, which
-  never included a repo header. A rebuild runs on every 3-second tmux tick, so
-  any row the cursor could move to but not be clamped to was taken back
-  seconds later without a keypress — visible as a selected header silently
-  becoming the worktree below it. Latent for collapsed headers since ADR-0003;
-  it surfaced when headers became a common landing spot. `leafIndices` is
-  deleted rather than fixed: the defect was having two answers.
-
-- A tmux pane could vanish from every scan (2026-09-22). `PaneStates` asked
-  tmux for six tab-separated fields and dropped any line that did not have
-  exactly six. `ExecCommand` returns its stdout `TrimSpace`d, which eats the
-  final line's trailing tab whenever that pane has no `@dg_agent_state` set — so
-  the last pane of the scan was discarded, and tmux orders the scan by session
-  name, making the victim whichever session sorts last. That pane's worktree
-  read as windowless in `dg ws` and `dg wt list` while its window was plainly
-  there, and its session was listed as standalone because the scan no longer saw
-  a `wt-` window in it. The parser now accepts five fields as well as six. Every
-  existing fixture ended in `"\n"`, which keeps the tab inside the string, so no
-  test could reproduce the shape production actually sees; the regression test is
-  written trimmed.
-
-- opencode installs the same way on both platforms (2026-09-16). opencode
-  1.18.30 crashed while building its system prompt, before any request reached a
-  model, which turned every `dg task review-run` reviewer into an opaque
-  `ERROR(Unexpected server error...)` — the cause was visible only in opencode's
-  own log. Recovery on macOS meant leaving devgeta's channel entirely, because
-  the Homebrew formula offers only `stable`: no pin, no downgrade. Investigating
-  that exposed three further defects on the Debian side, all of which a naive
-  macOS switch would have inherited — the install script ran under `sh` though
-  its shebang is bash (and on Debian `sh` is dash), the idempotency check asked
-  `dpkg -l` about a binary that is never in dpkg so every `dg install` re-ran
-  the installer, and uninstall ran `apt-get remove` against a file in
-  `~/.opencode`. Both platforms now run the official script with bash and key
-  detection, idempotency and uninstall on the binary it writes. devgeta owns the
-  `~/.opencode/bin` PATH entry because the script edits the user's own rc files,
-  which devgeta does not own and cannot keep consistent. Nothing is pinned; that
-  trade, and the cost of executing an unverified script from a moving branch
-  head, are recorded in ADR-0047.
-
-- An alias can go missing from a working install, and now devgeta says so
-  (2026-09-15). Two unrelated causes with one symptom. `alias cat="bat"` was
-  written inside the template's `{{if .Eza}}` block, so `cat` tracked eza
-  instead of bat — lost on a machine with bat and no eza, and pointing at a
-  missing binary on a machine with eza and no bat. Separately, a shell config
-  that loads anything _after_ `devgeta.zsh` gives that file the last word:
-  oh-my-zsh's `lib/theme-and-appearance.zsh` runs a plain `alias ls='ls -G'`
-  which does not preserve an existing alias, so a devgeta block above it loses
-  `ls` to plain `/bin/ls` with no error anywhere, while the same block appended
-  at the end keeps eza. `dg configure` now reports that ordering and names the
-  lines, but deliberately does not move anything: the shell config belongs to
-  the user, and a dotfiles or provisioning tool that generates it would undo
-  the move on its next run. Only a line devgeta itself wrote is ever removed
-  from that file. eza and bat were also registered as apps — they implemented
-  the whole contract but were missing `Name()`/`Kind()`, so `dg configure eza`
-  answered "unknown app" and a wrong shell-feature flag could only be repaired
-  by a full `dg install`.
-
-- The output-budget runner works on a stock Mac again (2026-09-14).
-  `output-budget-run.sh` starts with `#!/usr/bin/env bash`, which on a Mac
-  without Homebrew bash is `/bin/bash` 3.2, and since v1.23.0 it used
-  `mapfile` (bash 4) plus plain `"${arr[@]}"` on arrays that can be empty,
-  which `set -u` rejects before bash 4.4. With `integrations.output_budget`
-  on, every wrapped command exited 1 with no output, hiding both its output
-  and its real exit status. Lines are now read with a `while read` helper and
-  empty arrays are expanded as `${a[@]+"${a[@]}"}`. The behavior tests only
-  caught this because the machine running them had no newer bash on PATH, so
-  two guards back it now: `TestEmbeddedShellScriptsAvoidBash4OnlySyntax` bans
-  bash-4-only syntax in every embedded `.sh`, and
-  `TestOutputBudgetRun_WorksUnderBash3` runs the runner under a real
-  `/bin/bash` 3 wherever one exists. The new test also caught a smaller,
-  older contract violation: a command with no output replayed a lone newline
-  instead of nothing.
-
-- `dg archive <source> <destination-dir>` packs a folder onto an external
-  drive for a machine move (2026-09-13) — a one-shot archive, not an
-  incremental backup (`dg backup` stays reserved for devgeta's own config
-  snapshots). Written entirely in Go (`archive/tar` +
-  `github.com/klauspost/compress/zstd`), not by shelling out to `tar`: no
-  external binary to install on a fresh Mac, one code path on both supported
-  platforms, and each file is hashed while it is copied into the archive so
-  the checksum manifest costs no extra read of the source. See
-  [ADR-0040](decisions/ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md).
-  Skips only what's _proven_ regenerable — a `CACHEDIR.TAG` with the exact
-  standard signature, a `pyvenv.cfg` virtualenv, or a named folder
-  (`node_modules`, `target`, `vendor`, …) next to the manifest file that
-  proves a tool generates it, never by folder name or `.gitignore` alone,
-  so a `.env` file or a Go project's committed `vendor/` is never silently
-  dropped. See
-  [ADR-0041](decisions/ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md).
-  Refuses to write anything if the scan finds unreadable files or
-  undownloaded iCloud placeholders — hours into a large archive is the wrong
-  time to discover a permission problem — and every output (archive,
-  `sha256sum`-format manifest, skip report) is written to a `.partial` file
-  and only renamed into place once all three have synced, so a failed run
-  never leaves a file that looks complete but isn't. Verifies by default by
-  re-reading the archive from the destination and hashing every entry against
-  the manifest. Full design, the tar/zstd/Windows-naming research behind it,
-  and the manual cross-OS extraction checklist:
-  [2026-09-13-dg-archive cycle doc](plans/cycles/2026-09-13-dg-archive.md).
-
-- A long `--prompt` no longer gets silently dropped by `dg wt create`
-  (2026-08-07). Every pane's command was typed into the pane with
-  `tmux send-keys` right after creation; macOS/BSD's tty input queue caps at
-  1024 bytes, so a write past it discarded the excess **and the trailing
-  Enter** while `send-keys` still exited 0 — the window looked fine, the coder
-  sat at an empty session, and `dg wt create` reported success. See
-  [ADR-0021](decisions/ADR-0021-pane-commands-are-exec-d-not-typed.md). Now
-  every tmux call that brings a pane into existence (`CreateWindow`,
-  `CreateWindowInSession`, `CreateSessionWithWindow`, `SplitWindow`) carries
-  that pane's command as a shell-command (process arguments, ~1 MiB of
-  headroom) instead of keystrokes; the paths that write into an
-  already-existing pane (`ensureWindow`'s repair branch,
-  `launchReviewInLiveWindow`'s idle-shell reuse, `dg wt move`'s retarget)
-  still use `send-keys`, now guarded to reject any payload over 1023 bytes
-  rather than truncate it silently. The devgeta-owned launch also stopped
-  depending on the `cc`/`oc` shell alias — a created pane execs the coder's
-  resolved binary path directly, and the alias devgeta still writes into
-  `devgeta.zsh` is now rendered from the same `pkg/constants.CoderLaunch`
-  recipe the launch itself reads, so the two cannot drift. One user-visible
-  consequence of that: the pre-create install check probes the **binary**
-  instead of the alias, so a coder installed outside devgeta now passes it and
-  launches correctly, and a failure there no longer means "devgeta never
-  configured this tool" — only that the tool does not resolve.
-
-- Dedup suppresses duplicate comments, never the verdict (2026-08-07). A review
-  approved a PR whose missing route coverage was still live: the finding had
-  been deduplicated against an existing Copilot comment raising the same point,
-  and "already raised" was then read as "non-blocking". The hole was in
-  `/review-pr` step 3 — three of its four drop rules require the concern to be
-  handled, and the fourth ("the same point already appears in a review summary
-  or a conversation comment") required nothing, so a finding it dropped left the
-  verdict entirely. The same step then told the agent to settle that finding's
-  journal entry `--as answered`, deleting the concern from the only record that
-  would raise it next round. Step 3 now states that dedup decides what you post
-  and never the verdict, and forbids settling an entry dropped only because
-  someone else raised the same still-live point. Step 6 spells out three cases,
-  mirrored in `/approve-pr`: a live blocker **anyone** raised means no approval
-  plus an `--event comment` naming the one outstanding item and committing to
-  approve once it is addressed; a live non-blocking comment means `LGWC` approve
-  naming who left it; a failing check means `LGWC` approve naming the check —
-  `/approve-pr`'s call, since `/review-pr` never fetches check status.
-  `/review-loop` gets the journal-side half: "already raised" is never grounds
-  to settle a finding, stated in step 4 and in the fix subagent's never-do list,
-  which the dispatch carries verbatim. Five guard tests in
-  `internal/apps/opencode/permissions_test.go` pin the prose, each verified by
-  removing the sentence and confirming the test fails.
-
-- Tests are targeted by default; the full suite is the release gate (2026-08-07).
-  The suite grew to ~2,500 tests in ~80 packages (~5.5 min cold), and the docs
-  told every contributor and agent to run all of it before every commit — a cost
-  paid dozens of times a day for signal a targeted run already gives. CLAUDE.md
-  §6 now has **"Which tests to run"**: the changed package plus its in-repo
-  importers, found with a `go list` query rather than guessed. `go test ./...` is
-  required in §9 step 1 (release) and when a change's blast radius really is the
-  whole tree (`pkg/paths` has 71 dependents; anything under `configs/` that the
-  embedded-config tests read). The same edit went through CONTRIBUTING.md,
-  [testing-patterns.md](guides/testing-patterns.md),
-  [releasing.md](guides/releasing.md), [plans/TEMPLATE.md](plans/TEMPLATE.md),
-  and the Makefile/README `make test` labels — but **not** the skills under
-  `configs/shared/skills/`: a first pass edited four of them and was reverted,
-  because those ship to every user and run in repos that have no such policy.
-  That boundary is now written down as a §4 non-negotiable, in principle 8, and
-  in CLAUDE.md §12 "Anything we ship is built for strangers" — it covers every
-  shipped artifact and every size of change, not just skills. Known trade:
-  targeted runs cannot see
-  cross-package interference or load-dependent flakiness — those now surface only
-  at the release gate, and nothing in CI catches them earlier, because there is
-  no CI test job. Measured cause of the runtime: the root package alone is 319s
-  of the 328s suite (bash-spawning hook tests, no `t.Parallel()`); everything
-  else combined is ~30s.
-
-- Agent memory is writable again (2026-08-07). Both permission layers denied
-  `~/.claude/projects/<slug>/memory/`, Claude Code's per-project memory
-  directory, so the agent could not write a memory file. Memory holds notes,
-  not permissions or hooks, so `agent-config-guard.sh`/`.js` clause 1 gained a
-  second exception beside `worktrees` (scoped to a file strictly under
-  `projects/<slug>/memory/`, `.claude`-only), and the settings floor's blanket
-  `Edit(~/.claude/**)` was replaced by an enumeration of the config surfaces
-  under that root — deny beats allow with no specificity tiebreak, so no
-  carve-out could re-open it otherwise. See
-  [ADR-0014](decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)'s
-  memory amendment. Both agents changed symmetrically, and
-  `TestGlobalClaudeFloorLeavesMemoryWritable` stops the blanket coming back.
-
-- Review scope, output, and steering changed together (2026-08-07). A review now
-  covers the branch's **working state** — commits AND uncommitted work, untracked
-  files included — so `review-scope` and `branch-diff` diff `git diff <merge-base>`
-  (two dots, against the worktree) and `review-run` only refuses a branch with no
-  commits ahead **and** a clean tree. See
-  [ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md);
-  `collectWorktreeDiff` is the single gather behind both `BranchDiff` and the
-  `dg ws` diff pane, so the two cannot drift. `review-run` also gained
-  `--note <text>` (the human's own emphasis for every reviewer of the round,
-  framed so it cannot narrow the review; forwarded by `/review-loop --note`),
-  dropped its trailing `open:` line (findings live in the journal — `review-notes`
-  is what lists them, and `/review-loop` reads its ids from there), and reports
-  progress **as it happens** via the new `CommandParams.OnStdoutLine`, which hands
-  a caller each stdout line while the child still runs. That progress is
-  **sampled**: at most one heartbeat every 30s
-  (`progressHeartbeatInterval`), naming the running counters and the tool call
-  that triggered it, because the line-per-tool-call version measured ~200 lines a
-  round that `/review-loop` captured and paid tokens for. The full stream is
-  behind the existing root `--verbose` flag — no new flag — which `cmd/task.go`
-  copies onto `TaskManager.Verbose`; every tool call is still counted while quiet,
-  so the closing line totals the whole run.
-
-- `dg wt create` gained `--prompt <text>` and repeatable `--pane <command>`
-  (2026-07-31). `--prompt` starts the layout's AI coder already working on a
-  task; it is delivered as a **launch argument** (`cc '<text>'`,
-  `oc --prompt '<text>'`), never as keystrokes after the TUI boots — see
-  [ADR-0011](decisions/ADR-0011-agent-prompt-as-launch-argument.md). It
-  errors on a layout with no AI pane rather than silently dropping the prompt.
-  `--pane` adds a shell pane beside the layout and its value is used **unquoted**
-  (it is a shell command line, so `'cd api && make dev'` works); an empty value
-  is rejected. Both are create-only — repair takes neither.
-  Implemented as transformations on a resolved `worktree.Layout`
-  (`WithPrompt`/`WithExtraPanes`), so no `Create`/`CreateAt`/TUI signature
-  changed. In the same change, `Layout`'s parallel `paneCheckers` slice was
-  folded into unexported `Pane.check`/`Pane.prompt` fields — a pane's command,
-  install check, and prompt form now come from one `AICoder` via `coderPane`,
-  which is why `Pane` is no longer comparable with `==`.
+- Pi is a devgeta-managed terminal app (2026-11-04). `dg install` now sets up
+  Pi (`@earendil-works/pi-coding-agent`) alongside Claude and OpenCode, from
+  its official installer run under `sh` — its shebang is `#!/bin/sh`, the
+  inverse of opencode's bash contract, so the same `RunInstallScript` staging
+  needed a different interpreter. Three things make the app shape different
+  from its neighbors. First, the script requires Node.js 22.19+ and installs
+  Node itself only interactively, which devgeta never is — so the app runs
+  its own preflight matching the script's, before anything is downloaded,
+  and a clean-machine full install (terminal phase runs before languages)
+  fails with "install Node first (`dg install --only languages`), then
+  re-run" instead of a wasted download. Second, the managed install root
+  (`~/.pi/agent/install`) shares a home with Pi's own state
+  (`~/.pi/agent` — sessions, config, agent state), so uninstall removes
+  only the `install` subtree; deleting all of `~/.pi` would take the user's
+  sessions with it. Third, unlike opencode and claude, Pi gets no themes, no
+  shared skills, no permission sync, and no shell feature — how devgeta
+  should configure it is undecided until a later cycle, and the two-agent
+  sync contract is deliberately not extended to a third. The channel repeats
+  ADR-0047's accepted opencode trade knowingly; ADR-0059 records it. Review
+  follow-ups live in `docs/plans/cycles/2026-11-04-pi-app.md`.
 
 ## Recent specs completed
 

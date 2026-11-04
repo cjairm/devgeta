@@ -13,6 +13,7 @@ writing down. Not every installed app has one.
 | [handy.md](handy.md)       | offline speech-to-text; Linux needs manual installation           |
 | [neovim.md](neovim.md)     | kickstart.nvim setup, and the manual uninstall                    |
 | [opencode.md](opencode.md) | install channel, model picks and fallbacks, the notify plugin     |
+| [pi.md](pi.md)             | official-script install, managed-root uninstall, minimal scope    |
 | [raycast.md](raycast.md)   | replacing Spotlight; Ulauncher on Linux                           |
 | [ripgrep.md](ripgrep.md)   | search flags, multiline/PCRE2, pairing with `fd` and `fzf`        |
 | [rtk.md](rtk.md)           | token-compaction CLI and its opt-in agent integration             |

@@ -12,6 +12,7 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/mise"
 	"github.com/cjairm/devgeta/internal/apps/neovim"
 	"github.com/cjairm/devgeta/internal/apps/opencode"
+	"github.com/cjairm/devgeta/internal/apps/pi"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/core/autoconf"
@@ -121,6 +122,7 @@ func defaultApps() []namedInstallable {
 		{constants.Tmux, tmux.New()},
 		{constants.OpenCode, opencode.New()},
 		{constants.Claude, claude.New()},
+		{constants.Pi, pi.New()},
 		{constants.LazyDocker, lazydocker.New()},
 		{constants.LazyGit, lazygit.New()},
 	}
