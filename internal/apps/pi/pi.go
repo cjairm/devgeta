@@ -27,6 +27,7 @@ import (
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/utils"
 )
 
 var _ apps.App = (*Pi)(nil)
@@ -85,20 +86,26 @@ func (p *Pi) requireCompatibleNode() error {
 	if err != nil {
 		return fmt.Errorf(
 			"pi needs Node.js %d.%d or newer and npm; node was not found — install Node first (dg install --only languages), then re-run: %w",
-			piMinNodeMajor, piMinNodeMinor, err,
+			piMinNodeMajor,
+			piMinNodeMinor,
+			err,
 		)
 	}
 	major, minor, ok := parseNodeVersion(strings.TrimSpace(stdout))
 	if !ok || major < piMinNodeMajor || (major == piMinNodeMajor && minor < piMinNodeMinor) {
 		return fmt.Errorf(
 			"pi needs Node.js %d.%d or newer; found %s — upgrade Node (dg install --only languages), then re-run",
-			piMinNodeMajor, piMinNodeMinor, strings.TrimSpace(stdout),
+			piMinNodeMajor,
+			piMinNodeMinor,
+			strings.TrimSpace(stdout),
 		)
 	}
 	if _, err := cmd.LookPathFn("npm"); err != nil {
 		return fmt.Errorf(
 			"pi needs Node.js %d.%d or newer and npm; npm was not found — install npm first (dg install --only languages), then re-run: %w",
-			piMinNodeMajor, piMinNodeMinor, err,
+			piMinNodeMajor,
+			piMinNodeMinor,
+			err,
 		)
 	}
 	return nil
@@ -199,13 +206,14 @@ func piSettingsPath() string {
 	return filepath.Join(piAgentDir(), "settings.json")
 }
 
-// readInstalledExtensions returns the package sources Pi's settings already
-// declare. A missing settings file means nothing is installed yet. An entry is
-// either a bare source string or an object carrying one under "source" — Pi's
-// own settings accepts both — so both shapes are read; anything else in the
-// file is left to Pi.
-func readInstalledExtensions() (map[string]bool, error) {
-	installed := map[string]bool{}
+// readInstalledExtensions reports, per curated extension, the source string Pi
+// currently declares for it (matched the way Pi matches — by package name, so
+// a pinned `npm:<pkg>@<version>` counts). A missing settings file means
+// nothing is installed yet. An entry is either a bare source string or an
+// object carrying one under "source" — Pi's own settings accepts both — so
+// both shapes are read; anything else in the file is left to Pi.
+func readInstalledExtensions() (map[string]string, error) {
+	installed := map[string]string{}
 	settingsPath := piSettingsPath()
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
@@ -222,18 +230,33 @@ func readInstalledExtensions() (map[string]bool, error) {
 	}
 	for _, raw := range settings.Packages {
 		var source string
-		if err := json.Unmarshal(raw, &source); err == nil {
-			installed[source] = true
-			continue
+		if err := json.Unmarshal(raw, &source); err != nil {
+			var entry struct {
+				Source string `json:"source"`
+			}
+			if err := json.Unmarshal(raw, &entry); err != nil {
+				continue
+			}
+			source = entry.Source
 		}
-		var entry struct {
-			Source string `json:"source"`
-		}
-		if err := json.Unmarshal(raw, &entry); err == nil && entry.Source != "" {
-			installed[entry.Source] = true
+		// Pi compares npm sources by package name, ignoring a version or tag.
+		// Preserve the declared source so a forced refresh does not unpin it.
+		for _, name := range piExtensions {
+			if source == name || strings.HasPrefix(source, name+"@") {
+				if _, exists := installed[name]; !exists {
+					installed[name] = source
+				}
+				break
+			}
 		}
 	}
 	return installed, nil
+}
+
+// extension is one curated source during a configure run.
+type extension struct {
+	source string
+	added  bool
 }
 
 // configureExtensions installs the curated extensions Pi does not already
@@ -245,55 +268,72 @@ func (p *Pi) configureExtensions(force bool) error {
 	if err != nil {
 		return err
 	}
-	var pending []string
-	for _, source := range piExtensions {
-		if !force && installed[source] {
+	var pending []extension
+	for _, name := range piExtensions {
+		source, exists := installed[name]
+		if exists && !force {
+			utils.PrintInfo("Pi extension already configured: " + source)
 			continue
 		}
-		pending = append(pending, source)
+		if !exists {
+			source = name
+		}
+		pending = append(pending, extension{source: source, added: !exists})
 	}
 	if len(pending) == 0 {
 		return nil
 	}
-	if _, err := cmd.LookPathFn(constants.Pi); err != nil {
+	executable, err := piExecutable()
+	if err != nil {
 		return fmt.Errorf(
 			"configuring pi extensions needs the pi binary; install pi first (dg install --only pi), then re-run: %w",
 			err,
 		)
 	}
-	// A partial set is not an acceptable end state (§4, atomic installation),
-	// so track what this run added and undo it if a later install fails. Only
-	// sources that were not already declared count: a force re-install of an
-	// extension Pi already listed is not ours to remove.
-	var added []string
-	for _, source := range pending {
-		if err := p.ExecuteCommand("install", source); err != nil {
-			return p.rollbackExtensions(source, err, added)
+	// A failed configure removes what it added; extensions it merely refreshed
+	// over are left alone — their prior installed version is not recoverable
+	// (ADR-0060 decision 4).
+	var done []extension
+	for _, ext := range pending {
+		utils.PrintInfo("Installing Pi extension " + ext.source + "...")
+		if err := p.runPi(executable, "install", ext.source); err != nil {
+			return p.rollbackExtensions(executable, ext.source, err, done)
 		}
-		if !installed[source] {
-			added = append(added, source)
-		}
+		utils.PrintSuccess("Installed Pi extension " + ext.source)
+		done = append(done, ext)
 	}
 	return nil
 }
 
-// rollbackExtensions uninstalls what this run installed, newest first. A
-// removal that fails does not stop the rest from being undone — the goal is as
-// close to the original state as possible, and every failure is named so the
-// user can finish the job with `pi remove`. pi install records a package only
-// after it installs successfully, so the failing source itself needs no removal
-// (ADR-0060).
-func (p *Pi) rollbackExtensions(failed string, cause error, added []string) error {
+// rollbackExtensions undoes a failed configure by removing, newest first, the
+// sources this run added. Extensions the run refreshed over an existing
+// declaration are left alone: Pi offers no query for the version that was
+// installed before the run, so re-installing the same spec would fetch the
+// latest again and restore nothing — and would risk a spurious "rollback
+// failed" on a package that was never disturbed. Each removal's failure is
+// collected rather than stopping the rest, and every failure is named so the
+// user can finish by hand with `pi remove <package>`. The failing source
+// itself needs no removal: pi install records a package only after its own
+// install succeeds.
+func (p *Pi) rollbackExtensions(executable, failed string, cause error, done []extension) error {
 	var failures []string
-	for i := len(added) - 1; i >= 0; i-- {
-		if err := p.ExecuteCommand("remove", added[i]); err != nil {
-			failures = append(failures, fmt.Sprintf("%s: %v", added[i], err))
+	for i := len(done) - 1; i >= 0; i-- {
+		ext := done[i]
+		if !ext.added {
+			continue
+		}
+		if err := p.runPi(executable, "remove", ext.source); err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", ext.source, err))
+		} else {
+			utils.PrintInfo("Rolled back Pi extension " + ext.source)
 		}
 	}
 	if len(failures) > 0 {
 		return fmt.Errorf(
-			"failed to install pi extension %s: %w; rollback could not remove %s — remove these with `pi remove <package>`",
-			failed, cause, strings.Join(failures, "; "),
+			"failed to install pi extension %s: %w; rollback could not remove %s — finish by hand with `pi remove <package>`",
+			failed,
+			cause,
+			strings.Join(failures, "; "),
 		)
 	}
 	return fmt.Errorf("failed to install pi extension %s: %w", failed, cause)
@@ -357,9 +397,42 @@ func (p *Pi) Uninstall() error {
 	return gc.Save()
 }
 
-func (p *Pi) ExecuteCommand(args ...string) error {
+// managedLauncherPath is the launcher the official installer writes beside
+// the managed install root: <agent dir>/bin/pi. The script's
+// write_managed_install_launcher creates it on every managed install, so a
+// machine with the install marker also has this file even when nothing on
+// PATH points at it yet (see ADR-0059 decision 4).
+func managedLauncherPath() string {
+	return filepath.Join(filepath.Dir(paths.Paths.Home.PiInstall), "bin", constants.Pi)
+}
+
+// piExecutable prefers the user's PATH, then Pi's managed launcher when its
+// install marker exists. The launcher is available before a shell reload.
+// Like SoftInstall it keys on the fixed managed root, NOT piAgentDir: install
+// detection follows ADR-0059 decision 2, and only the settings read honors
+// PI_CODING_AGENT_DIR (ADR-0060 decision 3).
+func piExecutable() (string, error) {
+	path, err := cmd.LookPathFn(constants.Pi)
+	if err == nil {
+		return path, nil
+	}
+	if files.FileAlreadyExist(managedMarkerPath()) {
+		launcher := managedLauncherPath()
+		if info, statErr := os.Stat(
+			launcher,
+		); statErr == nil && info.Mode().IsRegular() &&
+			info.Mode().Perm()&0o111 != 0 {
+			return launcher, nil
+		}
+	}
+	return "", err
+}
+
+// runPi executes the resolved pi binary once for this caller, so a configure
+// run pays for one lookup instead of one per extension.
+func (p *Pi) runPi(executable string, args ...string) error {
 	params := cmd.CommandParams{
-		Command: constants.Pi,
+		Command: executable,
 		Args:    args,
 	}
 	_, _, err := p.Base.ExecCommand(params)
@@ -367,6 +440,14 @@ func (p *Pi) ExecuteCommand(args ...string) error {
 		return fmt.Errorf("pi command execution failed: %w", err)
 	}
 	return nil
+}
+
+func (p *Pi) ExecuteCommand(args ...string) error {
+	path, err := piExecutable()
+	if err != nil {
+		return fmt.Errorf("pi executable not found: %w", err)
+	}
+	return p.runPi(path, args...)
 }
 
 func (p *Pi) Update() error {

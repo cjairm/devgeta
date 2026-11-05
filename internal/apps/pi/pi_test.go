@@ -3,6 +3,7 @@ package pi
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -456,6 +457,138 @@ func TestConfigureExtensions(t *testing.T) {
 	})
 }
 
+func TestConfigureVersionedSources(t *testing.T) {
+	for _, force := range []bool{false, true} {
+		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
+			isolateInstallRoot(t)
+			stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
+			writeAgentSettings(t, `{"packages":[{"source":"npm:pi-subagents@0.84.0","extensions":["!*"]}]}`)
+			mockApp := testutil.NewMockApp()
+			app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			if err := app.configureExtensions(force); err != nil {
+				t.Fatal(err)
+			}
+			got := piInstallSources(mockApp)
+			if slices.Contains(got, "npm:pi-subagents") {
+				t.Errorf("configure replaced a versioned source: %v", got)
+			}
+			if slices.Contains(got, "npm:pi-subagents@0.84.0") != force {
+				t.Errorf("versioned source should be refreshed only with force: %v", got)
+			}
+		})
+	}
+}
+
+func TestVersionedExtensionNotRemovedOnFailure(t *testing.T) {
+	isolateInstallRoot(t)
+	stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
+	writeAgentSettings(t, `{"packages":["npm:pi-subagents@0.84.0"]}`)
+	mockApp := testutil.NewMockApp()
+	mockApp.Base.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+		if len(c.Args) == 2 && c.Args[0] == "install" && c.Args[1] == piExtensions[2] {
+			return "", "", fmt.Errorf("install failed")
+		}
+		return "", "", nil
+	}
+	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	if err := app.configureExtensions(true); err == nil {
+		t.Fatal("expected install failure")
+	}
+	// Assert on the calls AFTER the failing install only: the forward install
+	// of the versioned source happens before it, so scanning the whole list
+	// cannot tell rollback behavior from the normal path.
+	calls := mockApp.Base.ExecCommandCalls
+	failIdx := -1
+	for i, call := range calls {
+		if len(call.Args) == 2 && call.Args[0] == "install" && call.Args[1] == piExtensions[2] {
+			failIdx = i
+		}
+	}
+	if failIdx < 0 {
+		t.Fatal("the failing install call was not recorded")
+	}
+	after := calls[failIdx+1:]
+	if len(after) == 0 {
+		t.Fatal("expected rollback calls after the failure")
+	}
+	for _, call := range after {
+		if len(call.Args) == 2 && strings.Contains(call.Args[1], "pi-subagents") {
+			t.Errorf("rollback touched the refreshed versioned package: %v", call.Args)
+		}
+	}
+	// The one package this run added before the failure is the one removed.
+	if len(after) != 1 || after[0].Args[0] != "remove" || after[0].Args[1] != piExtensions[1] {
+		t.Errorf("expected rollback to remove only %q, got %v", piExtensions[1], after)
+	}
+}
+
+func TestConfigureManagedLauncherOffPath(t *testing.T) {
+	root := isolateInstallRoot(t)
+	writeManagedMarker(t, root)
+	// The path comes from managedLauncherPath — the layout the official
+	// installer documents (write_managed_install_launcher) — not from the
+	// test re-deriving it, so a layout change breaks one place.
+	launcher := managedLauncherPath()
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stubLookPath(t, func(string) (string, error) { return "", fmt.Errorf("not found") })
+	mockApp := testutil.NewMockApp()
+	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	if err := app.configureExtensions(false); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range mockApp.Base.ExecCommandCalls {
+		if call.Command != launcher {
+			t.Errorf("command = %q, want managed launcher %q", call.Command, launcher)
+		}
+	}
+	if len(mockApp.Base.ExecCommandCalls) != len(piExtensions) {
+		t.Fatalf("expected %d installs, got %d", len(piExtensions), len(mockApp.Base.ExecCommandCalls))
+	}
+}
+
+func TestConfigurePrintsExtensionProgress(t *testing.T) {
+	isolateInstallRoot(t)
+	stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
+	mockApp := testutil.NewMockApp()
+	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Drain in a goroutine: the pipe buffer is bounded, and ReadAll after the
+	// run would deadlock once the output outgrows it.
+	done := make(chan []byte, 1)
+	go func() {
+		out, _ := io.ReadAll(r)
+		done <- out
+	}()
+	original := os.Stdout
+	os.Stdout = w
+	err = app.configureExtensions(false)
+	os.Stdout = original
+	if closeErr := w.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	output := <-done
+	if closeErr := r.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil {
+		t.Fatalf("configure error: %v", err)
+	}
+	for _, source := range piExtensions {
+		if !strings.Contains(string(output), "Installing Pi extension "+source) ||
+			!strings.Contains(string(output), "Installed Pi extension "+source) {
+			t.Errorf("missing progress for %s: %s", source, output)
+		}
+	}
+}
+
 func TestConfigure(t *testing.T) {
 	t.Run("registers pi only after the extensions install", func(t *testing.T) {
 		tc := testutil.SetupCompleteTest(t)
@@ -625,8 +758,9 @@ func TestConfigureExtensionsRollback(t *testing.T) {
 		if err := app.configureExtensions(true); err == nil {
 			t.Fatal("expected the failed install to surface")
 		}
-		// The two declared sources are re-installed and stay; only the one this
-		// run added is rolled back.
+		// Only the source this run added is removed. The two declared sources
+		// the run refreshed are left alone: their prior installed version is
+		// not recoverable, so the rollback must not pretend to restore them.
 		want := []string{
 			"install " + piExtensions[0],
 			"install " + piExtensions[1],

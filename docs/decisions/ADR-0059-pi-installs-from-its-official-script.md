@@ -55,6 +55,13 @@ existing PATH directory, or asks to edit the shell profile — that part is the
 script's job, and devgeta adds no alias, no shell feature, and no `ShellFeatures`
 entry. Nothing in the generated shell config references pi.
 
+One fact about the layout is worth recording for the same reason: the script
+also always writes a launcher at `<agent dir>/bin/pi`
+(`write_managed_install_launcher` in the install script), so a machine with the
+managed marker has a known working entry point even when nothing on PATH points
+at it yet — configure uses that fallback (ADR-0060), while PATH management
+itself stays the script's.
+
 **5. This knowingly repeats ADR-0047's accepted security trade.** ADR-0004
 chose checksum-verified GitHub releases for rtk specifically to avoid piping an
 upstream script into a shell. As with opencode, the Pi script is not

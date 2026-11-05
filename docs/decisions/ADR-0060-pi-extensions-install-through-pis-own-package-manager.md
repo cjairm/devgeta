@@ -2,6 +2,7 @@
 
 **Date:** 2026-11-05
 **Status:** ACCEPTED
+**Documentation review:** APPROVED by the maintainer following the final re-review; covers this ADR, the ADR-0059 launcher-layout amendment, and `docs/apps/pi.md`. The documented rollback limits remain explicit; this approval does not establish full transaction atomicity.
 
 ## Context
 
@@ -64,14 +65,19 @@ while Pi writes to a relocated one would make every soft configure reinstall the
 whole set. Only this read follows the override: install detection and uninstall
 stay keyed on the fixed managed root (ADR-0059 decision 2).
 
-**4. A failed install rolls back the ones this run made.** Installs run
-sequentially; if the fifth fails, the four this run added are removed again
-(newest first, via `pi remove`), so configure never leaves a half-installed set
-behind (§4, atomic installation). Only sources this run added are rolled back —
-a `--force` re-install of an extension Pi already declared is not ours to
-remove. `pi install` records a package only after it installs successfully, so
-the failing source needs no removal. If the rollback itself fails, both failures
-are reported together.
+**4. A failed configure removes what it added and leaves the rest alone.**
+Rollback removes, newest first, the sources this run added — `pi install`
+records a package only after its own install succeeds, so the failing source
+needs no removal. Sources this run re-installed over an existing declaration
+are deliberately not touched: Pi exposes no query for the version that was
+installed before the run, so a "restore" would just re-install the same spec
+and fetch the latest again — restoring nothing for an unpinned source, and for
+a pinned one re-doing an install that never changed the version. Each removal's
+failure is collected rather than stopping the rest, and every failure is named
+with the manual fix (`pi remove <package>`). The one thing rollback cannot
+repair is an npm-tree half-write from the failing install itself — that is
+Pi's npm transaction, and Pi's own startup reconciles configured packages on
+the next launch.
 
 **5. A settings file devgeta cannot parse is an error, never a reset.**
 Unreadable or malformed JSON fails `configure` with the file named. Treating it
@@ -126,6 +132,9 @@ of that decision stands.
 - Extension versions are whatever npm serves at configure time (decision 8).
   There is no lockfile and no pinning; `dg update pi` remains unsupported, so
   refreshing an extension is `dg configure pi --force` or `pi update <source>`.
-- Configure is atomic at the set level: a failed install leaves Pi's settings as
-  it found them. It cannot undo a package whose own npm install half-wrote its
-  tree — that is Pi's npm transaction, not devgeta's.
+- Configure is set-atomic to the extent Pi's surface allows: a failed run
+  removes every extension it added, and leaves extensions it merely refreshed
+  at whatever version Pi resolved (decision 4 — a refreshed source's prior
+  version is not recoverable). It cannot undo a package whose own npm install
+  half-wrote its tree — that is Pi's npm transaction, which Pi reconciles on
+  next startup.

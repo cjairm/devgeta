@@ -76,13 +76,17 @@ The settings file is `<agent dir>/settings.json`, where the agent dir is
 
 Re-running:
 
-- `dg configure pi` installs only the extensions Pi's settings do not already
-declare, so it costs no network once the set is in place.
-- `dg configure pi --force` re-runs every install, which is how an
-already-installed extension picks up a newer version.
-- A failed install rolls back the extensions that same run added, so configure
-never leaves a partial set behind. Extensions you already had are never removed
-by a rollback.
+- `dg configure pi` installs only extensions Pi's settings do not already
+  declare, including declarations with a version or tag.
+- `dg configure pi --force` re-runs every install, preserving existing version
+  or tag specifications. Unpinned extensions can pick up newer versions.
+- Each install prints its progress and result.
+- If an install fails, the run removes the extensions it added during that run
+  (newest first) so no half-set is left behind. Extensions it merely refreshed
+  over an existing choice are left alone — their prior version cannot be
+  recovered, so the run never pretends to restore them. A rollback step that
+  fails does not stop the rest, and every failure is named with the manual
+  `pi remove <package>` fix.
 - A settings file devgeta cannot parse stops configure with the file named. It
 is never treated as empty — that would re-install over your file.
 
