@@ -18,7 +18,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// themedApps is the fixed, ordered list of the seven surfaces with a theme
+// themedApps is the fixed, ordered list of the eight surfaces with a theme
 // (ADR-0043). It is not derivable from apps.AppKind: Alacritty and i3 are
 // KindDesktop, tmux and Neovim are KindTerminal, and plenty of apps in both
 // kinds have no theme at all. Ordered, not a set, so a test can place one
@@ -32,6 +32,7 @@ var themedApps = []string{
 	constants.Tmux,
 	constants.Neovim,
 	constants.Claude,
+	constants.Pi,
 	constants.I3,
 }
 

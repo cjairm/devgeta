@@ -80,3 +80,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0058](ADR-0058-devgeta-instructions-live-in-their-own-file.md) — Devgeta's agent instructions live in their own file
 - [ADR-0059](ADR-0059-pi-installs-from-its-official-script.md) — Pi installs from its official script, keyed on the managed-install root
 - [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md) — Pi extensions install through Pi's own package manager, at configure time
+- [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md) — Pi is a themed surface, with one devgeta-owned theme file

@@ -199,10 +199,13 @@ Two groups mean something has to choose between them, and point 2 says it is
 neither the template nor the app. **The loader owns the choice, from one
 table:**
 
-| Group       | Surfaces                           |
-| ----------- | ---------------------------------- |
-| `terminal:` | Alacritty, Ghostty                 |
-| `colors:`   | tmux, Neovim, OpenCode, Claude, i3 |
+| Group       | Surfaces                               |
+| ----------- | -------------------------------------- |
+| `terminal:` | Alacritty, Ghostty                     |
+| `colors:`   | tmux, Neovim, OpenCode, Claude, Pi, i3 |
+
+_(Pi joined as the eighth surface in
+[ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md).)_
 
 That table is the mapping's only statement in the docs. In code it is one
 `map[string]group` in `internal/theme`, keyed by the `pkg/constants` app names

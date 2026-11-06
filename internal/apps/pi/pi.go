@@ -2,9 +2,10 @@
 //
 // Pi (@earendil-works/pi-coding-agent) is a terminal AI-coding harness. This
 // module provides installation and state management for Pi with devgeta
-// integration. Configuration is limited to a curated extension set installed
-// through Pi's own package manager; themes, skills and two-agent parity stay
-// out of scope (ADR-0059, ADR-0060).
+// integration. Configuration is a curated extension set installed through Pi's
+// own package manager (ADR-0060) and one devgeta-owned theme file that follows
+// `dg theme` (ADR-0061); skills and two-agent parity stay out of scope
+// (ADR-0059).
 //
 // References:
 // - Official installer: https://pi.dev/install.sh
@@ -13,23 +14,29 @@
 package pi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
 	"github.com/cjairm/devgeta/pkg/utils"
 )
 
-var _ apps.App = (*Pi)(nil)
+var (
+	_ apps.App              = (*Pi)(nil)
+	_ apps.ThemedConfigurer = (*Pi)(nil)
+)
 
 type Pi struct {
 	Cmd  cmd.Command
@@ -98,11 +105,9 @@ func (p *Pi) SoftInstall() error {
 	)
 }
 
-// piAgentDir is Pi's own config home, ~/.pi/agent: the managed install root's
-// parent. Its settings.json records the packages `pi install` has added.
-func piAgentDir() string {
-	return filepath.Dir(paths.Paths.Home.PiInstall)
-}
+// piAgentDir is Pi's own config home, ~/.pi/agent. Its settings.json records the
+// packages `pi install` has added and the active theme.
+func piAgentDir() string { return paths.PiAgentDir() }
 
 // declaredExtensions returns the curated extensions Pi's settings already list.
 // Pi matches npm sources by package name, so a pinned `npm:<pkg>@<version>`
@@ -172,12 +177,87 @@ func (p *Pi) configureExtensions() error {
 	return nil
 }
 
-// SoftConfigure installs the curated extensions Pi does not already declare,
-// then registers pi — last, so a failed extension does not mark pi as
-// configured. No config files are written, so Pi's own settings are the only
-// state to check. Themes, shared skills and agent-config parity remain out of
-// scope (ADR-0059).
-func (p *Pi) SoftConfigure() error {
+// piThemeName is the one theme devgeta owns in Pi: the file's content follows
+// current_theme, its name never changes (ADR-0061 §2). Pi's themes directory is
+// the user's too, so devgeta may own exactly this path and never the directory.
+const piThemeName = "devgeta"
+
+func themeFile() string {
+	return filepath.Join(piAgentDir(), "themes", piThemeName+".json")
+}
+
+// ForceConfigureTheme renders the theme file from def and writes nothing else:
+// `dg theme set` calls this for every themed app, and Pi's own settings are
+// deliberately outside a theme switch (ADR-0061 §3). Pi hot-reloads the active
+// theme file, and the write is atomic, so a running Pi restyles without ever
+// reading a partial file.
+func (p *Pi) ForceConfigureTheme(def theme.Definition) error {
+	palette, err := def.PaletteFor(p.Name())
+	if err != nil {
+		return fmt.Errorf("failed to resolve theme palette: %w", err)
+	}
+	if err := files.GenerateFromTemplate(
+		filepath.Join(paths.Paths.App.Configs.Pi, "themes", piThemeName+".json.tmpl"),
+		themeFile(),
+		map[string]any{"Palette": palette},
+	); err != nil {
+		return fmt.Errorf("failed to render pi theme: %w", err)
+	}
+	return nil
+}
+
+// selectTheme sets "theme" to the devgeta theme in Pi's settings.json: the one
+// key devgeta writes there (ADR-0061 §3). Without force an existing "theme" is
+// the user's choice and stays. Every other key is carried as raw JSON so Pi's
+// own state (packages above all) round-trips; HTML escaping is off because the
+// default would rewrite "&" in a package URL as \u0026. A file that does not
+// parse is an error, never a reset.
+func selectTheme(force bool) error {
+	settingsPath := filepath.Join(piAgentDir(), "settings.json")
+	settings := map[string]json.RawMessage{}
+	data, err := os.ReadFile(settingsPath)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &settings); err != nil {
+			return fmt.Errorf("failed to parse %s: %w", settingsPath, err)
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("failed to read %s: %w", settingsPath, err)
+	}
+	if _, exists := settings["theme"]; exists && !force {
+		return nil
+	}
+	settings["theme"] = json.RawMessage(strconv.Quote(piThemeName))
+
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(settings); err != nil {
+		return fmt.Errorf("failed to encode %s: %w", settingsPath, err)
+	}
+	return files.WriteFileAtomic(settingsPath, out.Bytes(), files.FilePermission)
+}
+
+// configure is the body of both configure modes: theme file, theme selection,
+// extensions, then registration - last, so a failed step does not mark pi as
+// configured. Soft keeps what already exists (an existing theme file, the
+// user's chosen theme); force rewrites devgeta's own pieces. Extensions are
+// Pi's own state: only the missing ones install, and refreshing the rest is
+// `pi update`'s job (ADR-0060).
+func (p *Pi) configure(force bool) error {
+	if force || !files.FileAlreadyExist(themeFile()) {
+		def, err := theme.CurrentDefinition()
+		if err != nil {
+			return fmt.Errorf("failed to resolve current theme: %w", err)
+		}
+		if err := p.ForceConfigureTheme(def); err != nil {
+			return err
+		}
+	}
+	if err := selectTheme(force); err != nil {
+		return err
+	}
 	if err := p.configureExtensions(); err != nil {
 		return err
 	}
@@ -192,9 +272,9 @@ func (p *Pi) SoftConfigure() error {
 	return gc.Save()
 }
 
-// ForceConfigure is SoftConfigure: there are no devgeta-owned files to
-// overwrite, and refreshing installed extensions is `pi update`'s job.
-func (p *Pi) ForceConfigure() error { return p.SoftConfigure() }
+func (p *Pi) SoftConfigure() error { return p.configure(false) }
+
+func (p *Pi) ForceConfigure() error { return p.configure(true) }
 
 // Uninstall removes only the managed install root. ~/.pi/agent is Pi's own
 // config/session home — sessions, agent state, skills — and must survive

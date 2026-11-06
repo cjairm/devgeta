@@ -9,6 +9,15 @@ set -ga terminal-overrides ",xterm-256color*:Tc"
 set -g default-terminal "tmux-256color"
 set -s escape-time 0
 
+# Forward extended keys so Shift+Enter and friends reach the app inside a pane
+# distinct from plain Enter. csi-u is the format modern TUIs (Pi, Claude Code)
+# read; the option only exists from tmux 3.5, so older tmux keeps its default
+# format instead of failing to load this file.
+set -g extended-keys on
+%if "#{>=:#{version},3.5}"
+set -g extended-keys-format csi-u
+%endif
+
 # Spawn panes/windows as non-login shells. tmux defaults to login shells,
 # which re-run the profile chain (/etc/zprofile, ~/.zprofile) on every new
 # pane even though ~/.zshrc already provides the full environment — measured

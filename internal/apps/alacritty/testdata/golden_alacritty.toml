@@ -52,3 +52,13 @@ magenta = "0xd3869b"
 cyan = "0x89b482"
 white = "0xd4be98"
 
+
+
+# Option+Enter as CSI-u, so TUIs that bind Alt+Enter (Pi's follow-up key) can
+# tell it from Enter. Rendered on macOS only. Programs that do not read CSI-u
+# may print the raw sequence instead.
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Alt"
+chars = "\u001b[13;3u"
+

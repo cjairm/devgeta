@@ -21,7 +21,9 @@ writing settings and running npm itself, or Pi doing it.
 **1. Devgeta states the set; Pi performs the installs.** `dg configure pi` (and
 `dg install`) runs `pi install <source>` once per entry in `piExtensions`
 (`internal/apps/pi/pi.go`). Devgeta never writes Pi's settings, never resolves
-versions, never touches Pi's npm tree.
+versions, never touches Pi's npm tree. _(Amended by
+[ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
+devgeta now writes exactly one key, `theme`, in Pi's settings.)_
 
 **2. The curated set is an opinionated default.** Eight general-purpose
 extensions from the public npm registry (listed in `docs/apps/pi.md`, which a
@@ -53,7 +55,9 @@ model changes, pinning becomes a code change here plus an amendment.
 settings survive `dg uninstall pi`.
 
 **8. Everything else stays out of scope:** no themes, no shared skills, no
-two-agent parity, no `dg worktree`/`dg task` wiring.
+two-agent parity, no `dg worktree`/`dg task` wiring. _(Amended by
+[ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
+themes are now in scope.)_
 
 ## Consequences
 

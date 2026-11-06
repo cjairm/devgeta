@@ -366,3 +366,54 @@ func TestEmbeddedShellScriptsAvoidBash4OnlySyntax(t *testing.T) {
 		t.Fatalf("failed to walk embedded configs: %v", err)
 	}
 }
+
+// Pi (and any TUI that tells Shift+Enter from Enter) needs tmux to forward
+// extended keys, or Shift+Enter arrives as plain Enter (ADR-0061 §6).
+// `extended-keys-format` only exists from tmux 3.5; on older tmux (Debian 12
+// ships 3.3a, Ubuntu 24.04 ships 3.4) an unguarded line is a config error, so
+// it must sit inside a version-gated %if block. String-only check against the
+// embedded text; it never starts tmux.
+func TestTmuxExtendedKeysAreEnabledAndVersionGated(t *testing.T) {
+	data, err := fs.ReadFile(ConfigsFS, "configs/tmux/tmux.conf.tmpl")
+	if err != nil {
+		t.Fatalf("failed to read embedded tmux.conf.tmpl: %v", err)
+	}
+	var lines []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+			lines = append(lines, trimmed)
+		}
+	}
+	indexOf := func(want string) int {
+		for i, line := range lines {
+			if line == want {
+				return i
+			}
+		}
+		return -1
+	}
+
+	if indexOf("set -g extended-keys on") < 0 {
+		t.Error("expected `set -g extended-keys on`")
+	}
+	gate := indexOf(`%if "#{>=:#{version},3.5}"`)
+	format := indexOf("set -g extended-keys-format csi-u")
+	end := -1
+	for i := format + 1; i < len(lines) && format >= 0; i++ {
+		if lines[i] == "%endif" {
+			end = i
+			break
+		}
+	}
+	if gate < 0 || format < 0 || end < 0 || !(gate < format && format < end) {
+		t.Errorf(
+			"extended-keys-format must sit inside a tmux >= 3.5 %%if block (gate=%d format=%d endif=%d)",
+			gate, format, end,
+		)
+	}
+	// The block must hold only that line: anything else would be skipped on
+	// tmux < 3.5 as a side effect of the gate.
+	if gate >= 0 && end >= 0 && end-gate != 2 {
+		t.Errorf("the version gate should wrap only extended-keys-format, wraps %d lines", end-gate-1)
+	}
+}

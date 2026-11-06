@@ -59,7 +59,9 @@ already established.
 **7. Config parity with claude/opencode is out of scope.** No themes, no shared
 skills, no agent-sync entries, no `coder_launch` wiring; the two-agent sync test
 is not extended. _(Amended by [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md):
-Pi installs a curated extension set at configure time.)_
+Pi installs a curated extension set at configure time. Amended by
+[ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
+themes are now in scope.)_
 
 ## Consequences
 

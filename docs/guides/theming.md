@@ -41,6 +41,7 @@ Treat the visual layer as a single surface.
 | **Neovim**    | `configs/neovim/init.lua` → generated `lua/devgeta/theme.lua`      | A fixed-name shim requires `devgeta.themes.<neovim_module>`, named by the current theme's YAML |
 | **tmux**      | `configs/tmux/tmux.conf.tmpl`                                      | Templated from `theme.Palette` (alongside the unrelated `worktree.notify_sound` setting)       |
 | **Claude**    | `configs/claude/settings.json.tmpl` + `themes/default.json.tmpl`   | `"theme": "custom:{{ .Theme }}"`; the theme file's `overrides` templated from `theme.Palette`  |
+| **Pi**        | `configs/pi/themes/devgeta.json.tmpl`                              | One fixed-name theme file (`devgeta`) rendered from `theme.Palette` (`colors:` group); Pi hot-reloads it |
 | **i3**        | `configs/i3/config.tmpl`                                           | Templated from `theme.Palette` (`colors:` group)                                               |
 
 Every surface above renders from the same `theme.Palette` type
@@ -86,7 +87,7 @@ including this guide, restates it.
 `configs/themes/default.yaml` — today's colors, recorded so wiring
 `current_theme` through was a visually-null change when it landed — carries
 **two** color groups instead of one: classic Gruvbox in `colors:` (tmux,
-Neovim, OpenCode, Claude, i3) and Gruvbox Material in `terminal:` (Alacritty,
+Neovim, OpenCode, Claude, Pi, i3) and Gruvbox Material in `terminal:` (Alacritty,
 Ghostty). Which group a surface reads is decided in exactly one place,
 `internal/theme`'s `Definition.PaletteFor` — see
 [ADR-0043's group mapping](../decisions/ADR-0043-a-theme-is-a-palette-file-not-a-branch-in-every-template.md#which-group-each-surface-gets-and-where-that-is-decided).

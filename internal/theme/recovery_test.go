@@ -7,6 +7,7 @@ import (
 
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
 
@@ -34,6 +35,7 @@ func isolateManifestPaths(t *testing.T) string {
 	paths.Paths.Config.Nvim = filepath.Join(root, "nvim")
 	paths.Paths.Config.Claude = filepath.Join(root, "claude")
 	paths.Paths.Config.I3 = filepath.Join(root, "i3")
+	paths.Paths.Home.PiInstall = filepath.Join(root, "home", ".pi", "agent", "install")
 
 	config.ResetGlobalConfigCacheForTest()
 	t.Cleanup(config.ResetGlobalConfigCacheForTest)
@@ -290,4 +292,23 @@ func TestRecoverInterrupted_NoPendingWithBackups_Discards(t *testing.T) {
 	if gc.CurrentTheme != "tokyonight" {
 		t.Errorf("current_theme = %q, want tokyonight (must not be touched)", gc.CurrentTheme)
 	}
+}
+
+// Pi's manifest entry is its one devgeta-owned theme file: Pi's themes
+// directory and settings.json belong to the user and to Pi, and a theme switch
+// never writes settings (ADR-0061 §2, §5).
+func TestManifest_PiIsTheThemeFileOnly(t *testing.T) {
+	isolateManifestPaths(t)
+
+	want := filepath.Join(paths.PiAgentDir(), "themes", "devgeta.json")
+	for _, entry := range Manifest() {
+		if entry.App != constants.Pi {
+			continue
+		}
+		if len(entry.Paths) != 1 || entry.Paths[0] != want {
+			t.Errorf("pi manifest paths = %v, want [%s]", entry.Paths, want)
+		}
+		return
+	}
+	t.Fatal("pi has no manifest entry")
 }

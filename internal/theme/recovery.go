@@ -61,6 +61,10 @@ func Manifest() []ManifestEntry {
 			filepath.Join(paths.Paths.Config.Claude, "settings.json"),
 			filepath.Join(paths.Paths.Config.Claude, "themes"),
 		}},
+		// Pi: the one theme file devgeta owns in Pi's agent home. Its
+		// themes/ directory and settings.json are the user's and Pi's, and a
+		// theme switch never writes settings (ADR-0061).
+		{constants.Pi, []string{filepath.Join(paths.PiAgentDir(), "themes", "devgeta.json")}},
 		{constants.I3, []string{filepath.Join(paths.Paths.Config.I3, "config")}},
 	}
 }

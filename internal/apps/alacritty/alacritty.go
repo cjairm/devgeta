@@ -127,6 +127,8 @@ func (a *Alacritty) ForceConfigureTheme(def theme.Definition) error {
 		"Font":       font,
 		"ConfigPath": paths.Paths.Config.Root,
 		"Colors":     newAlacrittyColors(p),
+		// Through Base, not runtime.GOOS, so tests cover both platforms.
+		"IsMac": a.Base.IsMac(),
 	}); err != nil {
 		return fmt.Errorf("failed to generate alacritty configuration: %w", err)
 	}

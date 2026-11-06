@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +122,7 @@ func (f *fakeLiveThemedApp) ApplyLiveTheme() error {
 var _ apps.LiveThemeApplier = (*fakeLiveThemedApp)(nil)
 
 // themeSetTestEnv isolates every path the manifest and theme loader touch,
-// marks all seven themed apps as installed, and wires themeGetAppFn to a set
+// marks all eight themed apps as installed, and wires themeGetAppFn to a set
 // of fakeThemedApp instances keyed by name - restoring everything in
 // t.Cleanup. Returns the fakes (for call-order assertions) and the root temp
 // dir.
@@ -147,6 +148,7 @@ func setupThemeSetTest(t *testing.T, installed []string) *themeSetTestEnv {
 	paths.Paths.Config.Nvim = filepath.Join(root, "nvim")
 	paths.Paths.Config.Claude = filepath.Join(root, "claude")
 	paths.Paths.Config.I3 = filepath.Join(root, "i3")
+	paths.Paths.Home.PiInstall = filepath.Join(root, "home", ".pi", "agent", "install")
 	paths.Paths.Config.Devgeta = filepath.Join(root, "devgeta")
 
 	themesDir := filepath.Join(root, "themes")
@@ -913,5 +915,20 @@ func TestThemeSet_WallpaperFailureDoesNotFailTheCommand(t *testing.T) {
 			"expected the switch to have committed despite the wallpaper failure, current_theme = %q",
 			gc.CurrentTheme,
 		)
+	}
+}
+
+// themedApps and theme.Manifest() must list the same apps in the same order:
+// `set` looks each manifest entry up by the app it is configuring.
+func TestThemedAppsMatchManifestOrder(t *testing.T) {
+	var manifestApps []string
+	for _, entry := range theme.Manifest() {
+		manifestApps = append(manifestApps, entry.App)
+	}
+	if strings.Join(manifestApps, ",") != strings.Join(themedApps, ",") {
+		t.Errorf("themedApps %v != manifest order %v", themedApps, manifestApps)
+	}
+	if !slices.Contains(themedApps, constants.Pi) {
+		t.Error("pi is a themed surface but is missing from themedApps")
 	}
 }

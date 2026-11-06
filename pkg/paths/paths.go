@@ -215,6 +215,7 @@ var Paths = struct {
 			I3        string
 			Neovim    string
 			OpenCode  string
+			Pi        string
 			Shared    string
 			Terminal  string
 			Templates string
@@ -287,6 +288,7 @@ var Paths = struct {
 			I3        string
 			Neovim    string
 			OpenCode  string
+			Pi        string
 			Shared    string
 			Terminal  string
 			Templates string
@@ -313,6 +315,7 @@ var Paths = struct {
 			I3        string
 			Neovim    string
 			OpenCode  string
+			Pi        string
 			Shared    string
 			Terminal  string
 			Templates string
@@ -330,6 +333,7 @@ var Paths = struct {
 			I3:        GetAppDir(constants.App.Dir.Configs, constants.I3),
 			Neovim:    GetAppDir(constants.App.Dir.Configs, constants.Neovim),
 			OpenCode:  GetAppDir(constants.App.Dir.Configs, constants.OpenCode),
+			Pi:        GetAppDir(constants.App.Dir.Configs, constants.Pi),
 			Shared:    GetAppDir(constants.App.Dir.Configs, constants.Shared),
 			Terminal:  GetAppDir(constants.App.Dir.Configs, constants.Terminal),
 			Templates: GetAppDir(constants.App.Dir.Configs, constants.Templates),
@@ -462,6 +466,13 @@ func GetDataDir(subPath ...string) string {
 func GetAppDir(subPath ...string) string {
 	appRoot := GetDataDir(constants.App.Name)
 	return filepath.Join(append([]string{appRoot}, subPath...)...)
+}
+
+// PiAgentDir is Pi's own config home, ~/.pi/agent: the managed install root's
+// parent. Derived from Home.PiInstall rather than stored, so a test that
+// isolates the install root isolates everything under the agent home with it.
+func PiAgentDir() string {
+	return filepath.Dir(Paths.Home.PiInstall)
 }
 
 func GetHomeDir(subPath ...string) string {

@@ -113,6 +113,7 @@ var surfaceGroup = map[string]group{
 	constants.Tmux:      groupColors,
 	constants.Neovim:    groupColors,
 	constants.OpenCode:  groupColors,
+	constants.Pi:        groupColors,
 	constants.Claude:    groupColors,
 	constants.I3:        groupColors,
 }

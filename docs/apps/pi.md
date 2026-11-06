@@ -24,10 +24,11 @@ instructions if they are missing. Terminal tools install before languages, so on
 a clean machine the first `dg install` may report that; run
 `dg install --only languages`, then `dg install --only pi`.
 
-## Configuration — a curated extension set, and nothing else
+## Configuration — a curated extension set and one theme
 
-`dg configure pi` (and the configure step of `dg install`) runs Pi's own package
-manager once per extension, `pi install npm:<name>`:
+`dg configure pi` (and the configure step of `dg install`) writes the devgeta
+theme (see [Theme](#theme)), then runs Pi's own package manager once per
+extension, `pi install npm:<name>`:
 
 | Extension           | What it adds                                                   |
 | ------------------- | -------------------------------------------------------------- |
@@ -114,16 +115,16 @@ extensions load normally, or list the extension for those agents in
 `~/.pi/agent/settings.json` under
 `subagents.agentOverrides.<agent>.subagentOnlyExtensions`.
 
-**Pi owns the install.** Devgeta never writes Pi's settings file or touches its
-npm tree. Versions are whatever npm serves at install time, and `pi update`
-advances them (ADR-0060).
+**Pi owns the install.** Devgeta never touches Pi's npm tree, and writes one key
+in Pi's settings file, `theme` (see [Theme](#theme)). Versions are whatever npm
+serves at install time, and `pi update` advances them (ADR-0060).
 
 Re-running:
 
 - `dg configure pi` installs only extensions `~/.pi/agent/settings.json` does
   not already declare — a declaration with a version or tag counts. `--force`
-  does the same: there is nothing of devgeta's to overwrite, and refreshing
-  installed extensions is `pi update`.
+  does the same: devgeta's own pieces are the theme, and refreshing installed
+  extensions is `pi update`.
 - If an install fails, configure stops and names the extension. Nothing is
   rolled back and pi is not registered as configured; fix the cause and re-run
   to install what is still missing.
@@ -137,8 +138,40 @@ without a shell reload.
 To drop one extension, use Pi directly: `pi remove <source>`. `pi list` shows
 the current set; `dg configure pi` will add it back.
 
-Everything else stays out of scope: no themes, no shared skills, no permission
-or formatter parity with claude/opencode, no `dg worktree`/`dg task` wiring
+## Theme
+
+Pi is the eighth surface `dg theme` restyles (ADR-0061). Devgeta owns exactly
+one file in Pi's themes directory, `~/.pi/agent/themes/devgeta.json`, rendered
+from `configs/pi/themes/devgeta.json.tmpl` and the `colors:` group of the
+current theme. The name `devgeta` never changes; its colors follow
+`dg theme set`. Any other theme file you put in that directory is left alone.
+
+- `dg theme set <name>` rewrites that file. A running Pi picks the new colors up
+  without a restart. It never touches Pi's settings, so a theme you chose in
+  Pi's `/settings` stays chosen.
+- `dg configure pi` sets `"theme": "devgeta"` in `~/.pi/agent/settings.json`
+  only when that file has no `theme` key. `dg configure pi --force` sets it
+  unconditionally. Every other key in the file, `packages` above all, is kept
+  as is. A file that does not parse stops configure with the file named.
+- Pi shows block backgrounds behind user messages and tool output; those use the
+  palette's element and diff background colors. Text itself uses your terminal's
+  foreground color.
+
+### Terminal keys
+
+Pi tells Shift+Enter (newline) from Enter (submit) and Option+Enter (queue a
+follow-up). Devgeta's own configs forward those keys:
+
+- **tmux:** `extended-keys on`, plus `extended-keys-format csi-u` on tmux 3.5 or
+  newer (older tmux does not have that option). Run `dg configure tmux --force`
+  and start a new tmux server for it to apply.
+- **Alacritty, macOS only:** Option+Enter sends `\u001b[13;3u`. A program that
+  does not read that sequence, such as a bare zsh prompt, may print it instead of
+  acting like Enter.
+- **Ghostty:** nothing to change.
+
+Everything else stays out of scope: no shared skills, no permission or
+formatter parity with claude/opencode, no `dg worktree`/`dg task` wiring
 (ADR-0059).
 
 ## Uninstall

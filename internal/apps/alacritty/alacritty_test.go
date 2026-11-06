@@ -107,7 +107,7 @@ func TestNameAndKind(t *testing.T) {
 
 func TestInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()
-	app := &Alacritty{Cmd: mockApp.Cmd}
+	app := &Alacritty{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 	if err := app.Install(); err != nil {
 		t.Fatalf("Install error: %v", err)
@@ -146,7 +146,7 @@ func TestForceInstall(t *testing.T) {
 
 func TestSoftInstall(t *testing.T) {
 	mockApp := testutil.NewMockApp()
-	app := &Alacritty{Cmd: mockApp.Cmd}
+	app := &Alacritty{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 	if err := app.SoftInstall(); err != nil {
 		t.Fatalf("SoftInstall error: %v", err)
@@ -266,7 +266,7 @@ background = "{{.Colors.Background}}"
 	})
 	setupThemeFixture(t, tc, "#282828")
 
-	app := &Alacritty{Cmd: tc.MockApp.Cmd}
+	app := &Alacritty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 	if err := app.ForceConfigure(); err != nil {
 		t.Fatalf("ForceConfigure error: %v", err)
@@ -394,7 +394,7 @@ foreground = "{{.Colors.Foreground}}"
 		t.Fatal(err)
 	}
 
-	app := &Alacritty{Cmd: tc.MockApp.Cmd}
+	app := &Alacritty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 	if err := app.ForceConfigure(); err != nil {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
@@ -476,7 +476,7 @@ background = "{{.Colors.Background}}"
 	})
 	setupThemeFixture(t, tc, "#1e1e1e")
 
-	app := &Alacritty{Cmd: tc.MockApp.Cmd}
+	app := &Alacritty{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 	if err := app.SoftConfigure(); err != nil {
 		t.Fatalf("SoftConfigure error: %v", err)

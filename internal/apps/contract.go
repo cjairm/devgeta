@@ -50,8 +50,8 @@ type SelectiveConfigurer interface {
 	ForceConfigureParts(parts []string) error
 }
 
-// ThemedConfigurer is implemented by the seven apps with a theme surface
-// (Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, i3). It exists because
+// ThemedConfigurer is implemented by the eight apps with a theme surface
+// (Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, Pi, i3). It exists because
 // ForceConfigure() takes no arguments and resolves its theme from
 // current_theme, which `dg theme set` deliberately has not written yet when
 // it needs to render the *target* theme — see
@@ -64,7 +64,8 @@ type SelectiveConfigurer interface {
 // def.PaletteFor(a.Name()) to get its own color group (PaletteFor stays the
 // only place a group is chosen — no app or template picks colors: vs
 // terminal: itself), but OpenCode and Claude also need def.Name (their
-// rendered theme file's name and their config's "theme" field) and Neovim
+// rendered theme file's name and their config's "theme" field; Pi's file name
+// is fixed) and Neovim
 // needs def.NeovimModule (its generated shim) — neither of which a flat
 // Palette carries.
 type ThemedConfigurer interface {
