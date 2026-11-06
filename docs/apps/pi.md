@@ -42,6 +42,7 @@ extension, `pi install npm:<name>`:
 | `npm:pi-openrouter-advanced-provider`    | An OpenRouter provider with the account's live model list and per-model routing            |
 | `npm:pi-openrouter-request-details`      | Shows which provider and model OpenRouter actually served, with per-turn cost              |
 | `npm:pi-thinking-reformatter`            | Repairs broken spacing and line breaks in thinking blocks (DeepSeek-style models)          |
+| `npm:pi-lens`                            | Language-server diagnostics after each edit; its formatting, autofix and downloads are off |
 
 The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
 here by a test.
@@ -299,6 +300,13 @@ text is what the model reads back later. It checks every model's thinking, but
 only rewrites text that matches the broken patterns, so clean output from
 Claude or OpenAI models is left as is. Devgeta writes no configuration for it.
 
+### pi-lens
+
+Adds language-server diagnostics (for example a Go type error from gopls) to
+Pi after edits. On its own it also formats, autofixes, and downloads any tool it
+is missing, with tools that differ from the Mason ones Claude Code and OpenCode
+use. Devgeta keeps only the diagnostics: see [Formatting](#formatting).
+
 **Pi owns the install.** Devgeta never touches Pi's npm tree, and writes one key
 in Pi's settings file, `theme` (see [Theme](#theme)). Versions are whatever npm
 serves at install time, and `pi update` advances them (ADR-0060).
@@ -326,6 +334,36 @@ Devgeta no longer installs `pi-schedule-prompt` (it crashes on current Pi and
 can corrupt a session); v1.44.0 was the last release that did. Configure only
 adds extensions, so if you have it, remove it yourself: find its entry in
 `pi list` and pass that source to `pi remove`.
+
+## Formatting
+
+After every `edit` or `write`, Pi formats and lints the file with the same
+Mason binaries and settings as Claude Code (ADR-0063). Three pieces:
+
+- `~/.config/devgeta/format-file.sh` is the one table of formatters and
+  linters, shared with Claude's hook. Mason (`$XDG_DATA_HOME/nvim/mason/bin`,
+  default `~/.local/share/nvim/mason/bin`) is the only source of tools.
+- `~/.pi/agent/extensions/devgeta-format.js` runs it after each edit. If the
+  file changed, the tool result says `Formatted by devgeta: lines N–M changed`
+  and shows those lines (capped; over the cap it tells the model to re-read the
+  file). Linter findings are appended as `Linter findings for <path>`. Any
+  failure is silent and never fails the edit. Devgeta rewrites this file on
+  every `dg configure pi`; put your own changes in a separate extension file.
+- `~/.pi-lens/config.json` gets `format.enabled` and `autofix.enabled` set to
+  `false` (other keys are kept; without `--force` a value you already set
+  stays). `PI_LENS_CONFIG_PATH` moves that file; `PI_CODING_AGENT_DIR` is not
+  followed.
+
+Side effects to know about:
+
+- The extension prepends the Mason directory to Pi's `PATH` so pi-lens finds
+  those tools.
+- It sets `PI_LENS_DISABLE_TOOL_INSTALL` and `PI_LENS_DISABLE_LSP_INSTALL` to
+  `1` unless you already set them. To let pi-lens download tools again, export
+  both as `0`.
+- Tools pi-lens downloaded earlier can still win over Mason. Delete
+  `~/.pi-lens/tools` and `~/.pi-lens/bin` to stop that; devgeta never deletes
+  them.
 
 ## Theme
 

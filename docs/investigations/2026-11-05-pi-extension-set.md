@@ -51,7 +51,7 @@ entry below is meant to be worked on its own.
 | `@plannotator/pi-extension`                      | **Not added** — overlaps Superpowers   | Well maintained        |
 | ~~`@juicesharp/rpiv-ask-user-question`~~ ✅ done | **Add**                                | Well maintained        |
 | ~~`@juicesharp/rpiv-todo`~~ ✅ done              | **Add**                                | Well maintained        |
-| `pi-lens`                                        | **Add**, last in order, formatting off | Well maintained        |
+| ~~`pi-lens`~~ ✅ done                            | **Add**, last in order, formatting off | Well maintained        |
 | `pi-schedule`                                    | **Add only if the sandbox run passes** | Active, one maintainer |
 
 ---

@@ -57,7 +57,9 @@ settings survive `dg uninstall pi`.
 **8. Everything else stays out of scope:** no themes, no shared skills, no
 two-agent parity, no `dg worktree`/`dg task` wiring. _(Amended by
 [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
-themes are now in scope.)_
+themes are now in scope. Amended by
+[ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md):
+Pi formats through devgeta's shared Mason script.)_
 
 ## Consequences
 

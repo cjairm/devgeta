@@ -16,7 +16,7 @@ deliberate.
 | Concern                 | Claude Code                                                       | OpenCode                                                                          |
 | ----------------------- | ----------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | Permissions             | `configs/claude/settings.json.tmpl`                               | `configs/opencode/opencode.json.tmpl`                                             |
-| Formatting on save      | `configs/claude/format.sh`                                        | `formatter` block in `opencode.json.tmpl`                                         |
+| Formatting on save      | `configs/claude/format.sh` (wraps `configs/devgeta/format-file.sh`)                                        | `formatter` block in `opencode.json.tmpl`                                         |
 | Command redirects       | `configs/claude/task-redirect.sh`                                 | `configs/opencode/plugin/task-redirect.js`                                        |
 | Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                               |
 | Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor        |
@@ -77,8 +77,9 @@ Deliberate — do not "fix" these by halves.
   without a further prompt — committing, pushing, or running unattended —
   guarded by `TestCommittingCommandsDeclareStandingAuthorization` and
   `TestReviewLoopRunsUnattendedWithoutAsking`.
-- **The lint feedback loop is Claude-only.** `format.sh` returns linter findings
-  via `hookSpecificOutput.additionalContext`; OpenCode's `formatter` block cannot
+- **The lint feedback loop is Claude and Pi only.** `format.sh` returns linter findings
+  via `hookSpecificOutput.additionalContext` and Pi's `devgeta-format.js` appends
+  them to the tool result, both from the shared `format-file.sh`; OpenCode's `formatter` block cannot
   return context, and OpenCode surfaces LSP diagnostics instead.
 - **`statusLine` has no OpenCode equivalent.**
 - **`rtk-shim.sh` has no OpenCode mirror, deliberately.** rtk installs its own

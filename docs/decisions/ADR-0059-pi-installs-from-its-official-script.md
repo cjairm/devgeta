@@ -61,7 +61,9 @@ skills, no agent-sync entries, no `coder_launch` wiring; the two-agent sync test
 is not extended. _(Amended by [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md):
 Pi installs a curated extension set at configure time. Amended by
 [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
-themes are now in scope.)_
+themes are now in scope. Amended by
+[ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md):
+Pi formats through devgeta's shared Mason script.)_
 
 ## Consequences
 

@@ -583,7 +583,9 @@ func useRepoThemes(t *testing.T) string {
 	origNeovim := paths.Paths.App.Configs.Neovim
 	origNvim := paths.Paths.Config.Nvim
 	origPi := paths.Paths.App.Configs.Pi
+	origDevgeta := paths.Paths.App.Configs.Devgeta
 	t.Cleanup(func() {
+		paths.Paths.App.Configs.Devgeta = origDevgeta
 		paths.Paths.App.Configs.Themes = origThemes
 		paths.Paths.App.Configs.Neovim = origNeovim
 		paths.Paths.Config.Nvim = origNvim
@@ -593,6 +595,7 @@ func useRepoThemes(t *testing.T) string {
 	paths.Paths.App.Configs.Neovim = filepath.Join(root, "configs", "neovim")
 	paths.Paths.Config.Nvim = filepath.Join(root, "does-not-exist-nvim")
 	paths.Paths.App.Configs.Pi = filepath.Join(root, "configs", "pi")
+	paths.Paths.App.Configs.Devgeta = filepath.Join(root, "configs", "devgeta")
 	return root
 }
 

@@ -75,6 +75,9 @@ var piExtensions = []string{
 	"npm:pi-openrouter-advanced-provider",
 	"npm:pi-openrouter-request-details",
 	"npm:pi-thinking-reformatter",
+	// Last: its native build is the likeliest to fail, and everything before
+	// it should already be installed by then (ADR-0063).
+	"npm:pi-lens",
 }
 
 func (p *Pi) Install() error {
@@ -273,8 +276,87 @@ func selectTheme(force bool) error {
 	return files.WriteFileAtomic(settingsPath, out.Bytes(), files.FilePermission)
 }
 
+// formatExtensionName is the devgeta-owned extension that runs the shared
+// format script after each edit (ADR-0063). Unlike the footer override it is
+// devgeta code, not user config, so it is rewritten on every configure.
+const formatExtensionName = "devgeta-format.js"
+
+func formatExtensionFile() string {
+	return filepath.Join(piAgentDir(), "extensions", formatExtensionName)
+}
+
+func writeFormatExtension() error {
+	source := filepath.Join(paths.Paths.App.Configs.Pi, "extensions", formatExtensionName)
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", source, err)
+	}
+	if err := files.WriteFileAtomic(formatExtensionFile(), data, files.FilePermission); err != nil {
+		return fmt.Errorf("failed to write %s: %w", formatExtensionFile(), err)
+	}
+	return nil
+}
+
+// piLensConfigPath is where pi-lens reads its settings: PI_LENS_CONFIG_PATH if
+// set, else ~/.pi-lens/config.json. PI_CODING_AGENT_DIR is deliberately not
+// followed (ADR-0059 §5); a relocated Pi would not load our extension either.
+func piLensConfigPath() string {
+	if override := os.Getenv("PI_LENS_CONFIG_PATH"); override != "" {
+		return override
+	}
+	return filepath.Join(paths.Paths.Home.Root, ".pi-lens", "config.json")
+}
+
+// disablePiLensMutations turns off pi-lens's own formatting and autofix, which
+// would fight devgeta's Mason formatters (ADR-0063). It merges into the user's
+// file the way selectTheme does: raw JSON kept, siblings kept, an unparseable
+// file is an error. Without force an existing "enabled" value stays.
+func disablePiLensMutations(force bool) error {
+	configPath := piLensConfigPath()
+	config := map[string]json.RawMessage{}
+	data, err := os.ReadFile(configPath)
+	switch {
+	case err == nil:
+		if err := json.Unmarshal(data, &config); err != nil {
+			return fmt.Errorf("failed to parse %s: %w", configPath, err)
+		}
+	case !os.IsNotExist(err):
+		return fmt.Errorf("failed to read %s: %w", configPath, err)
+	}
+	changed := false
+	for _, section := range []string{"format", "autofix"} {
+		fields := map[string]json.RawMessage{}
+		if raw, ok := config[section]; ok {
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return fmt.Errorf("failed to parse %q in %s: %w", section, configPath, err)
+			}
+		}
+		if _, exists := fields["enabled"]; exists && !force {
+			continue
+		}
+		fields["enabled"] = json.RawMessage("false")
+		raw, err := json.Marshal(fields)
+		if err != nil {
+			return fmt.Errorf("failed to encode %q: %w", section, err)
+		}
+		config[section] = raw
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	var out bytes.Buffer
+	encoder := json.NewEncoder(&out)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(config); err != nil {
+		return fmt.Errorf("failed to encode %s: %w", configPath, err)
+	}
+	return files.WriteFileAtomic(configPath, out.Bytes(), files.FilePermission)
+}
+
 // configure is the body of both configure modes: theme file, theme selection,
-// footer override, extensions, then registration - last, so a failed step does not mark pi as
+// footer override, format script and extension, pi-lens config, extensions, then registration - last, so a failed step does not mark pi as
 // configured. Soft keeps what already exists (an existing theme file, the
 // user's chosen theme); force rewrites devgeta's own pieces. Extensions are
 // Pi's own state: only the missing ones install, and refreshing the rest is
@@ -293,6 +375,15 @@ func (p *Pi) configure(force bool) error {
 		return err
 	}
 	if err := writeFooterOverride(force); err != nil {
+		return err
+	}
+	if err := baseapp.EnsureFormatScript(); err != nil {
+		return err
+	}
+	if err := writeFormatExtension(); err != nil {
+		return err
+	}
+	if err := disablePiLensMutations(force); err != nil {
 		return err
 	}
 	if err := p.configureExtensions(); err != nil {

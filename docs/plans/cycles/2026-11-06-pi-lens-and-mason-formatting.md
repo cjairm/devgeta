@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06
 **Estimated Duration:** ~4 hours
-**Status:** Approved 2026-11-06; not started
+**Status:** Phase 1 done (steps 1–6); awaiting manual check (§6), then Phase 2 tests
 
 ---
 

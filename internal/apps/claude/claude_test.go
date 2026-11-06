@@ -658,6 +658,14 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if err := os.WriteFile(
+		filepath.Join(devgetaConfigDir, baseapp.FormatScriptName),
+		[]byte(`#!/bin/bash`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
 	testutil.IsolateXDGDirs(t)
 
 	oldAppConfigsClaude := paths.Paths.App.Configs.Claude

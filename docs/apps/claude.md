@@ -43,6 +43,7 @@ for those projects along with the chats.
 | `configs/claude/settings.json.tmpl`        | `~/.claude/settings.json`             | rendered template: theme, permissions, hooks                                      |
 | `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                                                      |
 | `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                                                      |
+| `configs/devgeta/format-file.sh`           | `~/.config/devgeta/format-file.sh`    | `chmod 0755`; the formatter table the hook calls                                  |
 | `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                                                      |
 | `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                                                      |
 | `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                                                      |
@@ -128,7 +129,10 @@ date (deny-list bypass bugs have been patched in past releases).
 ## Formatting & linting (PostToolUse hook)
 
 `settings.json` registers a single `PostToolUse` hook on `Edit|Write` that runs
-`~/.claude/format.sh`. After Claude edits a file, the script:
+`~/.claude/format.sh`, a thin wrapper around the agent-neutral
+`~/.config/devgeta/format-file.sh` that Pi uses too (ADR-0063). The wrapper
+reads the hook payload, skips one grandfathered HTML path, and wraps the
+script's findings in hook JSON. After Claude edits a file, the pair:
 
 1. Reads the edited path from the hook payload on stdin (`.tool_input.file_path`).
 2. **Formats** the file in place with the tools matching its extension.
