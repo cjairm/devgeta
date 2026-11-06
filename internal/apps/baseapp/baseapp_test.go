@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
+	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
 	"github.com/cjairm/devgeta/pkg/paths"
 )
@@ -75,6 +76,95 @@ func TestReinstall_InstallReturnsError(t *testing.T) {
 	if !errors.Is(err, installErr) {
 		t.Fatalf("expected install error to propagate, got: %v", err)
 	}
+}
+
+// stubLookPath swaps the package-level PATH-lookup seam every app uses for
+// binary detection, so a test decides whether the binary resolves instead of
+// inheriting whatever the machine running the test has installed.
+func stubLookPath(t *testing.T, fn func(string) (string, error)) {
+	t.Helper()
+	orig := cmd.LookPathFn
+	t.Cleanup(func() { cmd.LookPathFn = orig })
+	cmd.LookPathFn = fn
+}
+
+func lookupFails(string) (string, error) { return "", fmt.Errorf("not found") }
+
+func TestSoftInstall(t *testing.T) {
+	t.Run("skips when the managed install is present, even off PATH", func(t *testing.T) {
+		stubLookPath(t, func(string) (string, error) {
+			t.Error("PATH must not be consulted once the managed install is present")
+			return "", nil
+		})
+		installed := false
+
+		if err := SoftInstall(func() bool { return true }, "demo", func() error {
+			installed = true
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if installed {
+			t.Error("expected no install over an existing managed install")
+		}
+	})
+
+	t.Run("skips when the binary resolves on PATH from elsewhere", func(t *testing.T) {
+		stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/demo", nil })
+		installed := false
+
+		if err := SoftInstall(func() bool { return false }, "demo", func() error {
+			installed = true
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if installed {
+			t.Error("expected no second copy over a user-installed binary")
+		}
+	})
+
+	t.Run("installs when neither check finds it", func(t *testing.T) {
+		stubLookPath(t, lookupFails)
+		installed := false
+
+		if err := SoftInstall(func() bool { return false }, "demo", func() error {
+			installed = true
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !installed {
+			t.Error("expected install to run when nothing is present")
+		}
+	})
+
+	// An app with no marker of its own still gets the PATH check, so a nil
+	// managedPresent must not turn SoftInstall into an unconditional install.
+	t.Run("works without a managed-presence check", func(t *testing.T) {
+		stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/demo", nil })
+		installed := false
+
+		if err := SoftInstall(nil, "demo", func() error {
+			installed = true
+			return nil
+		}); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if installed {
+			t.Error("expected the PATH check alone to skip the install")
+		}
+	})
+
+	t.Run("propagates the install error", func(t *testing.T) {
+		stubLookPath(t, lookupFails)
+		installErr := errors.New("install failed")
+
+		err := SoftInstall(func() bool { return false }, "demo", func() error { return installErr })
+		if !errors.Is(err, installErr) {
+			t.Fatalf("expected the install error to propagate, got: %v", err)
+		}
+	})
 }
 
 func writeFileTree(t *testing.T, path, content string) {

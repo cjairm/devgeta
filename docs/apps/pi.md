@@ -14,8 +14,11 @@ successful install (ADR-0059).
 
 Idempotency keys on the managed install root, not a package manager:
 
-- Skips if the script's marker (`~/.pi/agent/install/managed-install.json`)
-  exists.
+- Skips if the script's marker (`managed-install.json`) exists in the managed
+  root. Devgeta looks for that root in the order the install script does —
+  `$PI_MANAGED_INSTALL_ROOT`, then `$PI_CODING_AGENT_DIR/install`, then
+  `~/.pi/agent/install` — so a relocated install is recognized as installed
+  rather than downloaded again on every run.
 - Skips if `pi` already resolves on PATH (installed by other means — npm, your
   own setup): devgeta never lays a second copy over it.
 
@@ -72,7 +75,16 @@ it. See ADR-0060 decision 8.
 
 The settings file is `<agent dir>/settings.json`, where the agent dir is
 `$PI_CODING_AGENT_DIR` if you set it (a leading `~` is expanded) and
-`~/.pi/agent` otherwise — the same directory Pi writes to.
+`~/.pi/agent` otherwise — the same directory Pi writes to. Note that Pi resolves
+its config home from `PI_CODING_AGENT_DIR` alone: a `PI_MANAGED_INSTALL_ROOT`
+that moves the install leaves `settings.json` where it was, and devgeta reads it
+there.
+
+Configure runs whichever `pi` it finds: your PATH first, then the managed
+launcher the script writes at `dirname(root)/bin/pi` — the install root's parent,
+not your agent dir, so with `PI_MANAGED_INSTALL_ROOT` it sits beside that root.
+That fallback is what lets a configure right after an install work without a
+shell reload.
 
 Re-running:
 
@@ -101,8 +113,12 @@ install successfully.
 
 ## Uninstall
 
-`dg uninstall pi` removes **only** `~/.pi/agent/install` — the managed install
-root. `~/.pi/agent` itself holds Pi's config, sessions, installed extensions and
+`dg uninstall pi` removes **only** the managed install root — the one resolved
+above, so a relocated install is removed from where it actually lives. When no
+marker is found anywhere it clears `<agent dir>/install` instead: the script
+writes its marker last, so an interrupted install can leave a tree without one,
+and that tree is under the agent dir (`$PI_CODING_AGENT_DIR` or `~/.pi/agent`).
+`~/.pi/agent` itself holds Pi's config, sessions, installed extensions and
 agent state and is never touched, so the extension set survives an uninstall.
 Note that the `pi` binary is a symlink into the managed root, so it disappears
 with it; PATH entries the script added to your shell profile are left alone.

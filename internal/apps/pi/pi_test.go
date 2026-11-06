@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -28,9 +29,10 @@ func isolateInstallRoot(t *testing.T) string {
 	old := paths.Paths.Home.PiInstall
 	t.Cleanup(func() { paths.Paths.Home.PiInstall = old })
 	paths.Paths.Home.PiInstall = root
-	// The relocated agent dir wins over the install root, so clear it: a test
-	// that wants it sets its own value.
+	// The env overrides win over the recorded default root, so clear them: a
+	// test that wants one sets its own value.
 	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("PI_MANAGED_INSTALL_ROOT", "")
 	return root
 }
 
@@ -264,6 +266,275 @@ func TestUpdateNotSupported(t *testing.T) {
 	app := New()
 	if err := app.Update(); err == nil {
 		t.Fatal("expected Update to return an error")
+	}
+}
+
+// writeManagedLauncher creates the executable launcher the official installer
+// writes beside a managed root, at <agent dir>/bin/pi.
+func writeManagedLauncher(t *testing.T, root string) string {
+	t.Helper()
+	launcher := managedLauncherPath(root)
+	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(launcher, []byte("stub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return launcher
+}
+
+// Both env vars the install script honors move the managed root, so detection,
+// the launcher fallback and uninstall have to look where the script put it -
+// keying on ~/.pi/agent/install alone reinstalls on every soft install and
+// leaves the real root behind on uninstall.
+func TestManagedInstallRoot(t *testing.T) {
+	t.Run("is empty when nothing is managed-installed", func(t *testing.T) {
+		root := isolateInstallRoot(t)
+		if err := os.MkdirAll(root, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if got := managedInstallRoot(); got != "" {
+			t.Errorf("managedInstallRoot() = %q, want empty", got)
+		}
+	})
+
+	t.Run("defaults to the recorded managed root", func(t *testing.T) {
+		root := isolateInstallRoot(t)
+		writeManagedMarker(t, root)
+		if got := managedInstallRoot(); got != root {
+			t.Errorf("managedInstallRoot() = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("honors PI_CODING_AGENT_DIR", func(t *testing.T) {
+		isolateInstallRoot(t)
+		agentDir := t.TempDir()
+		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+		relocated := filepath.Join(agentDir, "install")
+		writeManagedMarker(t, relocated)
+		if got := managedInstallRoot(); got != relocated {
+			t.Errorf("managedInstallRoot() = %q, want %q", got, relocated)
+		}
+	})
+
+	t.Run("honors PI_MANAGED_INSTALL_ROOT ahead of the agent dir", func(t *testing.T) {
+		isolateInstallRoot(t)
+		agentDir := t.TempDir()
+		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+		writeManagedMarker(t, filepath.Join(agentDir, "install"))
+		explicit := t.TempDir()
+		t.Setenv("PI_MANAGED_INSTALL_ROOT", explicit+"/")
+		writeManagedMarker(t, explicit)
+		if got := managedInstallRoot(); got != explicit {
+			t.Errorf("managedInstallRoot() = %q, want %q", got, explicit)
+		}
+	})
+
+	// An override that points at a root with no marker is not a managed install:
+	// the script would install into it, so devgeta must not skip the install or
+	// claim a launcher that does not exist.
+	t.Run("ignores an override with no marker", func(t *testing.T) {
+		root := isolateInstallRoot(t)
+		writeManagedMarker(t, root)
+		t.Setenv("PI_MANAGED_INSTALL_ROOT", t.TempDir())
+		if got := managedInstallRoot(); got != root {
+			t.Errorf("managedInstallRoot() = %q, want the marked default %q", got, root)
+		}
+	})
+}
+
+func TestSoftInstallHonorsRelocatedRoot(t *testing.T) {
+	isolateInstallRoot(t)
+	agentDir := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+	writeManagedMarker(t, filepath.Join(agentDir, "install"))
+	stubLookPath(t, func(string) (string, error) {
+		return "", fmt.Errorf("not found")
+	})
+
+	mockApp := testutil.NewMockApp()
+	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.SoftInstall(); err != nil {
+		t.Fatalf("SoftInstall error: %v", err)
+	}
+	if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
+		t.Errorf("expected no installer run for a relocated managed install, got %d commands", got)
+	}
+}
+
+func TestUninstallRemovesTheRootTheScriptUsed(t *testing.T) {
+	t.Run("relocated by PI_MANAGED_INSTALL_ROOT", func(t *testing.T) {
+		testutil.IsolateXDGDirs(t)
+		tc := testutil.SetupCompleteTest(t)
+		defer tc.Cleanup()
+		defaultRoot := isolateInstallRoot(t)
+		relocated := t.TempDir()
+		t.Setenv("PI_MANAGED_INSTALL_ROOT", relocated)
+		writeManagedMarker(t, relocated)
+		// A marker-less leftover in the default root is not what this uninstall
+		// resolved to, so it stays: removing a second tree the run did not
+		// identify would be guesswork.
+		leftover := filepath.Join(defaultRoot, "releases", "1.0.0")
+		if err := os.MkdirAll(leftover, 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.Uninstall(); err != nil {
+			t.Fatalf("Uninstall error: %v", err)
+		}
+		if _, err := os.Stat(relocated); !os.IsNotExist(err) {
+			t.Errorf("expected the relocated managed root removed, stat err: %v", err)
+		}
+		if _, err := os.Stat(leftover); err != nil {
+			t.Errorf("expected the unrelated default root left alone, stat err: %v", err)
+		}
+		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	})
+
+	// The script writes its marker last, so an interrupted install leaves a
+	// tree with no marker. Uninstall still has to clear it.
+	t.Run("marker-less tree in the default root", func(t *testing.T) {
+		testutil.IsolateXDGDirs(t)
+		tc := testutil.SetupCompleteTest(t)
+		defer tc.Cleanup()
+		root := isolateInstallRoot(t)
+		if err := os.MkdirAll(filepath.Join(root, "releases"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.Uninstall(); err != nil {
+			t.Fatalf("Uninstall error: %v", err)
+		}
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Errorf("expected the default root cleared, stat err: %v", err)
+		}
+		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	})
+
+	// The same interrupted-install cleanup has to follow PI_CODING_AGENT_DIR:
+	// with it set, the partial tree is under the agent dir, and clearing the
+	// default root would leave the real one behind.
+	t.Run("marker-less tree under a relocated agent dir", func(t *testing.T) {
+		testutil.IsolateXDGDirs(t)
+		tc := testutil.SetupCompleteTest(t)
+		defer tc.Cleanup()
+		defaultRoot := isolateInstallRoot(t)
+		agentDir := t.TempDir()
+		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+		relocated := filepath.Join(agentDir, "install")
+		if err := os.MkdirAll(filepath.Join(relocated, "releases"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.Uninstall(); err != nil {
+			t.Fatalf("Uninstall error: %v", err)
+		}
+		if _, err := os.Stat(relocated); !os.IsNotExist(err) {
+			t.Errorf("expected the relocated marker-less root cleared, stat err: %v", err)
+		}
+		if _, err := os.Stat(defaultRoot); !os.IsNotExist(err) {
+			t.Errorf("expected the default root untouched, stat err: %v", err)
+		}
+		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+	})
+}
+
+// The launcher fallback has to follow the root: right after an install, nothing
+// on PATH points at pi yet, and the only entry point is the launcher the script
+// wrote beside the root it used.
+//
+// Each case asserts a launcher that exists at the root's parent and nowhere
+// else, so a code path that derived the launcher from the agent dir instead
+// fails here rather than passing by coincidence — for the default root the two
+// locations are the same path.
+func TestConfigureUsesLauncherBesideTheRoot(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T) string
+	}{
+		{
+			name: "agent dir relocated by PI_CODING_AGENT_DIR",
+			setup: func(t *testing.T) string {
+				agentDir := t.TempDir()
+				t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+				return filepath.Join(agentDir, "install")
+			},
+		},
+		{
+			// Here the agent dir and the root's parent deliberately differ: the
+			// script puts the launcher at dirname(root)/bin/pi even though
+			// settings.json stays under the agent dir (ADR-0059 decision 4).
+			name: "root relocated by PI_MANAGED_INSTALL_ROOT",
+			setup: func(t *testing.T) string {
+				agentDir := t.TempDir()
+				t.Setenv("PI_CODING_AGENT_DIR", agentDir)
+				root := filepath.Join(t.TempDir(), "pi-root")
+				t.Setenv("PI_MANAGED_INSTALL_ROOT", root)
+				return root
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			isolateInstallRoot(t)
+			root := tc.setup(t)
+			writeManagedMarker(t, root)
+			launcher := writeManagedLauncher(t, root)
+			stubLookPath(t, func(string) (string, error) {
+				return "", fmt.Errorf("not found")
+			})
+
+			mockApp := testutil.NewMockApp()
+			app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			if err := app.configureExtensions(false); err != nil {
+				t.Fatalf("configureExtensions error: %v", err)
+			}
+			if len(mockApp.Base.ExecCommandCalls) != len(piExtensions) {
+				t.Fatalf(
+					"expected %d installs, got %d",
+					len(piExtensions),
+					len(mockApp.Base.ExecCommandCalls),
+				)
+			}
+			for _, call := range mockApp.Base.ExecCommandCalls {
+				if call.Command != launcher {
+					t.Errorf("command = %q, want launcher beside the root %q", call.Command, launcher)
+				}
+			}
+		})
+	}
+}
+
+// extensionSourcePattern matches a concrete npm source in prose. The generic
+// forms the doc also uses (`npm:<name>`, `npm:<pkg>@<version>`) cannot match,
+// so only real package names are collected.
+var extensionSourcePattern = regexp.MustCompile(`npm:([a-z0-9][a-z0-9-]*)`)
+
+// ADR-0060 decision 2 makes docs/apps/pi.md the user-facing mirror of
+// piExtensions, and nothing but this test notices when the two drift.
+func TestPiExtensionsDocumented(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "apps", "pi.md"))
+	if err != nil {
+		t.Fatalf("read docs/apps/pi.md: %v", err)
+	}
+	documented := map[string]bool{}
+	for _, match := range extensionSourcePattern.FindAllStringSubmatch(string(data), -1) {
+		documented["npm:"+match[1]] = true
+	}
+	for _, source := range piExtensions {
+		if !documented[source] {
+			t.Errorf("%s is in piExtensions but not documented in docs/apps/pi.md", source)
+		}
+	}
+	for source := range documented {
+		if !slices.Contains(piExtensions, source) {
+			t.Errorf("docs/apps/pi.md documents %s, which piExtensions does not install", source)
+		}
 	}
 }
 
@@ -528,13 +799,7 @@ func TestConfigureManagedLauncherOffPath(t *testing.T) {
 	// The path comes from managedLauncherPath — the layout the official
 	// installer documents (write_managed_install_launcher) — not from the
 	// test re-deriving it, so a layout change breaks one place.
-	launcher := managedLauncherPath()
-	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(launcher, []byte("stub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	launcher := writeManagedLauncher(t, root)
 	stubLookPath(t, func(string) (string, error) { return "", fmt.Errorf("not found") })
 	mockApp := testutil.NewMockApp()
 	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}

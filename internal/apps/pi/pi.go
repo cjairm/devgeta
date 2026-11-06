@@ -155,27 +155,55 @@ func (p *Pi) ForceInstall() error {
 	return baseapp.Reinstall(p.Install, p.Uninstall)
 }
 
-// managedMarkerPath is the JSON marker Pi's script writes inside the managed
+// managedInstallMarker is the JSON marker Pi's script writes inside a managed
 // install root. Its presence is the script's own statement that the install
 // under that root is managed.
-func managedMarkerPath() string {
-	return filepath.Join(paths.Paths.Home.PiInstall, "managed-install.json")
+const managedInstallMarker = "managed-install.json"
+
+// managedInstallRoot is the managed install root Pi's script actually used, or
+// "" when Pi is not managed-installed anywhere devgeta can see.
+//
+// Candidates are checked in the script's own precedence order
+// (select_managed_install_dir): an explicit $PI_MANAGED_INSTALL_ROOT, then
+// <agent dir>/install — the agent dir being $PI_CODING_AGENT_DIR or
+// ~/.pi/agent, which the last candidate already spells out — then devgeta's
+// recorded default root. Both env vars move the root, so keying detection and
+// uninstall on the default alone would re-run the installer on every soft
+// install for a user who set either one, and would leave the real root in place
+// on uninstall (ADR-0059 decisions 2-3).
+//
+// Only the marker's presence is checked, never its contents: a marker written by
+// a newer Pi schema is still an install, and refusing to see it would strand the
+// root at uninstall. The script's third candidate — the root an already-resolved
+// `pi` command points at — is deliberately not mirrored: devgeta consults these
+// roots only when `pi` does not resolve, so there is no command to derive one
+// from.
+func managedInstallRoot() string {
+	for _, root := range []string{
+		strings.TrimRight(os.Getenv("PI_MANAGED_INSTALL_ROOT"), "/"),
+		filepath.Join(piAgentDir(), "install"),
+		paths.Paths.Home.PiInstall,
+	} {
+		if root == "" {
+			continue
+		}
+		if files.FileAlreadyExist(filepath.Join(root, managedInstallMarker)) {
+			return root
+		}
+	}
+	return ""
 }
 
-// SoftInstall installs pi only when it is not already there.
-//
-// Two checks, like opencode's: the managed marker covers a devgeta- or
-// script-installed copy even before the new bin dir is on the running
-// process's PATH, and LookPath covers a `pi` the user installed by other
-// means — devgeta does not lay a second copy over it.
+// SoftInstall installs pi only when it is not already there. The managed marker
+// — wherever the env vars put the root — covers a devgeta- or script-installed
+// copy even before the new bin dir is on the running process's PATH; the PATH
+// check covers a `pi` the user installed by other means.
 func (p *Pi) SoftInstall() error {
-	if files.FileAlreadyExist(managedMarkerPath()) {
-		return nil
-	}
-	if _, err := cmd.LookPathFn(constants.Pi); err == nil {
-		return nil
-	}
-	return p.Install()
+	return baseapp.SoftInstall(
+		func() bool { return managedInstallRoot() != "" },
+		constants.Pi,
+		p.Install,
+	)
 }
 
 // piAgentDir is Pi's own config home. Pi relocates it when
@@ -184,6 +212,12 @@ func (p *Pi) SoftInstall() error {
 // ~/.pi/agent while Pi writes elsewhere would make every soft configure
 // reinstall the whole set. Without the override it is the managed install
 // root's parent, which is ~/.pi/agent by construction (ADR-0059).
+//
+// This stays keyed on PI_CODING_AGENT_DIR alone, never on the resolved install
+// root: Pi itself resolves its config home the same way, so a
+// PI_MANAGED_INSTALL_ROOT that moves the install leaves settings.json where it
+// was. Deriving the agent dir from the install root would read the wrong
+// settings file for exactly that user.
 func piAgentDir() string {
 	dir := os.Getenv("PI_CODING_AGENT_DIR")
 	if dir == "" {
@@ -384,12 +418,17 @@ func (p *Pi) Uninstall() error {
 	if err := gc.Load(); err != nil {
 		return fmt.Errorf("failed to load global config: %w", err)
 	}
-	if err := os.RemoveAll(paths.Paths.Home.PiInstall); err != nil {
-		return fmt.Errorf(
-			"failed to remove %s: %w",
-			paths.Paths.Home.PiInstall,
-			err,
-		)
+	root := managedInstallRoot()
+	if root == "" {
+		// No marker anywhere: an interrupted install leaves the tree without
+		// one, because the script writes the marker last. Clear where the script
+		// would have put it — under the agent dir, which is
+		// PI_CODING_AGENT_DIR/install when that is set and the default root
+		// otherwise. On a machine that never had Pi this removes nothing.
+		root = filepath.Join(piAgentDir(), "install")
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return fmt.Errorf("failed to remove %s: %w", root, err)
 	}
 	// No shell feature was ever registered for pi (ADR-0059 decision 4), so
 	// there is nothing to disable or regenerate — only the installed list.
@@ -397,27 +436,29 @@ func (p *Pi) Uninstall() error {
 	return gc.Save()
 }
 
-// managedLauncherPath is the launcher the official installer writes beside
-// the managed install root: <agent dir>/bin/pi. The script's
-// write_managed_install_launcher creates it on every managed install, so a
-// machine with the install marker also has this file even when nothing on
-// PATH points at it yet (see ADR-0059 decision 4).
-func managedLauncherPath() string {
-	return filepath.Join(filepath.Dir(paths.Paths.Home.PiInstall), "bin", constants.Pi)
+// managedLauncherPath is the launcher the official installer writes beside a
+// managed install root: dirname(root)/bin/pi. That is the root's parent, NOT
+// $PI_CODING_AGENT_DIR — the script computes PI_MANAGED_AGENT_DIR as
+// "${PI_MANAGED_INSTALL_DIR%/*}" and hands that to
+// write_managed_install_launcher, so with PI_MANAGED_INSTALL_ROOT=/opt/pi-root
+// the launcher is /opt/bin/pi. The two coincide only for the default root. The
+// script creates it on every managed install, so a machine with the install
+// marker also has this file even when nothing on PATH points at it yet (see
+// ADR-0059 decision 4).
+func managedLauncherPath(root string) string {
+	return filepath.Join(filepath.Dir(root), "bin", constants.Pi)
 }
 
-// piExecutable prefers the user's PATH, then Pi's managed launcher when its
-// install marker exists. The launcher is available before a shell reload.
-// Like SoftInstall it keys on the fixed managed root, NOT piAgentDir: install
-// detection follows ADR-0059 decision 2, and only the settings read honors
-// PI_CODING_AGENT_DIR (ADR-0060 decision 3).
+// piExecutable prefers the user's PATH, then the managed launcher beside
+// whichever root holds the install marker. The launcher is available before a
+// shell reload, so a configure run right after install works without one.
 func piExecutable() (string, error) {
 	path, err := cmd.LookPathFn(constants.Pi)
 	if err == nil {
 		return path, nil
 	}
-	if files.FileAlreadyExist(managedMarkerPath()) {
-		launcher := managedLauncherPath()
+	if root := managedInstallRoot(); root != "" {
+		launcher := managedLauncherPath(root)
 		if info, statErr := os.Stat(
 			launcher,
 		); statErr == nil && info.Mode().IsRegular() &&

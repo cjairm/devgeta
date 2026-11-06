@@ -63,7 +63,13 @@ as Pi does — and otherwise the managed install root's parent. Pi moves both
 `settings.json` and its `npm` tree together, so reading the default location
 while Pi writes to a relocated one would make every soft configure reinstall the
 whole set. Only this read follows the override: install detection and uninstall
-stay keyed on the fixed managed root (ADR-0059 decision 2).
+stay keyed on the managed root (ADR-0059 decision 2).
+
+*(Amended 2026-11-05: the settings read still follows `PI_CODING_AGENT_DIR`
+alone, because that is how Pi itself resolves its config home — a
+`PI_MANAGED_INSTALL_ROOT` that moves the install does not move `settings.json`.
+Install detection and uninstall now resolve the managed root through both
+variables; see the amendment to ADR-0059 decisions 2-3.)*
 
 **4. A failed configure removes what it added and leaves the rest alone.**
 Rollback removes, newest first, the sources this run added — `pi install`

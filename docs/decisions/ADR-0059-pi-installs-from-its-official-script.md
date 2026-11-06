@@ -13,10 +13,18 @@ https://pi.dev/install.sh
 ```
 
 The script installs the npm package `@earendil-works/pi-coding-agent` as a
-*managed install* under `$HOME/.pi/agent/install` (overridable only by
-`PI_MANAGED_INSTALL_ROOT`), with the `pi` binary symlinked into an existing
-PATH directory (`~/.local/bin`, `~/bin`, …). It records a JSON marker —
-`managed-install.json` — inside that root.
+*managed install* under `$HOME/.pi/agent/install`, with the `pi` binary
+symlinked into an existing PATH directory (`~/.local/bin`, `~/bin`, …). It
+records a JSON marker — `managed-install.json` — inside that root.
+
+*(Corrected 2026-11-05: this root is overridable by **two** variables, not one.
+`select_managed_install_dir` in the script takes `$PI_MANAGED_INSTALL_ROOT` when
+it already holds a valid marker, else the root an existing managed `pi` command
+points at, else `${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/install` — so
+`PI_CODING_AGENT_DIR` moves the managed root too, and with it the launcher the
+script writes beside that root. Note the override is honored only when the root
+it names already holds a valid marker: on a clean machine with
+`PI_MANAGED_INSTALL_ROOT` set, the script still installs under the agent dir.)*
 
 Three facts shaped the decision:
 
@@ -45,10 +53,27 @@ manager.** `SoftInstall` skips when the managed marker
 PATH — the second check keeps a user who installed Pi by other means (npm,
 their own setup) on their own copy.
 
+*(Amended 2026-11-05: the marker is looked for in the root the script would
+use — `$PI_MANAGED_INSTALL_ROOT`, then `$PI_CODING_AGENT_DIR/install`, then the
+default — not in the default alone. Keying on the fixed default made a machine
+with either variable set re-run the installer on every soft install. Only the
+marker's presence is checked, never its contents: a schema devgeta does not
+recognize is still an install, and refusing to see it would strand the root at
+uninstall. The script's own third candidate, a root derived from an
+already-resolved `pi` command, is not mirrored — devgeta consults these roots
+only when `pi` does not resolve, so there is no command to derive one from.)*
+
 **3. Uninstall removes only `~/.pi/agent/install`.** The managed root is
 everything the script owns. `~/.pi/agent` — sessions, config, skills — is
 untouched. This is the opencode `clearManagedConfig` allowlist thinking
 applied to an uninstall.
+
+*(Amended 2026-11-05: "the managed root" is the one decision 2 now resolves, so
+a relocated install is removed from where it lives instead of leaving it behind.
+When no marker is found anywhere, `<agent dir>/install` is still cleared —
+following `PI_CODING_AGENT_DIR` when set, which is the default root otherwise —
+because the script writes its marker last and an interrupted install leaves a
+tree without one.)*
 
 **4. Devgeta does not manage Pi's PATH.** The script itself symlinks into an
 existing PATH directory, or asks to edit the shell profile — that part is the
@@ -56,11 +81,19 @@ script's job, and devgeta adds no alias, no shell feature, and no `ShellFeatures
 entry. Nothing in the generated shell config references pi.
 
 One fact about the layout is worth recording for the same reason: the script
-also always writes a launcher at `<agent dir>/bin/pi`
+also always writes a launcher at `dirname(root)/bin/pi`
 (`write_managed_install_launcher` in the install script), so a machine with the
 managed marker has a known working entry point even when nothing on PATH points
 at it yet — configure uses that fallback (ADR-0060), while PATH management
 itself stays the script's.
+
+`dirname(root)` is the script's own `PI_MANAGED_AGENT_DIR`, computed as
+`${PI_MANAGED_INSTALL_DIR%/*}` — the install root's parent, **not**
+`$PI_CODING_AGENT_DIR`. The two coincide for the default root; with
+`PI_MANAGED_INSTALL_ROOT=/opt/pi-root` the launcher is `/opt/bin/pi`, while
+`settings.json` stays under the agent dir. Reading the launcher from the agent
+dir would therefore miss it for exactly the users who set the override, so
+devgeta derives it from the root it resolved.
 
 **5. This knowingly repeats ADR-0047's accepted security trade.** ADR-0004
 chose checksum-verified GitHub releases for rtk specifically to avoid piping an

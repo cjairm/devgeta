@@ -91,20 +91,16 @@ func installedBinary() string {
 
 // SoftInstall installs opencode only when it is not already there.
 //
-// The two checks are not redundant. A freshly installed ~/.opencode/bin is not
-// on the running process's PATH - nor on the user's, until they open a new
-// shell - so a PATH-only check re-runs the installer on every `dg install`,
-// which is the Debian idempotency defect ADR-0047 fixes. And a user who
-// already has opencode from elsewhere (npm, brew, their own build) keeps it:
-// devgeta does not lay a second copy over it.
+// The prefix check is not redundant with the PATH lookup: a freshly installed
+// ~/.opencode/bin is not on the running process's PATH - nor on the user's,
+// until they open a new shell - so a PATH-only check re-runs the installer on
+// every `dg install`, which is the Debian idempotency defect ADR-0047 fixes.
 func (o *OpenCode) SoftInstall() error {
-	if files.FileAlreadyExist(installedBinary()) {
-		return nil
-	}
-	if _, err := cmd.LookPathFn(constants.OpenCode); err == nil {
-		return nil
-	}
-	return o.Install()
+	return baseapp.SoftInstall(
+		func() bool { return files.FileAlreadyExist(installedBinary()) },
+		constants.OpenCode,
+		o.Install,
+	)
 }
 
 func (o *OpenCode) Uninstall() error {
