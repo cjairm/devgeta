@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06
 **Estimated Duration:** ~4 hours
-**Status:** Phase 1 done (steps 1–6); awaiting manual check (§6), then Phase 2 tests
+**Status:** Phases 1 and 2 done; two manual checks still open (see §6, "Open after the first manual run")
 
 ---
 
@@ -65,14 +65,14 @@ anything.
 
 ### In Scope
 
-- [ ] `configs/devgeta/format-file.sh` — the shared script
-- [ ] `configs/claude/format.sh` reduced to a wrapper; behavior unchanged for
+- [x] `configs/devgeta/format-file.sh` — the shared script
+- [x] `configs/claude/format.sh` reduced to a wrapper; behavior unchanged for
       Claude, `hire2` skip kept there
-- [ ] Deploying the script from both Claude's and Pi's configure
-- [ ] `configs/pi/extensions/devgeta-format.js` and its deployment
-- [ ] pi-lens config merge (`format.enabled`, `autofix.enabled`)
-- [ ] `npm:pi-lens` appended last to `piExtensions`
-- [ ] Tests for all of the above, in Phase 2 after the first version has been
+- [x] Deploying the script from both Claude's and Pi's configure
+- [x] `configs/pi/extensions/devgeta-format.js` and its deployment
+- [x] pi-lens config merge (`format.enabled`, `autofix.enabled`)
+- [x] `npm:pi-lens` appended last to `piExtensions`
+- [x] Tests for all of the above, in Phase 2 after the first version has been
       tried by hand; docs (`docs/apps/pi.md`, `docs/apps/claude.md`,
       `docs/guides/agent-sync.md`,
       investigation, ADR-0059 §7 and ADR-0060 §8 amendment notes)
@@ -245,7 +245,7 @@ Written against the behavior kept after the manual run.
 
 ## 6. Verification Plan
 
-### Automated Verification (Phase 2)
+### Automated Verification (Phase 2 — done)
 
 ```bash
 go test ./...      # baseapp + configs/ changes: full suite, see §2
@@ -269,6 +269,29 @@ Needs `make build`, then `dg configure claude --force` and
    `~/.pi-lens/tools` gains nothing new during the session.
 5. `~/.pi-lens/config.json` has `format.enabled: false` and
    `autofix.enabled: false`, and any other keys it had before are still there.
+
+### Open after the first manual run (2026-11-06, maintainer's other machine)
+
+The maintainer ran §6 and judged it good enough to move on. What it showed and
+what is still unverified:
+
+- Passed: pi-lens config written as expected, nothing downloaded into
+  `~/.pi-lens/tools` or `bin`, the reformat reached the model, Claude's hook
+  unchanged.
+- Fixed from it: the pi-lens widget showed a file list under the input box
+  (now `widget.visible: false`), and golangci-lint v2's `0 issues.` summary was
+  reported to the agent as a finding to fix after every clean Go edit
+  (`--show-stats=false`).
+- **Still open: the read-guard check (step 3).** The run was muddied: the model
+  was told "no reformatting", so it undid the reformat through `bash`, which
+  the extension does not format. Whether an `edit` straight after a reformat is
+  blocked by pi-lens ("File modified since read/write") was not observed. If it
+  is, ADR-0063's fallback applies (report the formatted lines and let the guard
+  ask for a read) and the extension's output changes.
+- **Still open: a hang after a type error (step 6).** Pi sat on "thinking" until
+  Esc. Not reproduced or explained. The false `0 issues.` finding is one
+  suspect; gopls waiting on diagnostics is another. If it recurs, collect
+  `~/.pi-lens/latency.log` and the session file.
 
 ### Regression Check
 

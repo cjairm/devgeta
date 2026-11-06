@@ -1016,3 +1016,227 @@ func TestConfigureWritesFooterOverride(t *testing.T) {
 		}
 	})
 }
+
+// isolatePiLensConfig points pi-lens's config at a throwaway file, so no test
+// can read or write the real ~/.pi-lens.
+func isolatePiLensConfig(t *testing.T, existing string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "pi-lens", "config.json")
+	t.Setenv("PI_LENS_CONFIG_PATH", path)
+	if existing != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(existing), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func readPiLensConfig(t *testing.T, path string) map[string]map[string]any {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := map[string]map[string]any{}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatalf("pi-lens config is not valid JSON: %v\n%s", err, data)
+	}
+	return config
+}
+
+func TestApplyPiLensDefaults(t *testing.T) {
+	t.Run("creates the file with formatting, autofix and the widget off", func(t *testing.T) {
+		path := isolatePiLensConfig(t, "")
+		if err := applyPiLensDefaults(false); err != nil {
+			t.Fatalf("applyPiLensDefaults error: %v", err)
+		}
+		config := readPiLensConfig(t, path)
+		want := map[string]string{"format": "enabled", "autofix": "enabled", "widget": "visible"}
+		for section, key := range want {
+			if got, ok := config[section][key]; !ok || got != false {
+				t.Errorf("%s.%s: want false, got %v (present: %v)", section, key, got, ok)
+			}
+		}
+	})
+
+	t.Run("keeps sibling keys inside a section and at the top level", func(t *testing.T) {
+		path := isolatePiLensConfig(t,
+			`{"ignore":["scratch/**"],"format":{"mode":"immediate"},"widget":{"x":1}}`)
+		if err := applyPiLensDefaults(false); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			Ignore []string       `json:"ignore"`
+			Format map[string]any `json:"format"`
+			Widget map[string]any `json:"widget"`
+		}
+		if err := json.Unmarshal(data, &config); err != nil {
+			t.Fatalf("pi-lens config is not valid JSON: %v\n%s", err, data)
+		}
+		if config.Format["mode"] != "immediate" || config.Widget["x"] != float64(1) {
+			t.Errorf("sibling keys inside a section were lost: %s", data)
+		}
+		if len(config.Ignore) != 1 || config.Ignore[0] != "scratch/**" {
+			t.Errorf("top-level key was lost: %s", data)
+		}
+	})
+
+	t.Run("soft keeps a value the user already set", func(t *testing.T) {
+		path := isolatePiLensConfig(t, `{"widget":{"visible":true},"format":{"enabled":true}}`)
+		if err := applyPiLensDefaults(false); err != nil {
+			t.Fatal(err)
+		}
+		config := readPiLensConfig(t, path)
+		if config["widget"]["visible"] != true || config["format"]["enabled"] != true {
+			t.Errorf("soft overwrote the user's choices: %v", config)
+		}
+		if config["autofix"]["enabled"] != false {
+			t.Errorf("soft did not fill the missing autofix default: %v", config)
+		}
+	})
+
+	t.Run("soft with every key present leaves the file byte for byte", func(t *testing.T) {
+		original := `{"format":{"enabled":true},"autofix":{"enabled":true},"widget":{"visible":true}}`
+		path := isolatePiLensConfig(t, original)
+		if err := applyPiLensDefaults(false); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(path)
+		if string(got) != original {
+			t.Errorf("file was rewritten though nothing was missing: %s", got)
+		}
+	})
+
+	t.Run("force replaces the user's values", func(t *testing.T) {
+		path := isolatePiLensConfig(t, `{"widget":{"visible":true},"format":{"enabled":true}}`)
+		if err := applyPiLensDefaults(true); err != nil {
+			t.Fatal(err)
+		}
+		config := readPiLensConfig(t, path)
+		if config["widget"]["visible"] != false || config["format"]["enabled"] != false {
+			t.Errorf("force did not set the defaults: %v", config)
+		}
+	})
+
+	t.Run("an unparseable file is an error and is left untouched", func(t *testing.T) {
+		path := isolatePiLensConfig(t, `{not json`)
+		err := applyPiLensDefaults(true)
+		if err == nil || !strings.Contains(err.Error(), path) {
+			t.Fatalf("want an error naming %s, got %v", path, err)
+		}
+		if got, _ := os.ReadFile(path); string(got) != `{not json` {
+			t.Errorf("an unparseable file was modified: %s", got)
+		}
+	})
+
+	t.Run("a section that is not an object is an error", func(t *testing.T) {
+		path := isolatePiLensConfig(t, `{"widget":"hidden"}`)
+		err := applyPiLensDefaults(false)
+		if err == nil || !strings.Contains(err.Error(), "widget") {
+			t.Fatalf("want an error naming the widget section, got %v", err)
+		}
+		if got, _ := os.ReadFile(path); string(got) != `{"widget":"hidden"}` {
+			t.Errorf("file was modified despite the error: %s", got)
+		}
+	})
+}
+
+func TestPiLensInstallsLast(t *testing.T) {
+	// pi-lens builds a native binary at install time and configure stops at the
+	// first failure, so a failure there must not keep the other extensions out.
+	if got := piExtensions[len(piExtensions)-1]; got != "npm:pi-lens" {
+		t.Errorf("pi-lens must be the last extension, last is %s", got)
+	}
+}
+
+func TestConfigureDeploysFormatPieces(t *testing.T) {
+	setup := func(t *testing.T) *Pi {
+		t.Helper()
+		tc := testutil.SetupCompleteTest(t)
+		t.Cleanup(tc.Cleanup)
+		useRepoThemes(t)
+		isolateInstallRoot(t)
+		piOnPath(t)
+		isolatePiLensConfig(t, "")
+		return &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	}
+	shipped := func(t *testing.T, parts ...string) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(append([]string{repoRoot(t), "configs"}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	t.Run("writes the extension, the shared script and the pi-lens defaults", func(t *testing.T) {
+		app := setup(t)
+		if err := app.SoftConfigure(); err != nil {
+			t.Fatalf("SoftConfigure error: %v", err)
+		}
+		got, err := os.ReadFile(formatExtensionFile())
+		if err != nil {
+			t.Fatalf("extension not deployed: %v", err)
+		}
+		if string(got) != shipped(t, "pi", "extensions", "devgeta-format.js") {
+			t.Error("deployed extension differs from the shipped one")
+		}
+		script := filepath.Join(paths.Paths.Config.Devgeta, "format-file.sh")
+		info, err := os.Stat(script)
+		if err != nil {
+			t.Fatalf("shared script not deployed: %v", err)
+		}
+		if info.Mode()&0o111 == 0 {
+			t.Errorf("shared script is not executable: %v", info.Mode())
+		}
+		config := readPiLensConfig(t, os.Getenv("PI_LENS_CONFIG_PATH"))
+		if config["format"]["enabled"] != false || config["autofix"]["enabled"] != false ||
+			config["widget"]["visible"] != false {
+			t.Errorf("pi-lens defaults not applied: %v", config)
+		}
+	})
+
+	t.Run("soft rewrites an edited extension, since it is devgeta's code", func(t *testing.T) {
+		app := setup(t)
+		if err := app.SoftConfigure(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(formatExtensionFile(), []byte("// edited"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := app.SoftConfigure(); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(formatExtensionFile())
+		if string(got) != shipped(t, "pi", "extensions", "devgeta-format.js") {
+			t.Error("soft configure left an edited extension in place")
+		}
+	})
+
+	// The extension must exist before the extensions install, so the first Pi
+	// start after configure already formats; and a failed install must not
+	// have skipped it.
+	t.Run("deploys the extension even when an extension install fails", func(t *testing.T) {
+		tc := testutil.SetupCompleteTest(t)
+		t.Cleanup(tc.Cleanup)
+		useRepoThemes(t)
+		isolateInstallRoot(t)
+		piOnPath(t)
+		isolatePiLensConfig(t, "")
+		tc.MockApp.Base.ExecCommandError = fmt.Errorf("npm exited 1")
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		if err := app.SoftConfigure(); err == nil {
+			t.Fatal("expected SoftConfigure to fail")
+		}
+		if _, err := os.Stat(formatExtensionFile()); err != nil {
+			t.Errorf("extension missing after a failed extension install: %v", err)
+		}
+	})
+}
