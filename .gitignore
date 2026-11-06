@@ -52,3 +52,6 @@ devgeta-linux-*
 
 # SDD scratch space (review diffs, task briefs/reports)
 .superpowers/
+
+# OpenCode project-local state
+.opencode/

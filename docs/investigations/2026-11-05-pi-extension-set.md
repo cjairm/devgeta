@@ -448,13 +448,71 @@ checkers and formatters, and feeds the findings back to the agent.
   - A small devgeta Pi extension runs the same formatter script Claude uses on
     Pi's `tool_result` event after `edit`/`write`. That event can rewrite the
     tool result, so lint findings reach the model the way Claude's
-    `additionalContext` does. Pi loads a local-path package without copying it
-    (`pi install <dir>`), so devgeta keeps the extension in a directory it owns.
+    `additionalContext` does. ~~Pi loads a local-path package without copying
+    it (`pi install <dir>`)~~ — see "Where the extension lives" below.
   - `format.sh` moves to an agent-neutral location (`~/.config/devgeta/`, as
     `output-budget-run.sh` already did), so three agents call one script.
-- **Open question:** whether pi-lens reads the install switches and `PATH` at
-  call time (the devgeta extension can set them) or at load time (they must be
-  in Pi's launch environment).
+- **Open question, closed (2026-11-06, 4.4.9 source):** pi-lens reads the
+  install switches at call time — `isToolInstallDisabled()` checks
+  `process.env.PI_LENS_DISABLE_TOOL_INSTALL` on every install attempt. Pi runs
+  every extension in one process, so a devgeta extension that sets them (and
+  prepends the Mason bin to `process.env.PATH`) when it loads is enough. Side
+  effect: the `bash` tool's children inherit that `PATH` too.
+- **Where the extension lives (Pi 1.5 source, `package-manager.js`
+  `resourcePrecedenceRank`):** `tool_result` handlers chain in extension load
+  order, and Pi sorts extensions as project files → user files
+  (`~/.pi/agent/extensions/*.ts` or `*.js`; `FILE_PATTERNS.extensions` is
+  `/\.(ts|js)$/`) → npm packages → built-ins. A file in
+  `~/.pi/agent/extensions/` therefore always runs before pi-lens, so pi-lens
+  diagnoses the formatted bytes. A `pi install <dir>` local package is ranked
+  with the npm packages instead, and its order against pi-lens would depend on
+  the `packages` list. Use the auto-discovered file. It also hot-reloads with
+  `/reload`.
+- **pi-lens read-before-edit guard vs an outside formatter:** the guard blocks
+  an edit when the file's bytes differ from what the conversation last read or
+  wrote. pi-lens records "what was written" by hashing the file on disk in its
+  own `tool_result` handler (`observeAuthoredBytes`), and that runs after ours,
+  so formatted bytes should count as the agent's. Not run yet — the sandbox run
+  must check an edit → format → second edit on the same file is not blocked.
+- **The agent must be told the file changed.** Pi's `edit` needs an exact
+  `oldText` match, so a reformat silently breaks the next edit. pi-lens
+  defers its own formatting to `agent_end` for exactly this reason. The
+  existing `@ian-pascoe/pi-formatter` (0.6.9, 11 stars, 4 contributors, 35
+  commits 90d) solves it by appending `Formatted by <tool>: lines N–M changed`
+  plus a short diff to the tool result. The devgeta extension should do the
+  same, alongside the lint findings. `@ian-pascoe/pi-formatter` itself was not
+  chosen: it would need the per-language formatter table copied into Pi's
+  `settings.json` (a third copy beside `format.sh` and `opencode.json.tmpl`),
+  and it carries no lint feedback.
+- **`hire2` exception:** `format.sh` skips HTML formatting for one private
+  repo. The maintainer chose to keep it (grandfathered in
+  `TestEmbeddedConfigsNameNoPersonalCheckoutPaths`), so it stays in Claude's
+  wrapper and is not carried into the shared script, where it would spread
+  to Pi.
+- **Sources for the facts above** (Pi 1.5.0 and pi-lens 4.4.9, unpacked with
+  `npm pack --ignore-scripts`):
+  - Pi `docs/extensions.md`: "Handler Composition" and `tool_result`
+    (middleware chaining, partial patches, `structuredContent` dropped when
+    `content` is replaced without it), `pi.exec(command, args, {signal,
+timeout})`, "Extension Locations".
+  - Pi `dist/core/package-manager.js`: `resourcePrecedenceRank`,
+    `FILE_PATTERNS`, `toResolvedPaths` (sort by rank).
+  - Pi `dist/core/tools/edit.d.ts` / `write.d.ts`: inputs carry `path`.
+    `isEditToolResult` / `isWriteToolResult` are exported from
+    `dist/core/extensions/index.d.ts`.
+  - pi-lens `dist/chunk-VCRVNLE7.js` `isToolInstallDisabled()` (reads
+    `process.env` per call).
+  - pi-lens `dist/chunk-OUYAUXAT.js`: `recordWritten`, `creditAuthorship`,
+    `observeAuthoredBytes` (hashes the file on disk when no hash is passed).
+  - pi-lens `docs/features.md` ("Formatters", "Read-Before-Edit Guard", bus
+    events: pi-lens publishes, does not consume) and `docs/globalconfig.md`
+    (`format.enabled`, `autofix.enabled`).
+  - pi-lens `docs/configuration.md`: global config path table
+    (`PI_LENS_CONFIG_PATH`, `~/.pi-lens/config.json`,
+    `$PI_CODING_AGENT_DIR/extensions/pi-lens.json`).
+- **Plan:** [ADR-0063](../decisions/ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md),
+  cycle [2026-11-06-pi-lens-and-mason-formatting](../plans/cycles/2026-11-06-pi-lens-and-mason-formatting.md).
+  Decision taken: no pi-lens downloads; Mason is the only tool source.
 - **Unrelated bug found:** `~/.local/share/nvim/mason/bin` on the maintainer's
   machine has no `eslint_d` and no `clang-format`, yet `format.sh` and
   `configs/opencode/opencode.json.tmpl` call both. JS linting and C formatting
@@ -545,8 +603,9 @@ Node on the maintainer's machine is v26.10.0; Pi needs 22.19 or later.
 ## Decisions this will need
 
 - Amend ADR-0059 §7 and ADR-0060 §8 ("no themes, no formatter parity"): devgeta
-  would now write two things of its own for Pi — the footer's `theme.json` and a
-  local-path Pi package holding the formatter extension.
-- ADR-0060 §1 ("devgeta never writes Pi's settings") stays true: `pi install`
-  writes the settings, including for the local package.
+  would now write two things of its own for Pi — the footer's `theme.json` and
+  the formatter extension. Taken up by ADR-0063, which uses an auto-discovered
+  extension file instead of a local-path package (load order, see `pi-lens`).
+- ADR-0060 §1 ("devgeta never writes Pi's settings") stays true: the extension
+  file is not a settings entry, and pi-lens's config is not Pi's settings.
 - Whether a one-maintainer package (`pi-schedule`) may be a default.

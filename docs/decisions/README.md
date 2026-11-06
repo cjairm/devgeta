@@ -82,3 +82,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0060](ADR-0060-pi-extensions-install-through-pis-own-package-manager.md) — Pi extensions install through Pi's own package manager, at configure time
 - [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md) — Pi is a themed surface, with one devgeta-owned theme file
 - [ADR-0062](ADR-0062-pi-powerline-footer-colors-come-from-the-active-pi-theme.md) — pi-powerline-footer's colors come from the active Pi theme
+- [ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md) — Pi formats through devgeta's shared Mason script; pi-lens only diagnoses
