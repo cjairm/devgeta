@@ -45,7 +45,8 @@ touched on a switch, and Pi's hot reload applies the new colors to a running
 session with no extra live-apply step.
 
 **3. Devgeta writes exactly one key in Pi's settings: `theme`. This amends
-ADR-0060 §1.** It is a read-modify-write that keeps every other key
+ADR-0060 §1.** _(Amended by [ADR-0064](ADR-0064-pi-hides-thinking-blocks-by-default.md):
+devgeta also writes `hideThinkingBlock`, under the same rules.)_ It is a read-modify-write that keeps every other key
 (`packages` above all) and is written atomically (`files.WriteFileAtomic`).
 A file that does not parse is an error, never a reset (same rule as ADR-0060
 §5). A missing file is created with only that key.

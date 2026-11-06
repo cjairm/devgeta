@@ -243,13 +243,21 @@ func writeFooterOverride(force bool) error {
 	return nil
 }
 
-// selectTheme sets "theme" to the devgeta theme in Pi's settings.json: the one
-// key devgeta writes there (ADR-0061 §3). Without force an existing "theme" is
-// the user's choice and stays. Every other key is carried as raw JSON so Pi's
-// own state (packages above all) round-trips; HTML escaping is off because the
-// default would rewrite "&" in a package URL as \u0026. A file that does not
-// parse is an error, never a reset.
-func selectTheme(force bool) error {
+// piSettingDefaults are the only keys devgeta writes in Pi's settings.json
+// (ADR-0061 §3, ADR-0064). Collapsed thinking still shows a "Thinking..." line
+// that a click or Ctrl+T expands, so hiding it by default loses nothing.
+var piSettingDefaults = map[string]json.RawMessage{
+	"theme":             json.RawMessage(strconv.Quote(piThemeName)),
+	"hideThinkingBlock": json.RawMessage("true"),
+}
+
+// applySettingDefaults writes piSettingDefaults into Pi's settings.json.
+// Without force a key already present is the user's choice and stays; with
+// force every default is written. Every other key is carried as raw JSON so
+// Pi's own state (packages above all) round-trips; HTML escaping is off because
+// the default would rewrite "&" in a package URL as \u0026. A file that does
+// not parse is an error, never a reset.
+func applySettingDefaults(force bool) error {
 	settingsPath := filepath.Join(piAgentDir(), "settings.json")
 	settings := map[string]json.RawMessage{}
 	data, err := os.ReadFile(settingsPath)
@@ -261,10 +269,17 @@ func selectTheme(force bool) error {
 	case !os.IsNotExist(err):
 		return fmt.Errorf("failed to read %s: %w", settingsPath, err)
 	}
-	if _, exists := settings["theme"]; exists && !force {
+	changed := false
+	for key, value := range piSettingDefaults {
+		if _, exists := settings[key]; exists && !force {
+			continue
+		}
+		settings[key] = value
+		changed = true
+	}
+	if !changed {
 		return nil
 	}
-	settings["theme"] = json.RawMessage(strconv.Quote(piThemeName))
 
 	var out bytes.Buffer
 	encoder := json.NewEncoder(&out)
@@ -309,7 +324,7 @@ func piLensConfigPath() string {
 
 // disablePiLensMutations turns off pi-lens's own formatting and autofix, which
 // would fight devgeta's Mason formatters (ADR-0063). It merges into the user's
-// file the way selectTheme does: raw JSON kept, siblings kept, an unparseable
+// file the way applySettingDefaults does: raw JSON kept, siblings kept, an unparseable
 // file is an error. Without force an existing "enabled" value stays.
 func disablePiLensMutations(force bool) error {
 	configPath := piLensConfigPath()
@@ -355,10 +370,10 @@ func disablePiLensMutations(force bool) error {
 	return files.WriteFileAtomic(configPath, out.Bytes(), files.FilePermission)
 }
 
-// configure is the body of both configure modes: theme file, theme selection,
+// configure is the body of both configure modes: theme file, Pi setting defaults,
 // footer override, format script and extension, pi-lens config, extensions, then registration - last, so a failed step does not mark pi as
 // configured. Soft keeps what already exists (an existing theme file, the
-// user's chosen theme); force rewrites devgeta's own pieces. Extensions are
+// user's own setting values); force rewrites devgeta's own pieces. Extensions are
 // Pi's own state: only the missing ones install, and refreshing the rest is
 // `pi update`'s job (ADR-0060).
 func (p *Pi) configure(force bool) error {
@@ -371,7 +386,7 @@ func (p *Pi) configure(force bool) error {
 			return err
 		}
 	}
-	if err := selectTheme(force); err != nil {
+	if err := applySettingDefaults(force); err != nil {
 		return err
 	}
 	if err := writeFooterOverride(force); err != nil {

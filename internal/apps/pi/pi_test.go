@@ -791,22 +791,67 @@ func TestForceConfigureTheme(t *testing.T) {
 	})
 }
 
-func TestSelectTheme(t *testing.T) {
-	t.Run("creates settings with only the theme key when absent", func(t *testing.T) {
+func TestApplySettingDefaults(t *testing.T) {
+	t.Run("creates settings with only devgeta's keys when absent", func(t *testing.T) {
 		isolateInstallRoot(t)
-		if err := selectTheme(false); err != nil {
-			t.Fatalf("selectTheme error: %v", err)
+		if err := applySettingDefaults(false); err != nil {
+			t.Fatalf("applySettingDefaults error: %v", err)
 		}
 		keys := readSettingsKeys(t)
-		if len(keys) != 1 || string(keys["theme"]) != `"devgeta"` {
-			t.Errorf("expected only theme=devgeta, got %v", keys)
+		if len(keys) != 2 ||
+			string(keys["theme"]) != `"devgeta"` ||
+			string(keys["hideThinkingBlock"]) != `true` {
+			t.Errorf("expected only theme=devgeta and hideThinkingBlock=true, got %v", keys)
+		}
+	})
+
+	// Ctrl+T in Pi writes hideThinkingBlock, so a present value is the user's
+	// last choice and soft configure must not flip it back.
+	t.Run(
+		"soft keeps the user's thinking visibility and fills the other default",
+		func(t *testing.T) {
+			isolateInstallRoot(t)
+			writeAgentSettings(t, `{"hideThinkingBlock": false}`)
+			if err := applySettingDefaults(false); err != nil {
+				t.Fatal(err)
+			}
+			keys := readSettingsKeys(t)
+			if got := string(keys["hideThinkingBlock"]); got != `false` {
+				t.Errorf("soft replaced the user's thinking visibility: %s", got)
+			}
+			if got := string(keys["theme"]); got != `"devgeta"` {
+				t.Errorf("soft did not add the missing theme: %s", got)
+			}
+		},
+	)
+
+	t.Run("soft with every key present leaves the file byte-for-byte", func(t *testing.T) {
+		isolateInstallRoot(t)
+		original := `{"theme":"dark","hideThinkingBlock":false}`
+		writeAgentSettings(t, original)
+		if err := applySettingDefaults(false); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := os.ReadFile(settingsFilePath()); string(got) != original {
+			t.Errorf("file was rewritten: %q", got)
+		}
+	})
+
+	t.Run("force hides thinking again", func(t *testing.T) {
+		isolateInstallRoot(t)
+		writeAgentSettings(t, `{"hideThinkingBlock": false}`)
+		if err := applySettingDefaults(true); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(readSettingsKeys(t)["hideThinkingBlock"]); got != `true` {
+			t.Errorf("force did not hide thinking: %s", got)
 		}
 	})
 
 	t.Run("soft keeps a theme the user already chose", func(t *testing.T) {
 		isolateInstallRoot(t)
 		writeAgentSettings(t, `{"theme": "dark"}`)
-		if err := selectTheme(false); err != nil {
+		if err := applySettingDefaults(false); err != nil {
 			t.Fatal(err)
 		}
 		if got := string(readSettingsKeys(t)["theme"]); got != `"dark"` {
@@ -817,7 +862,7 @@ func TestSelectTheme(t *testing.T) {
 	t.Run("soft adds theme when settings has other keys but no theme", func(t *testing.T) {
 		isolateInstallRoot(t)
 		writeAgentSettings(t, `{"defaultModel": "x"}`)
-		if err := selectTheme(false); err != nil {
+		if err := applySettingDefaults(false); err != nil {
 			t.Fatal(err)
 		}
 		keys := readSettingsKeys(t)
@@ -829,7 +874,7 @@ func TestSelectTheme(t *testing.T) {
 	t.Run("force replaces the user's theme", func(t *testing.T) {
 		isolateInstallRoot(t)
 		writeAgentSettings(t, `{"theme": "dark"}`)
-		if err := selectTheme(true); err != nil {
+		if err := applySettingDefaults(true); err != nil {
 			t.Fatal(err)
 		}
 		if got := string(readSettingsKeys(t)["theme"]); got != `"devgeta"` {
@@ -844,7 +889,7 @@ func TestSelectTheme(t *testing.T) {
 		isolateInstallRoot(t)
 		original := `{"packages": ["npm:a@1", {"source": "git:https://x.test/r?a=1&b=<2>", "skills": []}], "other": {"n": 1.50}}`
 		writeAgentSettings(t, original)
-		if err := selectTheme(true); err != nil {
+		if err := applySettingDefaults(true); err != nil {
 			t.Fatal(err)
 		}
 		var want map[string]json.RawMessage
@@ -875,7 +920,7 @@ func TestSelectTheme(t *testing.T) {
 		isolateInstallRoot(t)
 		writeAgentSettings(t, `{"packages": [`)
 		for _, force := range []bool{false, true} {
-			err := selectTheme(force)
+			err := applySettingDefaults(force)
 			if err == nil {
 				t.Fatalf("force=%v: expected an error", force)
 			}

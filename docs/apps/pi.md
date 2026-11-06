@@ -307,15 +307,16 @@ Pi after edits. On its own it also formats, autofixes, and downloads any tool it
 is missing, with tools that differ from the Mason ones Claude Code and OpenCode
 use. Devgeta keeps only the diagnostics: see [Formatting](#formatting).
 
-**Pi owns the install.** Devgeta never touches Pi's npm tree, and writes one key
-in Pi's settings file, `theme` (see [Theme](#theme)). Versions are whatever npm
+**Pi owns the install.** Devgeta never touches Pi's npm tree, and writes two keys
+in Pi's settings file, `theme` (see [Theme](#theme)) and `hideThinkingBlock`
+(see [Thinking blocks](#thinking-blocks)). Versions are whatever npm
 serves at install time, and `pi update` advances them (ADR-0060).
 
 Re-running:
 
 - `dg configure pi` installs only extensions `~/.pi/agent/settings.json` does
   not already declare — a declaration with a version or tag counts. `--force`
-  does the same: devgeta's own pieces are the theme, and refreshing installed
+  does the same: devgeta's own pieces are the theme and settings, and refreshing installed
   extensions is `pi update`.
 - If an install fails, configure stops and names the extension. Nothing is
   rolled back and pi is not registered as configured; fix the cause and re-run
@@ -335,7 +336,18 @@ can corrupt a session); v1.44.0 was the last release that did. Configure only
 adds extensions, so if you have it, remove it yourself: find its entry in
 `pi list` and pass that source to `pi remove`.
 
-## Formatting
+## Thinking blocks
+
+Devgeta sets `"hideThinkingBlock": true` in `~/.pi/agent/settings.json`
+(ADR-0064), so a model's reasoning shows as a single `Thinking...` line rather
+than the full text, the same way Claude Code and OpenCode show it.
+
+- Click a `Thinking...` line to open that one block, and click again to close
+  it. Inside tmux this needs `mouse on`.
+- `Ctrl+T` shows or hides every block. Pi saves that choice to the same key, and
+  `dg configure pi` keeps it from then on. Only `dg configure pi --force` sets
+  it back to hidden.
+
 
 After every `edit` or `write`, Pi formats and lints the file with the same
 Mason binaries and settings as Claude Code (ADR-0063). Three pieces:
