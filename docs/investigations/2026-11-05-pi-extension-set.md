@@ -2,8 +2,11 @@
 
 **Date:** 2026-11-05
 **Status:** Open
-**Feeds:** none yet — a cycle doc, and an ADR amending ADR-0059 §7 and ADR-0060
-§8 (see [Decisions this will need](#decisions-this-will-need))
+**Feeds:**
+[ADR-0062](../decisions/ADR-0062-pi-powerline-footer-colors-come-from-the-active-pi-theme.md)
+and cycle [2026-11-06-pi-powerline-footer](../plans/cycles/2026-11-06-pi-powerline-footer.md);
+[ADR-0063](../decisions/ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md)
+and cycle [2026-11-06-pi-lens-and-mason-formatting](../plans/cycles/2026-11-06-pi-lens-and-mason-formatting.md)
 
 ## Question
 
@@ -52,7 +55,7 @@ entry below is meant to be worked on its own.
 | ~~`@juicesharp/rpiv-ask-user-question`~~ ✅ done | **Add**                                | Well maintained        |
 | ~~`@juicesharp/rpiv-todo`~~ ✅ done              | **Add**                                | Well maintained        |
 | ~~`pi-lens`~~ ✅ done                            | **Add**, last in order, formatting off | Well maintained        |
-| `pi-schedule`                                    | **Add only if the sandbox run passes** | Active, one maintainer |
+| `pi-schedule`                                    | **Skipped for now**                    | Active, one maintainer |
 
 ---
 
@@ -531,9 +534,10 @@ replacement for `pi-schedule-prompt`.
 - Active — a release every 1–3 weeks since 2026-07-20, 18 closed issues/PRs —
   but one maintainer and almost no users. Pi 1.5 compatibility is unverified
   (peer range `*`, last release 2026-10-19).
-- **Action:** add only if the sandbox run shows it loading and firing on Pi 1.5;
-  otherwise list it in `docs/apps/pi.md` as optional. Re-check its maintenance
-  at each devgeta release.
+- **Action:** skipped for now (maintainer's choice, 2026-11-06). Not in
+  `piExtensions`. If scheduled prompts are needed later, re-check its
+  maintenance and run the sandbox check (loads and fires on Pi 1.5) before
+  adding it.
 
 ---
 
@@ -564,8 +568,8 @@ replacement for `pi-schedule-prompt`.
 8. ~~`npm:pi-openrouter-advanced-provider`~~ ✅ done
 9. ~~`npm:pi-openrouter-request-details`~~ ✅ done
 10. ~~`npm:pi-thinking-reformatter`~~ ✅ done
-11. `npm:pi-schedule` — only if the sandbox run passes
-12. `npm:pi-lens` — always last
+11. ~~`npm:pi-schedule`~~ — skipped for now
+12. ~~`npm:pi-lens`~~ ✅ done — always last
 
 ### Live install output
 
@@ -589,7 +593,7 @@ scratch prefix, point `HOME` and `PI_CODING_AGENT_DIR` at scratch, then:
 
 1. run `pi install` for each extension and record what it prints (stdout and
    stderr separately) and how long it takes;
-2. confirm every extension loads on Pi 1.5 — `pi-schedule` especially — and
+2. confirm every extension loads on Pi 1.5, and
    whether `subagentOnlyExtensions` accepts `npm:pi-web-access` so the
    foreground `researcher` gets the web tools; for `pi-mcp-adapter`, that the
    first start adds `"-builtin:mcp"` to `settings.json` and Pi then loads no
@@ -608,4 +612,5 @@ Node on the maintainer's machine is v26.10.0; Pi needs 22.19 or later.
   extension file instead of a local-path package (load order, see `pi-lens`).
 - ADR-0060 §1 ("devgeta never writes Pi's settings") stays true: the extension
   file is not a settings entry, and pi-lens's config is not Pi's settings.
-- Whether a one-maintainer package (`pi-schedule`) may be a default.
+- ~~Whether a one-maintainer package (`pi-schedule`) may be a default.~~
+  Deferred: `pi-schedule` is skipped for now.
