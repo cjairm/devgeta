@@ -30,11 +30,15 @@ a clean machine the first `dg install` may report that; run
 theme (see [Theme](#theme)), then runs Pi's own package manager once per
 extension, `pi install npm:<name>`:
 
-| Extension                 | What it adds                                                                   |
-| ------------------------- | ------------------------------------------------------------------------------ |
-| `npm:pi-subagents`        | Subagent delegation and scripted multi-agent workflows                         |
-| `npm:pi-web-access`       | Web search, page/PDF reading, GitHub repo cloning, video input                 |
-| `npm:pi-powerline-footer` | A powerline status bar in place of Pi's footer, colored by the active Pi theme |
+| Extension                             | What it adds                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------- |
+| `npm:pi-subagents`                    | Subagent delegation and scripted multi-agent workflows                                |
+| `npm:pi-web-access`                   | Web search, page/PDF reading, GitHub repo cloning, video input                        |
+| `npm:pi-powerline-footer`             | A powerline status bar in place of Pi's footer, colored by the active Pi theme        |
+| `npm:pi-stalled-agent-recovery`       | Retries empty or thinking-only replies and nudges the model out of failing tool loops |
+| `npm:pi-openrouter-advanced-provider` | An OpenRouter provider with the account's live model list and per-model routing       |
+| `npm:pi-openrouter-request-details`   | Shows which provider and model OpenRouter actually served, with per-turn cost         |
+| `npm:pi-thinking-reformatter`         | Repairs broken spacing and line breaks in thinking blocks (DeepSeek-style models)     |
 
 The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
 here by a test.
@@ -144,6 +148,54 @@ installs its own Nerd Font, so the bar shows glyphs there too (run
 `dg configure alacritty --force`). Its network features (`autoFollowUp`,
 non-USD `cost.currency`, `/vibe`) are all off by default; devgeta turns none on.
 
+### pi-stalled-agent-recovery
+
+When a turn ends with an empty or thinking-only reply, it sends a hidden "keep
+going" message and retries, up to 5 times. When the same tool call fails 5
+times in a row, it nudges the model to change approach, up to 3 times, then
+stops intervening. Each retry or nudge is a new model request, so it costs
+tokens. The limits are in `~/.pi/agent/stalled-agent-recovery.json`
+(`maxRetries`, `loopThreshold`, `maxLoopNudges`; `"maxRetries": 0` turns
+retries off). Devgeta writes no configuration for it.
+
+### pi-openrouter-advanced-provider
+
+It replaces Pi's OpenRouter provider with one that loads your account's model
+list (including bring-your-own-key models), picks the provider behind each
+model by price, speed and tool-call error rate, and uses that provider's real
+context window. It reads your key from `OPENROUTER_API_KEY` or from Pi's
+`/login`. Commands: `/openrouter-sync`, `/openrouter-balance`,
+`/openrouter-status`, `/openrouter-tier`. Settings live in
+`~/.pi/agent/openrouter-advanced-provider.json`; devgeta writes none.
+
+**It contacts openrouter.ai even if you never use OpenRouter.** Each session
+start fetches the public model list, and the first prompt fetches OpenRouter's
+public catalog (cached for a day). Without a key, those requests carry no
+key and no prompt text, only the model name. Setting
+`"selection": { "enabled": false }` in its settings file stops the catalog
+lookup; `pi remove npm:pi-openrouter-advanced-provider` stops both.
+
+**With pi-subagents:** OpenRouter puts almost every model behind one key, which
+is how a child agent can quietly end up on an expensive model. If you sign in
+to OpenRouter, add the `subagents.modelScope` setting shown under
+[pi-subagents](#pi-subagents).
+
+### pi-openrouter-request-details
+
+For OpenRouter replies only, it shows which provider and model actually served
+each request, with token counts and cost. `/openrouter-details` hides or shows
+the cards. It fetches prices from openrouter.ai only for OpenRouter model names
+(`author/model`), and uses `OPENROUTER_API_KEY` when set. Devgeta writes no
+configuration for it.
+
+### pi-thinking-reformatter
+
+Some models (DeepSeek-style) stream thinking with stray spaces and broken
+lines. It repairs that both on screen and in the saved message, so the clean
+text is what the model reads back later. It checks every model's thinking, but
+only rewrites text that matches the broken patterns, so clean output from
+Claude or OpenAI models is left as is. Devgeta writes no configuration for it.
+
 **Pi owns the install.** Devgeta never touches Pi's npm tree, and writes one key
 in Pi's settings file, `theme` (see [Theme](#theme)). Versions are whatever npm
 serves at install time, and `pi update` advances them (ADR-0060).
@@ -166,6 +218,11 @@ without a shell reload.
 
 To drop one extension, use Pi directly: `pi remove <source>`. `pi list` shows
 the current set; `dg configure pi` will add it back.
+
+Devgeta no longer installs `pi-schedule-prompt` (it crashes on current Pi and
+can corrupt a session); v1.44.0 was the last release that did. Configure only
+adds extensions, so if you have it, remove it yourself: find its entry in
+`pi list` and pass that source to `pi remove`.
 
 ## Theme
 

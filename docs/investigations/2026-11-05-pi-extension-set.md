@@ -37,22 +37,22 @@ entry below is meant to be worked on its own.
 
 ## Summary
 
-| Library                              | Action                                 | Maintenance            |
-| ------------------------------------ | -------------------------------------- | ---------------------- |
-| ~~`pi-subagents`~~ ✅ done           | Keep                                   | Well maintained        |
-| ~~`pi-web-access`~~ ✅ done          | Keep                                   | Well maintained        |
-| ~~`pi-powerline-footer`~~ ✅ done    | Keep, plus a color override            | Well maintained        |
-| `pi-stalled-agent-recovery`          | Keep (maintainer's choice)             | Too new to judge       |
-| `pi-openrouter-advanced-provider`    | Keep (maintainer's choice)             | Too new to judge       |
-| `pi-openrouter-request-details`      | Keep (maintainer's choice)             | Too new to judge       |
-| `pi-thinking-reformatter`            | Keep (maintainer's choice)             | Too new to judge       |
-| `pi-schedule-prompt`                 | **Drop**                               | Not maintained         |
-| `pi-mcp-adapter`                     | **Add**                                | Well maintained        |
-| `@plannotator/pi-extension`          | **Add**                                | Well maintained        |
-| `@juicesharp/rpiv-ask-user-question` | **Add**                                | Well maintained        |
-| `@juicesharp/rpiv-todo`              | **Add**                                | Well maintained        |
-| `pi-lens`                            | **Add**, last in order, formatting off | Well maintained        |
-| `pi-schedule`                        | **Add only if the sandbox run passes** | Active, one maintainer |
+| Library                                       | Action                                 | Maintenance            |
+| --------------------------------------------- | -------------------------------------- | ---------------------- |
+| ~~`pi-subagents`~~ ✅ done                    | Keep                                   | Well maintained        |
+| ~~`pi-web-access`~~ ✅ done                   | Keep                                   | Well maintained        |
+| ~~`pi-powerline-footer`~~ ✅ done             | Keep, plus a color override            | Well maintained        |
+| ~~`pi-stalled-agent-recovery`~~ ✅ done       | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-openrouter-advanced-provider`~~ ✅ done | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-openrouter-request-details`~~ ✅ done   | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-thinking-reformatter`~~ ✅ done         | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-schedule-prompt`~~ ✅ done              | **Drop**                               | Not maintained         |
+| `pi-mcp-adapter`                              | **Add**                                | Well maintained        |
+| `@plannotator/pi-extension`                   | **Add**                                | Well maintained        |
+| `@juicesharp/rpiv-ask-user-question`          | **Add**                                | Well maintained        |
+| `@juicesharp/rpiv-todo`                       | **Add**                                | Well maintained        |
+| `pi-lens`                                     | **Add**, last in order, formatting off | Well maintained        |
+| `pi-schedule`                                 | **Add only if the sandbox run passes** | Active, one maintainer |
 
 ---
 
@@ -167,7 +167,14 @@ typed during compaction, a sticky bash mode, `/cd`.
   terminal's palette (ADR-0061). The footer paints no backgrounds; Pi's own
   block backgrounds were settled in step one (`docs/apps/pi.md`, Theme).
 
-### `pi-stalled-agent-recovery`
+The four packages below share one author and were read together on 2026-11-06
+(1.0.0 tarballs, `npm pack --ignore-scripts`). All four have no dependencies
+and no install scripts, use no `child_process`, `eval` or dynamic imports, and
+write no files; they read only their own `~/.pi/agent/<name>.json` settings
+file (the OpenRouter provider also reads Pi's `auth.json` for an OpenRouter
+key). They hard-code `~/.pi/agent`, so they ignore `PI_CODING_AGENT_DIR`.
+
+### ~~`pi-stalled-agent-recovery`~~ — done 2026-11-06
 
 Retries empty or thinking-only responses and breaks loops of the same failing
 tool call. Works with any provider.
@@ -176,27 +183,45 @@ tool call. Works with any provider.
   created 2026-09-26
 - Does not meet the "well maintained" bar: one author, new, unused. Kept by the
   maintainer's choice.
-- **Action:** read the source before shipping — extensions run with the agent's
-  full permissions.
+- **Source read:** 365 lines, no network access. On `agent_settled` it sends a
+  hidden follow-up message that starts a new turn: up to 5 retries for an empty
+  or thinking-only reply, and up to 3 nudges once the same tool call has failed
+  5 times in a row, then it stops intervening. Budgets reset on a reply with
+  text or an abort. Each retry is a paid request. Limits are configurable in
+  `~/.pi/agent/stalled-agent-recovery.json`.
+- **Action:** done — added to `piExtensions` after `pi-powerline-footer`, with
+  a `docs/apps/pi.md` section. No devgeta config.
 
-### `pi-openrouter-advanced-provider`
+### ~~`pi-openrouter-advanced-provider`~~ — done 2026-11-06
 
 OpenRouter provider: live model catalog for the account, per-model provider
-routing, real context windows. Does nothing unless you use OpenRouter.
+routing, real context windows.
 
 - 1.0.0 · 1 star · 1 open issue · 17 commits 90d · 1 contributor · MIT · repo
   created 2026-09-26
 - Same author and same caveat as `pi-stalled-agent-recovery`.
-- **Action:** read the source before shipping.
-- **Revisit the subagent model guard first.** OpenRouter puts almost every model
-  behind one key, which is how a local model in pi-subagents#3203 reached Opus
-  and cost $20. Shipping this extension by default makes that setup common, so
-  decide then whether devgeta ships `subagents.modelScope`
-  (`allow: ["scoped"]`) by default instead of only documenting it in
-  `docs/apps/pi.md`. That means writing Pi's `settings.json`, so it needs an
-  amendment to ADR-0060 §1.
+- **Correction — it is not inert without OpenRouter.** On every
+  `session_start` it fetches the model list from `openrouter.ai/api/v1/models`
+  (the public list when there is no key) and registers the provider. With
+  selection on (the default), `before_agent_start` fetches OpenRouter's
+  frontend catalog (`/api/frontend/v1/catalog/models`, cached 24h) for the
+  current model, whatever its provider. Without a key these requests carry no
+  credentials and no prompt text. `"selection": { "enabled": false }` in
+  `~/.pi/agent/openrouter-advanced-provider.json` stops the catalog lookup;
+  only removing the extension stops the session-start fetch.
+- **Source read:** 2,800 lines of TypeScript. Network access goes only to
+  `openrouter.ai`; the key comes from `OPENROUTER_API_KEY`, Pi's model
+  registry, or an `sk-or-` entry in `~/.pi/agent/auth.json`.
+- **Subagent model guard — kept as documentation.** Shipping
+  `subagents.modelScope` by default means writing Pi's `settings.json`, which
+  needs an ADR-0060 §1 amendment, so it is not done here. `docs/apps/pi.md`
+  now tells OpenRouter users to add the opt-in snippet. Still open for the
+  maintainer: whether to make it a default.
+- **Action:** done — added to `piExtensions` after
+  `pi-stalled-agent-recovery`, with a `docs/apps/pi.md` section covering the
+  network calls. No devgeta config.
 
-### `pi-openrouter-request-details`
+### ~~`pi-openrouter-request-details`~~ — done 2026-11-06
 
 Shows which provider and model OpenRouter actually served, with per-turn cost
 cards. Does nothing unless you use OpenRouter.
@@ -204,25 +229,39 @@ cards. Does nothing unless you use OpenRouter.
 - 1.0.0 · 0 stars · 0 open issues · 2 commits 90d · 1 contributor · MIT · repo
   created 2026-09-26
 - Same author and same caveat.
-- **Action:** read the source before shipping.
+- **Source read:** 1,200 lines. Its `message_end` handler returns early unless
+  `provider === "openrouter"`. It reads response streams only from the
+  `openrouter.ai` host. On session start it fetches prices from
+  `openrouter.ai/api/v1/models/<id>/endpoints` only when the current model id
+  has the `author/model` form, so a non-OpenRouter model normally triggers no
+  request.
+- **Action:** done — added to `piExtensions` after
+  `pi-openrouter-advanced-provider`, with a `docs/apps/pi.md` section. No
+  devgeta config.
 
-### `pi-thinking-reformatter`
+### ~~`pi-thinking-reformatter`~~ — done 2026-11-06
 
 Fixes the spurious whitespace and line breaks in thinking blocks from
-DeepSeek-style models. Does nothing for Claude or OpenAI models. Not replaced by
-`pi-lens`: that one checks files the agent writes, this one fixes how model
-output is displayed.
+DeepSeek-style models. Not replaced by `pi-lens`: that one checks files the
+agent writes, this one fixes how model output is displayed.
 
 - 1.0.0 · 0 stars · 0 open issues · 2 commits 90d · 1 contributor · MIT · repo
   created 2026-09-26
 - Same author and same caveat.
-- **Action:** read the source before shipping.
+- **Source read:** 210 lines, no network or file access. It is not limited to
+  any model: it checks every thinking block and rewrites only text that
+  matches its broken-spacing patterns. The rewrite applies to the stored
+  message too (`message_end`), not just the display, so the repaired text is
+  what goes back into the model's context.
+- **Action:** done — added to `piExtensions` after
+  `pi-openrouter-request-details`, with a `docs/apps/pi.md` section. No
+  devgeta config.
 
 ---
 
 ## Drop
 
-### `pi-schedule-prompt`
+### ~~`pi-schedule-prompt`~~ — done 2026-11-06
 
 Cron-like recurring and one-shot prompts.
 
@@ -233,9 +272,10 @@ Cron-like recurring and one-shot prompts.
   - #12 (2026-05-05): scheduler messages with empty content corrupt the parent
     session, so every later request fails with a 400. A user posted a verified
     three-line fix in May; it was never merged.
-- **Action:** remove from `piExtensions` and the `docs/apps/pi.md` table.
-  Configure only adds, so existing installs keep it; the doc should tell users
-  to run `pi remove npm:pi-schedule-prompt`. Replacement: `pi-schedule`
+- **Action:** done — it left `piExtensions` and the `docs/apps/pi.md` table
+  when the set was restarted (4dc0252), and v1.44.0 was the last release to
+  install it. Configure only adds, so `docs/apps/pi.md` now tells existing
+  users to run `pi remove npm:pi-schedule-prompt`. Replacement: `pi-schedule`
   (conditional, below).
 
 ---
@@ -386,10 +426,10 @@ replacement for `pi-schedule-prompt`.
 5. `npm:@juicesharp/rpiv-ask-user-question`
 6. `npm:@juicesharp/rpiv-todo`
 7. ~~`npm:pi-powerline-footer`~~ ✅ done
-8. `npm:pi-stalled-agent-recovery`
-9. `npm:pi-openrouter-advanced-provider`
-10. `npm:pi-openrouter-request-details`
-11. `npm:pi-thinking-reformatter`
+8. ~~`npm:pi-stalled-agent-recovery`~~ ✅ done
+9. ~~`npm:pi-openrouter-advanced-provider`~~ ✅ done
+10. ~~`npm:pi-openrouter-request-details`~~ ✅ done
+11. ~~`npm:pi-thinking-reformatter`~~ ✅ done
 12. `npm:pi-schedule` — only if the sandbox run passes
 13. `npm:pi-lens` — always last
 

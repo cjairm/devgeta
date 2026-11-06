@@ -68,6 +68,10 @@ var piExtensions = []string{
 	"npm:pi-subagents",
 	"npm:pi-web-access",
 	"npm:pi-powerline-footer",
+	"npm:pi-stalled-agent-recovery",
+	"npm:pi-openrouter-advanced-provider",
+	"npm:pi-openrouter-request-details",
+	"npm:pi-thinking-reformatter",
 }
 
 func (p *Pi) Install() error {
