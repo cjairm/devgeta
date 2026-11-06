@@ -24,7 +24,7 @@ local gh = require("kickstart.utils").gh
 -- Telescope picker. This is really useful to discover what Telescope can
 -- do as well as how to actually do it!
 
----@type (string|vim.pack.Spec)[]
+---@type (string | vim.pack.Spec)[]
 local telescope_plugins = {
 	gh("nvim-lua/plenary.nvim"),
 	gh("nvim-telescope/telescope.nvim"),

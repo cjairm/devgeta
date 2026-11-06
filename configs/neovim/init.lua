@@ -211,9 +211,19 @@ do
 	require("kickstart.plugins.neotree")
 	-- [/devgeta]
 
-	-- NOTE: You can add your own plugins, configuration, etc from `lua/custom/plugins/*.lua`
+	-- NOTE: You can add your own plugins, configuration, etc. in `lua/custom/plugins/*.lua`.
 	--
-	--  Uncomment the following line and add your plugins to `lua/custom/plugins/*.lua` to get going.
+	-- For independent modules, uncomment the convenience loader:
+	-- require 'custom.plugins'
+	--
+	-- `custom.plugins` automatically loads files from that directory, but their
+	-- order is unspecified. If plugins depend on each other, keep them in the same
+	-- file and put their `vim.pack.add()` and `setup()` calls in the required order.
+	--
+	-- If separate modules need a specific order, require them explicitly instead:
+	-- require 'custom.plugins.colorscheme'
+	-- require 'custom.plugins.ui'
+	-- require 'custom.plugins.git'
 	-- [devgeta]
 	require("devgeta.plugins.coffee_script")
 	require("devgeta.plugins.copilot")
