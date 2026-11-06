@@ -255,6 +255,11 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to ensure the output-budget runtime: %w", err)
 	}
 
+	// The hook wrapper (format.sh) delegates to this shared script.
+	if err := baseapp.EnsureFormatScript(); err != nil {
+		return fmt.Errorf("failed to ensure the format script: %w", err)
+	}
+
 	gc.ReconcileShellFeatures()
 	gc.AddToInstalled(constants.Claude, "package")
 	gc.Shell.Claude = true

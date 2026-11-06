@@ -1028,12 +1028,12 @@ func TestClaudeAndOpenCodePermissionParity(t *testing.T) {
 }
 
 // TestClaudeAndOpenCodeFormatterParity pins that both tools format the same file
-// types. Claude formats via the format.sh PostToolUse hook (a shell `case` over
+// types. Claude and Pi format via the shared format-file.sh (a shell `case` over
 // glob patterns); OpenCode formats via the `formatter` block's extension lists.
 // A language added to one must be added to the other.
 func TestClaudeAndOpenCodeFormatterParity(t *testing.T) {
-	// Extensions handled by format.sh, scraped from its `case` glob patterns.
-	shPath := filepath.Join("..", "..", "..", "configs", "claude", "format.sh")
+	// Extensions handled by format-file.sh, scraped from its `case` glob patterns.
+	shPath := filepath.Join("..", "..", "..", "configs", "devgeta", "format-file.sh")
 	sh, err := os.ReadFile(shPath)
 	if err != nil {
 		t.Fatal(err)
