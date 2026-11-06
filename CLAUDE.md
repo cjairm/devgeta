@@ -31,6 +31,7 @@ Read these **in order** before starting work:
 | `CLAUDE.md` (this file) | Development practices, tech stack, architecture patterns, code standards |
 | `docs/decisions/`       | Individual architectural decisions and their rationale                   |
 | `docs/plans/cycles/`    | Current cycle scope and priorities (always check if a cycle is active)   |
+| `docs/investigations/`  | Evidence gathered before a decision (tool comparisons, probes)           |
 | `CONTRIBUTING.md`       | Setup, build, test, and release workflows                                |
 | `ROADMAP.md`            | Planned features, future commands, open questions                        |
 
@@ -440,6 +441,7 @@ When to write documentation **before** code:
 
 - **Write a cycle doc** when tackling a feature that spans multiple commands or touches multiple layers (see `docs/plans/TEMPLATE.md`)
 - **Write an ADR** when choosing between technologies, patterns, or approaches with lasting impact (see `docs/decisions/TEMPLATE.md`)
+- **Write an investigation** when a choice depends on facts nobody has checked yet — comparing third-party tools, probing how an external program behaves (see `docs/investigations/TEMPLATE.md`). It records evidence and a recommendation; the decision itself still goes in an ADR
 - **Skip both** for bug fixes, incremental improvements to existing features, or obvious changes
 - **Quick ADR** (one page) for local design decisions; full ADR for platform-level choices
 
@@ -624,7 +626,7 @@ Quick reference to where things live:
 | **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                                                   |
 | **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders                                 |
 | **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                                                       |
-| **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure |
+| **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure                                                          |
 | **Output budget**       | `docs/guides/output-budget-runner.md`        | The write-time output-cap contract: argv/sidecar schema, bounded capture, marker accounting, the bash/JS numeric contract, tokenization (not yet implemented) |
 | **Recent changes**      | `docs/recent-changes.md`                     | Prose summaries of recent work, last two releases only — the changelog that used to live at the bottom of this file                                           |
 | **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                                                         |
@@ -637,6 +639,7 @@ Quick reference to where things live:
 | **Migrations**          | `docs/migrations/README.md`                  | Upgrade steps a user must run by hand (paths/folders that move)                                                                                               |
 | **Roadmap**             | `ROADMAP.md`                                 | Planned commands, future features, open questions                                                                                                             |
 | **Decisions**           | `docs/decisions/README.md`                   | Architectural decisions with rationale                                                                                                                        |
+| **Investigations**      | `docs/investigations/TEMPLATE.md`            | Evidence gathered before a decision: what was checked, its sources, and a recommendation — never the decision itself                                          |
 | **Contributing**        | `CONTRIBUTING.md`                            | Dev setup, build, test, git workflow, release process                                                                                                         |
 
 ---
