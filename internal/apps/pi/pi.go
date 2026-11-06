@@ -161,19 +161,9 @@ func (p *Pi) configureExtensions() error {
 		}
 		pending = append(pending, name)
 	}
-	if len(pending) == 0 {
-		return nil
-	}
-	executable, err := piExecutable()
-	if err != nil {
-		return fmt.Errorf(
-			"configuring pi extensions needs the pi binary; install pi first (dg install --only pi), then re-run: %w",
-			err,
-		)
-	}
 	for _, source := range pending {
 		utils.PrintInfo("Installing Pi extension " + source + "...")
-		if err := p.runPi(executable, "install", source); err != nil {
+		if err := p.ExecuteCommand("install", source); err != nil {
 			return fmt.Errorf("failed to install pi extension %s: %w", source, err)
 		}
 		utils.PrintSuccess("Installed Pi extension " + source)
@@ -181,9 +171,15 @@ func (p *Pi) configureExtensions() error {
 	return nil
 }
 
-// registerInstalled records pi in the installed list, after the extensions
-// have landed so a failed install does not mark pi as configured.
-func (p *Pi) registerInstalled() error {
+// SoftConfigure installs the curated extensions Pi does not already declare,
+// then registers pi — last, so a failed extension does not mark pi as
+// configured. No config files are written, so Pi's own settings are the only
+// state to check. Themes, shared skills and agent-config parity remain out of
+// scope (ADR-0059).
+func (p *Pi) SoftConfigure() error {
+	if err := p.configureExtensions(); err != nil {
+		return err
+	}
 	gc := &config.GlobalConfig{}
 	if err := gc.Create(); err != nil {
 		return fmt.Errorf("failed to create global config: %w", err)
@@ -193,17 +189,6 @@ func (p *Pi) registerInstalled() error {
 	}
 	gc.AddToInstalled(constants.Pi, "package")
 	return gc.Save()
-}
-
-// SoftConfigure installs the curated extensions Pi does not already declare,
-// then registers pi. No config files are written, so Pi's own settings are the
-// only state to check. Themes, shared skills and agent-config parity remain out
-// of scope (ADR-0059).
-func (p *Pi) SoftConfigure() error {
-	if err := p.configureExtensions(); err != nil {
-		return err
-	}
-	return p.registerInstalled()
 }
 
 // ForceConfigure is SoftConfigure: there are no devgeta-owned files to
@@ -250,26 +235,22 @@ func piExecutable() (string, error) {
 	return "", err
 }
 
-// runPi executes the resolved pi binary once for this caller, so a configure
-// run pays for one lookup instead of one per extension.
-func (p *Pi) runPi(executable string, args ...string) error {
+func (p *Pi) ExecuteCommand(args ...string) error {
+	executable, err := piExecutable()
+	if err != nil {
+		return fmt.Errorf(
+			"pi executable not found; install it with `dg install --only pi`: %w",
+			err,
+		)
+	}
 	params := cmd.CommandParams{
 		Command: executable,
 		Args:    args,
 	}
-	_, _, err := p.Base.ExecCommand(params)
-	if err != nil {
+	if _, _, err := p.Base.ExecCommand(params); err != nil {
 		return fmt.Errorf("pi command execution failed: %w", err)
 	}
 	return nil
-}
-
-func (p *Pi) ExecuteCommand(args ...string) error {
-	path, err := piExecutable()
-	if err != nil {
-		return fmt.Errorf("pi executable not found: %w", err)
-	}
-	return p.runPi(path, args...)
 }
 
 func (p *Pi) Update() error {
