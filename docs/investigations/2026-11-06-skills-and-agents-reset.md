@@ -3,6 +3,9 @@
 **Date:** 2026-11-06
 **Status:** Open
 **Feeds:** a cycle doc for the reset; ADRs listed in [Decisions this will need](#decisions-this-will-need)
+**Branch:** `agentsv2`. Work that acts on this investigation, together with
+[2026-11-06-rtk-value-and-risk.md](2026-11-06-rtk-value-and-risk.md), happens
+there. This file was committed to `main` before the branch existed.
 
 ## Question
 
@@ -235,6 +238,7 @@ every row as a lead to check, not a recommendation to install.
   wording is also left out, so the same file reads correctly in all three
   coders. The file grew from 1.6 KB to 2.7 KB and is loaded in every
   session, so anything added later must be just as general.
+
 - **Verdict on Pi delivery:** use a devgeta-owned extension,
   `devgeta-instructions.js`, that reads `~/.pi/agent/DEVGETA.md` and appends
   it in `before_agent_start`. It plays the same role as OpenCode's
@@ -312,7 +316,7 @@ worktree`) on the branch and confirm all three coders follow the wrapper
 Proposed replacement for `configs/shared/DEVGETA.md`, applied on the reset
 branch, not before.
 
-````markdown
+```markdown
 # Response style
 
 - **Lead with the answer.** Put the answer or the outcome first, then only what the reader needs to act on it.
@@ -348,4 +352,4 @@ Messages, PR descriptions, commit messages, comments on tickets:
 - **Keep functions focused.** One job per function, readable top to bottom, without splitting it into fragments the reader has to jump between.
 - **Use names that last.** Say what the thing is or does in plain words someone new would understand. Avoid abbreviations, task-specific jargon, and names like `data2` or `newFix`.
 - **Comments explain why,** not what the code already says.
-````
+```
