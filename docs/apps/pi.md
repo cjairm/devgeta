@@ -30,16 +30,18 @@ a clean machine the first `dg install` may report that; run
 theme (see [Theme](#theme)), then runs Pi's own package manager once per
 extension, `pi install npm:<name>`:
 
-| Extension                             | What it adds                                                                          |
-| ------------------------------------- | ------------------------------------------------------------------------------------- |
-| `npm:pi-subagents`                    | Subagent delegation and scripted multi-agent workflows                                |
-| `npm:pi-web-access`                   | Web search, page/PDF reading, GitHub repo cloning, video input                        |
-| `npm:pi-mcp-adapter`                  | MCP servers that start on first use and stop when idle, in place of Pi's built-in MCP |
-| `npm:pi-powerline-footer`             | A powerline status bar in place of Pi's footer, colored by the active Pi theme        |
-| `npm:pi-stalled-agent-recovery`       | Retries empty or thinking-only replies and nudges the model out of failing tool loops |
-| `npm:pi-openrouter-advanced-provider` | An OpenRouter provider with the account's live model list and per-model routing       |
-| `npm:pi-openrouter-request-details`   | Shows which provider and model OpenRouter actually served, with per-turn cost         |
-| `npm:pi-thinking-reformatter`         | Repairs broken spacing and line breaks in thinking blocks (DeepSeek-style models)     |
+| Extension                                | What it adds                                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `npm:pi-subagents`                       | Subagent delegation and scripted multi-agent workflows                                     |
+| `npm:pi-web-access`                      | Web search, page/PDF reading, GitHub repo cloning, video input                             |
+| `npm:pi-mcp-adapter`                     | MCP servers that start on first use and stop when idle, in place of Pi's built-in MCP      |
+| `npm:@juicesharp/rpiv-ask-user-question` | A tool for the model to ask you up to four multiple-choice questions in one dialog         |
+| `npm:@juicesharp/rpiv-todo`              | A todo tool with a live task panel above the editor that survives `/reload` and compaction |
+| `npm:pi-powerline-footer`                | A powerline status bar in place of Pi's footer, colored by the active Pi theme             |
+| `npm:pi-stalled-agent-recovery`          | Retries empty or thinking-only replies and nudges the model out of failing tool loops      |
+| `npm:pi-openrouter-advanced-provider`    | An OpenRouter provider with the account's live model list and per-model routing            |
+| `npm:pi-openrouter-request-details`      | Shows which provider and model OpenRouter actually served, with per-turn cost              |
+| `npm:pi-thinking-reformatter`            | Repairs broken spacing and line breaks in thinking blocks (DeepSeek-style models)          |
 
 The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
 here by a test.
@@ -175,6 +177,51 @@ Things worth knowing:
 **With pi-subagents:** foreground children never load the parent's extensions,
 so they get no MCP tools. Run an agent that needs them in the background
 (`async: true`).
+
+### rpiv-ask-user-question
+
+It adds one tool, `ask_user_question`, the counterpart of Claude Code's
+AskUserQuestion: the model asks up to four questions in one tabbed dialog, each
+with two to four described options plus a free-text answer, and gets your
+choices back as structured data. It makes no model calls of its own. Devgeta
+writes no configuration for it.
+
+- **Only where someone can answer.** In a non-interactive run (`pi -p`, JSON
+  mode) the tool is removed from the model's tool list rather than failing each
+  call. Editor hosts such as Zed get a plain one-question-at-a-time version.
+- **Keys:** inside the dialog, `n` adds a note and Ctrl+] shrinks the dialog to
+  one line. Ctrl+] is only taken while a dialog is open; otherwise it keeps
+  Pi's own meaning in the editor (jump to a character).
+- **How eagerly the model asks** is set by the tool's built-in guidance, which
+  tells it to ask whenever a request is ambiguous. To change that, or the keys,
+  create `~/.config/rpiv-ask-user-question/config.json` (`guidance.*`,
+  `collapseKey`, `notesKey`). The extension only reads that file; it never
+  writes it.
+- Interface text is in English. The optional `@juicesharp/rpiv-i18n`
+  package translates it; devgeta does not install it.
+
+### rpiv-todo
+
+It adds a `todo` tool, a `/todos` command, and a panel above the editor showing
+what the agent is doing, what it finished and what is queued. The list is
+rebuilt from the session itself, so it survives `/reload` and compaction and
+writes nothing to disk. Tasks can depend on each other (`blockedBy`). Devgeta
+writes no configuration for it.
+
+Pi has no task-list tool of its own, and the Superpowers skills (`executing-plans`,
+`subagent-driven-development`) ask for one on Pi: without it they fall back to a
+`TODO.md` file.
+
+- **Keys:** Ctrl+Shift+T collapses the panel to one line. Pi binds nothing to
+  it by default. Whether your terminal and tmux pass that combination through
+  is untested; `/todos` prints the full list either way.
+- **Settings** go in `~/.config/rpiv-todo/config.json`: `maxWidgetLines`
+  (default 12), `collapseKey`, `guidance`. The extension only reads that file.
+- With no screen (`pi -p`) the tool still works; nothing is drawn.
+
+**With pi-subagents:** each session keeps its own list, and foreground children
+never load the parent's extensions, so a foreground child agent has neither
+tool: it cannot ask you questions or show a task panel.
 
 ### pi-powerline-footer
 

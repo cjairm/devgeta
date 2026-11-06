@@ -195,10 +195,11 @@ func TestUpdateNotSupported(t *testing.T) {
 	}
 }
 
-// extensionSourcePattern matches a concrete npm source in prose. The generic
-// forms the doc also uses (`npm:<name>`, `npm:<pkg>@<version>`) cannot match,
-// so only real package names are collected.
-var extensionSourcePattern = regexp.MustCompile(`npm:([a-z0-9][a-z0-9-]*)`)
+// extensionSourcePattern matches a concrete npm source in prose, scoped
+// (`npm:@scope/name`) or not. The generic forms the doc also uses
+// (`npm:<name>`, `npm:<pkg>@<version>`) cannot match, so only real package
+// names are collected.
+var extensionSourcePattern = regexp.MustCompile(`npm:((?:@[a-z0-9][a-z0-9-]*/)?[a-z0-9][a-z0-9-]*)`)
 
 // ADR-0060 makes docs/apps/pi.md the user-facing mirror of piExtensions, and
 // nothing but this test notices when the two drift.
@@ -440,28 +441,31 @@ func TestConfigure(t *testing.T) {
 		}
 	})
 
-	t.Run("ForceConfigure writes the theme, selects it, then installs extensions", func(t *testing.T) {
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		useRepoThemes(t)
-		isolateInstallRoot(t)
-		piOnPath(t)
-		writeAgentSettings(t, `{"theme": "dark"}`)
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	t.Run(
+		"ForceConfigure writes the theme, selects it, then installs extensions",
+		func(t *testing.T) {
+			tc := testutil.SetupCompleteTest(t)
+			defer tc.Cleanup()
+			useRepoThemes(t)
+			isolateInstallRoot(t)
+			piOnPath(t)
+			writeAgentSettings(t, `{"theme": "dark"}`)
+			app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
-		if err := app.ForceConfigure(); err != nil {
-			t.Fatalf("ForceConfigure error: %v", err)
-		}
-		if _, err := os.Stat(themeFilePath()); err != nil {
-			t.Errorf("theme file not written: %v", err)
-		}
-		if got := string(readSettingsKeys(t)["theme"]); got != `"devgeta"` {
-			t.Errorf("force should select devgeta, got %s", got)
-		}
-		if got := len(piInstallSources(tc.MockApp)); got != len(piExtensions) {
-			t.Errorf("expected %d extension installs, got %d", len(piExtensions), got)
-		}
-	})
+			if err := app.ForceConfigure(); err != nil {
+				t.Fatalf("ForceConfigure error: %v", err)
+			}
+			if _, err := os.Stat(themeFilePath()); err != nil {
+				t.Errorf("theme file not written: %v", err)
+			}
+			if got := string(readSettingsKeys(t)["theme"]); got != `"devgeta"` {
+				t.Errorf("force should select devgeta, got %s", got)
+			}
+			if got := len(piInstallSources(tc.MockApp)); got != len(piExtensions) {
+				t.Errorf("expected %d extension installs, got %d", len(piExtensions), got)
+			}
+		},
+	)
 
 	t.Run("SoftConfigure writes the theme and selects it when neither exists", func(t *testing.T) {
 		tc := testutil.SetupCompleteTest(t)
@@ -482,49 +486,55 @@ func TestConfigure(t *testing.T) {
 		}
 	})
 
-	t.Run("SoftConfigure keeps the user's theme choice and an existing theme file", func(t *testing.T) {
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		useRepoThemes(t)
-		isolateInstallRoot(t)
-		piOnPath(t)
-		writeAgentSettings(t, `{"theme": "dark"}`)
-		if err := os.MkdirAll(filepath.Dir(themeFilePath()), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(themeFilePath(), []byte(`{"edited":true}`), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	t.Run(
+		"SoftConfigure keeps the user's theme choice and an existing theme file",
+		func(t *testing.T) {
+			tc := testutil.SetupCompleteTest(t)
+			defer tc.Cleanup()
+			useRepoThemes(t)
+			isolateInstallRoot(t)
+			piOnPath(t)
+			writeAgentSettings(t, `{"theme": "dark"}`)
+			if err := os.MkdirAll(filepath.Dir(themeFilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(themeFilePath(), []byte(`{"edited":true}`), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
-		if err := app.SoftConfigure(); err != nil {
-			t.Fatalf("SoftConfigure error: %v", err)
-		}
-		if got := string(readSettingsKeys(t)["theme"]); got != `"dark"` {
-			t.Errorf("soft replaced the user's theme: %s", got)
-		}
-		if got, _ := os.ReadFile(themeFilePath()); string(got) != `{"edited":true}` {
-			t.Errorf("soft overwrote an existing theme file: %s", got)
-		}
-	})
+			if err := app.SoftConfigure(); err != nil {
+				t.Fatalf("SoftConfigure error: %v", err)
+			}
+			if got := string(readSettingsKeys(t)["theme"]); got != `"dark"` {
+				t.Errorf("soft replaced the user's theme: %s", got)
+			}
+			if got, _ := os.ReadFile(themeFilePath()); string(got) != `{"edited":true}` {
+				t.Errorf("soft overwrote an existing theme file: %s", got)
+			}
+		},
+	)
 
-	t.Run("an unparseable settings file stops configure before any extension install", func(t *testing.T) {
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		useRepoThemes(t)
-		isolateInstallRoot(t)
-		piOnPath(t)
-		writeAgentSettings(t, `{"packages": [`)
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	t.Run(
+		"an unparseable settings file stops configure before any extension install",
+		func(t *testing.T) {
+			tc := testutil.SetupCompleteTest(t)
+			defer tc.Cleanup()
+			useRepoThemes(t)
+			isolateInstallRoot(t)
+			piOnPath(t)
+			writeAgentSettings(t, `{"packages": [`)
+			app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
-		err := app.ForceConfigure()
-		if err == nil || !strings.Contains(err.Error(), "settings.json") {
-			t.Fatalf("expected an error naming settings.json, got %v", err)
-		}
-		if got := len(piInstallSources(tc.MockApp)); got != 0 {
-			t.Errorf("no extensions should install after the failure, got %d", got)
-		}
-	})
+			err := app.ForceConfigure()
+			if err == nil || !strings.Contains(err.Error(), "settings.json") {
+				t.Fatalf("expected an error naming settings.json, got %v", err)
+			}
+			if got := len(piInstallSources(tc.MockApp)); got != 0 {
+				t.Errorf("no extensions should install after the failure, got %d", got)
+			}
+		},
+	)
 }
 
 // piRequiredThemeColors is the 51 roles Pi's theme schema requires under
@@ -653,7 +663,8 @@ func TestThemeTemplateSatisfiesPiSchema(t *testing.T) {
 				if !slices.Contains(allowed, key) {
 					t.Errorf("color %q is not in Pi's schema", key)
 				}
-				if _, isVar := parsed.Vars[value]; value != "" && !isVar && !piHexColor.MatchString(value) {
+				if _, isVar := parsed.Vars[value]; value != "" && !isVar &&
+					!piHexColor.MatchString(value) {
 					t.Errorf("color %q = %q is neither \"\", a var, nor hex", key, value)
 				}
 			}
@@ -847,7 +858,12 @@ func TestSelectTheme(t *testing.T) {
 				t.Fatalf("%s: %v", key, err)
 			}
 			if wantCompact.String() != gotCompact.String() {
-				t.Errorf("%s changed:\n want %s\n  got %s", key, wantCompact.String(), gotCompact.String())
+				t.Errorf(
+					"%s changed:\n want %s\n  got %s",
+					key,
+					wantCompact.String(),
+					gotCompact.String(),
+				)
 			}
 		}
 	})
@@ -901,7 +917,9 @@ func TestConfigureWritesFooterOverride(t *testing.T) {
 	}
 	shipped := func(t *testing.T) string {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(repoRoot(t), "configs", "pi", "powerline-footer", "theme.json"))
+		data, err := os.ReadFile(
+			filepath.Join(repoRoot(t), "configs", "pi", "powerline-footer", "theme.json"),
+		)
 		if err != nil {
 			t.Fatal(err)
 		}

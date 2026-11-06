@@ -37,22 +37,22 @@ entry below is meant to be worked on its own.
 
 ## Summary
 
-| Library                                       | Action                                 | Maintenance            |
-| --------------------------------------------- | -------------------------------------- | ---------------------- |
-| ~~`pi-subagents`~~ ✅ done                    | Keep                                   | Well maintained        |
-| ~~`pi-web-access`~~ ✅ done                   | Keep                                   | Well maintained        |
-| ~~`pi-powerline-footer`~~ ✅ done             | Keep, plus a color override            | Well maintained        |
-| ~~`pi-stalled-agent-recovery`~~ ✅ done       | Keep (maintainer's choice)             | Too new to judge       |
-| ~~`pi-openrouter-advanced-provider`~~ ✅ done | Keep (maintainer's choice)             | Too new to judge       |
-| ~~`pi-openrouter-request-details`~~ ✅ done   | Keep (maintainer's choice)             | Too new to judge       |
-| ~~`pi-thinking-reformatter`~~ ✅ done         | Keep (maintainer's choice)             | Too new to judge       |
-| ~~`pi-schedule-prompt`~~ ✅ done              | **Drop**                               | Not maintained         |
-| ~~`pi-mcp-adapter`~~ ✅ done                  | **Add**                                | Well maintained        |
-| `@plannotator/pi-extension`                   | **Add**                                | Well maintained        |
-| `@juicesharp/rpiv-ask-user-question`          | **Add**                                | Well maintained        |
-| `@juicesharp/rpiv-todo`                       | **Add**                                | Well maintained        |
-| `pi-lens`                                     | **Add**, last in order, formatting off | Well maintained        |
-| `pi-schedule`                                 | **Add only if the sandbox run passes** | Active, one maintainer |
+| Library                                          | Action                                 | Maintenance            |
+| ------------------------------------------------ | -------------------------------------- | ---------------------- |
+| ~~`pi-subagents`~~ ✅ done                       | Keep                                   | Well maintained        |
+| ~~`pi-web-access`~~ ✅ done                      | Keep                                   | Well maintained        |
+| ~~`pi-powerline-footer`~~ ✅ done                | Keep, plus a color override            | Well maintained        |
+| ~~`pi-stalled-agent-recovery`~~ ✅ done          | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-openrouter-advanced-provider`~~ ✅ done    | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-openrouter-request-details`~~ ✅ done      | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-thinking-reformatter`~~ ✅ done            | Keep (maintainer's choice)             | Too new to judge       |
+| ~~`pi-schedule-prompt`~~ ✅ done                 | **Drop**                               | Not maintained         |
+| ~~`pi-mcp-adapter`~~ ✅ done                     | **Add**                                | Well maintained        |
+| `@plannotator/pi-extension`                      | **Not added** — overlaps Superpowers   | Well maintained        |
+| ~~`@juicesharp/rpiv-ask-user-question`~~ ✅ done | **Add**                                | Well maintained        |
+| ~~`@juicesharp/rpiv-todo`~~ ✅ done              | **Add**                                | Well maintained        |
+| `pi-lens`                                        | **Add**, last in order, formatting off | Well maintained        |
+| `pi-schedule`                                    | **Add only if the sandbox run passes** | Active, one maintainer |
 
 ---
 
@@ -365,42 +365,57 @@ setup`.
 - **pi-subagents interaction:** foreground children never load the parent's
   extensions, so they get no MCP tools; agents that need them must run with
   `async: true`. Documented.
-- **Action:** done — added to `piExtensions` after `pi-web-access` (the entry
-  ahead of it in the install order, `@plannotator/pi-extension`, is not
-  shipped yet), with a `docs/apps/pi.md` section covering the above. No
-  devgeta config.
+- **Action:** done — added to `piExtensions` after `pi-web-access`, with a
+  `docs/apps/pi.md` section covering the above. No devgeta config.
 
-### `@plannotator/pi-extension`
-
-Plan mode: destructive commands blocked, writes limited to the plan file, and a
-browser UI for commenting on plans. Pi has no plan mode of its own (it ships one
-only as an example).
-
-- 0.28.50 · 9,866 stars · 161 open issues · 100+ commits 90d · 100+
-  contributors · MIT OR Apache-2.0
-- The backlog is large, but so is the project (it also ships plugins for other
-  agents).
-- **Action:** add to `piExtensions`.
-
-### `@juicesharp/rpiv-ask-user-question`
+### ~~`@juicesharp/rpiv-ask-user-question`~~ — done 2026-11-06
 
 A structured question tool with typed options, the closest match to Claude
 Code's AskUserQuestion.
 
-- 2.15.0 · 943 stars (monorepo `juicesharp/rpiv-mono`) · 81 open issues · 100+
-  commits 90d · 44 contributors · MIT
+- 2.15.0 · 945 stars (monorepo `juicesharp/rpiv-mono`) · 83 open issues · 100+
+  commits 90d · MIT. Rechecked 2026-11-06: last push and release 2026-10-24,
+  after five releases on 2026-10-23. The 44-contributor figure was not
+  re-confirmed.
 - Its peer `@juicesharp/rpiv-i18n` only translates the interface and is
   optional. That matters because Pi does not install peer dependencies for
-  managed npm packages (`docs/packages.md` in the Pi package).
-- **Action:** add to `piExtensions`.
+  managed npm packages (`docs/packages.md` in the Pi package). Its other peers
+  (`typebox`, `pi-tui`, `pi-coding-agent`) are the ones `pi-subagents` also
+  declares, which Pi provides.
+- **No duplication** (read from the published packages): Pi core registers only
+  `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`; none of the other
+  curated extensions registers a question tool; Superpowers names no question
+  tool for Pi (`using-superpowers/references/pi-tools.md`).
+- **One tension:** its built-in guidance tells the model to ask "whenever the
+  request is ambiguous", while Superpowers' `brainstorming` wants open
+  questions first and a menu only when the user is stuck. Claude Code has the
+  same tension with AskUserQuestion and the skill steers it there. The
+  `guidance.promptGuidelines` setting can tune it per user; devgeta ships none.
+- In non-interactive runs it removes itself from the tool list. Its collapse
+  key (Ctrl+]) is registered per dialog, so it does not take Pi's editor
+  binding for that key (`tui.editor.jumpForward`) the rest of the time.
+- **Action:** done — added to `piExtensions` after `pi-mcp-adapter`, with a
+  `docs/apps/pi.md` section. No devgeta config: its config file is optional and
+  only read.
 
-### `@juicesharp/rpiv-todo`
+### ~~`@juicesharp/rpiv-todo`~~ — done 2026-11-06
 
 A todo tool shown as a live overlay that survives `/reload` and compaction, the
 closest match to Claude Code's todo list.
 
 - 2.15.0 · same monorepo and numbers as above · 140 releases
-- **Action:** add to `piExtensions`.
+- **Fills a gap Superpowers names:** `using-superpowers/references/pi-tools.md`
+  says Pi has no task-list tool and to use an installed one, otherwise
+  `TODO.md`; `executing-plans` and `subagent-driven-development` mark todos per
+  task. Pi ships a todo tool only as an unloaded example
+  (`examples/extensions/todo.ts`). With `@plannotator/pi-extension` not added,
+  no other checklist widget overlaps it.
+- Its collapse key, Ctrl+Shift+T, has no Pi default (`app.session.tree` uses it
+  only in a docs example). Whether Alacritty and tmux pass it through is
+  untested; `/todos` works regardless.
+- **Action:** done — added to `piExtensions` after
+  `rpiv-ask-user-question`, with a `docs/apps/pi.md` section. No devgeta
+  config.
 
 ### `pi-lens`
 
@@ -466,13 +481,14 @@ replacement for `pi-schedule-prompt`.
 
 ## Considered, not added
 
-| Library               | Why not                                                                                                                                                                |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `context-mode`        | 33,564 stars, very active, but Elastic-2.0 (not open source) and overlaps rtk and devgeta's output-budget hook. Revisit when the token-efficiency tooling is reworked. |
-| `pi-cc-loop`          | Copies Claude Code's `/loop` and `CronCreate` tool names, the closest match to Claude. Three weeks old, 0 stars, one author, docs in Chinese.                          |
-| `@henryqw/pi-cron`    | Active (6 contributors) but requires its own `@henryqw/pi-subagent` and `@henryqw/pi-task-models` — a second subagent system beside `pi-subagents`.                    |
-| `@bacnh85/pi-cron`    | Declares `@earendil-works/pi-coding-agent >=0.84.3 <1.2.0`; no Pi 1.5 support.                                                                                         |
-| `@tintinweb/pi-tasks` | Claude Code-style task tracking, but same author as the unmaintained `pi-schedule-prompt`.                                                                             |
+| Library                     | Why not                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context-mode`              | 33,564 stars, very active, but Elastic-2.0 (not open source) and overlaps rtk and devgeta's output-budget hook. Revisit when the token-efficiency tooling is reworked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `pi-cc-loop`                | Copies Claude Code's `/loop` and `CronCreate` tool names, the closest match to Claude. Three weeks old, 0 stars, one author, docs in Chinese.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `@henryqw/pi-cron`          | Active (6 contributors) but requires its own `@henryqw/pi-subagent` and `@henryqw/pi-task-models` — a second subagent system beside `pi-subagents`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `@bacnh85/pi-cron`          | Declares `@earendil-works/pi-coding-agent >=0.84.3 <1.2.0`; no Pi 1.5 support.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `@tintinweb/pi-tasks`       | Claude Code-style task tracking, but same author as the unmaintained `pi-schedule-prompt`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `@plannotator/pi-extension` | Well maintained (0.28.51, 100+ contributors), but its plan mode is a second planning workflow beside the Superpowers skills (`brainstorming` → `writing-plans` → `executing-plans`), with its own instructions for how to write and submit a plan. Running both gives the model two sets of rules. What is given up: the browser UI for commenting on plans and diffs (`/plannotator-review`, `/plannotator-annotate`), and a write lock while planning. The lock is partial: only edits are limited to markdown files, bash stays unrestricted. Also on by default, with no config key to turn it off: a daily anonymous usage ping to `ping.plannotator.ai`, which only `DO_NOT_TRACK=1` or `NO_ANON_PING=1` stops. |
 
 ---
 
@@ -482,17 +498,16 @@ replacement for `pi-schedule-prompt`.
 
 1. ~~`npm:pi-subagents`~~ ✅ done
 2. ~~`npm:pi-web-access`~~ ✅ done
-3. `npm:@plannotator/pi-extension`
-4. ~~`npm:pi-mcp-adapter`~~ ✅ done
-5. `npm:@juicesharp/rpiv-ask-user-question`
-6. `npm:@juicesharp/rpiv-todo`
-7. ~~`npm:pi-powerline-footer`~~ ✅ done
-8. ~~`npm:pi-stalled-agent-recovery`~~ ✅ done
-9. ~~`npm:pi-openrouter-advanced-provider`~~ ✅ done
-10. ~~`npm:pi-openrouter-request-details`~~ ✅ done
-11. ~~`npm:pi-thinking-reformatter`~~ ✅ done
-12. `npm:pi-schedule` — only if the sandbox run passes
-13. `npm:pi-lens` — always last
+3. ~~`npm:pi-mcp-adapter`~~ ✅ done
+4. ~~`npm:@juicesharp/rpiv-ask-user-question`~~ ✅ done
+5. ~~`npm:@juicesharp/rpiv-todo`~~ ✅ done
+6. ~~`npm:pi-powerline-footer`~~ ✅ done
+7. ~~`npm:pi-stalled-agent-recovery`~~ ✅ done
+8. ~~`npm:pi-openrouter-advanced-provider`~~ ✅ done
+9. ~~`npm:pi-openrouter-request-details`~~ ✅ done
+10. ~~`npm:pi-thinking-reformatter`~~ ✅ done
+11. `npm:pi-schedule` — only if the sandbox run passes
+12. `npm:pi-lens` — always last
 
 ### Live install output
 

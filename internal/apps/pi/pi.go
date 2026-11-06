@@ -68,6 +68,8 @@ var piExtensions = []string{
 	"npm:pi-subagents",
 	"npm:pi-web-access",
 	"npm:pi-mcp-adapter",
+	"npm:@juicesharp/rpiv-ask-user-question",
+	"npm:@juicesharp/rpiv-todo",
 	"npm:pi-powerline-footer",
 	"npm:pi-stalled-agent-recovery",
 	"npm:pi-openrouter-advanced-provider",
