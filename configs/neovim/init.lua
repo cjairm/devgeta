@@ -226,7 +226,6 @@ do
 	-- require 'custom.plugins.git'
 	-- [devgeta]
 	require("devgeta.plugins.coffee_script")
-	require("devgeta.plugins.copilot")
 	require("devgeta.plugins.lazygit")
 	require("devgeta.plugins.obsession")
 	require("devgeta.plugins.tmux_navigator")
