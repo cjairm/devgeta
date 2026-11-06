@@ -147,3 +147,47 @@ func TestForceConfigureTheme_OptionEnterBindingIsMacOnly(t *testing.T) {
 		})
 	}
 }
+
+// pi-powerline-footer picks Nerd Font glyphs from the terminal's name, and
+// Alacritty under devgeta sets TERM=xterm-256color and no TERM_PROGRAM, so it
+// would show ASCII even though devgeta installs a Nerd Font (ADR-0062 §5). The
+// config states it explicitly, but only when it also installs that font:
+// claiming Nerd Font glyphs for a font the user chose themselves would print
+// boxes. Rendered from the shipped template, so a template edit that drops the
+// line or moves it out of [env] fails here.
+func TestTemplate_NerdFontsSignalFollowsTheDefaultFont(t *testing.T) {
+	repoRoot, p := repoDefaultAlacrittyPalette(t)
+	for _, tt := range []struct {
+		font string
+		want bool
+	}{
+		{"default", true},
+		{"user-chosen", false},
+	} {
+		t.Run(tt.font, func(t *testing.T) {
+			out := filepath.Join(t.TempDir(), "alacritty.toml")
+			tmplPath := filepath.Join(repoRoot, "configs", "alacritty", "alacritty.toml.tmpl")
+			if err := files.GenerateFromTemplate(tmplPath, out, map[string]any{
+				"Font":       tt.font,
+				"ConfigPath": "/home/tester/.config",
+				"Colors":     newAlacrittyColors(p),
+				"IsMac":      false,
+			}); err != nil {
+				t.Fatalf("failed to render alacritty.toml.tmpl: %v", err)
+			}
+			data, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered := string(data)
+			envSection := rendered[strings.Index(rendered, "[env]"):]
+			if next := strings.Index(envSection[1:], "\n["); next >= 0 {
+				envSection = envSection[:next+1]
+			}
+			got := strings.Contains(envSection, `POWERLINE_NERD_FONTS = "1"`)
+			if got != tt.want {
+				t.Errorf("font %q: POWERLINE_NERD_FONTS in [env] = %v, want %v\n%s", tt.font, got, tt.want, rendered)
+			}
+		})
+	}
+}

@@ -67,6 +67,7 @@ const piInstallScriptURL = "https://pi.dev/install.sh"
 var piExtensions = []string{
 	"npm:pi-subagents",
 	"npm:pi-web-access",
+	"npm:pi-powerline-footer",
 }
 
 func (p *Pi) Install() error {
@@ -206,6 +207,32 @@ func (p *Pi) ForceConfigureTheme(def theme.Definition) error {
 	return nil
 }
 
+// footerThemeFile is where pi-powerline-footer reads its color overrides. Pi
+// does not load a directory holding only this file as an extension, so it is
+// safe beside the extension's own files (ADR-0062 §2).
+func footerThemeFile() string {
+	return filepath.Join(piAgentDir(), "extensions", "powerline-footer", "theme.json")
+}
+
+// writeFooterOverride installs the static override that maps the footer's
+// hard-coded colors to Pi theme role names (ADR-0062 §2). It names roles, never
+// colors, so nothing in it follows the palette directly and `dg theme set`
+// never touches it. Without force an existing file is the user's and stays.
+func writeFooterOverride(force bool) error {
+	if !force && files.FileAlreadyExist(footerThemeFile()) {
+		return nil
+	}
+	source := filepath.Join(paths.Paths.App.Configs.Pi, "powerline-footer", "theme.json")
+	data, err := os.ReadFile(source)
+	if err != nil {
+		return fmt.Errorf("failed to read %s: %w", source, err)
+	}
+	if err := files.WriteFileAtomic(footerThemeFile(), data, files.FilePermission); err != nil {
+		return fmt.Errorf("failed to write %s: %w", footerThemeFile(), err)
+	}
+	return nil
+}
+
 // selectTheme sets "theme" to the devgeta theme in Pi's settings.json: the one
 // key devgeta writes there (ADR-0061 §3). Without force an existing "theme" is
 // the user's choice and stays. Every other key is carried as raw JSON so Pi's
@@ -240,7 +267,7 @@ func selectTheme(force bool) error {
 }
 
 // configure is the body of both configure modes: theme file, theme selection,
-// extensions, then registration - last, so a failed step does not mark pi as
+// footer override, extensions, then registration - last, so a failed step does not mark pi as
 // configured. Soft keeps what already exists (an existing theme file, the
 // user's chosen theme); force rewrites devgeta's own pieces. Extensions are
 // Pi's own state: only the missing ones install, and refreshing the rest is
@@ -256,6 +283,9 @@ func (p *Pi) configure(force bool) error {
 		}
 	}
 	if err := selectTheme(force); err != nil {
+		return err
+	}
+	if err := writeFooterOverride(force); err != nil {
 		return err
 	}
 	if err := p.configureExtensions(); err != nil {

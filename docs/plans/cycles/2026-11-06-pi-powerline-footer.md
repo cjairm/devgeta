@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-06
 **Estimated Duration:** ~2 hours
-**Status:** In Progress
+**Status:** Implemented 2026-11-06; maintainer's manual verification (§6) and the upstream post pending
 
 ---
 
@@ -45,14 +45,14 @@ live along with the rest of Pi.
 
 ### In Scope
 
-- [ ] `npm:pi-powerline-footer` appended to `piExtensions` and `docs/apps/pi.md`
-- [ ] `configs/pi/powerline-footer/theme.json` (static; five keys, ADR-0062 §2)
-- [ ] Configure writes it to `~/.pi/agent/extensions/powerline-footer/theme.json`:
+- [x] `npm:pi-powerline-footer` appended to `piExtensions` and `docs/apps/pi.md`
+- [x] `configs/pi/powerline-footer/theme.json` (static; five keys, ADR-0062 §2)
+- [x] Configure writes it to `~/.pi/agent/extensions/powerline-footer/theme.json`:
       soft only when absent, force always
-- [ ] Alacritty `[env]` `POWERLINE_NERD_FONTS = "1"` when `.Font == "default"`
+- [x] Alacritty `[env]` `POWERLINE_NERD_FONTS = "1"` when `.Font == "default"`
       (separable, ADR-0062 §5)
-- [ ] Upstream issue/PR: route `colors.ts` through `theme.ts` (ADR-0062 §4)
-- [ ] Tests; docs (`docs/apps/pi.md`, `docs/guides/theming.md`, ADR index,
+- [x] Upstream issue/PR: route `colors.ts` through `theme.ts` (ADR-0062 §4) — text drafted, posting is the maintainer's call
+- [x] Tests; docs (`docs/apps/pi.md`, `docs/guides/theming.md`, ADR index,
       investigation entry marked done)
 
 ### Explicitly Out of Scope

@@ -33,16 +33,16 @@ Treat the visual layer as a single surface.
 
 ## What's wired to what
 
-| Config        | File                                                               | Theming mechanism                                                                              |
-| ------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------- |
-| **Alacritty** | `configs/alacritty/alacritty.toml.tmpl`                            | Templated from `theme.Palette` (`terminal:` group)                                             |
-| **Ghostty**   | `configs/ghostty/ghostty.conf.tmpl`                                | Templated from `theme.Palette` (`terminal:` group)                                             |
-| **OpenCode**  | `configs/opencode/opencode.json.tmpl` + `themes/default.json.tmpl` | `"theme": "{{ .Theme }}"`; the theme file's `defs` templated from `theme.Palette`              |
-| **Neovim**    | `configs/neovim/init.lua` → generated `lua/devgeta/theme.lua`      | A fixed-name shim requires `devgeta.themes.<neovim_module>`, named by the current theme's YAML |
-| **tmux**      | `configs/tmux/tmux.conf.tmpl`                                      | Templated from `theme.Palette` (alongside the unrelated `worktree.notify_sound` setting)       |
-| **Claude**    | `configs/claude/settings.json.tmpl` + `themes/default.json.tmpl`   | `"theme": "custom:{{ .Theme }}"`; the theme file's `overrides` templated from `theme.Palette`  |
-| **Pi**        | `configs/pi/themes/devgeta.json.tmpl`                              | One fixed-name theme file (`devgeta`) rendered from `theme.Palette` (`colors:` group); Pi hot-reloads it |
-| **i3**        | `configs/i3/config.tmpl`                                           | Templated from `theme.Palette` (`colors:` group)                                               |
+| Config        | File                                                               | Theming mechanism                                                                                                                                                                                |
+| ------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Alacritty** | `configs/alacritty/alacritty.toml.tmpl`                            | Templated from `theme.Palette` (`terminal:` group)                                                                                                                                               |
+| **Ghostty**   | `configs/ghostty/ghostty.conf.tmpl`                                | Templated from `theme.Palette` (`terminal:` group)                                                                                                                                               |
+| **OpenCode**  | `configs/opencode/opencode.json.tmpl` + `themes/default.json.tmpl` | `"theme": "{{ .Theme }}"`; the theme file's `defs` templated from `theme.Palette`                                                                                                                |
+| **Neovim**    | `configs/neovim/init.lua` → generated `lua/devgeta/theme.lua`      | A fixed-name shim requires `devgeta.themes.<neovim_module>`, named by the current theme's YAML                                                                                                   |
+| **tmux**      | `configs/tmux/tmux.conf.tmpl`                                      | Templated from `theme.Palette` (alongside the unrelated `worktree.notify_sound` setting)                                                                                                         |
+| **Claude**    | `configs/claude/settings.json.tmpl` + `themes/default.json.tmpl`   | `"theme": "custom:{{ .Theme }}"`; the theme file's `overrides` templated from `theme.Palette`                                                                                                    |
+| **Pi**        | `configs/pi/themes/devgeta.json.tmpl`                              | One fixed-name theme file (`devgeta`) rendered from `theme.Palette` (`colors:` group); Pi hot-reloads it. `pi-powerline-footer` reads colors from this theme, so it follows too (no new surface) |
+| **i3**        | `configs/i3/config.tmpl`                                           | Templated from `theme.Palette` (`colors:` group)                                                                                                                                                 |
 
 Every surface above renders from the same `theme.Palette` type
 (`internal/theme`), resolved from a single `configs/themes/<name>.yaml` file

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"io/fs"
+	"maps"
 	"regexp"
 	"strings"
 	"testing"
@@ -415,5 +417,37 @@ func TestTmuxExtendedKeysAreEnabledAndVersionGated(t *testing.T) {
 	// tmux < 3.5 as a side effect of the gate.
 	if gate >= 0 && end >= 0 && end-gate != 2 {
 		t.Errorf("the version gate should wrap only extended-keys-format, wraps %d lines", end-gate-1)
+	}
+}
+
+// ADR-0062 §2: the pi-powerline-footer override maps its hard-coded colors to
+// Pi theme role names, so the bar follows whichever Pi theme is active. This
+// pins the table exactly (key and value), and forbids pinning a color: a hex
+// value or `rainbow` here would stop `dg theme set` from restyling the bar.
+func TestPowerlineFooterOverrideFollowsThePiTheme(t *testing.T) {
+	data, err := fs.ReadFile(ConfigsFS, "configs/pi/powerline-footer/theme.json")
+	if err != nil {
+		t.Fatalf("failed to read embedded powerline-footer theme.json: %v", err)
+	}
+	var override struct {
+		Colors map[string]string `json:"colors"`
+	}
+	if err := json.Unmarshal(data, &override); err != nil {
+		t.Fatalf("powerline-footer theme.json does not parse: %v", err)
+	}
+	want := map[string]string{
+		"model":         "syntaxNumber",
+		"path":          "syntaxType",
+		"thinkingHigh":  "thinkingHigh",
+		"thinkingXhigh": "thinkingXhigh",
+		"thinkingMax":   "thinkingMax",
+	}
+	if !maps.Equal(override.Colors, want) {
+		t.Errorf("colors must equal the ADR-0062 §2 table\n got: %v\nwant: %v", override.Colors, want)
+	}
+	for key, value := range override.Colors {
+		if strings.HasPrefix(value, "#") || value == "rainbow" {
+			t.Errorf("%s pins a color (%q); it must name a Pi theme role", key, value)
+		}
 	}
 }

@@ -673,6 +673,10 @@ func themeFilePath() string {
 	return filepath.Join(paths.PiAgentDir(), "themes", "devgeta.json")
 }
 
+func footerOverrideFilePath() string {
+	return filepath.Join(paths.PiAgentDir(), "extensions", "powerline-footer", "theme.json")
+}
+
 func settingsFilePath() string {
 	return filepath.Join(paths.PiAgentDir(), "settings.json")
 }
@@ -862,6 +866,87 @@ func TestSelectTheme(t *testing.T) {
 		}
 		if got, _ := os.ReadFile(settingsFilePath()); string(got) != `{"packages": [` {
 			t.Errorf("unparseable file was modified: %q", got)
+		}
+	})
+}
+
+// ADR-0062 §2: configure ships the pi-powerline-footer color override beside
+// the extension. It is not part of a theme switch: it names Pi roles, so it
+// never changes with the palette, and `dg theme set` must leave it alone.
+func TestConfigureWritesFooterOverride(t *testing.T) {
+	run := func(t *testing.T, force bool, existing string) (string, error) {
+		t.Helper()
+		tc := testutil.SetupCompleteTest(t)
+		t.Cleanup(tc.Cleanup)
+		useRepoThemes(t)
+		isolateInstallRoot(t)
+		piOnPath(t)
+		if existing != "" {
+			if err := os.MkdirAll(filepath.Dir(footerOverrideFilePath()), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(footerOverrideFilePath(), []byte(existing), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+		var err error
+		if force {
+			err = app.ForceConfigure()
+		} else {
+			err = app.SoftConfigure()
+		}
+		got, _ := os.ReadFile(footerOverrideFilePath())
+		return string(got), err
+	}
+	shipped := func(t *testing.T) string {
+		t.Helper()
+		data, err := os.ReadFile(filepath.Join(repoRoot(t), "configs", "pi", "powerline-footer", "theme.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+
+	t.Run("soft writes it when absent", func(t *testing.T) {
+		got, err := run(t, false, "")
+		if err != nil {
+			t.Fatalf("SoftConfigure error: %v", err)
+		}
+		if got != shipped(t) {
+			t.Errorf("override not written from the embedded file, got %q", got)
+		}
+	})
+
+	t.Run("soft keeps an existing file byte for byte", func(t *testing.T) {
+		got, err := run(t, false, `{"colors":{"model":"#ffffff"}}`)
+		if err != nil {
+			t.Fatalf("SoftConfigure error: %v", err)
+		}
+		if got != `{"colors":{"model":"#ffffff"}}` {
+			t.Errorf("soft overwrote the user's override: %s", got)
+		}
+	})
+
+	t.Run("force replaces an existing file", func(t *testing.T) {
+		got, err := run(t, true, `{"colors":{"model":"#ffffff"}}`)
+		if err != nil {
+			t.Fatalf("ForceConfigure error: %v", err)
+		}
+		if got != shipped(t) {
+			t.Errorf("force did not restore the shipped override, got %q", got)
+		}
+	})
+
+	t.Run("a theme switch does not create it", func(t *testing.T) {
+		useRepoThemes(t)
+		isolateInstallRoot(t)
+		app, _ := newApp()
+		if err := app.ForceConfigureTheme(defaultDefinition(t)); err != nil {
+			t.Fatalf("ForceConfigureTheme error: %v", err)
+		}
+		if _, err := os.Stat(footerOverrideFilePath()); !os.IsNotExist(err) {
+			t.Errorf("dg theme set must not touch the footer override, stat err: %v", err)
 		}
 	})
 }

@@ -1,5 +1,8 @@
 [env]
 TERM = "xterm-256color"
+# TERM above hides the terminal's name, so tell tools that guess glyphs from it
+# (pi-powerline-footer) that the Nerd Font installed below is in use.
+POWERLINE_NERD_FONTS = "1"
 
 [terminal.shell]
 program = "/home/tester/.config/alacritty/starter.sh"

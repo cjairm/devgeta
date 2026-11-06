@@ -30,10 +30,11 @@ a clean machine the first `dg install` may report that; run
 theme (see [Theme](#theme)), then runs Pi's own package manager once per
 extension, `pi install npm:<name>`:
 
-| Extension           | What it adds                                                   |
-| ------------------- | -------------------------------------------------------------- |
-| `npm:pi-subagents`  | Subagent delegation and scripted multi-agent workflows         |
-| `npm:pi-web-access` | Web search, page/PDF reading, GitHub repo cloning, video input |
+| Extension                 | What it adds                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------ |
+| `npm:pi-subagents`        | Subagent delegation and scripted multi-agent workflows                         |
+| `npm:pi-web-access`       | Web search, page/PDF reading, GitHub repo cloning, video input                 |
+| `npm:pi-powerline-footer` | A powerline status bar in place of Pi's footer, colored by the active Pi theme |
 
 The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
 here by a test.
@@ -114,6 +115,34 @@ load the parent's extensions. Run them in the background (`async: true`), where
 extensions load normally, or list the extension for those agents in
 `~/.pi/agent/settings.json` under
 `subagents.agentOverrides.<agent>.subagentOnlyExtensions`.
+
+### pi-powerline-footer
+
+It replaces Pi's footer with a powerline bar (model, path, git, thinking level,
+context use). Its colors come from the active Pi theme, so under the `devgeta`
+theme `dg theme set` restyles the bar within about five seconds, with no
+restart (ADR-0062).
+
+Devgeta writes one file for it,
+`~/.pi/agent/extensions/powerline-footer/theme.json`. The extension hard-codes
+three colors (model, path and a rainbow for the high thinking levels); this
+file points them at Pi theme roles instead: `model` → `syntaxNumber`, `path` →
+`syntaxType`, and the `high`/`xhigh`/`max` thinking levels → Pi's own
+`thinkingHigh`/`thinkingXhigh`/`thinkingMax`. The file names roles, never
+colors, so it also works under a theme you picked yourself. `dg configure pi`
+writes it only when it is absent; `--force` restores it. `dg theme set` never
+touches it. To get the rainbow back, set a key to `rainbow` there and
+configure without `--force`.
+
+What still ignores the palette, because the extension offers no way to change
+it: the startup welcome overlay, and the gray used for separators in the editor
+frame and for ghost text in bash mode.
+
+Nerd Font glyphs: the extension guesses from the terminal's name. Ghostty is
+recognized. Devgeta's Alacritty config sets `POWERLINE_NERD_FONTS=1` when it
+installs its own Nerd Font, so the bar shows glyphs there too (run
+`dg configure alacritty --force`). Its network features (`autoFollowUp`,
+non-USD `cost.currency`, `/vibe`) are all off by default; devgeta turns none on.
 
 **Pi owns the install.** Devgeta never touches Pi's npm tree, and writes one key
 in Pi's settings file, `theme` (see [Theme](#theme)). Versions are whatever npm

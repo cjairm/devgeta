@@ -1,0 +1,9 @@
+{
+  "colors": {
+    "model": "syntaxNumber",
+    "path": "syntaxType",
+    "thinkingHigh": "thinkingHigh",
+    "thinkingXhigh": "thinkingXhigh",
+    "thinkingMax": "thinkingMax"
+  }
+}

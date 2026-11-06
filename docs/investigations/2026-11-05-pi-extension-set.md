@@ -41,7 +41,7 @@ entry below is meant to be worked on its own.
 | ------------------------------------ | -------------------------------------- | ---------------------- |
 | ~~`pi-subagents`~~ ✅ done           | Keep                                   | Well maintained        |
 | ~~`pi-web-access`~~ ✅ done          | Keep                                   | Well maintained        |
-| `pi-powerline-footer`                | Keep, plus a color override            | Well maintained        |
+| ~~`pi-powerline-footer`~~ ✅ done    | Keep, plus a color override            | Well maintained        |
 | `pi-stalled-agent-recovery`          | Keep (maintainer's choice)             | Too new to judge       |
 | `pi-openrouter-advanced-provider`    | Keep (maintainer's choice)             | Too new to judge       |
 | `pi-openrouter-request-details`      | Keep (maintainer's choice)             | Too new to judge       |
@@ -154,12 +154,18 @@ typed during compaction, a sticky bash mode, `/cd`.
   are rendered from `theme.Palette`, so Pi already follows `dg theme`. The
   footer uses Pi theme color names except two hard-coded hex values: `model`
   `#d787af` and `path` `#00afaf`.
-- **Action:** write `~/.pi/agent/extensions/powerline-footer/theme.json` mapping
-  those two to theme color names (for example `accent`), only when the file is
-  absent (product principle 4). The whole footer then follows any palette.
-- **Open questions:** whether tmux passes Pi's color queries (OSC 4/10/11)
-  through to the terminal, and whether Pi's panel backgrounds break the
-  transparency convention in `docs/guides/theming.md`.
+- **Action:** done (ADR-0062, cycle 2026-11-06-pi-powerline-footer) — added to
+  `piExtensions` after `pi-web-access` (the entries ahead of it in the install
+  order are not shipped yet), plus a static
+  `~/.pi/agent/extensions/powerline-footer/theme.json`, written only when absent
+  (soft) or always (force). Reading the 0.22.0 source showed a third hard-coded
+  color (the `rainbow` for the high thinking levels), so it maps three colors,
+  five keys, to Pi theme roles; and that Alacritty needs
+  `POWERLINE_NERD_FONTS=1` to get glyphs.
+- **Open questions, closed:** OSC 4/10/11 passthrough under tmux no longer
+  matters, because the `devgeta` Pi theme uses explicit colors, not the
+  terminal's palette (ADR-0061). The footer paints no backgrounds; Pi's own
+  block backgrounds were settled in step one (`docs/apps/pi.md`, Theme).
 
 ### `pi-stalled-agent-recovery`
 
@@ -379,7 +385,7 @@ replacement for `pi-schedule-prompt`.
 4. `npm:pi-mcp-adapter`
 5. `npm:@juicesharp/rpiv-ask-user-question`
 6. `npm:@juicesharp/rpiv-todo`
-7. `npm:pi-powerline-footer`
+7. ~~`npm:pi-powerline-footer`~~ ✅ done
 8. `npm:pi-stalled-agent-recovery`
 9. `npm:pi-openrouter-advanced-provider`
 10. `npm:pi-openrouter-request-details`
