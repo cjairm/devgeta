@@ -3,7 +3,6 @@ package pi
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,25 +20,20 @@ import (
 func init() { testutil.InitLogger() }
 
 // isolateInstallRoot points paths.Paths.Home.PiInstall - the managed install
-// root this app keys its detection and uninstall on - into a throwaway
-// directory, and restores it via t.Cleanup.
+// root this app keys its detection, uninstall and settings lookup on - into a
+// throwaway directory, and restores it via t.Cleanup.
 func isolateInstallRoot(t *testing.T) string {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), ".pi", "agent", "install")
 	old := paths.Paths.Home.PiInstall
 	t.Cleanup(func() { paths.Paths.Home.PiInstall = old })
 	paths.Paths.Home.PiInstall = root
-	// The env overrides win over the recorded default root, so clear them: a
-	// test that wants one sets its own value.
-	t.Setenv("PI_CODING_AGENT_DIR", "")
-	t.Setenv("PI_MANAGED_INSTALL_ROOT", "")
 	return root
 }
 
 // stubLookPath swaps the package-level PATH-lookup seam every app uses for
 // binary detection (commands.LookPathFn), so a test decides whether pi
-// resolves on PATH instead of inheriting whatever the machine running the
-// test has installed.
+// resolves on PATH instead of inheriting whatever the machine has installed.
 func stubLookPath(t *testing.T, fn func(string) (string, error)) {
 	t.Helper()
 	orig := commands.LookPathFn
@@ -47,97 +41,14 @@ func stubLookPath(t *testing.T, fn func(string) (string, error)) {
 	commands.LookPathFn = fn
 }
 
-// stubNodeAvailable makes the npm PATH check pass — the `node --version`
-// mock output is set per-test on the mock base.
-func stubNodeAvailable(t *testing.T) {
+func piOnPath(t *testing.T) {
 	t.Helper()
-	stubLookPath(t, func(name string) (string, error) {
-		if name == "npm" {
-			return "/usr/local/bin/npm", nil
-		}
-		return "", fmt.Errorf("%s not found", name)
-	})
+	stubLookPath(t, func(name string) (string, error) { return "/usr/local/bin/" + name, nil })
 }
 
-func TestRequireCompatibleNode(t *testing.T) {
-	t.Run("fails with an actionable error when node is missing", func(t *testing.T) {
-		stubLookPath(t, func(string) (string, error) {
-			return "", fmt.Errorf("not found")
-		})
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.ExecCommandError = fmt.Errorf("exec: node: not found")
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-		err := app.requireCompatibleNode()
-		if err == nil {
-			t.Fatal("expected an error when node is missing")
-		}
-		// The error must point at the fix, not just the fact.
-		if !strings.Contains(err.Error(), "dg install --only languages") {
-			t.Errorf("expected the error to suggest dg install --only languages, got: %v", err)
-		}
-	})
-
-	t.Run("fails when node is older than 22.19", func(t *testing.T) {
-		stubLookPath(t, func(string) (string, error) {
-			return "", fmt.Errorf("not found")
-		})
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.ExecCommandStdout = "v18.0.0\n"
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-		if err := app.requireCompatibleNode(); err == nil {
-			t.Fatal("expected an error for an outdated node")
-		}
-	})
-
-	t.Run("passes with node 22.19+ and npm on PATH", func(t *testing.T) {
-		for _, version := range []string{"v22.19.0", "v22.20.1", "v23.1.0"} {
-			stubNodeAvailable(t)
-			mockApp := testutil.NewMockApp()
-			mockApp.Base.ExecCommandStdout = version + "\n"
-			app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-			if err := app.requireCompatibleNode(); err != nil {
-				t.Errorf("node %s should satisfy the requirement: %v", version, err)
-			}
-		}
-	})
-
-	t.Run("fails when npm is missing", func(t *testing.T) {
-		stubLookPath(t, func(string) (string, error) {
-			return "", fmt.Errorf("not found")
-		})
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.ExecCommandStdout = "v22.19.0\n"
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-		if err := app.requireCompatibleNode(); err == nil {
-			t.Fatal("expected an error when npm is missing")
-		}
-	})
-}
-
-func TestParseNodeVersion(t *testing.T) {
-	cases := []struct {
-		in           string
-		major, minor int
-		ok           bool
-	}{
-		{"v22.19.0", 22, 19, true},
-		{"v18.0.0", 18, 0, true},
-		{"v23.1.0", 23, 1, true},
-		{"garbage", 0, 0, false},
-		{"v22", 0, 0, false},
-		{"v22.19", 0, 0, false},
-	}
-	for _, tc := range cases {
-		major, minor, ok := parseNodeVersion(tc.in)
-		if ok != tc.ok || (ok && (major != tc.major || minor != tc.minor)) {
-			t.Errorf("parseNodeVersion(%q) = (%d, %d, %v), want (%d, %d, %v)",
-				tc.in, major, minor, ok, tc.major, tc.minor, tc.ok)
-		}
-	}
+func piNotOnPath(t *testing.T) {
+	t.Helper()
+	stubLookPath(t, func(string) (string, error) { return "", fmt.Errorf("not found") })
 }
 
 // writeManagedMarker creates the marker file the official install script
@@ -156,18 +67,48 @@ func writeManagedMarker(t *testing.T, root string) {
 	}
 }
 
+// writeAgentSettings writes Pi's settings.json into the agent home - the parent
+// of the managed install root - matching the file `pi install` maintains.
+func writeAgentSettings(t *testing.T, settingsJSON string) {
+	t.Helper()
+	dir := filepath.Dir(paths.Paths.Home.PiInstall)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, "settings.json"),
+		[]byte(settingsJSON),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// piInstallSources returns the source argument of every `pi install <source>`
+// call the mock recorded, in call order.
+func piInstallSources(mockApp *testutil.MockApp) []string {
+	var sources []string
+	for _, call := range mockApp.Base.ExecCommandCalls {
+		if filepath.Base(call.Command) == "pi" && len(call.Args) == 2 && call.Args[0] == "install" {
+			sources = append(sources, call.Args[1])
+		}
+	}
+	return sources
+}
+
+func newApp() (*Pi, *testutil.MockApp) {
+	mockApp := testutil.NewMockApp()
+	return &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}, mockApp
+}
+
 func TestSoftInstall(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 
 	t.Run("skips when the managed marker is present, even off PATH", func(t *testing.T) {
 		root := isolateInstallRoot(t)
 		writeManagedMarker(t, root)
-		stubLookPath(t, func(string) (string, error) {
-			return "", fmt.Errorf("not found")
-		})
-
-		mockApp := testutil.NewMockApp()
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		piNotOnPath(t)
+		app, mockApp := newApp()
 
 		if err := app.SoftInstall(); err != nil {
 			t.Fatalf("SoftInstall error: %v", err)
@@ -175,22 +116,12 @@ func TestSoftInstall(t *testing.T) {
 		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
 			t.Errorf("expected no commands when pi is already installed, got %d", got)
 		}
-		if mockApp.Cmd.MaybeInstalled != "" || mockApp.Cmd.InstalledPkg != "" {
-			t.Errorf(
-				"expected no package-manager calls, got maybe=%q install=%q",
-				mockApp.Cmd.MaybeInstalled, mockApp.Cmd.InstalledPkg,
-			)
-		}
 	})
 
 	t.Run("skips when pi resolves on PATH from elsewhere", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(string) (string, error) {
-			return "/usr/local/bin/pi", nil
-		})
-
-		mockApp := testutil.NewMockApp()
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		piOnPath(t)
+		app, mockApp := newApp()
 
 		if err := app.SoftInstall(); err != nil {
 			t.Fatalf("SoftInstall error: %v", err)
@@ -204,30 +135,15 @@ func TestSoftInstall(t *testing.T) {
 	// #!/bin/sh (ADR-0059), the inverse of opencode's bash contract.
 	t.Run("installs the official script with sh when nothing is present", func(t *testing.T) {
 		isolateInstallRoot(t)
-		// Satisfy the runtime preflight so the mock install is reached.
-		stubNodeAvailable(t)
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.ExecCommandStdout = "v22.19.0\n"
-		app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+		piNotOnPath(t)
+		app, mockApp := newApp()
 
 		if err := app.SoftInstall(); err != nil {
 			t.Fatalf("SoftInstall error: %v", err)
 		}
 		calls := mockApp.Base.ExecCommandCalls
-		if len(calls) != 3 {
-			t.Fatalf("expected 3 ExecCommand calls (node check, download, execute), got %d", len(calls))
-		}
-		if calls[0].Command != "node" || calls[1].Command != "curl" || calls[2].Command != "sh" {
-			t.Errorf(
-				"expected staged node-check, curl, then sh install, got %q, %q, then %q",
-				calls[0].Command, calls[1].Command, calls[2].Command,
-			)
-		}
-		if mockApp.Cmd.MaybeInstalled != "" {
-			t.Errorf(
-				"expected no package-manager install, got MaybeInstallPackage(%q)",
-				mockApp.Cmd.MaybeInstalled,
-			)
+		if len(calls) != 2 || calls[0].Command != "curl" || calls[1].Command != "sh" {
+			t.Fatalf("expected staged curl download then sh install, got %v", calls)
 		}
 	})
 }
@@ -239,9 +155,7 @@ func TestUninstall(t *testing.T) {
 
 	root := isolateInstallRoot(t)
 	writeManagedMarker(t, root)
-
-	mockApp := testutil.NewMockApp()
-	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
+	app, mockApp := newApp()
 
 	if err := app.Uninstall(); err != nil {
 		t.Fatalf("Uninstall error: %v", err)
@@ -252,8 +166,7 @@ func TestUninstall(t *testing.T) {
 	if _, err := os.Stat(root); !os.IsNotExist(err) {
 		t.Errorf("expected the managed install root to be removed, stat err: %v", err)
 	}
-	agentDir := filepath.Dir(root)
-	if _, err := os.Stat(agentDir); err != nil {
+	if _, err := os.Stat(filepath.Dir(root)); err != nil {
 		t.Errorf("expected ~/.pi/agent to survive uninstall, stat err: %v", err)
 	}
 	if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
@@ -269,254 +182,13 @@ func TestUpdateNotSupported(t *testing.T) {
 	}
 }
 
-// writeManagedLauncher creates the executable launcher the official installer
-// writes beside a managed root, at <agent dir>/bin/pi.
-func writeManagedLauncher(t *testing.T, root string) string {
-	t.Helper()
-	launcher := managedLauncherPath(root)
-	if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(launcher, []byte("stub"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return launcher
-}
-
-// Both env vars the install script honors move the managed root, so detection,
-// the launcher fallback and uninstall have to look where the script put it -
-// keying on ~/.pi/agent/install alone reinstalls on every soft install and
-// leaves the real root behind on uninstall.
-func TestManagedInstallRoot(t *testing.T) {
-	t.Run("is empty when nothing is managed-installed", func(t *testing.T) {
-		root := isolateInstallRoot(t)
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if got := managedInstallRoot(); got != "" {
-			t.Errorf("managedInstallRoot() = %q, want empty", got)
-		}
-	})
-
-	t.Run("defaults to the recorded managed root", func(t *testing.T) {
-		root := isolateInstallRoot(t)
-		writeManagedMarker(t, root)
-		if got := managedInstallRoot(); got != root {
-			t.Errorf("managedInstallRoot() = %q, want %q", got, root)
-		}
-	})
-
-	t.Run("honors PI_CODING_AGENT_DIR", func(t *testing.T) {
-		isolateInstallRoot(t)
-		agentDir := t.TempDir()
-		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-		relocated := filepath.Join(agentDir, "install")
-		writeManagedMarker(t, relocated)
-		if got := managedInstallRoot(); got != relocated {
-			t.Errorf("managedInstallRoot() = %q, want %q", got, relocated)
-		}
-	})
-
-	t.Run("honors PI_MANAGED_INSTALL_ROOT ahead of the agent dir", func(t *testing.T) {
-		isolateInstallRoot(t)
-		agentDir := t.TempDir()
-		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-		writeManagedMarker(t, filepath.Join(agentDir, "install"))
-		explicit := t.TempDir()
-		t.Setenv("PI_MANAGED_INSTALL_ROOT", explicit+"/")
-		writeManagedMarker(t, explicit)
-		if got := managedInstallRoot(); got != explicit {
-			t.Errorf("managedInstallRoot() = %q, want %q", got, explicit)
-		}
-	})
-
-	// An override that points at a root with no marker is not a managed install:
-	// the script would install into it, so devgeta must not skip the install or
-	// claim a launcher that does not exist.
-	t.Run("ignores an override with no marker", func(t *testing.T) {
-		root := isolateInstallRoot(t)
-		writeManagedMarker(t, root)
-		t.Setenv("PI_MANAGED_INSTALL_ROOT", t.TempDir())
-		if got := managedInstallRoot(); got != root {
-			t.Errorf("managedInstallRoot() = %q, want the marked default %q", got, root)
-		}
-	})
-}
-
-func TestSoftInstallHonorsRelocatedRoot(t *testing.T) {
-	isolateInstallRoot(t)
-	agentDir := t.TempDir()
-	t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-	writeManagedMarker(t, filepath.Join(agentDir, "install"))
-	stubLookPath(t, func(string) (string, error) {
-		return "", fmt.Errorf("not found")
-	})
-
-	mockApp := testutil.NewMockApp()
-	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-
-	if err := app.SoftInstall(); err != nil {
-		t.Fatalf("SoftInstall error: %v", err)
-	}
-	if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
-		t.Errorf("expected no installer run for a relocated managed install, got %d commands", got)
-	}
-}
-
-func TestUninstallRemovesTheRootTheScriptUsed(t *testing.T) {
-	t.Run("relocated by PI_MANAGED_INSTALL_ROOT", func(t *testing.T) {
-		testutil.IsolateXDGDirs(t)
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		defaultRoot := isolateInstallRoot(t)
-		relocated := t.TempDir()
-		t.Setenv("PI_MANAGED_INSTALL_ROOT", relocated)
-		writeManagedMarker(t, relocated)
-		// A marker-less leftover in the default root is not what this uninstall
-		// resolved to, so it stays: removing a second tree the run did not
-		// identify would be guesswork.
-		leftover := filepath.Join(defaultRoot, "releases", "1.0.0")
-		if err := os.MkdirAll(leftover, 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-		if err := app.Uninstall(); err != nil {
-			t.Fatalf("Uninstall error: %v", err)
-		}
-		if _, err := os.Stat(relocated); !os.IsNotExist(err) {
-			t.Errorf("expected the relocated managed root removed, stat err: %v", err)
-		}
-		if _, err := os.Stat(leftover); err != nil {
-			t.Errorf("expected the unrelated default root left alone, stat err: %v", err)
-		}
-		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
-	})
-
-	// The script writes its marker last, so an interrupted install leaves a
-	// tree with no marker. Uninstall still has to clear it.
-	t.Run("marker-less tree in the default root", func(t *testing.T) {
-		testutil.IsolateXDGDirs(t)
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		root := isolateInstallRoot(t)
-		if err := os.MkdirAll(filepath.Join(root, "releases"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-		if err := app.Uninstall(); err != nil {
-			t.Fatalf("Uninstall error: %v", err)
-		}
-		if _, err := os.Stat(root); !os.IsNotExist(err) {
-			t.Errorf("expected the default root cleared, stat err: %v", err)
-		}
-		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
-	})
-
-	// The same interrupted-install cleanup has to follow PI_CODING_AGENT_DIR:
-	// with it set, the partial tree is under the agent dir, and clearing the
-	// default root would leave the real one behind.
-	t.Run("marker-less tree under a relocated agent dir", func(t *testing.T) {
-		testutil.IsolateXDGDirs(t)
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-		defaultRoot := isolateInstallRoot(t)
-		agentDir := t.TempDir()
-		t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-		relocated := filepath.Join(agentDir, "install")
-		if err := os.MkdirAll(filepath.Join(relocated, "releases"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-
-		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-		if err := app.Uninstall(); err != nil {
-			t.Fatalf("Uninstall error: %v", err)
-		}
-		if _, err := os.Stat(relocated); !os.IsNotExist(err) {
-			t.Errorf("expected the relocated marker-less root cleared, stat err: %v", err)
-		}
-		if _, err := os.Stat(defaultRoot); !os.IsNotExist(err) {
-			t.Errorf("expected the default root untouched, stat err: %v", err)
-		}
-		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
-	})
-}
-
-// The launcher fallback has to follow the root: right after an install, nothing
-// on PATH points at pi yet, and the only entry point is the launcher the script
-// wrote beside the root it used.
-//
-// Each case asserts a launcher that exists at the root's parent and nowhere
-// else, so a code path that derived the launcher from the agent dir instead
-// fails here rather than passing by coincidence — for the default root the two
-// locations are the same path.
-func TestConfigureUsesLauncherBesideTheRoot(t *testing.T) {
-	cases := []struct {
-		name  string
-		setup func(t *testing.T) string
-	}{
-		{
-			name: "agent dir relocated by PI_CODING_AGENT_DIR",
-			setup: func(t *testing.T) string {
-				agentDir := t.TempDir()
-				t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-				return filepath.Join(agentDir, "install")
-			},
-		},
-		{
-			// Here the agent dir and the root's parent deliberately differ: the
-			// script puts the launcher at dirname(root)/bin/pi even though
-			// settings.json stays under the agent dir (ADR-0059 decision 4).
-			name: "root relocated by PI_MANAGED_INSTALL_ROOT",
-			setup: func(t *testing.T) string {
-				agentDir := t.TempDir()
-				t.Setenv("PI_CODING_AGENT_DIR", agentDir)
-				root := filepath.Join(t.TempDir(), "pi-root")
-				t.Setenv("PI_MANAGED_INSTALL_ROOT", root)
-				return root
-			},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			isolateInstallRoot(t)
-			root := tc.setup(t)
-			writeManagedMarker(t, root)
-			launcher := writeManagedLauncher(t, root)
-			stubLookPath(t, func(string) (string, error) {
-				return "", fmt.Errorf("not found")
-			})
-
-			mockApp := testutil.NewMockApp()
-			app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-			if err := app.configureExtensions(false); err != nil {
-				t.Fatalf("configureExtensions error: %v", err)
-			}
-			if len(mockApp.Base.ExecCommandCalls) != len(piExtensions) {
-				t.Fatalf(
-					"expected %d installs, got %d",
-					len(piExtensions),
-					len(mockApp.Base.ExecCommandCalls),
-				)
-			}
-			for _, call := range mockApp.Base.ExecCommandCalls {
-				if call.Command != launcher {
-					t.Errorf("command = %q, want launcher beside the root %q", call.Command, launcher)
-				}
-			}
-		})
-	}
-}
-
 // extensionSourcePattern matches a concrete npm source in prose. The generic
 // forms the doc also uses (`npm:<name>`, `npm:<pkg>@<version>`) cannot match,
 // so only real package names are collected.
 var extensionSourcePattern = regexp.MustCompile(`npm:([a-z0-9][a-z0-9-]*)`)
 
-// ADR-0060 decision 2 makes docs/apps/pi.md the user-facing mirror of
-// piExtensions, and nothing but this test notices when the two drift.
+// ADR-0060 makes docs/apps/pi.md the user-facing mirror of piExtensions, and
+// nothing but this test notices when the two drift.
 func TestPiExtensionsDocumented(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "apps", "pi.md"))
 	if err != nil {
@@ -538,49 +210,13 @@ func TestPiExtensionsDocumented(t *testing.T) {
 	}
 }
 
-// writeAgentSettings writes Pi's settings.json into the agent home the tests
-// redirect — the parent of the managed install root — matching the file
-// `pi install` maintains.
-func writeAgentSettings(t *testing.T, settingsJSON string) {
-	t.Helper()
-	dir := filepath.Dir(paths.Paths.Home.PiInstall)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "settings.json"), []byte(settingsJSON), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// piInstalledSources returns the source argument of every `pi install <source>`
-// call the mock recorded, in call order.
-func piInstallSources(mockApp *testutil.MockApp) []string {
-	var sources []string
-	for _, call := range mockApp.Base.ExecCommandCalls {
-		if filepath.Base(call.Command) != "pi" {
-			continue
-		}
-		if len(call.Args) == 2 && call.Args[0] == "install" {
-			sources = append(sources, call.Args[1])
-		}
-	}
-	return sources
-}
-
 func TestConfigureExtensions(t *testing.T) {
-	newApp := func() (*Pi, *testutil.MockApp) {
-		mockApp := testutil.NewMockApp()
-		return &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}, mockApp
-	}
-
 	t.Run("installs every curated source when settings have none", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
+		piOnPath(t)
 		app, mockApp := newApp()
 
-		if err := app.configureExtensions(false); err != nil {
+		if err := app.configureExtensions(); err != nil {
 			t.Fatalf("configureExtensions error: %v", err)
 		}
 		if got := piInstallSources(mockApp); !slices.Equal(got, piExtensions) {
@@ -588,59 +224,41 @@ func TestConfigureExtensions(t *testing.T) {
 		}
 	})
 
-	t.Run("skips sources settings already declare", func(t *testing.T) {
+	// Pi matches npm sources by package name and accepts a bare string or an
+	// object carrying "source". Any declared form counts as installed, so a
+	// pinned version is never replaced and nothing is re-installed per run.
+	t.Run("skips sources settings already declare, in any form", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
-		installed := piExtensions[:len(piExtensions)-1]
-		quoted, err := json.Marshal(installed)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeAgentSettings(t, `{"packages": `+string(quoted)+`}`)
+		piOnPath(t)
+		writeAgentSettings(t, `{"packages": [
+			"npm:pi-subagents@0.84.0",
+			{"source": "npm:pi-web-access", "extensions": ["!*"]},
+			"npm:pi-schedule-prompt"
+		]}`)
 		app, mockApp := newApp()
 
-		if err := app.configureExtensions(false); err != nil {
+		if err := app.configureExtensions(); err != nil {
 			t.Fatalf("configureExtensions error: %v", err)
 		}
-		want := piExtensions[len(piExtensions)-1:]
+		want := piExtensions[3:]
 		if got := piInstallSources(mockApp); !slices.Equal(got, want) {
 			t.Errorf("expected only %v installed, got %v", want, got)
 		}
 	})
 
-	// Pi's settings accept an object carrying the source, not just a bare
-	// string. Treating those entries as missing would re-install on every run.
-	t.Run("recognizes object-shaped package entries", func(t *testing.T) {
-		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
-		writeAgentSettings(t, `{"packages": [{"source": "npm:pi-subagents"}]}`)
-		app, mockApp := newApp()
-
-		if err := app.configureExtensions(false); err != nil {
-			t.Fatalf("configureExtensions error: %v", err)
-		}
-		if got := piInstallSources(mockApp); slices.Contains(got, "npm:pi-subagents") {
-			t.Errorf("expected an already-declared source to be skipped, got %v", got)
-		}
-	})
-
-	t.Run("installs nothing when every source is already declared", func(t *testing.T) {
+	t.Run("does not look up pi when nothing is pending", func(t *testing.T) {
 		isolateInstallRoot(t)
 		stubLookPath(t, func(string) (string, error) {
 			return "", fmt.Errorf("pi must not be looked up when nothing is pending")
 		})
-		quoted, err := json.Marshal(piExtensions)
+		declared, err := json.Marshal(piExtensions)
 		if err != nil {
 			t.Fatal(err)
 		}
-		writeAgentSettings(t, `{"packages": `+string(quoted)+`}`)
+		writeAgentSettings(t, `{"packages": `+string(declared)+`}`)
 		app, mockApp := newApp()
 
-		if err := app.configureExtensions(false); err != nil {
+		if err := app.configureExtensions(); err != nil {
 			t.Fatalf("configureExtensions error: %v", err)
 		}
 		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
@@ -648,221 +266,107 @@ func TestConfigureExtensions(t *testing.T) {
 		}
 	})
 
-	t.Run("force re-installs sources already declared", func(t *testing.T) {
-		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
-		quoted, err := json.Marshal(piExtensions)
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeAgentSettings(t, `{"packages": `+string(quoted)+`}`)
-		app, mockApp := newApp()
-
-		if err := app.configureExtensions(true); err != nil {
-			t.Fatalf("configureExtensions error: %v", err)
-		}
-		if got := piInstallSources(mockApp); !slices.Equal(got, piExtensions) {
-			t.Errorf("expected force to re-install every source, got %v", got)
-		}
-	})
-
 	t.Run("fails with the fix named when pi is not installed", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(string) (string, error) {
-			return "", fmt.Errorf("not found")
-		})
+		piNotOnPath(t)
 		app, mockApp := newApp()
 
-		err := app.configureExtensions(false)
-		if err == nil {
-			t.Fatal("expected an error when pi is not on PATH")
-		}
-		if !strings.Contains(err.Error(), "dg install --only pi") {
-			t.Errorf("expected the error to name the fix, got: %v", err)
+		err := app.configureExtensions()
+		if err == nil || !strings.Contains(err.Error(), "dg install --only pi") {
+			t.Fatalf("expected an error naming dg install --only pi, got: %v", err)
 		}
 		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
 			t.Errorf("expected no install attempts, got %d", got)
 		}
 	})
 
-	// A settings file devgeta cannot parse is reported, never overwritten and
-	// never treated as empty: silently re-installing over it would hide a
-	// corrupted file the user needs to see.
+	// Pi's launcher is written beside the managed root, so a configure run right
+	// after install works before the new bin dir is on PATH.
+	t.Run("falls back to the managed launcher when pi is off PATH", func(t *testing.T) {
+		root := isolateInstallRoot(t)
+		piNotOnPath(t)
+		launcher := managedLauncher()
+		if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(launcher, []byte("stub"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if want := filepath.Join(filepath.Dir(root), "bin", "pi"); launcher != want {
+			t.Fatalf("managedLauncher() = %q, want %q", launcher, want)
+		}
+		app, mockApp := newApp()
+
+		if err := app.configureExtensions(); err != nil {
+			t.Fatalf("configureExtensions error: %v", err)
+		}
+		if len(mockApp.Base.ExecCommandCalls) != len(piExtensions) {
+			t.Fatalf(
+				"expected %d installs, got %d",
+				len(piExtensions),
+				len(mockApp.Base.ExecCommandCalls),
+			)
+		}
+		for _, call := range mockApp.Base.ExecCommandCalls {
+			if call.Command != launcher {
+				t.Errorf("command = %q, want managed launcher %q", call.Command, launcher)
+			}
+		}
+	})
+
+	// A settings file devgeta cannot parse is reported, never treated as empty:
+	// silently re-installing over it would hide a corrupted file.
 	t.Run("reports an unparseable settings file instead of installing", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
+		piOnPath(t)
 		writeAgentSettings(t, `{not json`)
 		app, mockApp := newApp()
 
-		err := app.configureExtensions(false)
-		if err == nil {
-			t.Fatal("expected an error for an unparseable settings file")
-		}
-		if !strings.Contains(err.Error(), "settings.json") {
-			t.Errorf("expected the error to name the settings file, got: %v", err)
+		err := app.configureExtensions()
+		if err == nil || !strings.Contains(err.Error(), "settings.json") {
+			t.Fatalf("expected an error naming settings.json, got: %v", err)
 		}
 		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
 			t.Errorf("expected no install attempts, got %d", got)
 		}
 	})
 
-	t.Run("names the extension that failed to install", func(t *testing.T) {
+	// No rollback: extensions are Pi's own state and a re-run installs whatever
+	// is still missing, so a failure stops, names the extension and removes nothing.
+	t.Run("stops at the first failure and names the extension", func(t *testing.T) {
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
+		piOnPath(t)
 		app, mockApp := newApp()
-		mockApp.Base.ExecCommandError = fmt.Errorf("npm exited 1")
-
-		err := app.configureExtensions(false)
-		if err == nil {
-			t.Fatal("expected an install failure to surface")
+		mockApp.Base.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
+			if len(c.Args) == 2 && c.Args[1] == piExtensions[2] {
+				return "", "", fmt.Errorf("npm exited 1")
+			}
+			return "", "", nil
 		}
-		if !strings.Contains(err.Error(), "npm:pi-subagents") {
-			t.Errorf("expected the error to name the first extension, got: %v", err)
+
+		err := app.configureExtensions()
+		if err == nil || !strings.Contains(err.Error(), piExtensions[2]) {
+			t.Fatalf("expected an error naming %s, got: %v", piExtensions[2], err)
+		}
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 3 {
+			t.Fatalf("expected installs to stop at the failing one (3 calls), got %d", len(calls))
+		}
+		for _, call := range calls {
+			if call.Args[0] != "install" {
+				t.Errorf("unexpected non-install call %v", call.Args)
+			}
 		}
 	})
 }
 
-func TestConfigureVersionedSources(t *testing.T) {
-	for _, force := range []bool{false, true} {
-		t.Run(fmt.Sprintf("force=%v", force), func(t *testing.T) {
-			isolateInstallRoot(t)
-			stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
-			writeAgentSettings(t, `{"packages":[{"source":"npm:pi-subagents@0.84.0","extensions":["!*"]}]}`)
-			mockApp := testutil.NewMockApp()
-			app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-			if err := app.configureExtensions(force); err != nil {
-				t.Fatal(err)
-			}
-			got := piInstallSources(mockApp)
-			if slices.Contains(got, "npm:pi-subagents") {
-				t.Errorf("configure replaced a versioned source: %v", got)
-			}
-			if slices.Contains(got, "npm:pi-subagents@0.84.0") != force {
-				t.Errorf("versioned source should be refreshed only with force: %v", got)
-			}
-		})
-	}
-}
-
-func TestVersionedExtensionNotRemovedOnFailure(t *testing.T) {
-	isolateInstallRoot(t)
-	stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
-	writeAgentSettings(t, `{"packages":["npm:pi-subagents@0.84.0"]}`)
-	mockApp := testutil.NewMockApp()
-	mockApp.Base.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
-		if len(c.Args) == 2 && c.Args[0] == "install" && c.Args[1] == piExtensions[2] {
-			return "", "", fmt.Errorf("install failed")
-		}
-		return "", "", nil
-	}
-	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-	if err := app.configureExtensions(true); err == nil {
-		t.Fatal("expected install failure")
-	}
-	// Assert on the calls AFTER the failing install only: the forward install
-	// of the versioned source happens before it, so scanning the whole list
-	// cannot tell rollback behavior from the normal path.
-	calls := mockApp.Base.ExecCommandCalls
-	failIdx := -1
-	for i, call := range calls {
-		if len(call.Args) == 2 && call.Args[0] == "install" && call.Args[1] == piExtensions[2] {
-			failIdx = i
-		}
-	}
-	if failIdx < 0 {
-		t.Fatal("the failing install call was not recorded")
-	}
-	after := calls[failIdx+1:]
-	if len(after) == 0 {
-		t.Fatal("expected rollback calls after the failure")
-	}
-	for _, call := range after {
-		if len(call.Args) == 2 && strings.Contains(call.Args[1], "pi-subagents") {
-			t.Errorf("rollback touched the refreshed versioned package: %v", call.Args)
-		}
-	}
-	// The one package this run added before the failure is the one removed.
-	if len(after) != 1 || after[0].Args[0] != "remove" || after[0].Args[1] != piExtensions[1] {
-		t.Errorf("expected rollback to remove only %q, got %v", piExtensions[1], after)
-	}
-}
-
-func TestConfigureManagedLauncherOffPath(t *testing.T) {
-	root := isolateInstallRoot(t)
-	writeManagedMarker(t, root)
-	// The path comes from managedLauncherPath — the layout the official
-	// installer documents (write_managed_install_launcher) — not from the
-	// test re-deriving it, so a layout change breaks one place.
-	launcher := writeManagedLauncher(t, root)
-	stubLookPath(t, func(string) (string, error) { return "", fmt.Errorf("not found") })
-	mockApp := testutil.NewMockApp()
-	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-	if err := app.configureExtensions(false); err != nil {
-		t.Fatal(err)
-	}
-	for _, call := range mockApp.Base.ExecCommandCalls {
-		if call.Command != launcher {
-			t.Errorf("command = %q, want managed launcher %q", call.Command, launcher)
-		}
-	}
-	if len(mockApp.Base.ExecCommandCalls) != len(piExtensions) {
-		t.Fatalf("expected %d installs, got %d", len(piExtensions), len(mockApp.Base.ExecCommandCalls))
-	}
-}
-
-func TestConfigurePrintsExtensionProgress(t *testing.T) {
-	isolateInstallRoot(t)
-	stubLookPath(t, func(string) (string, error) { return "/usr/local/bin/pi", nil })
-	mockApp := testutil.NewMockApp()
-	app := &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Drain in a goroutine: the pipe buffer is bounded, and ReadAll after the
-	// run would deadlock once the output outgrows it.
-	done := make(chan []byte, 1)
-	go func() {
-		out, _ := io.ReadAll(r)
-		done <- out
-	}()
-	original := os.Stdout
-	os.Stdout = w
-	err = app.configureExtensions(false)
-	os.Stdout = original
-	if closeErr := w.Close(); closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	output := <-done
-	if closeErr := r.Close(); closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	if err != nil {
-		t.Fatalf("configure error: %v", err)
-	}
-	for _, source := range piExtensions {
-		if !strings.Contains(string(output), "Installing Pi extension "+source) ||
-			!strings.Contains(string(output), "Installed Pi extension "+source) {
-			t.Errorf("missing progress for %s: %s", source, output)
-		}
-	}
-}
-
 func TestConfigure(t *testing.T) {
-	t.Run("registers pi only after the extensions install", func(t *testing.T) {
+	t.Run("SoftConfigure registers pi after the extensions install", func(t *testing.T) {
 		tc := testutil.SetupCompleteTest(t)
 		defer tc.Cleanup()
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
-		app, mockApp := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}, tc.MockApp
+		piOnPath(t)
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 		if err := app.SoftConfigure(); err != nil {
 			t.Fatalf("SoftConfigure error: %v", err)
@@ -874,8 +378,26 @@ func TestConfigure(t *testing.T) {
 		if !gc.IsInstalledByDevgeta(constants.Pi, "package") {
 			t.Error("expected pi in the installed packages list")
 		}
-		if got := len(piInstallSources(mockApp)); got != len(piExtensions) {
+		if got := len(piInstallSources(tc.MockApp)); got != len(piExtensions) {
 			t.Errorf("expected %d extension installs, got %d", len(piExtensions), got)
+		}
+	})
+
+	// Updating installed extensions is Pi's job (`pi update`), so a forced
+	// configure only fills in what is missing and never unpins a version.
+	t.Run("ForceConfigure installs only the missing extensions", func(t *testing.T) {
+		tc := testutil.SetupCompleteTest(t)
+		defer tc.Cleanup()
+		isolateInstallRoot(t)
+		piOnPath(t)
+		writeAgentSettings(t, `{"packages": ["npm:pi-subagents@0.84.0"]}`)
+		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+
+		if err := app.ForceConfigure(); err != nil {
+			t.Fatalf("ForceConfigure error: %v", err)
+		}
+		if got := piInstallSources(tc.MockApp); !slices.Equal(got, piExtensions[1:]) {
+			t.Errorf("expected only the missing extensions installed, got %v", got)
 		}
 	})
 
@@ -883,14 +405,12 @@ func TestConfigure(t *testing.T) {
 		tc := testutil.SetupCompleteTest(t)
 		defer tc.Cleanup()
 		isolateInstallRoot(t)
-		stubLookPath(t, func(name string) (string, error) {
-			return "/usr/local/bin/" + name, nil
-		})
+		piOnPath(t)
 		tc.MockApp.Base.ExecCommandError = fmt.Errorf("npm exited 1")
 		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
-		if err := app.ForceConfigure(); err == nil {
-			t.Fatal("expected ForceConfigure to fail")
+		if err := app.SoftConfigure(); err == nil {
+			t.Fatal("expected SoftConfigure to fail")
 		}
 		gc := &config.GlobalConfig{}
 		if err := gc.Load(); err != nil {
@@ -898,184 +418,6 @@ func TestConfigure(t *testing.T) {
 		}
 		if gc.IsInstalledByDevgeta(constants.Pi, "package") {
 			t.Error("expected a failed configure to leave pi out of the installed list")
-		}
-	})
-}
-
-func TestPiAgentDir(t *testing.T) {
-	root := isolateInstallRoot(t)
-	home := paths.Paths.Home.Root
-
-	t.Run("defaults to the managed install root's parent", func(t *testing.T) {
-		t.Setenv("PI_CODING_AGENT_DIR", "")
-		if got, want := piAgentDir(), filepath.Dir(root); got != want {
-			t.Errorf("piAgentDir() = %q, want %q", got, want)
-		}
-	})
-
-	// Pi relocates settings.json and its npm tree together when this is set,
-	// so devgeta has to read from the same directory or it never sees what Pi
-	// installed.
-	t.Run("honors PI_CODING_AGENT_DIR", func(t *testing.T) {
-		t.Setenv("PI_CODING_AGENT_DIR", "/relocated/agent")
-		if got, want := piAgentDir(), "/relocated/agent"; got != want {
-			t.Errorf("piAgentDir() = %q, want %q", got, want)
-		}
-		if got, want := piSettingsPath(), "/relocated/agent/settings.json"; got != want {
-			t.Errorf("piSettingsPath() = %q, want %q", got, want)
-		}
-	})
-
-	// Pi expands a leading tilde itself, so "~/agent" must not be read as a
-	// path relative to the working directory.
-	t.Run("expands a leading tilde", func(t *testing.T) {
-		for _, tc := range []struct{ in, want string }{
-			{"~", home},
-			{"~/.config/pi", filepath.Join(home, ".config", "pi")},
-		} {
-			t.Setenv("PI_CODING_AGENT_DIR", tc.in)
-			if got := piAgentDir(); got != tc.want {
-				t.Errorf("piAgentDir() with %q = %q, want %q", tc.in, got, tc.want)
-			}
-		}
-	})
-}
-
-// setenvAgentDir points PI_CODING_AGENT_DIR at a fresh directory and returns
-// it, so a test speaks to the relocated settings file Pi would actually write.
-func setenvAgentDir(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	t.Setenv("PI_CODING_AGENT_DIR", dir)
-	return dir
-}
-
-func TestConfigureExtensionsRollback(t *testing.T) {
-	newApp := func(fn func(commands.CommandParams) (string, string, error)) (*Pi, *testutil.MockApp) {
-		mockApp := testutil.NewMockApp()
-		mockApp.Base.ExecCommandFn = fn
-		return &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}, mockApp
-	}
-	allowPi := func(name string) (string, error) { return "/usr/local/bin/" + name, nil }
-
-	// piSequence renders every pi call as "<action> <source>", so a test asserts
-	// on the exact install/remove order rather than on call counts.
-	piSequence := func(mockApp *testutil.MockApp) []string {
-		var seq []string
-		for _, call := range mockApp.Base.ExecCommandCalls {
-			if filepath.Base(call.Command) != "pi" || len(call.Args) != 2 {
-				continue
-			}
-			seq = append(seq, call.Args[0]+" "+call.Args[1])
-		}
-		return seq
-	}
-
-	// A partial extension set is not an end state (§4, atomic installation), so
-	// a failure after some installs must undo exactly those installs.
-	t.Run("rolls back this run's installs when a later one fails", func(t *testing.T) {
-		isolateInstallRoot(t)
-		stubLookPath(t, allowPi)
-		app, mockApp := newApp(func(c commands.CommandParams) (string, string, error) {
-			if len(c.Args) == 2 && c.Args[0] == "install" && c.Args[1] == piExtensions[2] {
-				return "", "", fmt.Errorf("npm exited 1")
-			}
-			return "", "", nil
-		})
-
-		err := app.configureExtensions(false)
-		if err == nil {
-			t.Fatal("expected the failed install to surface")
-		}
-		if !strings.Contains(err.Error(), piExtensions[2]) {
-			t.Errorf("expected the failing extension named in the error, got: %v", err)
-		}
-
-		want := []string{
-			"install " + piExtensions[0],
-			"install " + piExtensions[1],
-			"install " + piExtensions[2],
-			"remove " + piExtensions[1],
-			"remove " + piExtensions[0],
-		}
-		if got := piSequence(mockApp); !slices.Equal(got, want) {
-			t.Errorf("expected %v, got %v", want, got)
-		}
-	})
-
-	// A force re-install of something Pi already listed is not ours to remove:
-	// undoing it would delete an extension the user already had.
-	t.Run("never removes extensions that were already declared", func(t *testing.T) {
-		isolateInstallRoot(t)
-		stubLookPath(t, allowPi)
-		declared, err := json.Marshal(piExtensions[:2])
-		if err != nil {
-			t.Fatal(err)
-		}
-		writeAgentSettings(t, `{"packages": `+string(declared)+`}`)
-		app, mockApp := newApp(func(c commands.CommandParams) (string, string, error) {
-			if len(c.Args) == 2 && c.Args[0] == "install" && c.Args[1] == piExtensions[3] {
-				return "", "", fmt.Errorf("npm exited 1")
-			}
-			return "", "", nil
-		})
-
-		if err := app.configureExtensions(true); err == nil {
-			t.Fatal("expected the failed install to surface")
-		}
-		// Only the source this run added is removed. The two declared sources
-		// the run refreshed are left alone: their prior installed version is
-		// not recoverable, so the rollback must not pretend to restore them.
-		want := []string{
-			"install " + piExtensions[0],
-			"install " + piExtensions[1],
-			"install " + piExtensions[2],
-			"install " + piExtensions[3],
-			"remove " + piExtensions[2],
-		}
-		if got := piSequence(mockApp); !slices.Equal(got, want) {
-			t.Errorf("expected %v, got %v", want, got)
-		}
-	})
-
-	// A rollback that itself fails must report the failure, name the package it
-	// could not remove, and still undo the rest of the set.
-	t.Run("keeps rolling back after a removal fails, and names what is left", func(t *testing.T) {
-		isolateInstallRoot(t)
-		stubLookPath(t, allowPi)
-		app, mockApp := newApp(func(c commands.CommandParams) (string, string, error) {
-			if len(c.Args) != 2 {
-				return "", "", nil
-			}
-			switch {
-			case c.Args[0] == "install" && c.Args[1] == piExtensions[4]:
-				return "", "", fmt.Errorf("npm exited 1")
-			case c.Args[0] == "remove" && c.Args[1] == piExtensions[1]:
-				return "", "", fmt.Errorf("npm uninstall exited 1")
-			}
-			return "", "", nil
-		})
-
-		err := app.configureExtensions(false)
-		if err == nil {
-			t.Fatal("expected a failure")
-		}
-		if !strings.Contains(err.Error(), piExtensions[1]) || !strings.Contains(err.Error(), "pi remove") {
-			t.Errorf("expected the stuck package and the manual fix in the error, got: %v", err)
-		}
-		want := []string{
-			"install " + piExtensions[0],
-			"install " + piExtensions[1],
-			"install " + piExtensions[2],
-			"install " + piExtensions[3],
-			"install " + piExtensions[4],
-			"remove " + piExtensions[3],
-			"remove " + piExtensions[2],
-			"remove " + piExtensions[1],
-			"remove " + piExtensions[0],
-		}
-		if got := piSequence(mockApp); !slices.Equal(got, want) {
-			t.Errorf("expected %v, got %v", want, got)
 		}
 	})
 }
