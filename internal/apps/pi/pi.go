@@ -59,6 +59,7 @@ const piInstallScriptURL = "https://pi.dev/install.sh"
 // docs/apps/pi.md.
 var piExtensions = []string{
 	"npm:pi-subagents",
+	"npm:pi-web-access",
 }
 
 func (p *Pi) Install() error {

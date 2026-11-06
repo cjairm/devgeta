@@ -40,7 +40,7 @@ entry below is meant to be worked on its own.
 | Library                              | Action                                 | Maintenance            |
 | ------------------------------------ | -------------------------------------- | ---------------------- |
 | ~~`pi-subagents`~~ ✅ done           | Keep                                   | Well maintained        |
-| `pi-web-access`                      | Keep                                   | Well maintained        |
+| ~~`pi-web-access`~~ ✅ done          | Keep                                   | Well maintained        |
 | `pi-powerline-footer`                | Keep, plus a color override            | Well maintained        |
 | `pi-stalled-agent-recovery`          | Keep (maintainer's choice)             | Too new to judge       |
 | `pi-openrouter-advanced-provider`    | Keep (maintainer's choice)             | Too new to judge       |
@@ -87,18 +87,58 @@ leaves delegation out on purpose; this is the most useful extension in the set.
   are added.
 - **Optional:** `pi-intercom` is no longer needed; child-to-parent messages are
   built in.
-- **Action:** done — it is now the only entry in `piExtensions`; the others are
-  re-added one at a time.
+- **Action:** done — it was the first entry restored to `piExtensions`; the
+  others are re-added one at a time.
 
-### `pi-web-access`
+### ~~`pi-web-access`~~ — done 2026-11-06
 
 Web search, page and PDF reading, GitHub repo cloning, YouTube and local video
-input. Search needs an API key for one backend (Exa by default; Brave, Tavily,
-Perplexity, Gemini, OpenAI and others supported).
+input.
 
-- 0.47.0 · 1,768 stars · 2 open issues · 100+ commits 90d · 91 contributors ·
-  MIT
-- **Action:** none. `docs/apps/pi.md` should say a search key is needed.
+- 0.47.0 · 1,769 stars · 2 open issues · 100+ commits 90d · 91 contributors ·
+  MIT. In the 30 days to 2026-11-06: 64 commits by the author (who also wrote
+  `pi-subagents`), 32 by 25 others. `main` is three commits past 0.47.0, all
+  search-provider additions and fixes; none touch setup.
+- Pi 1.5 support is not declared: peer range `*`, built against Pi 1.0.4, and
+  the README says "Requires Pi v0.37.3+". Sandbox step 2 still applies.
+- **Correction — no key is needed** (read from the 0.47.0 tarball's README and
+  `exa.ts`, and the README on `main`). With no configuration, search goes to
+  Exa's free hosted endpoint (`https://mcp.exa.ai/mcp`), so queries are sent to
+  Exa. If Pi is signed in with a ChatGPT/Codex subscription, OpenAI search is
+  tried first. Keys only add other services (Brave, Tavily, Perplexity, …) or
+  raise Exa's limits. They come from environment variables (`BRAVE_API_KEY`,
+  `EXA_API_KEY`, …) or from `~/.pi/agent/web-search.json`, which accepts a
+  variable reference (`"$BRAVE_API_KEY"`) or a command (`"!<cmd>"`) in place
+  of the key.
+- **Devgeta must not write `web-search.json`.** The extension rewrites the
+  whole file itself (`saveConfig` in `index.ts`, called by `/curator` and by
+  provider changes in the curator page), so a devgeta template would be
+  overwritten, and a key placed there would sit in a config file. The file
+  honors `PI_CODING_AGENT_DIR` and `XDG_CONFIG_HOME`.
+- **The defaults need no change:** plain results with no browser page and no
+  extra model call (`workflow: "none"`), browser cookies off
+  (`allowBrowserCookies: false`), no third-party scraping fallbacks
+  (`fetchRouting.allowRemoteHostedProviders: false`), private network
+  addresses blocked, and `toolActivation: "auto"` (a compact `web_enable`
+  tool where the model can take tools mid-session without a prompt-cache
+  miss).
+- **Optional system tools, none added:** `gh` (already installed by devgeta)
+  for private repos and PR/issue views; `ffmpeg` and `yt-dlp` only for video
+  frame extraction (video understanding itself needs a Gemini key);
+  `xdg-utils` on Linux only to open the curator page, which is off by default.
+- **pi-subagents interaction** (read from the 0.86.0 tarball's
+  `docs/agents.md`): `researcher` and `evidence-auditor` fail unless the child
+  registers all four web tools. Foreground children never load the parent's
+  extensions, so either run them with `async: true` or set
+  `subagents.agentOverrides.<agent>.subagentOnlyExtensions` in Pi's
+  `settings.json`. The docs call those entries "extension paths"; whether an
+  `npm:pi-web-access` source works there is unverified — add it to the sandbox
+  run. Devgeta does not write that file (ADR-0060 §1), so `docs/apps/pi.md`
+  documents both options.
+- Not used: the package also ships an MCP server (`npx -y pi-web-access`) for
+  Claude Code and others. Claude Code has web search built in.
+- **Action:** done — added to `piExtensions` after `pi-subagents`, and
+  `docs/apps/pi.md` has a section covering the above. No devgeta config.
 
 ### `pi-powerline-footer`
 
@@ -334,7 +374,7 @@ replacement for `pi-schedule-prompt`.
 ### Install order
 
 1. ~~`npm:pi-subagents`~~ ✅ done
-2. `npm:pi-web-access`
+2. ~~`npm:pi-web-access`~~ ✅ done
 3. `npm:@plannotator/pi-extension`
 4. `npm:pi-mcp-adapter`
 5. `npm:@juicesharp/rpiv-ask-user-question`
@@ -369,7 +409,9 @@ scratch prefix, point `HOME` and `PI_CODING_AGENT_DIR` at scratch, then:
 
 1. run `pi install` for each extension and record what it prints (stdout and
    stderr separately) and how long it takes;
-2. confirm every extension loads on Pi 1.5 — `pi-schedule` especially;
+2. confirm every extension loads on Pi 1.5 — `pi-schedule` especially — and
+   whether `subagentOnlyExtensions` accepts `npm:pi-web-access` so the
+   foreground `researcher` gets the web tools;
 3. check whether pi-lens honors the install switches and `PATH` set from an
    extension at load time;
 4. look at Pi's `system` theme and the footer inside tmux.

@@ -29,9 +29,10 @@ a clean machine the first `dg install` may report that; run
 `dg configure pi` (and the configure step of `dg install`) runs Pi's own package
 manager once per extension, `pi install npm:<name>`:
 
-| Extension          | What it adds                                           |
-| ------------------ | ------------------------------------------------------ |
-| `npm:pi-subagents` | Subagent delegation and scripted multi-agent workflows |
+| Extension           | What it adds                                                   |
+| ------------------- | -------------------------------------------------------------- |
+| `npm:pi-subagents`  | Subagent delegation and scripted multi-agent workflows         |
+| `npm:pi-web-access` | Web search, page/PDF reading, GitHub repo cloning, video input |
 
 The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
 here by a test.
@@ -65,6 +66,53 @@ name a model, or they refuse to start. To route roles to different models on pur
 upstream docs (`/subagents-guide models`) describe a tiering that works well:
 a cheap fast model for `scout`, a mid-tier one for `worker` and `reviewer`, and
 a top reasoning model only for `oracle`.
+
+### pi-web-access
+
+It works with no configuration and no API key. Search goes to Exa's free hosted
+endpoint by default, so your search queries are sent to Exa. If Pi is signed in
+with a ChatGPT/Codex subscription, OpenAI search is tried first. Devgeta writes
+no configuration for it.
+
+To use another search service (Brave, Tavily, Perplexity, Gemini, …) or raise
+Exa's limits, export its key in your shell, for example `BRAVE_API_KEY` or
+`EXA_API_KEY`. If you prefer a config file, use
+`~/.pi/agent/web-search.json` and point at a variable rather than pasting the
+key itself:
+
+```json
+{
+  "braveApiKey": "$BRAVE_API_KEY"
+}
+```
+
+A value starting with `!` runs a command instead (for example a password
+manager's CLI, given by absolute path) each time the key is needed.
+
+The extension edits that file itself (`/curator` and the curator page save
+their choices there), which is one more reason devgeta leaves it alone.
+
+The defaults are conservative: search returns plain results without opening a
+browser page or making an extra model call, browser cookies are never read
+unless you allow them (`allowBrowserCookies`), page fetches never fall back to
+third-party scraping services unless you allow them, and private network
+addresses are blocked.
+
+Optional tools it uses when present:
+
+- `gh` (installed by devgeta) — private GitHub repos and readable PR/issue
+  views.
+- `ffmpeg` and `yt-dlp` — only for pulling still frames out of videos. Video
+  understanding itself needs a Gemini key.
+- `xdg-utils` on Linux — only to open the curator page, which is off by
+  default.
+
+**With pi-subagents:** the built-in `researcher` and `evidence-auditor` agents
+need pi-web-access loaded inside the child agent, and foreground children never
+load the parent's extensions. Run them in the background (`async: true`), where
+extensions load normally, or list the extension for those agents in
+`~/.pi/agent/settings.json` under
+`subagents.agentOverrides.<agent>.subagentOnlyExtensions`.
 
 **Pi owns the install.** Devgeta never writes Pi's settings file or touches its
 npm tree. Versions are whatever npm serves at install time, and `pi update`
