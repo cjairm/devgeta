@@ -59,13 +59,6 @@ const piInstallScriptURL = "https://pi.dev/install.sh"
 // docs/apps/pi.md.
 var piExtensions = []string{
 	"npm:pi-subagents",
-	"npm:pi-web-access",
-	"npm:pi-schedule-prompt",
-	"npm:pi-powerline-footer",
-	"npm:pi-openrouter-advanced-provider",
-	"npm:pi-openrouter-request-details",
-	"npm:pi-stalled-agent-recovery",
-	"npm:pi-thinking-reformatter",
 }
 
 func (p *Pi) Install() error {

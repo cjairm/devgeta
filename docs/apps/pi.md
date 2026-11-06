@@ -29,20 +29,42 @@ a clean machine the first `dg install` may report that; run
 `dg configure pi` (and the configure step of `dg install`) runs Pi's own package
 manager once per extension, `pi install npm:<name>`:
 
-| Extension                             | What it adds                                                   |
-| ------------------------------------- | -------------------------------------------------------------- |
-| `npm:pi-subagents`                    | Subagent delegation and scripted multi-agent workflows         |
-| `npm:pi-web-access`                   | Web search, URL/PDF/YouTube reading, repo cloning              |
-| `npm:pi-schedule-prompt`              | Cron-like recurring and one-shot prompts                       |
-| `npm:pi-powerline-footer`             | Powerline-style status bar                                     |
-| `npm:pi-openrouter-advanced-provider` | Live model catalog, per-model provider routing                 |
-| `npm:pi-openrouter-request-details`   | Which provider/model served each request, with cost cards      |
-| `npm:pi-stalled-agent-recovery`       | Retries empty or thinking-only runs, breaks failing-tool loops |
-| `npm:pi-thinking-reformatter`         | Cleans up deepseek-style thinking whitespace                   |
+| Extension          | What it adds                                           |
+| ------------------ | ------------------------------------------------------ |
+| `npm:pi-subagents` | Subagent delegation and scripted multi-agent workflows |
 
-The two OpenRouter extensions only matter if you use OpenRouter; the rest are
-provider-agnostic. The list lives in `internal/apps/pi/pi.go` (`piExtensions`)
-and is mirrored here by a test.
+The list lives in `internal/apps/pi/pi.go` (`piExtensions`) and is mirrored
+here by a test.
+
+### pi-subagents
+
+It works with no configuration: its built-in agents (`scout`, `worker`,
+`reviewer`, `oracle`, `delegate`, …) use your current Pi model, so nothing
+depends on a provider you have not set up. Run `/subagents-doctor` if
+delegation misbehaves. Devgeta writes no configuration for it.
+
+One setting is worth adding yourself if you have more than one provider signed
+in. The parent model may pick a model for a child on its own, and Pi matches the
+name against any provider that has a key — one user's local model delegated to
+a paid model this way
+([pi-subagents#3203](https://github.com/nicobailon/pi-subagents/issues/3203)).
+This limits children to the parent's model, or to your `/scoped-models` set
+when you have one, in `~/.pi/agent/settings.json`:
+
+```json
+{
+  "subagents": {
+    "modelScope": { "enforce": true, "strict": true, "allow": ["scoped"] }
+  }
+}
+```
+
+With this on, the bundled `claude-code` and `claude-code-writer` agents must
+name a model, or they refuse to start. To route roles to different models on purpose, set
+`subagents.agentOverrides.<agent>.model` and add those models to `allow`. The
+upstream docs (`/subagents-guide models`) describe a tiering that works well:
+a cheap fast model for `scout`, a mid-tier one for `worker` and `reviewer`, and
+a top reasoning model only for `oracle`.
 
 **Pi owns the install.** Devgeta never writes Pi's settings file or touches its
 npm tree. Versions are whatever npm serves at install time, and `pi update`

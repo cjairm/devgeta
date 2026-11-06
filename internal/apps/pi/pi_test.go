@@ -96,6 +96,15 @@ func piInstallSources(mockApp *testutil.MockApp) []string {
 	return sources
 }
 
+// useFakeExtensions swaps in a fixed multi-entry list, so the skip, order and
+// stop-at-failure behavior stays covered however short the curated set is.
+func useFakeExtensions(t *testing.T) {
+	t.Helper()
+	original := piExtensions
+	piExtensions = []string{"npm:ext-a", "npm:ext-b", "npm:ext-c", "npm:ext-d"}
+	t.Cleanup(func() { piExtensions = original })
+}
+
 func newApp() (*Pi, *testutil.MockApp) {
 	mockApp := testutil.NewMockApp()
 	return &Pi{Cmd: mockApp.Cmd, Base: mockApp.Base}, mockApp
@@ -230,10 +239,11 @@ func TestConfigureExtensions(t *testing.T) {
 	t.Run("skips sources settings already declare, in any form", func(t *testing.T) {
 		isolateInstallRoot(t)
 		piOnPath(t)
+		useFakeExtensions(t)
 		writeAgentSettings(t, `{"packages": [
-			"npm:pi-subagents@0.84.0",
-			{"source": "npm:pi-web-access", "extensions": ["!*"]},
-			"npm:pi-schedule-prompt"
+			"npm:ext-a@0.84.0",
+			{"source": "npm:ext-b", "extensions": ["!*"]},
+			"npm:ext-c"
 		]}`)
 		app, mockApp := newApp()
 
@@ -336,6 +346,7 @@ func TestConfigureExtensions(t *testing.T) {
 	t.Run("stops at the first failure and names the extension", func(t *testing.T) {
 		isolateInstallRoot(t)
 		piOnPath(t)
+		useFakeExtensions(t)
 		app, mockApp := newApp()
 		mockApp.Base.ExecCommandFn = func(c commands.CommandParams) (string, string, error) {
 			if len(c.Args) == 2 && c.Args[1] == piExtensions[2] {
@@ -390,7 +401,8 @@ func TestConfigure(t *testing.T) {
 		defer tc.Cleanup()
 		isolateInstallRoot(t)
 		piOnPath(t)
-		writeAgentSettings(t, `{"packages": ["npm:pi-subagents@0.84.0"]}`)
+		useFakeExtensions(t)
+		writeAgentSettings(t, `{"packages": ["npm:ext-a@0.84.0"]}`)
 		app := &Pi{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 
 		if err := app.ForceConfigure(); err != nil {

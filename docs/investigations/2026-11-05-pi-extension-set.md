@@ -39,7 +39,7 @@ entry below is meant to be worked on its own.
 
 | Library                              | Action                                 | Maintenance            |
 | ------------------------------------ | -------------------------------------- | ---------------------- |
-| `pi-subagents`                       | Keep                                   | Well maintained        |
+| ~~`pi-subagents`~~ ✅ done           | Keep                                   | Well maintained        |
 | `pi-web-access`                      | Keep                                   | Well maintained        |
 | `pi-powerline-footer`                | Keep, plus a color override            | Well maintained        |
 | `pi-stalled-agent-recovery`          | Keep (maintainer's choice)             | Too new to judge       |
@@ -58,15 +58,37 @@ entry below is meant to be worked on its own.
 
 ## Keep
 
-### `pi-subagents`
+### ~~`pi-subagents`~~ — done 2026-11-05
 
 Delegation to focused helper agents and scripted multi-agent workflows. Pi
 leaves delegation out on purpose; this is the most useful extension in the set.
 
 - 0.86.0 · 4,137 stars · 3 open issues · 100+ commits 90d · 100+ contributors ·
   MIT
-- Declares `@earendil-works/pi-ai >=1.2.0`, so it targets current Pi.
-- **Action:** none.
+- Declares `@earendil-works/pi-ai >=1.2.0`, so it targets current Pi. Releases
+  daily; 0.86.0 (2026-11-05) fixes a Pi 1.5 bug where a session lost its
+  subagent tools after a compaction (#3198).
+- **Configuration (read from the 0.86.0 tarball's `docs/`):** none is needed.
+  Built-in agents inherit the parent's model, `toolActivation: "auto"` avoids a
+  prompt-cache miss, nesting stops at depth 2, 20 children run at once at most,
+  and a run times out after 30 minutes. `/subagents-doctor` checks the setup.
+  Upstream's README and the web search found no recommended `config.json`.
+- **One risk with no-config:** the parent model may choose a child's model by
+  itself, and Pi fuzzy-matches it against any signed-in provider. #3203 (open,
+  2026-11-05): a local Qwen delegated to Opus over OpenRouter, a surprise $20.
+  `subagents.modelScope` with `allow: ["scoped"]` blocks this; it lives in Pi's
+  `settings.json`, which devgeta does not write (ADR-0060 §1), so
+  `docs/apps/pi.md` shows it as an opt-in snippet.
+- **Matters for later entries:** foreground children never load the parent's
+  extensions. The built-in `researcher` and `evidence-auditor` need
+  `pi-web-access` loaded in the child (via the agent's `extensions` or
+  `subagentOnlyExtensions`, or `async: true`), and agents using
+  `pi-mcp-adapter` tools must run in the background. Check both when those two
+  are added.
+- **Optional:** `pi-intercom` is no longer needed; child-to-parent messages are
+  built in.
+- **Action:** done — it is now the only entry in `piExtensions`; the others are
+  re-added one at a time.
 
 ### `pi-web-access`
 
@@ -120,6 +142,13 @@ routing, real context windows. Does nothing unless you use OpenRouter.
   created 2026-09-26
 - Same author and same caveat as `pi-stalled-agent-recovery`.
 - **Action:** read the source before shipping.
+- **Revisit the subagent model guard first.** OpenRouter puts almost every model
+  behind one key, which is how a local model in pi-subagents#3203 reached Opus
+  and cost $20. Shipping this extension by default makes that setup common, so
+  decide then whether devgeta ships `subagents.modelScope`
+  (`allow: ["scoped"]`) by default instead of only documenting it in
+  `docs/apps/pi.md`. That means writing Pi's `settings.json`, so it needs an
+  amendment to ADR-0060 §1.
 
 ### `pi-openrouter-request-details`
 
@@ -304,7 +333,7 @@ replacement for `pi-schedule-prompt`.
 
 ### Install order
 
-1. `npm:pi-subagents`
+1. ~~`npm:pi-subagents`~~ ✅ done
 2. `npm:pi-web-access`
 3. `npm:@plannotator/pi-extension`
 4. `npm:pi-mcp-adapter`
