@@ -67,6 +67,7 @@ const piInstallScriptURL = "https://pi.dev/install.sh"
 var piExtensions = []string{
 	"npm:pi-subagents",
 	"npm:pi-web-access",
+	"npm:pi-mcp-adapter",
 	"npm:pi-powerline-footer",
 	"npm:pi-stalled-agent-recovery",
 	"npm:pi-openrouter-advanced-provider",

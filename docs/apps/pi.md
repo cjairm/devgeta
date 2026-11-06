@@ -34,6 +34,7 @@ extension, `pi install npm:<name>`:
 | ------------------------------------- | ------------------------------------------------------------------------------------- |
 | `npm:pi-subagents`                    | Subagent delegation and scripted multi-agent workflows                                |
 | `npm:pi-web-access`                   | Web search, page/PDF reading, GitHub repo cloning, video input                        |
+| `npm:pi-mcp-adapter`                  | MCP servers that start on first use and stop when idle, in place of Pi's built-in MCP |
 | `npm:pi-powerline-footer`             | A powerline status bar in place of Pi's footer, colored by the active Pi theme        |
 | `npm:pi-stalled-agent-recovery`       | Retries empty or thinking-only replies and nudges the model out of failing tool loops |
 | `npm:pi-openrouter-advanced-provider` | An OpenRouter provider with the account's live model list and per-model routing       |
@@ -119,6 +120,61 @@ load the parent's extensions. Run them in the background (`async: true`), where
 extensions load normally, or list the extension for those agents in
 `~/.pi/agent/settings.json` under
 `subagents.agentOverrides.<agent>.subagentOnlyExtensions`.
+
+### pi-mcp-adapter
+
+It replaces Pi's built-in MCP support. The built-in starts every enabled server
+when a session starts and keeps all of them running; the adapter starts a
+server the first time the model calls one of its tools and stops it after 10
+idle minutes. The model sees one small `mcp` tool and searches for the server
+tools it needs. Sign-in tokens go to the OS keychain instead of a JSON file.
+Devgeta writes no configuration for it.
+
+**It turns Pi's built-in MCP off for you.** On the first start after an install
+or update it adds `"-builtin:mcp"` to `extensions` in
+`~/.pi/agent/settings.json`, the same entry `pi config` writes, and says so
+once. If you remove the adapter later, the built-in stays off: turn it back on
+under Built-in extensions in `pi config`.
+
+**Where servers come from.** With no setup it reads `~/.config/mcp/mcp.json`
+(all projects), a project's `.mcp.json`, and servers you added with
+`pi mcp add`. A project's servers ask once before they first run. Servers
+configured in Claude Code, OpenCode, Cursor, Codex or VS Code are not read
+until you import them: run `/mcp-adapter setup` in Pi (or
+`pi-mcp-adapter init` in a shell), which shows what it found and the exact file
+change before writing. The Claude Code import reads only user-scope servers
+(`claude mcp add --scope user`), not ones added for a single project. Devgeta
+does not add imports: it ships no MCP servers to any agent, and the adapter
+rewrites its own `~/.pi/agent/mcp-adapter.json`.
+
+`pi-mcp-adapter doctor` checks every configured server from a shell and never
+starts a sign-in.
+
+Things worth knowing:
+
+- **The model can add a remote server by itself.**
+  `mcp({ action: "install", url })` saves an HTTPS server to the global
+  `mcp-adapter.json` and connects to it without asking; only a project install
+  asks. To block it, add `"settings": { "allowInstall": false }` to that file.
+- **Sign-in on Linux needs an unlocked keyring** (GNOME Keyring or another
+  Secret Service). Without one, OAuth sign-in fails rather than saving tokens in
+  plain text. Desktop Ubuntu has one; a headless server usually does not.
+  Local servers and servers that use a header or token are not affected.
+- **Bulk MCP work costs more tokens than the built-in** — up to 5.5× by the
+  adapter's own measurement, when many records pass through the model one call
+  at a time. Single lookups cost about the same. Turning on Pi's `codemode`
+  lets the model script many calls in one step, which roughly halves that gap.
+  Add it in `~/.pi/agent/settings.json`:
+
+  ```json
+  {
+    "defaultTools": ["+codemode"]
+  }
+  ```
+
+**With pi-subagents:** foreground children never load the parent's extensions,
+so they get no MCP tools. Run an agent that needs them in the background
+(`async: true`).
 
 ### pi-powerline-footer
 

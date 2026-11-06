@@ -47,7 +47,7 @@ entry below is meant to be worked on its own.
 | ~~`pi-openrouter-request-details`~~ ✅ done   | Keep (maintainer's choice)             | Too new to judge       |
 | ~~`pi-thinking-reformatter`~~ ✅ done         | Keep (maintainer's choice)             | Too new to judge       |
 | ~~`pi-schedule-prompt`~~ ✅ done              | **Drop**                               | Not maintained         |
-| `pi-mcp-adapter`                              | **Add**                                | Well maintained        |
+| ~~`pi-mcp-adapter`~~ ✅ done                  | **Add**                                | Well maintained        |
 | `@plannotator/pi-extension`                   | **Add**                                | Well maintained        |
 | `@juicesharp/rpiv-ask-user-question`          | **Add**                                | Well maintained        |
 | `@juicesharp/rpiv-todo`                       | **Add**                                | Well maintained        |
@@ -282,32 +282,93 @@ Cron-like recurring and one-shot prompts.
 
 ## Add
 
-### `pi-mcp-adapter`
+### ~~`pi-mcp-adapter`~~ — done 2026-11-06
 
 MCP support that starts a server on first use and stops it after 10 idle
 minutes. Pi 1.5's built-in MCP starts every enabled server at session start and
 keeps all of them running.
 
-- 7.0.1 · 1,641 stars · 0 open issues · 100+ commits 90d · 90 contributors · MIT
-- Turns Pi's built-in MCP off itself when installed (in Pi's own settings).
-- Stores sign-in tokens in the OS keychain instead of a JSON file under
-  `~/.pi/agent`.
+- 7.0.1 (2026-11-04) · 1,642 stars · 0 open issues, 0 open PRs · 100+ commits
+  90d · 90 contributors · MIT · repo created 2026-01-19. In the 30 days to
+  2026-11-06: 84 commits, 70 by the author (who also wrote `pi-subagents` and
+  `pi-web-access`) and 14 by 10 others. The 15 most recent issues were all
+  closed, most within a day.
+- Pi 1.5 support is covered but not tested: peer `@earendil-works/pi-ai`
+  `^1.0.0`, built against Pi 1.0.0, docs written against Pi 1.3.0. It imports
+  `SettingsManager` from `@earendil-works/pi-coding-agent`, which it does not
+  declare as a peer, so it relies on Pi's loader to provide it. Sandbox step 2
+  now also checks that the built-in-off write below works on Pi 1.5.
+- **Install is low risk** (read from the registry): its native dependencies
+  (`@napi-rs/keyring`, `recheck`) ship as prebuilt optional packages for darwin
+  and linux on x64 and arm64, and nothing in its dependency tree has an install
+  script. Unlike `pi-lens`, there is no build step to fail.
+- **Open security report, fixed but not yet released:** #936 (2026-11-05)
+  found that 7.0.1's `app-bridge.bundle.js` bundles a copy of the MCP SDK 1.25.2
+  (CVE-2026-25536, CVE-2026-111767), which `npm audit` cannot see. The reporter
+  found no way to exploit it in the adapter. The fix (#937) is on `main` since
+  2026-11-05 and reaches users through `pi update` once released, since
+  versions are not pinned (ADR-0060 §6).
+- **Turns Pi's built-in MCP off itself** (read from `pi-builtin-mcp.ts`): once
+  per adapter version it adds `"-builtin:mcp"` to `extensions` in Pi's user
+  `settings.json`, unless a `builtin:mcp` entry is already there, so a user who
+  turns the built-in back on in `pi config` keeps that choice. It never changes
+  project settings. ADR-0060 §1 still holds — the adapter writes this key, not
+  devgeta — and devgeta's own `theme` write (`selectTheme`) keeps every other
+  key in that file. Removing the adapter leaves the built-in off.
+- **Files it writes itself**, all under the Pi agent dir (it honors
+  `PI_CODING_AGENT_DIR`, `agent-dir.ts`): `mcp-cache.json`,
+  `mcp-onboarding.json`, a project-approvals file and `mcp.log`.
+  `mcp-adapter.json` is written by URL installs, `init` and `/mcp-adapter
+setup`.
+- **Servers it reads with no setup:** `~/.config/mcp/mcp.json`,
+  `~/.agents/mcp.json`, `~/.agents/mcp/mcp.json`, Pi's `mcp.json` files
+  (`pi mcp add`), `mcp-adapter.json`, and project `.mcp.json` / `.pi/mcp.json`
+  behind a per-project approval prompt.
 - **Reusing Claude Code's setup:**
-  - MCP servers: yes. Its `imports` setting accepts `claude-code` (reads
-    `~/.claude.json`), plus `opencode`, `claude-desktop`, `cursor`, `codex`,
-    `vscode`, `windsurf`. The host file is read at startup, not copied, so
-    Claude stays the single place to edit servers. `/mcp-adapter setup` or
-    `pi-mcp-adapter init` adds the import. Project `.mcp.json` files load
-    automatically, behind a per-project approval prompt.
+  - MCP servers: only after an import is added. Its `imports` setting accepts
+    `claude-code`, plus `opencode`, `claude-desktop`, `cursor`, `codex`,
+    `vscode`, `windsurf`; once listed, the host file is read at every start,
+    not copied. Host configs are not loaded by default
+    (`hostConfigDiscovery: "off"`). **Correction:** the `claude-code` import
+    reads only the top-level `mcpServers` of `~/.claude.json` (plus
+    `~/.claude/mcp.json` and `~/.claude/claude_desktop_config.json`), i.e.
+    user-scope servers. Servers added for one project
+    (`projects[<path>].mcpServers`) are not imported.
   - Claude Code plugins: partly. Its `claudePlugins` setting loads a plugin's
     MCP servers (root `.mcp.json`) and skills (`skills/**/SKILL.md`) from a
     listed local plugin directory. Hooks, commands and agents do not carry over.
   - Nothing is removed from Claude Code either way.
+- **Devgeta adds no imports.** Devgeta ships no MCP servers to any agent
+  (`configs/claude` and `configs/opencode` only deny edits to `.mcp.json`), so
+  an import would bring in nothing devgeta set up. On the maintainer's machine
+  it would import nothing at all: no user-scope servers in `~/.claude.json`, no
+  `mcp` key in `opencode.json`. The adapter also rewrites `mcp-adapter.json`
+  itself, the same reason devgeta stays out of `web-search.json`. And
+  `/mcp-adapter setup` / `pi-mcp-adapter init` already find the host configs
+  and show the file diff before writing.
+- **The model can add a remote server with no prompt** (read from
+  `executeInstall` in `index.ts`): `mcp({ action: "install", url })` saves an
+  HTTPS (or loopback HTTP) server to the global `mcp-adapter.json` and connects
+  it; only `target: "project"` asks. Devgeta does not set
+  `allowInstall: false`: Pi has no permission layer by default, so the model
+  can already write that file with its own write or bash tools. Documented as
+  an opt-out.
+- **OAuth on Linux needs Secret Service** (`docs/auth.md`): tokens go to the
+  macOS Keychain or a Secret Service keyring, and with no unlocked keyring
+  sign-in fails rather than falling back to plaintext. Local servers and
+  header or bearer-token servers are unaffected. Devgeta installs no keyring;
+  documented.
 - **Trade-off:** bulk MCP work can cost up to 5.5× more tokens than the built-in
-  unless `"+codemode"` is added to Pi's `defaultTools` setting (the adapter's
-  own measurement).
-- **Action:** add to `piExtensions`. Decide whether devgeta adds the
-  `claude-code` and `opencode` imports or leaves that to `/mcp-adapter setup`.
+  (2.9× with `"+codemode"` in Pi's `defaultTools`); single lookups cost about
+  the same (the adapter's own measurement, Pi 1.3.0). `defaultTools` lives in
+  Pi's `settings.json`, so `docs/apps/pi.md` shows it as an opt-in snippet.
+- **pi-subagents interaction:** foreground children never load the parent's
+  extensions, so they get no MCP tools; agents that need them must run with
+  `async: true`. Documented.
+- **Action:** done — added to `piExtensions` after `pi-web-access` (the entry
+  ahead of it in the install order, `@plannotator/pi-extension`, is not
+  shipped yet), with a `docs/apps/pi.md` section covering the above. No
+  devgeta config.
 
 ### `@plannotator/pi-extension`
 
@@ -422,7 +483,7 @@ replacement for `pi-schedule-prompt`.
 1. ~~`npm:pi-subagents`~~ ✅ done
 2. ~~`npm:pi-web-access`~~ ✅ done
 3. `npm:@plannotator/pi-extension`
-4. `npm:pi-mcp-adapter`
+4. ~~`npm:pi-mcp-adapter`~~ ✅ done
 5. `npm:@juicesharp/rpiv-ask-user-question`
 6. `npm:@juicesharp/rpiv-todo`
 7. ~~`npm:pi-powerline-footer`~~ ✅ done
@@ -457,7 +518,9 @@ scratch prefix, point `HOME` and `PI_CODING_AGENT_DIR` at scratch, then:
    stderr separately) and how long it takes;
 2. confirm every extension loads on Pi 1.5 — `pi-schedule` especially — and
    whether `subagentOnlyExtensions` accepts `npm:pi-web-access` so the
-   foreground `researcher` gets the web tools;
+   foreground `researcher` gets the web tools; for `pi-mcp-adapter`, that the
+   first start adds `"-builtin:mcp"` to `settings.json` and Pi then loads no
+   built-in MCP;
 3. check whether pi-lens honors the install switches and `PATH` set from an
    extension at load time;
 4. look at Pi's `system` theme and the footer inside tmux.
