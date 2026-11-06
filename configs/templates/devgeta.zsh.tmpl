@@ -32,6 +32,21 @@ fi
 
 # Shell Enhancements
 # ----------------------------------------------------------------------------
+
+# History: search by typed prefix with Up/Down, shared across panes.
+# Both arrow codes are bound because terminals and tmux switch between them
+# (^[[A vs ^[OA), and macOS's /etc/zshrc only covers one.
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[OA' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+bindkey '^[OB' down-line-or-beginning-search
+
+HISTSIZE=50000
+SAVEHIST=50000
+setopt SHARE_HISTORY HIST_IGNORE_DUPS HIST_REDUCE_BLANKS
 {{if .ZshAutosuggestions}}
 # Zsh Autosuggestions - Fish-like autosuggestions
 {{if .IsMac}}

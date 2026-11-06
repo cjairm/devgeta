@@ -132,3 +132,44 @@ func TestShellConfigAliasesSpellOptionValues(t *testing.T) {
 		}
 	}
 }
+
+// TestShellConfigBindsArrowKeysToPrefixHistorySearch pins Up/Down to searching
+// history by what is already typed ("make" then Up finds the last make command).
+//
+// Devgeta used to leave this to the OS. macOS's /etc/zshrc binds only the
+// terminfo code ^[OA, but terminals and tmux send ^[[A, which stays on plain
+// up-line-or-history and ignores the typed prefix. Linux distros and
+// oh-my-zsh happen to cover it, so the same devgeta behaved differently per
+// machine. Both codes are bound because terminals switch between the two forms.
+func TestShellConfigBindsArrowKeysToPrefixHistorySearch(t *testing.T) {
+	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+
+	for _, want := range []string{
+		`bindkey '^[[A' up-line-or-beginning-search`,
+		`bindkey '^[OA' up-line-or-beginning-search`,
+		`bindkey '^[[B' down-line-or-beginning-search`,
+		`bindkey '^[OB' down-line-or-beginning-search`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("Expected devgeta.zsh to contain %q", want)
+		}
+	}
+}
+
+// TestShellConfigSharesAndKeepsLongHistory pins the history settings that make
+// prefix search useful: without SHARE_HISTORY a command typed in one tmux pane
+// is invisible to the others until that shell exits, and macOS's default
+// SAVEHIST=1000 forgets too quickly.
+func TestShellConfigSharesAndKeepsLongHistory(t *testing.T) {
+	rendered := renderEmbeddedShellConfig(t, allShellFeaturesEnabled())
+
+	for _, want := range []string{
+		"HISTSIZE=50000",
+		"SAVEHIST=50000",
+		"setopt SHARE_HISTORY",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("Expected devgeta.zsh to contain %q", want)
+		}
+	}
+}
