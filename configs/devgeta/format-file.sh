@@ -123,9 +123,14 @@ lint() {
 # No --timeout is passed: that bounds golangci-lint's analysis phase only, and
 # it reports the expiry as an error we would then hand to Claude as if it were a
 # lint finding. run_bounded bounds the whole process instead, and stays silent.
+#
+# v2 prints a "0 issues." summary on a clean run (--show-stats defaults to true),
+# which would reach the agent as a finding to fix. v1 prints nothing when clean.
+# --show-stats=false goes after --fast-only so a v1 binary rejects --fast-only
+# first and the fallback below still matches.
 lint_go() {
 	local tool="$1" file="$2" saved="$LINT_OUT"
-	lint "golangci-lint" "$tool" run --fast-only "$file"
+	lint "golangci-lint" "$tool" run --fast-only --show-stats=false "$file"
 	case "$LINT_OUT" in
 	*"unknown flag: --fast-only"*)
 		LINT_OUT="$saved"

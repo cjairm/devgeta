@@ -348,6 +348,7 @@ than the full text, the same way Claude Code and OpenCode show it.
   `dg configure pi` keeps it from then on. Only `dg configure pi --force` sets
   it back to hidden.
 
+## Formatting
 
 After every `edit` or `write`, Pi formats and lints the file with the same
 Mason binaries and settings as Claude Code (ADR-0063). Three pieces:
@@ -361,9 +362,12 @@ Mason binaries and settings as Claude Code (ADR-0063). Three pieces:
   file). Linter findings are appended as `Linter findings for <path>`. Any
   failure is silent and never fails the edit. Devgeta rewrites this file on
   every `dg configure pi`; put your own changes in a separate extension file.
-- `~/.pi-lens/config.json` gets `format.enabled` and `autofix.enabled` set to
-  `false` (other keys are kept; without `--force` a value you already set
-  stays). `PI_LENS_CONFIG_PATH` moves that file; `PI_CODING_AGENT_DIR` is not
+- `~/.pi-lens/config.json` gets `format.enabled`, `autofix.enabled` and
+  `widget.visible` set to `false` (other keys are kept; without `--force` a
+  value you already set stays). The hidden widget is only the panel under the
+  input box: pi-lens's findings still reach the model in the tool results, and
+  `/lens-widget-toggle` shows the panel for the current session.
+  `PI_LENS_CONFIG_PATH` moves that file; `PI_CODING_AGENT_DIR` is not
   followed.
 
 Side effects to know about:

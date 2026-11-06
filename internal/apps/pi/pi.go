@@ -322,11 +322,21 @@ func piLensConfigPath() string {
 	return filepath.Join(paths.Paths.Home.Root, ".pi-lens", "config.json")
 }
 
-// disablePiLensMutations turns off pi-lens's own formatting and autofix, which
-// would fight devgeta's Mason formatters (ADR-0063). It merges into the user's
-// file the way applySettingDefaults does: raw JSON kept, siblings kept, an unparseable
-// file is an error. Without force an existing "enabled" value stays.
-func disablePiLensMutations(force bool) error {
+// piLensDefaults are the pi-lens settings devgeta sets, as section → key → raw
+// JSON value. Formatting and autofix are off because they would fight devgeta's
+// Mason formatters (ADR-0063). The diagnostics widget is hidden because the
+// findings already reach the model in the tool results; /lens-widget-toggle
+// still shows it for one session.
+var piLensDefaults = []struct{ section, key, value string }{
+	{"format", "enabled", "false"},
+	{"autofix", "enabled", "false"},
+	{"widget", "visible", "false"},
+}
+
+// applyPiLensDefaults merges piLensDefaults into the user's pi-lens config the
+// way applySettingDefaults does: raw JSON kept, siblings kept, an unparseable
+// file is an error. Without force a value the user already set stays.
+func applyPiLensDefaults(force bool) error {
 	configPath := piLensConfigPath()
 	config := map[string]json.RawMessage{}
 	data, err := os.ReadFile(configPath)
@@ -339,22 +349,22 @@ func disablePiLensMutations(force bool) error {
 		return fmt.Errorf("failed to read %s: %w", configPath, err)
 	}
 	changed := false
-	for _, section := range []string{"format", "autofix"} {
+	for _, setting := range piLensDefaults {
 		fields := map[string]json.RawMessage{}
-		if raw, ok := config[section]; ok {
+		if raw, ok := config[setting.section]; ok {
 			if err := json.Unmarshal(raw, &fields); err != nil {
-				return fmt.Errorf("failed to parse %q in %s: %w", section, configPath, err)
+				return fmt.Errorf("failed to parse %q in %s: %w", setting.section, configPath, err)
 			}
 		}
-		if _, exists := fields["enabled"]; exists && !force {
+		if _, exists := fields[setting.key]; exists && !force {
 			continue
 		}
-		fields["enabled"] = json.RawMessage("false")
+		fields[setting.key] = json.RawMessage(setting.value)
 		raw, err := json.Marshal(fields)
 		if err != nil {
-			return fmt.Errorf("failed to encode %q: %w", section, err)
+			return fmt.Errorf("failed to encode %q: %w", setting.section, err)
 		}
-		config[section] = raw
+		config[setting.section] = raw
 		changed = true
 	}
 	if !changed {
@@ -398,7 +408,7 @@ func (p *Pi) configure(force bool) error {
 	if err := writeFormatExtension(); err != nil {
 		return err
 	}
-	if err := disablePiLensMutations(force); err != nil {
+	if err := applyPiLensDefaults(force); err != nil {
 		return err
 	}
 	if err := p.configureExtensions(); err != nil {

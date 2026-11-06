@@ -191,10 +191,13 @@ structuredContent: event.structuredContent }`. Returns nothing when there is
   `~/.pi-lens/config.json`. `PI_CODING_AGENT_DIR` is not followed, for the
   same reason devgeta ignores it everywhere else (ADR-0059 §5). A relocated
   Pi would also not load the extension, which goes to the default agent dir.
-- `disablePiLensMutations(force)`: same merge approach as `selectTheme` (raw
+- `applyPiLensDefaults(force)`: same merge approach as `selectTheme` (raw
   JSON preserved, HTML escaping off, unparseable file is an error). Set
   `format.enabled` / `autofix.enabled` to `false`, keeping sibling keys inside
   `format` / `autofix`. Without force, an existing `enabled` value stays.
+  Added after the first manual run: `widget.visible: false`, same rules — the
+  widget's file rows were noise to the user, and the findings already reach
+  the model in the tool results.
 - Append `"npm:pi-lens"` last in `piExtensions` and in `docs/apps/pi.md`.
 - Order in `configure`: theme → selectTheme → footer → format script →
   extension file → pi-lens config → extensions → register.
