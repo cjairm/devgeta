@@ -4,8 +4,9 @@
 **Status:** Open
 **Feeds:** a cycle doc for the reset; ADRs listed in [Decisions this will need](#decisions-this-will-need)
 **Branch:** `agentsv2`. Work that acts on this investigation, together with
-[2026-11-06-rtk-value-and-risk.md](2026-11-06-rtk-value-and-risk.md), happens
-there. This file was committed to `main` before the branch existed.
+[2026-11-06-rtk-value-and-risk.md](2026-11-06-rtk-value-and-risk.md) and
+[2026-11-06-agent-customizations-rollback.md](2026-11-06-agent-customizations-rollback.md),
+happens there. This file was committed to `main` before the branch existed.
 
 ## Question
 

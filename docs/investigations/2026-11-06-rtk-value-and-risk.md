@@ -4,8 +4,10 @@
 **Status:** Open
 **Feeds:** none yet. If acted on, an ADR that removes rtk and amends ADR-0004 and ADR-0038.
 **Branch:** `agentsv2`. Work that acts on this investigation, together with
-[2026-11-06-skills-and-agents-reset.md](2026-11-06-skills-and-agents-reset.md),
-happens there. This file was committed to `main` before the branch existed.
+[2026-11-06-skills-and-agents-reset.md](2026-11-06-skills-and-agents-reset.md)
+and [2026-11-06-agent-customizations-rollback.md](2026-11-06-agent-customizations-rollback.md),
+happens there. The rollback investigation supersedes recommendation 2 below
+(output-budget is removed, not made the default). This file was committed to `main` before the branch existed.
 
 ## Question
 
