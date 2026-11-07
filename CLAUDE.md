@@ -48,7 +48,7 @@ Read these **in order** before starting work:
 7. **Visual consistency** — Alacritty, tmux, Neovim, and the AI-coder configs share one palette (Gruvbox dark) and a transparency convention; a color/theme change in one must be mirrored in the others. See [docs/guides/theming.md](docs/guides/theming.md)
 8. **Everything general, never bespoke** — Every feature devgeta ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgeta's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — see the `release` redirect's `go.mod` gate in `configs/claude/task-redirect.sh` — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
 
-   **This applies to every change, not just new features.** A bug fix, a refactor, a doc tweak, a one-line default, a hook edit — each one is subject to the same test: _would this still make sense to someone who has never seen this repo?_ The rule runs in both directions, and the second is the one that gets missed: as well as not building one-off features for one user, never bend a shipped artifact to carry a devgeta-specific decision. Our test policy, our release chain, our branch conventions are **project law, not product** — they belong in `CLAUDE.md` and `docs/`, never inside something a stranger installs. The trap that keeps catching us is `configs/shared/`; see [§12](#anything-we-ship-is-built-for-strangers).
+   **This applies to every change, not just new features.** A bug fix, a refactor, a doc tweak, a one-line default, a hook edit — each one is subject to the same test: _would this still make sense to someone who has never seen this repo?_ The rule runs in both directions, and the second is the one that gets missed: as well as not building one-off features for one user, never bend a shipped artifact to carry a devgeta-specific decision. Our test policy, our release chain, our branch conventions are **project law, not product** — they belong in `CLAUDE.md` and `docs/`, never inside something a stranger installs. The trap that keeps catching us is anything that loads into an agent's context in other people's repos; see [§12](#anything-we-ship-is-built-for-strangers).
 
 ---
 
@@ -511,7 +511,6 @@ Where to find and add code:
 | **TUI components**         | `internal/tui/`                | TUIs live here; `internal/tui/components` is the shared toolkit (palette, hint bar, help overlay, filter field, list navigation) — new TUIs must be assembled from it, and logic needed by a second TUI moves into it |
 | **Shared utilities**       | `pkg/`                         | Logger, paths, file ops, constants, package mappings, `progress` (byte meter for long streaming work)                                                                                                                 |
 | **Embedded configs**       | `configs/`                     | Templates and static files (embedded at compile time)                                                                                                                                                                 |
-| **Shared agent artifacts** | `configs/shared/`              | Skills, commands, agents shipped to both AI coders **and to every user's other repos** — nothing here may carry a devgeta-specific decision (see below)                                                               |
 | **Tests**                  | `*_test.go` alongside impl     | Use testutil mocks; never execute real commands                                                                                                                                                                       |
 | **User docs**              | `docs/`                        | Feature docs, architecture, app guides, tooling details                                                                                                                                                               |
 | **Developer docs**         | `CLAUDE.md`, `CONTRIBUTING.md` | This file and contributor guide                                                                                                                                                                                       |
@@ -544,7 +543,6 @@ Where to find and add code:
 3. Deploy with `dg configure <app> --force` — the maintainer runs steps 2 and 3, or you run them only after asking
 4. If the config must satisfy a constraint imposed by an external tool (a plugin or program that parses, splices, or re-executes the value), enforce that constraint with a test against the embedded configs FS — a comment in the config alone will not survive future edits
 5. If the config governs an AI coding agent, apply the change to **both** agents — see below
-6. If the file lives under `configs/shared/skills/`, stop and read the next section first — it is almost certainly the wrong file to change
 
 ### Anything we ship is built for strangers
 
@@ -559,15 +557,10 @@ belongs in `CLAUDE.md` or `docs/` — project law, not product ([principle 8](#3
 
 Two places where the line is easy to cross:
 
-- **`configs/shared/skills/`** — these run inside other people's repositories,
-  which have no test suite of ours, no release gate, no branch conventions.
-  Putting our policy in one is not just useless there, it is a wrong instruction.
-  Most are also **vendored from upstream** — [docs/guides/vendored-skills.md](docs/guides/vendored-skills.md)
-  lists which, and how to sync them (see also
-  [ADR-0015 §7](docs/decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md#7-vendored-skills-keep-tmp-knowingly)),
-  so local edits buy a merge conflict on every sync. `dg-worktree` is the
-  exception that shows the shape of a legitimate one: devgeta's own skill about
-  devgeta's own command.
+- **Anything that loads into an agent's context** — a skill, command, subagent
+  or instructions file runs inside other people's repositories, which have no
+  test suite of ours, no release gate, no branch conventions. Putting our policy
+  in one is not just useless there, it is a wrong instruction.
 - **Devgeta's own process, when it has to be automated** — gate it so it can
   never fire in a user's environment, the way the `release` redirect is gated on
   `go.mod` in `configs/claude/task-redirect.sh`. Never ship it as a global
@@ -625,7 +618,6 @@ Quick reference to where things live:
 | **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles                                                                   |
 | **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders                                 |
 | **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                                                       |
-| **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure                                                          |
 | **Output budget**       | `docs/guides/output-budget-runner.md`        | The write-time output-cap contract: argv/sidecar schema, bounded capture, marker accounting, the bash/JS numeric contract, tokenization (not yet implemented) |
 | **Recent changes**      | `docs/recent-changes.md`                     | Prose summaries of recent work, last two releases only — the changelog that used to live at the bottom of this file                                           |
 | **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                                                         |

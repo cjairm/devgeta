@@ -57,7 +57,6 @@ type taskRunner interface {
 	ReviewNoteSettle(branch, rev, id, resolution, cite, note string) (string, error)
 	ReviewNoteRatify(branch, id string) (string, error)
 	ReviewNoteReopen(branch, id string) (string, error)
-	ReviewRun(reviewer, note string, rng task.ReviewRange) (string, error)
 	WorktreeStart(name, base string) (string, error)
 	WorktreeFinish(name string, merge, discard, check, force bool) (string, error)
 	Release(version, messageFile string, push bool) (string, error)
@@ -71,16 +70,8 @@ type taskRunner interface {
 }
 
 // newTaskManager is the factory used by task subcommands; overridden in tests.
-//
-// The root --verbose flag is copied onto the manager here rather than read
-// from the logger's level, because it steers progress output (review-run's
-// per-tool-call stream) and not only logging. Reading it at call time — not at
-// package init — is what makes it the flag's actual value: PersistentPreRunE
-// has already parsed it by the time a subcommand's RunE calls this.
 var newTaskManager = func() taskRunner {
-	tm := task.New()
-	tm.Verbose = verbose
-	return tm
+	return task.New()
 }
 
 var taskCmd = &cobra.Command{
@@ -546,114 +537,6 @@ Run this before deciding what to trim from CLAUDE.md or a skill: it turns
 	},
 }
 
-// taskReviewRunReviewerFlag/NoteFlag are review-run's flags, and
-// taskReviewRunBase/Head/Journal/ReportDirFlag are its explicit-range mode's
-// group — all four together, or none of them (ADR-0023 §5).
-var (
-	taskReviewRunReviewerFlag  string
-	taskReviewRunNoteFlag      string
-	taskReviewRunBaseFlag      string
-	taskReviewRunHeadFlag      string
-	taskReviewRunJournalFlag   string
-	taskReviewRunReportDirFlag string
-)
-
-var taskReviewRunCmd = &cobra.Command{
-	Use: "review-run [--reviewer code|document|skill] [--note <text>] " +
-		"[--base <sha> --head <sha> --journal <key> --report-dir <dir>]",
-	Short: "Run one round of headless AI review and print each reviewer's verdict (for agents)",
-	Long: `Run every reviewer model configured in "review.reviewers" against the current
-branch, one after another, headless, and print what each concluded.
-
-One invocation is one round. Rounds are not repeated here — the caller decides
-whether another round is worth it.
-
---reviewer picks which reviewer agent runs (the same choices the "dg ws" R
-keybinding offers): code (default), document, or skill. Every configured model
-runs that same reviewer; with "review.reviewers" unset, one run uses OpenCode's
-default model. A model listed more than once runs once, in the position of its
-first entry.
-
---note passes your own words to every reviewer this round, on top of the fixed
-review prompt — e.g. --note "focus on docs/spec.md, I only changed the wording
-there". It adds emphasis, it does not narrow the review: reviewers are told
-exactly that, and still review the whole branch. A blank --note is refused
-rather than dropped.
-
-The branch under review is everything the branch would merge: its commits AND
-whatever is still uncommitted in the working tree, including untracked files.
-So work in progress can be reviewed without committing it first.
-
-Refuses to run on the default branch or a detached HEAD — both before any
-reviewer starts — because a review compares a branch against the default one,
-and a review journal is keyed by branch name. Also refuses a branch that
-changes nothing at all: no commits ahead of the default branch AND a clean
-working tree.
-
---base, --head, --journal, and --report-dir switch to explicit-range mode:
-review those two commits instead of the checkout. All four are required
-together, and passing some without the others is an error rather than a branch
-review of unrelated code. Any commit-ish is accepted and resolved to a sha
-before a reviewer starts; a commit this clone does not have is refused there
-and then. --base must be the MERGE BASE when the range has to equal a pull
-request's diff ("dg task pr-review-target" prints one) — a base branch tip
-makes everything merged since look reverted.
-
-In that mode nothing depends on the checkout: none of the three refusals above
-apply, any branch (including the default one) or a detached HEAD is fine, and
-the review covers the two commits ONLY — the working tree is never part of the
-diff, unlike a branch review. --journal keys the review journal explicitly
-(e.g. pr/owner/repo/213), so findings are not filed under whatever branch
-happens to be checked out. Each reviewer's full report — every severity,
-strengths, evidence — is written to <report-dir>/<agent>+<model>.md, where
-<agent> is the resolved reviewer agent's name and <model> is percent-encoded so
-a provider/model id cannot become a path. Each output line names the file:
-
-  openai/gpt-5.2 → REQUEST CHANGES  report: /tmp/r/code-reviewer+openai%2Fgpt-5.2.md
-
-Each reviewer reads the journal as it stood when the round began, so no
-reviewer sees what another raised or settled in the same round. Their entries
-still go to the live journal immediately and keep their real ids.
-
-Output is exactly one line per reviewer:
-
-  openai/gpt-5.2 → REQUEST CHANGES
-  google/gemini-3-pro → APPROVE
-
-The findings themselves are not printed here — they are in the journal; read
-them with "dg task review-notes", which also lists what is still open.
-
-An outcome is APPROVE, REQUEST CHANGES, NEEDS DISCUSSION, NO VERDICT (the run
-finished but stated no verdict), NO VERDICT(<reason>) (the run wrote no report
-at all, and the reason is why), or ERROR(<reason>) (the run itself failed).
-NO VERDICT and ERROR are never approval. One reviewer failing does not stop
-the others.
-
-While a reviewer runs, progress goes to stderr as it happens — a line when it
-starts, a heartbeat at most every 30 seconds naming the tool call it is on and
-the running counters, and a closing line with the outcome, elapsed time, and
-cost. Pass the root --verbose flag to see every tool call instead. stdout stays
-exactly the contract above either way.`,
-	Example: `  dg task review-run
-  dg task review-run --reviewer document
-  dg task review-run --note "focus on the retry path in internal/http"
-  dg task review-run --base 4a1c2ef --head 9f2c1ab --journal pr/acme/web/213 --report-dir "$SCRATCH"`,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		out, err := newTaskManager().ReviewRun(
-			taskReviewRunReviewerFlag,
-			taskReviewRunNoteFlag,
-			task.ReviewRange{
-				Base:      taskReviewRunBaseFlag,
-				Head:      taskReviewRunHeadFlag,
-				Journal:   taskReviewRunJournalFlag,
-				ReportDir: taskReviewRunReportDirFlag,
-			},
-		)
-		return emitPRResult(cmd, out, err)
-	},
-}
-
 // taskWorktreeStartBaseFlag is worktree-start's --base flag.
 var taskWorktreeStartBaseFlag string
 
@@ -882,7 +765,6 @@ func init() {
 	taskCmd.AddCommand(taskReviewPackageCmd)
 	taskCmd.AddCommand(taskReviewNotesCmd)
 	taskCmd.AddCommand(taskReviewNoteCmd)
-	taskCmd.AddCommand(taskReviewRunCmd)
 	taskCmd.AddCommand(taskWorktreeStartCmd)
 	taskCmd.AddCommand(taskWorktreeFinishCmd)
 	taskCmd.AddCommand(taskReleaseCmd)
@@ -972,25 +854,6 @@ func init() {
 	taskHandoffCmd.MarkFlagsMutuallyExclusive("write", "read", "clear")
 	taskHandoffCmd.MarkFlagsOneRequired("write", "read", "clear")
 	taskHandoffCmd.MarkFlagsMutuallyExclusive("note", "note-file")
-
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunReviewerFlag, "reviewer", task.DefaultReviewerKey, "Reviewer agent to run: code, document, or skill")
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunNoteFlag, "note", "", "Extra context for every reviewer this round (adds emphasis; does not narrow the review)")
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunBaseFlag, "base", "", "Review this commit..--head instead of the checkout (the PR's merge base, not the base branch tip)")
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunHeadFlag, "head", "", "Head commit of the reviewed range (with --base)")
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunJournalFlag, "journal", "", "Review journal key to read and write, instead of the current branch name (e.g. pr/owner/repo/213)")
-	taskReviewRunCmd.Flags().
-		StringVar(&taskReviewRunReportDirFlag, "report-dir", "", "Directory each reviewer's full report is written to")
-	// The four are one mode, so cobra refuses a partial group here as well as
-	// ReviewRun refusing it in Go. Both are needed: this catches it at parse
-	// time with cobra's own wording, and ReviewRun's check is what protects
-	// every other caller — including RunE called directly by tests — from a
-	// range review silently degrading into a branch review of unrelated code.
-	taskReviewRunCmd.MarkFlagsRequiredTogether("base", "head", "journal", "report-dir")
 
 	taskWorktreeStartCmd.Flags().
 		StringVar(&taskWorktreeStartBaseFlag, "base", "", "Starting ref for the new branch (default: repo default branch)")

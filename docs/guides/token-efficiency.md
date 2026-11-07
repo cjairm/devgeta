@@ -125,17 +125,8 @@ ending, not a longer session and not an automatically-captured memory
 whatever text it's given, and deciding what's worth carrying forward is a
 skill's job, composed on top of this command, not something baked into it.
 
-Two shipped agent commands are that composition, one per direction:
-
-- `/save-context` — distills the session into a note and writes it. It reads
-  the existing note first, because `--write` replaces rather than appends.
-- `/load-context` — reads the note back, checks it against the tree when HEAD
-  has moved since it was written, and reports where the branch stands without
-  starting the work.
-
-Both live in `configs/shared/commands/` and ship to Claude Code and OpenCode
-alike. Using them is optional — `dg task handoff` is the whole mechanism, and
-the commands only supply the judgment about what to put in it.
+`dg task handoff` is the whole mechanism; what to put in the note is the
+caller's judgment.
 
 The note is capped at 8 KiB, rendered — a write that would exceed it is
 refused outright, never silently truncated, and the previous note is left

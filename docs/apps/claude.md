@@ -5,7 +5,7 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 `~/.claude/`.
 
 - **Module:** `internal/apps/claude/`
-- **Config source:** `configs/claude/` (+ shared content in `configs/shared/`)
+- **Config source:** `configs/claude/`
 - **Install:** official script (`curl -fsSL https://claude.ai/install.sh | bash`)
 
 ## Using it
@@ -20,8 +20,9 @@ Start it with `cc`. Useful slash commands inside the session:
 - `/init` — initialize CLAUDE.md for your project
 - `/review` — review a pull request
 
-Settings, themes, skills, commands, and agents all land in `~/.claude/` — see
-the deployment table below for exactly what goes where.
+Settings, hooks and themes land in `~/.claude/` — see the deployment table
+below for exactly what goes where. devgeta ships no skills, commands, agents or
+instructions file, and never writes to `~/.claude/CLAUDE.md`.
 
 **Resetting chat history.** Message/input history and past chats are separate:
 
@@ -52,26 +53,9 @@ for those projects along with the chats.
 | `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below                                         |
 | `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly                                            |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
-| `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                                                              |
-| `configs/shared/DEVGETA.md`                | `~/.claude/DEVGETA.md`                | response style and coding defaults; shared with OpenCode, see below               |
 
 `settings.json` is rendered from a template so tracked opt-ins (such as
 `integrations.output_budget`) survive a `--force` re-render.
-
-### Response style and coding defaults (`DEVGETA.md`)
-
-`DEVGETA.md` holds devgeta's default instructions: answers that fit the task
-(a quick answer, an investigation, an explanation of something new) without
-filler; reuse before writing; short, readable functions; and names that stay
-meaningful over time. Devgeta owns this file and overwrites it on every
-configure. Put your own rules in `~/.claude/CLAUDE.md`, not here.
-
-Claude Code loads it through a single `@DEVGETA.md` line that devgeta appends
-to `~/.claude/CLAUDE.md` the **first** time you configure Claude. Nothing else
-in that file is touched. To opt out, delete the line. Devgeta records in
-`global_config.yaml` (`integrations.claude_instructions_imported`) that it
-already added the line once, so it does not add it back. See
-[ADR-0058](../decisions/ADR-0058-devgeta-instructions-live-in-their-own-file.md).
 
 ## Permissions model
 
@@ -250,10 +234,6 @@ worktree remove, and the two release rules) from the plugin context's
 `directory` (falling back to `worktree`, then `process.cwd()`) and applies the
 identical fail-toward-not-firing `go.mod` check — see that file's header
 comment.
-
-Upstream-synced skills under `configs/shared/skills/` still hand-roll these raw
-git sequences in their prose (they can't be edited without conflicting with
-upstream syncs); this hook is the durable, runtime answer for those flows.
 
 ## Secret-commit guard (PreToolUse hook)
 

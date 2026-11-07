@@ -36,8 +36,7 @@ const splitVertical = "vertical"
 // "vertical" or "horizontal" for every subsequent pane.
 //
 // Command is the form TYPED into a pane that ALREADY EXISTS, which since
-// ADR-0021 is exactly two paths: ensureWindow's repair branch, and
-// launchReviewInLiveWindow's idle-shell reuse (ADR-0021 part 4). A pane devgeta
+// ADR-0021 is exactly one path: ensureWindow's repair branch. A pane devgeta
 // CREATES never receives it - it gets a different rendering, built by
 // creationCommand (launch.go) from the fields below and exec'd as the pane's
 // process. Two representations, both intentional; neither is a substitute for
@@ -112,10 +111,9 @@ type Layout struct {
 //
 // Returns "" for an empty layout (len(l.Panes) == 0) rather than an error or a
 // (string, bool) result. No caller can reach an empty layout today: every
-// validateLayout call site gates on len(Panes) > 0 before this could run, and
-// LaunchReviewInRepo always builds a one-pane layout - so a new error path here
-// would be unreachable code. If that ever changed, "" is still the right
-// fallback: it's already the shell pane's legitimate value - creationCommand
+// validateLayout call site gates on len(Panes) > 0 before this could run - so a
+// new error path here would be unreachable code. If that ever changed, "" is
+// still the right fallback: it's already the shell pane's legitimate value - creationCommand
 // returns "" for a pane with no launch and no Command, and tmux then starts the
 // pane's own shell and nothing else. That beats a panic. The cost of that
 // choice: an empty layout becomes indistinguishable from a shell pane, since
@@ -140,10 +138,9 @@ func (l Layout) pane0CreatedCommand(shell string) string {
 //
 // Returns "" for an empty layout (len(l.Panes) == 0) rather than an error or a
 // (string, bool) result. No caller can reach an empty layout today: every
-// validateLayout call site gates on len(Panes) > 0 before this could run, and
-// LaunchReviewInRepo always builds a one-pane layout - so a new error path here
-// would be unreachable code. If that ever changed, "" is still the right
-// fallback: it makes ensureWindow's repair branch a no-op, which is exactly
+// validateLayout call site gates on len(Panes) > 0 before this could run - so a
+// new error path here would be unreachable code. If that ever changed, "" is
+// still the right fallback: it makes ensureWindow's repair branch a no-op, which is exactly
 // what it already does for the shell layout (see ensureWindow). The cost of
 // that choice is the same one pane0CreatedCommand's doc comment spells out: an
 // empty layout becomes indistinguishable from a shell pane, and validateLayout
@@ -283,9 +280,7 @@ func (l Layout) EnsureInstalled() (Layout, error) {
 // each of the three behaviors is a func value the copy shares with the original.
 //
 // Sharing those func values is safe because of a property the CONSTRUCTORS hold,
-// not because the closures are argument-only - reviewerPane's two launch
-// closures capture the reviewer's agent name and its OpenCodeCoder, and coderPane
-// captures its coder through the method values it takes. The invariant to check a
+// not because the closures are argument-only - coderPane captures its coder through the method values it takes. The invariant to check a
 // new behavior against is therefore: whatever a pane's closure captures is fixed
 // at construction, immutable, and belongs to that pane alone. A closure that
 // captured mutable state, or state shared with another pane, would be shared
@@ -485,66 +480,6 @@ func builtinLayouts() map[string]Layout {
 	}
 }
 
-// Reviewer describes one of the reviewer agents `dg ws`'s (future) R
-// keybinding can launch: the OpenCode agent name passed to `opencode --agent
-// <name>`, and a human-readable label for the picker UI.
-type Reviewer struct {
-	Agent string
-	Label string
-}
-
-// reviewerKeys lists the valid reviewer picker keys in a stable order,
-// "code" first per the cycle plan (the common case) - used both to build the
-// registry and, later, to render the picker in a fixed order.
-var reviewerKeys = []string{"code", "document", "skill"}
-
-// builtinReviewers returns the registry of reviewer agents the (future) R
-// keybinding can launch, keyed by short picker key. Each Reviewer.Agent must
-// equal a filename (minus ".md") in configs/shared/agents/ -
-// TestBuiltinReviewersAgentNamesMatchAgentFiles (this package, on-disk read)
-// and TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles (package main,
-// embedded ConfigsFS read) both enforce that, per CLAUDE.md's "Changing an
-// embedded config" rule: a constraint an external tool imposes (here,
-// `opencode --agent <name>` failing silently on a typo) gets enforced by a
-// test, because a comment would not survive future edits.
-func builtinReviewers() map[string]Reviewer {
-	return map[string]Reviewer{
-		"code":     {Agent: "code-reviewer", Label: "code — bugs, security"},
-		"document": {Agent: "document-reviewer", Label: "document — plans, specs"},
-		"skill":    {Agent: "skill-reviewer", Label: "skill — agents/commands"},
-	}
-}
-
-// ReviewerAgentNames returns the OpenCode agent name for each built-in
-// reviewer, in reviewerKeys order. Exported so the root package's
-// TestBuiltinReviewersAgentNamesMatchEmbeddedAgentFiles can assert the same
-// names against the embedded configs/shared/agents/ filenames that this
-// package's own on-disk test (TestBuiltinReviewersAgentNamesMatchAgentFiles)
-// checks - embedded.go's ConfigsFS lives in package main, which this package
-// cannot import without an import cycle, so package main needs its own way
-// to see these names.
-func ReviewerAgentNames() []string {
-	reviewers := builtinReviewers()
-	names := make([]string, 0, len(reviewerKeys))
-	for _, key := range reviewerKeys {
-		names = append(names, reviewers[key].Agent)
-	}
-	return names
-}
-
-// ReviewPrompt is the single fixed opening prompt sent to every reviewer
-// agent, regardless of which one (code/document/skill) was picked, and
-// regardless of how it is launched — the `dg ws` R keybinding's tmux pane or
-// `dg task review-run`'s headless run both send exactly this. It's
-// deliberately short and generic: each reviewer agent's own instructions
-// already run `devgeta task review-scope` and `devgeta task branch-diff` to
-// scope itself (see configs/shared/agents/*.md), so this prompt only needs
-// to start the conversation, not describe the diff. It is also deliberately
-// free of shell metacharacters, even though shellSingleQuote below makes the
-// command safe either way - keeping the shipped prompt simple means the
-// common case never depends on the escaping path being exercised.
-const ReviewPrompt = "Review this branch against the default branch."
-
 // shellSingleQuote wraps s in single quotes so it is safe to embed as one
 // literal word in a POSIX shell command line, escaping any embedded single
 // quote with the standard close/escape/reopen trick (quote, backslash,
@@ -629,136 +564,6 @@ func isUsableShell(path string) bool {
 		return false
 	}
 	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
-}
-
-// ReviewerChoice is one entry of the reviewer registry as callers outside
-// this package see it: the short key passed to LaunchReviewInRepo (and to
-// `dg task review-run --reviewer`), the reviewer's human label for a picker,
-// and the OpenCode agent name a headless run passes to `--agent`.
-type ReviewerChoice struct {
-	Key   string
-	Label string
-	Agent string
-}
-
-// BuiltinReviewerChoices returns the reviewer registry in reviewerKeys order
-// ("code" first, the common case), so callers can validate a key and resolve
-// its agent without duplicating this package's registry — the TUI's R picker
-// builds its item list from it, and `dg task review-run` validates
-// --reviewer against it.
-func BuiltinReviewerChoices() []ReviewerChoice {
-	reviewers := builtinReviewers()
-	choices := make([]ReviewerChoice, 0, len(reviewerKeys))
-	for _, key := range reviewerKeys {
-		choices = append(choices, ReviewerChoice{
-			Key:   key,
-			Label: reviewers[key].Label,
-			Agent: reviewers[key].Agent,
-		})
-	}
-	return choices
-}
-
-// lookupBuiltinReviewer resolves key ("code", "document", or "skill") against
-// the reviewer registry, producing the one "unknown reviewer" error message.
-//
-// It exists so that everything which needs a Reviewer gets it from a lookup that
-// can FAIL, rather than from a second index into the registry whose safety
-// depends on some earlier call having validated the key. reviewerPane used to do
-// exactly that (`builtinReviewers()[key].Agent` after a separate command build),
-// and a map miss there yields a zero Reviewer with an empty Agent - which builds an
-// opencode launch with no --agent at all, i.e. a plain coder session that looks
-// like a review. Structural rather than comment-guarded (CLAUDE.md §4).
-func lookupBuiltinReviewer(key string) (Reviewer, error) {
-	reviewer, ok := builtinReviewers()[key]
-	if !ok {
-		return Reviewer{}, fmt.Errorf(
-			"unknown reviewer %q. Valid reviewers: %s",
-			key, strings.Join(reviewerKeys, ", "),
-		)
-	}
-	return reviewer, nil
-}
-
-// reviewCommandFor renders reviewer's TYPED command - the form sent to a pane
-// that already exists, via send-keys. It is the pure, probe-free half of
-// reviewerPane, kept separate so the exact command can be pinned by a test
-// without a shell lookup.
-//
-// It takes the coder rather than building its own so a reviewer pane's typed
-// command and its two launch closures all come from ONE OpenCodeCoder. A second
-// instance would be harmless today (the type is stateless and zero-size), but a
-// pane's behaviors sharing state with anything outside that pane is exactly what
-// Layout.clone's invariant asks a reader to check for, and threading the coder
-// through means there is nothing to check.
-//
-// The command is built by OpenCodeCoder.promptCommandWithAgent, which is also
-// what PromptCommand (the --prompt flag's path) delegates to - so the
-// `--prompt '<quoted>'` fragment, including the single-quoting a send-keys
-// command line requires, has exactly one author.
-//
-// That author renders opencode's structured launch (see launch.go), which quotes
-// every argument uniformly - so this emits
-// `opencode '--agent' '<name>' '--prompt' '<text>'`. It names the BINARY, not the
-// oc alias, even though it is typed at an interactive shell: preflight probes the
-// binary, and sending a live pane something the check never verified is what
-// ADR-0021's 2026-08-07 amendment removes. Reviewer launches are OpenCode-only by
-// design (see the cycle plan's scope boundary: the reviewer agents' permission:
-// frontmatter is enforced by OpenCode and ignored by Claude Code), so unlike
-// deriveLayoutFromAlias this does not accept an aiAlias.
-func reviewCommandFor(opencode *OpenCodeCoder, reviewer Reviewer) string {
-	return opencode.promptCommandWithAgent(reviewer.Agent, ReviewPrompt)
-}
-
-// reviewerPane builds the pane that launches the reviewer agent registered under
-// key, probing opencode ONCE and carrying that probe's resolution on the pane it
-// returns.
-//
-// This is the review path's counterpart to coderPane, and it exists because the
-// review path does its own preflight instead of going through validateLayout: it
-// used to call EnsureInstalled and throw the answer away, leaving its launches to
-// either probe a second time or drop the path and always fall back - the two
-// options ADR-0021 rules out. One constructor, one probe, and BOTH of
-// LaunchReviewInRepo's launches (the create branch with no live window, and the
-// live window's split) build from the same pane, so they cannot disagree about
-// what was verified.
-//
-// Ordering is load-bearing: the registry lookup runs FIRST, so an unknown
-// reviewer key fails before the probe rather than costing a shell lookup (and
-// before any git or tmux state is touched).
-//
-// check is left nil deliberately. The probe has already run here, so a nil check
-// is what makes a second one impossible even if this pane is later put in a
-// Layout that goes through EnsureInstalled - it skips nil checks, and skipping
-// preserves the resolution set below rather than overwriting it. prompt is nil
-// too: the reviewer's opening prompt is fixed (ReviewPrompt), so there is no
-// `--prompt` to retarget onto this pane.
-func reviewerPane(key string) (Pane, error) {
-	reviewer, err := lookupBuiltinReviewer(key)
-	if err != nil {
-		return Pane{}, err
-	}
-	agent := reviewer.Agent
-
-	opencode := &OpenCodeCoder{}
-	resolvedPath, err := opencode.EnsureInstalled()
-	if err != nil {
-		return Pane{}, err
-	}
-
-	return Pane{
-		Command: reviewCommandFor(opencode, reviewer),
-		launch: launchFor(
-			func(prompt string) paneLaunch {
-				return opencode.interactiveLaunchWithAgent(agent, prompt)
-			},
-			func(binaryPath, prompt string) paneLaunch {
-				return opencode.execLaunchWithAgent(binaryPath, agent, prompt)
-			},
-		),
-		resolvedPath: resolvedPath,
-		promptText:   ReviewPrompt,
-	}, nil
 }
 
 // BuiltinLayoutNames returns the valid built-in layout names, in a stable

@@ -146,29 +146,6 @@ func TestPromptCommandExactFormPerCoder(t *testing.T) {
 	}
 }
 
-// promptCommandWithAgent is the one author of opencode's launch-with-a-prompt
-// form, shared by PromptCommand (no agent) and layout.go's reviewCommandFor (with
-// one). This pins both branches so the shared helper can't drift from either
-// caller's needs.
-func TestOpenCodePromptCommandWithAgent(t *testing.T) {
-	coder := &OpenCodeCoder{}
-
-	withAgent := coder.promptCommandWithAgent("code-reviewer", "review it")
-	wantWithAgent := "opencode '--agent' 'code-reviewer' '--prompt' 'review it'"
-	if withAgent != wantWithAgent {
-		t.Errorf("got %q, want %q", withAgent, wantWithAgent)
-	}
-
-	// An empty agent must omit the flag entirely, not emit a bare "--agent".
-	noAgent := coder.promptCommandWithAgent("", "review it")
-	if want := "opencode '--prompt' 'review it'"; noAgent != want {
-		t.Errorf("got %q, want %q", noAgent, want)
-	}
-	if strings.Contains(noAgent, "--agent") {
-		t.Errorf("expected no --agent flag with an empty agent, got %q", noAgent)
-	}
-}
-
 // OpenCodeCoder/ClaudeCoder.EnsureInstalled route through the shared
 // ensureToolInstalled helper, which resolves the tool through the swappable
 // commands.ShellCommandLookupFn (see setShellCommandExistsFn /

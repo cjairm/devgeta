@@ -38,7 +38,6 @@ func cloneGlobalConfig(src *GlobalConfig) *GlobalConfig {
 	dst.Shortcuts = cloneStringMap(src.Shortcuts)
 	dst.FailedInstallations = cloneFailedInstallations(src.FailedInstallations)
 	dst.Worktree = cloneWorktreeConfig(src.Worktree)
-	dst.Review = cloneReviewConfig(src.Review)
 	dst.Wallpapers = cloneStringMap(src.Wallpapers)
 	// AppPath, ConfigPath, CurrentFont, CurrentTheme, PendingTheme, Shell, and
 	// Integrations are strings/bools (or structs made only of those), so the
@@ -118,11 +117,5 @@ func cloneWorktreeConfig(wc WorktreeConfig) WorktreeConfig {
 		v := *wc.AttachAfterCreate
 		out.AttachAfterCreate = &v
 	}
-	return out
-}
-
-func cloneReviewConfig(rc ReviewConfig) ReviewConfig {
-	out := rc
-	out.Reviewers = cloneStringSlice(rc.Reviewers)
 	return out
 }

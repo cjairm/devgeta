@@ -262,11 +262,10 @@ option ADR-0014 §5 already rejected, for the reason this bullet demonstrates. T
 real boundary for high-autonomy work is Claude Code's OS sandbox (`/sandbox`,
 Seatbelt on macOS).
 
-**`gh api *` is `ask`, not `deny`.** A deny would break a workflow devgeta itself
-ships: `configs/shared/skills/receiving-code-review/SKILL.md` tells the agent to
-reply to inline review comments with
+**`gh api *` is `ask`, not `deny`.** A deny would break ordinary workflows, such
+as replying to inline review comments with
 `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`. `ask` keeps the
-human gate on an easy egress path without breaking a shipped skill. Verified that
+human gate on an easy egress path without breaking them. Verified that
 the pattern matches at all, on both agents, with `gh api rate_limit`: denied when
 the rule was a deny, allowed in the control.
 

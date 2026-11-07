@@ -21,14 +21,10 @@ deliberate.
 | Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                               |
 | Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor        |
 | Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                                      |
-| Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                                |
-| Global instructions     | `configs/shared/DEVGETA.md`, imported from `~/.claude/CLAUDE.md`  | `configs/shared/DEVGETA.md`, listed in `instructions` in `opencode.json.tmpl`     |
 
-`configs/shared/skills/` is synced to both agents too, but it is **not** a place
-to put devgeta policy: those skills run in every user's other repositories, and
-most are vendored from upstream (see [vendored-skills.md](vendored-skills.md)). A devgeta rule belongs in CLAUDE.md
-or a guide. That holds for everything else in this table as well — see CLAUDE.md
-§12, "Anything we ship is built for strangers".
+Nothing in this table is a place to put devgeta policy: it all ships to every
+user. A devgeta rule belongs in CLAUDE.md or a guide — see CLAUDE.md §12,
+"Anything we ship is built for strangers".
 
 ## Rules
 

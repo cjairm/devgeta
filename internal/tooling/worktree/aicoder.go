@@ -114,9 +114,9 @@ type AICoder interface {
 // alias, and the invariant "probe exactly what the pane will launch" holds on
 // EVERY path - not only the exec ones. A created pane execs the binary through
 // tmux's non-interactive shell, where an alias does not exist at all (ADR-0021
-// part 3, rule 1); and since ADR-0021's 2026-08-07 amendment the two paths that
-// still TYPE a command into a live pane (the repair branch of ensureWindow,
-// launchReviewInLiveWindow's idle-shell reuse) send the binary too, so a pass
+// part 3, rule 1); and since ADR-0021's 2026-08-07 amendment the path that
+// still TYPES a command into a live pane (the repair branch of ensureWindow)
+// sends the binary too, so a pass
 // here guarantees they resolve as well. Probing the alias would also make this
 // function unable to resolve a path, because `command -v oc` prints
 // `alias oc=opencode`, which is not path-shaped.
@@ -192,18 +192,9 @@ func (o *OpenCodeCoder) Command() string { return constants.OpenCodeLaunch.Comma
 
 // PromptCommand launches opencode with prompt as its opening message, using
 // opencode's --prompt flag ("prompt to use" in its --help).
-func (o *OpenCodeCoder) PromptCommand(prompt string) string {
-	return o.promptCommandWithAgent("", prompt)
-}
-
-// promptCommandWithAgent is the single author of opencode's
-// launch-with-a-prompt form, shared by PromptCommand (no agent) and
-// layout.go's reviewCommandFor (which pins a reviewer agent). Before this existed
-// the `--prompt '<quoted>'` fragment had two authors; CLAUDE.md's DRY rule
-// requires the extraction happen in the change that introduces the second use.
 //
-// It renders the structured name-form launch, so the argument shape now has
-// one author across BOTH representations (this typed string and the exec'd pane
+// It renders the structured name-form launch, so the argument shape has one
+// author across BOTH representations (this typed string and the exec'd pane
 // command) rather than one per representation.
 //
 // The arguments are single-quoted because the returned string is typed into an
@@ -211,51 +202,30 @@ func (o *OpenCodeCoder) PromptCommand(prompt string) string {
 // parser to lean on. See ADR-0011. The flags are quoted too, which is why this
 // emits `opencode '--prompt' '<text>'` rather than `opencode --prompt '<text>'`:
 // same command to the shell, uniform rule (see paneLaunch.render).
-func (o *OpenCodeCoder) promptCommandWithAgent(agent, prompt string) string {
-	return o.interactiveLaunchWithAgent(agent, prompt).render()
+func (o *OpenCodeCoder) PromptCommand(prompt string) string {
+	return o.interactiveLaunch(prompt).render()
 }
 
 // interactiveLaunch is the name form: the opencode binary NAME, left for the
 // shell running it to resolve.
 func (o *OpenCodeCoder) interactiveLaunch(prompt string) paneLaunch {
-	return o.interactiveLaunchWithAgent("", prompt)
-}
-
-// interactiveLaunchWithAgent is interactiveLaunch with a reviewer agent pinned,
-// for the review launches (see layout.go's reviewCommandFor). Claude has no
-// equivalent: reviewer launches are OpenCode-only by design, because the
-// reviewer agents' permission: frontmatter is enforced by OpenCode and ignored
-// by Claude Code.
-func (o *OpenCodeCoder) interactiveLaunchWithAgent(agent, prompt string) paneLaunch {
-	return recipeLaunch(constants.OpenCodeLaunch, o.launchArgs(agent, prompt)...)
+	return recipeLaunch(constants.OpenCodeLaunch, o.launchArgs(prompt)...)
 }
 
 // execLaunch is the resolved-binary form: the pane execs binaryPath, so its own
 // PATH stops mattering (ADR-0021).
 func (o *OpenCodeCoder) execLaunch(binaryPath, prompt string) paneLaunch {
-	return o.execLaunchWithAgent(binaryPath, "", prompt)
-}
-
-// execLaunchWithAgent is execLaunch with a reviewer agent pinned - the review
-// window's create and split branches both exec the resolved opencode binary
-// rather than typing a command at a pane (ADR-0021 part 3).
-func (o *OpenCodeCoder) execLaunchWithAgent(binaryPath, agent, prompt string) paneLaunch {
-	return binaryLaunch(binaryPath, o.launchArgs(agent, prompt)...)
+	return binaryLaunch(binaryPath, o.launchArgs(prompt)...)
 }
 
 // launchArgs is the one place opencode's argument shape is decided, for every
-// form above: --agent before --prompt, and each flag omitted entirely when its
-// value is empty (a bare "--agent" with no value would be a broken command
-// line, not a no-op).
-func (o *OpenCodeCoder) launchArgs(agent, prompt string) []string {
-	args := make([]string, 0, 4)
-	if agent != "" {
-		args = append(args, "--agent", agent)
+// form above: --prompt is omitted entirely when empty (a bare "--prompt" with
+// no value would be a broken command line, not a no-op).
+func (o *OpenCodeCoder) launchArgs(prompt string) []string {
+	if prompt == "" {
+		return nil
 	}
-	if prompt != "" {
-		args = append(args, "--prompt", prompt)
-	}
-	return args
+	return []string{"--prompt", prompt}
 }
 
 // EnsureInstalled checks the "opencode" BINARY - what every devgeta launch of

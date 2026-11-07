@@ -60,7 +60,6 @@ func makeTestModel(statuses []worktree.WorktreeStatus) Model {
 	m.checkHookCompatibilityFn = func(_ string) []string { return nil }
 	m.createFn = func(_, _, _ string) (string, error) { return "", nil }
 	m.prTitleFn = func(_, _ string) string { return "" }
-	m.launchReviewFn = func(_, _, _ string) error { return nil }
 	// A manager that scans an empty tmux server, so a test can run the commands
 	// a handler returns without the real one. Overridden by any test that cares
 	// what the scan finds. It is set by default because handlers legitimately
@@ -2537,17 +2536,6 @@ func TestRenderHelpPopupIncludesSessionKeys(t *testing.T) {
 			"expected help popup's d-d entry to clarify session-row kill behavior, got:\n%s",
 			out,
 		)
-	}
-}
-
-func TestRenderHelpPopupIncludesReview(t *testing.T) {
-	m := makeTestModel(testStatuses())
-	out := ansi.Strip(m.renderHelpPopup())
-	if !strings.Contains(out, "R") {
-		t.Errorf("expected help popup to include 'R' key, got:\n%s", out)
-	}
-	if !strings.Contains(out, "kick a review") {
-		t.Errorf("expected help popup to include the review entry, got:\n%s", out)
 	}
 }
 

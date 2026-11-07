@@ -226,20 +226,18 @@ See [Installation Command](#1-installation-command-dg-install) above.
 Re-applies configuration files for a named app without reinstalling the app itself.
 
 ```
-dg configure <app> [--force] [--only=<parts>]
+dg configure <app> [--force]
 ```
 
 **Flags**:
 
 - `--force` — Overwrite existing configuration files. Without this flag, configuration is only applied if files do not already exist (soft mode).
-- `--only=<parts>` — Refresh only the named app-defined parts; requires `--force` and an app implementing `SelectiveConfigurer`. The AI coders (`claude`, `opencode`) expose their shared config subtrees (`skills`, `commands`, `agents`).
 
 **Behavior**:
 
 - Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `pi`, `raycast`, `shottr`, `tmux`, `ulauncher`.
 - Apps that have no configuration to deploy (e.g., `brave`) return `ErrConfigureNotSupported` — the command prints an info message and exits zero.
 - Unknown app names print a sorted list of supported apps and exit non-zero.
-- Unknown `--only` values list the app's valid parts and exit non-zero; `--only` without `--force` is an error; apps without parts reject `--only`.
 
 **Examples**:
 
@@ -248,7 +246,6 @@ dg configure git            # Apply git config if not already present
 dg configure neovim --force # Overwrite existing neovim config
 dg configure brave          # Info: configure not supported for brave (exit 0)
 dg configure foo            # Error: unknown app "foo" + supported list (exit non-zero)
-dg configure claude --force --only=skills          # Refresh only the skills folder
 ```
 
 **Planned commands**: See [ROADMAP.md](ROADMAP.md) for planned features and future commands.
@@ -357,12 +354,6 @@ Use [`dg config`](#dg-config) to list, read, set, or unset these — hand-editin
 - `notify_sound` — whether an agent pane finishing (`idle`), blocking on a permission prompt (`blocked`), or erroring (`error`) plays a sound while its window is unattended, per [ADR-0009](decisions/ADR-0009-audible-agent-notifications.md). Default: **absent/`false`, which means off**. Unlike `attach_after_create` just above, where the zero value would silently flip existing behavior and so needed a nullable bool, off is already the correct default here, so a plain boolean is enough — the zero value already means what it should. The two hooks that actually play the sound (`configs/claude/agent-state.sh`, `configs/opencode/plugin/notify.js`) cannot parse `global_config.yaml`, so this YAML value is only the durable source: `configs/tmux/tmux.conf.tmpl` renders it into the deployed `~/.tmux.conf` as the tmux global option `@dg_notify_sound`, which is what the hooks actually query at runtime. Changing this key therefore has no effect on a running tmux server by itself — it takes effect after `dg configure tmux --force` plus a config reload (or a fresh server), or immediately if you also run `tmux set-option -g @dg_notify_sound on` by hand.
 - `location` — where worktrees are created on disk, and where `remove`/`repair`/state checks look for an existing one. Default: `shared` (`~/.local/share/devgeta/worktrees/<repo-slug>/<name>`, today's behavior — no existing install changes). The other value, `in-repo`, creates worktrees at `<repo-root>/.claude/worktrees/<name>` instead, the same path Claude Code's own worktree feature uses. Changing this key only affects where _new_ worktrees are created — it does not relocate an existing one on its own. `remove`/`repair` always check git for a worktree's actual location first (both shapes), so they still find an existing worktree wherever it really lives even if this key changes underneath it; use `dg wt move` (below) to physically relocate one that already exists.
 
-**Review config keys** (`global_config.yaml`, under `review:` — see
-[ADR-0017](decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md)):
-
-- `reviewers` — list of AI reviewer models `dg task review-run` runs headless, each written as `provider/model` (e.g. `anthropic/claude-opus-4-6`). Default: empty, which runs one reviewer on OpenCode's own default model. Validation only checks the shape (at least one `/`, non-empty on both sides of the first one) — a stale or unconfigured provider is not caught here; it surfaces as an `ERROR(<reason>)` outcome from `review-run` at run time instead. `/review-loop` narrows this key mid-run to just the reviewers still blocking, and restores it after every round — see `/review-loop` below for the mechanics and the interruption residual.
-- `rounds` — max review rounds `/review-loop` performs **per phase** before moving on. Default: `3`. Valid range: `1`–`5`; anything outside it is rejected by `dg config set`, not clamped. A full run is at most this cap plus 2 rounds — the one opening round and the one confirming round that bracket the phase this caps.
-
 **Flags for `create`**:
 
 - `--repo <path>` / `-r <path>` — Path to the repository (`~` is expanded), so the command works
@@ -465,41 +456,11 @@ dg wt prune --stale                         # Clear git's leftover entries for d
   `global_config.yaml`'s `worktree.recent_repos` (MRU-ordered, capped at 20). This is what lets
   the picker offer a repo that currently has zero worktrees.
 
-**Kicking a review from the dashboard (`R`)**:
-
-- `R` on a worktree row opens a floating picker with three choices, `code` first:
-  `code — bugs, security`, `document — plans, specs`, `skill — agents/commands`.
-- Selecting one launches the matching reviewer agent (`code-reviewer`, `document-reviewer`, or
-  `skill-reviewer`) via OpenCode, in that worktree, with the fixed prompt "Review this branch
-  against the default branch." — the agent scopes itself from there (each reviewer agent already
-  runs `devgeta task review-scope` on its own).
-- Where the review lands, in order: no live window → a new window with the review as its only
-  pane; a pane sitting at a shell prompt → the review runs **in that pane**, no new pane (this is
-  what makes `R` on a `shell`-layout worktree reuse the empty pane you already have, and it prefers
-  the lowest-numbered idle pane, i.e. the one devgeta built the window with); otherwise → a new
-  pane split beside the running one.
-- The rule is "never type into a pane that is running something", not "always split". Idle is
-  decided by the same shell allowlist `dg wt move` uses to pick panes it may `cd`
-  (`isIdleShellPane`) — anything unrecognized counts as busy, because a running agent cannot be
-  identified by process name (a Claude Code pane reports its versioned binary directory, e.g.
-  `2.1.222` — see [ADR-0008](decisions/ADR-0008-agent-state-on-every-pane-row.md)). So the
-  fallback is always the safe one: at worst you get today's extra pane. A reused pane is never
-  killed on failure — it is the user's own shell, not something `R` created.
-- Either way you stay in the dashboard: `R` reports `review started: <name>` and leaves you on the
-  list, so you can kick a review per worktree without being thrown into each one. (The
-  window-was-missing case used to yank you into the new window; window creation no longer moves
-  the client at all.)
-- `R` only applies to worktree rows (see the `D`/`r`/`R` note below for the exact no-ops), and
-  it's a no-op on every row while any review launch is already in flight (a single global guard,
-  not per-row), so repeated presses can't start a second launch.
-- Esc at the picker cancels and returns to the dashboard unchanged.
-
 **In-progress feedback**: any dashboard action that builds or tears down tmux state shows a
 status line at the bottom while it runs, so the dashboard is never silently unresponsive during
 the (occasionally slow) git/tmux work: `creating worktree: <name> (<layout>)…` on create,
 `repairing: <name> (<layout>)…` on `r` (and on attaching to a worktree whose window is missing,
-which auto-repairs), `deleting: <name>…` on the confirming `d`/`D` press, and `review: <name>
-(<label>)…` on `R`, resolving to `review started: <name>` or `review failed: <error>`. The layout is named
+which auto-repairs), and `deleting: <name>…` on the confirming `d`/`D` press. The layout is named
 by its tools (`claude`, `opencode`, `neovim`, `claude + neovim`). Each message is replaced by the
 result the moment the action finishes (and is moot inside tmux on a create/attach that succeeds,
 since the TUI then attaches and exits).
@@ -525,7 +486,7 @@ dg config unset <key>
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | _(bare, same as `list`)_ | Print every setting: key, current value (or `(default)` if unset), live default, and description                                                         |
 | `get <key>`              | Print only the effective value, nothing else (bare, for scripts)                                                                                         |
-| `set <key> <value...>`   | Validate and persist a value; a `stringlist`-kind key (`worktree.search_paths`, `review.reviewers`) accepts multiple values, every other key exactly one |
+| `set <key> <value...>`   | Validate and persist a value; a `stringlist`-kind key (`worktree.search_paths`) accepts multiple values, every other key exactly one |
 | `unset <key>`            | Clear a setting back to its default                                                                                                                      |
 
 **Flags**:
@@ -534,8 +495,8 @@ dg config unset <key>
 
 **Settable keys**: `worktree.default_ai`, `worktree.search_paths`, `worktree.scan_depth`,
 `worktree.default_layout`, `worktree.attach_after_create`, `worktree.notify_sound`,
-`worktree.location`, `review.reviewers`, `review.rounds` — see "Worktree scan and layout
-config keys" and "Review config keys" above for what each one does.
+`worktree.location` — see "Worktree scan and layout config keys" above for
+what each one does.
 Setting `worktree.notify_sound` only persists the YAML value and the tmux-rendered default for
 the _next_ server — see that key's entry above for why it does not also flip the option on an
 already-running tmux server.
@@ -562,8 +523,6 @@ dg config get worktree.scan_depth                   # Print only the effective v
 dg config set worktree.scan_depth 6                 # Validate and persist
 dg config set worktree.search_paths ~/code ~/work   # stringlist keys accept several values
 dg config unset worktree.attach_after_create        # Clear back to default (true)
-dg config set review.reviewers anthropic/claude-opus-4-6 openai/gpt-5.2
-dg config set review.rounds 5                       # Cap /review-loop at 5 rounds per phase
 ```
 
 #### `dg ws`
@@ -841,7 +800,7 @@ Standalone session rows add:
   `TmuxSessionName(<repo slug>)` — otherwise a rename would make the next worktree create start
   a second, differently-named session for the same repo.
 
-- `D`/`r`/`R` are worktree-only actions and are no-ops on a session row.
+- `D`/`r` are worktree-only actions and are no-ops on a session row.
 - The diff pane draws nothing, same as a repo header or pane row: a session has no single
   branch to diff.
 
@@ -957,82 +916,6 @@ what was already answered — see
 | `review-notes` | `--branch <b>`, `--rev <sha>`, `--path`, `--prune`                                                                                                                     | Print the branch's journal: settled entries (answered / rejected-with-reason / fixed) and still-open ones, each with its id and a resolved `[fresh]` or `[STALE: …]` marker. Staleness compares the **content** of the cited file (`git hash-object`), not a commit, so an uncommitted edit correctly invalidates an entry — a commit-based check cannot see one. A **rejected** entry is exempt and reads `[STANDING: …]` instead of either: a rejection records a decision about the reason it states, and [ADR-0012](decisions/ADR-0012-review-knowledge-in-a-local-journal.md) §2 has it expire when that reason stops holding, never because the cited file moved. Findings cluster in a handful of files, so without the exemption the first fix of any round flipped every rejection in those files to "re-check", which is the re-litigation the journal exists to stop. An entry citing no file carries no marker, because nothing can date it. `--rev <sha>` resolves staleness against that revision instead of the working tree, for reviewing code that is not checked out (a PR head): pass the revision under review **now**, so `[STALE]` means "that revision changed this file since the finding was written" rather than "your checkout differs from it" — which is true of nearly every file and would mark the whole journal stale ([ADR-0023](decisions/ADR-0023-a-pr-review-targets-immutable-shas.md) §4). It is refused with `--path` and `--prune`, which compute no freshness. A `--rev` this repository does not have is refused up front, naming the revision — never reported as bad cited paths or as a journal of stale findings. `--path` prints the journal file's location for hand correction; `--prune` deletes journals whose branch no longer exists locally or on the remote; a PR-scoped journal (`pr/<owner>/<repo>/<number>`) is left alone, because no branch ever carries that name and the check would report every one of them gone — including a PR still under review. Sentinels: `No review notes for branch <b>.`, `No branch — review notes are keyed by branch.` (detached HEAD), `No review journals to prune.`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `review-note`  | `--open` \| `--settle` \| `--ratify` \| `--reopen`, `--id <n>`, `--as rejected\|answered\|fixed`, `--at <path[:line]>`, `--note <text>`, `--branch <b>`, `--rev <sha>` | Write one entry. `--open` records something awaiting an answer and echoes its new id (`Noted n4`); `--settle --id n4 --as …` closes that entry, carrying its cited path over so an answer can never retarget the question it closes (`--at` is refused there); `--settle` without an id records an exchange that was never open. `--at` is optional — a design-level entry cites no file and never goes stale — but when given, the path must exist, because an entry that claims to cite code with no content stamp could never be checked. `--rev <sha>` stamps the cited path at that revision instead of the working tree, and the path must exist **there** — the same typo guard, relocated — for reviewing code that is not checked out, where the cited file may be missing from the checkout or hold unrelated content ([ADR-0023](decisions/ADR-0023-a-pr-review-targets-immutable-shas.md) §4). The head stamp is then the revision itself, not the checkout's `HEAD` — resolved to its commit sha first, so passing a mutable ref name (`refs/pull/213/head`, a branch, `HEAD`) records the immutable commit it named rather than a name that will point somewhere else after the next fetch. A cited path is looked up literally (`:(literal)` pathspec) — not to defeat globbing, since `git ls-tree` does not glob at all, but so that a filename starting with `:` names that file instead of being read as pathspec magic (without the prefix `ls-tree -- ':weird.go'` exits 0 with no output, which would be reported as "that path does not exist at that revision" for a perfectly correct cite). `--rev` applies to `--open` and `--settle` only; `--ratify` and `--reopen` never restamp, and are refused with it rather than ignoring it. A `--rev` this repository does not have is refused up front, naming the revision; a cite naming a directory is refused at a revision exactly as it is in the working tree. Echoes `Settled n4 (fixed)`. `--ratify --id n7` and `--reopen --id n7` are **human-only** transitions (ADR-0017 §6): when the review loop's coding agent settles a finding `rejected` with a note prefixed to mark that the agent, not a human, made the call, `--ratify` strips that prefix (the entry becomes an ordinary rejection) and `--reopen` returns the entry to open under the **same id** — original finding text kept, settle note dropped — so the next round re-raises it. `--ratify` fails on anything but an agent-prefixed rejection; `--reopen` fails on an already-open entry or an unknown id; both name the actual state so the caller sees why. Echoes `Ratified n7` / `Reopened n7`. |
 
-**Review loop subcommand** (headless, multi-round AI review — see
-[ADR-0017](decisions/ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) and
-[ADR-0018](decisions/ADR-0018-review-loop-refuses-the-default-branch.md)):
-
-| Subcommand   | Args / Flags                                                                                                                                                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `review-run` | `--reviewer code\|document\|skill` (default `code`), `--note <text>`, `--base <commit-ish> --head <commit-ish> --journal <key> --report-dir <dir>` (required together) | Runs every reviewer model configured in `review.reviewers` sequentially, headless, through OpenCode (`opencode run --agent <a> --format json [-m <provider/model>]`), against the current branch — one invocation is one round; the round cap lives in the agent-side loop, not here. `--reviewer` picks which reviewer agent runs (the same three choices the `dg ws` `R` keybinding offers); every configured model runs that same reviewer. With `review.reviewers` unset, one run uses OpenCode's own default model. A model id repeated in the list runs **once**, in the position of its first entry: a second run of one model pays twice for one opinion, and in explicit-range mode (below) it would also overwrite that model's own report file while both output lines still named it, breaking the one-line-one-report pairing. `--note <text>` appends the caller's own words to the fixed review prompt for every reviewer this round, introduced as emphasis that explicitly does **not** narrow the review, so "focus on file A" cannot be read as "review only file A"; a present-but-blank `--note` is refused rather than dropped, since a silently ignored note is indistinguishable from one that was delivered. Prints **exactly one line per reviewer** (`<model, or "OpenCode default model"> → <outcome>`) and nothing else — no findings, no journal ids: a finding lives in the journal, and `review-notes` is what reads it (it also lists what is still open, which is where the agent-side loop gets the ids). An outcome is `APPROVE`, `REQUEST CHANGES`, or `NEEDS DISCUSSION` (parsed from the reviewer's last `**Status:**` line), `NO VERDICT` (the run finished but stated no verdict), `NO VERDICT(<reason>)` (the run wrote no report at all, and the reason is OpenCode's own words for why — its stderr, which is where a headless run records an auto-rejected permission and nowhere else, or failing that the last step's finish reason), or `ERROR(<reason>)` (the run itself failed — spawn failure, nonzero exit, timeout, or an OpenCode error event; never guessed from matching message text, since an unusable model and a wedged provider both surface the same generic OpenCode error). One reviewer failing never stops the ones after it. A reviewer whose attempt produced **no report at all** is launched **once more** inside the same round before its outcome is reported — never more than that, and never when the attempt wrote anything (a report with no verdict in it is still an opinion that was paid for). If the retry also produces no report, the **first** attempt's outcome is the one reported, so a retry that dies with nothing to say cannot erase a first failure that named a reason. The retry is announced on the progress stream, not in the printed outcome; worst case it doubles one reviewer's wall clock and spend, bounded at two runs of the 30-minute timeout ([ADR-0020](decisions/ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md)). Refuses to run on the default branch or a detached HEAD (both checked before any reviewer is launched, with an actionable `git switch -c <name>` error — a review diffs against the default branch and a journal is keyed by branch name, so neither state has anything to review or anywhere to record it; see [ADR-0018](decisions/ADR-0018-review-loop-refuses-the-default-branch.md)), and refuses a branch that changes nothing at all — no commits ahead of the default branch **and** a clean working tree (`git status --porcelain`, so untracked files count), checked the same way before any reviewer is launched. Uncommitted work alone is reviewable: the reviewers read the branch's working state, not just its commits ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md)). The branch is re-checked **after every reviewer**, not only at the start: a reviewer runs shell commands for minutes, and one that moves `HEAD` silently redirects the round's findings into another branch's journal (the journal is keyed by branch name) — including a `main` journal, the thing [ADR-0018](decisions/ADR-0018-review-loop-refuses-the-default-branch.md) exists to prevent. When that happens the round is **abandoned**: no further reviewer is launched, no verdict is printed (there is no way to tell whether the switch preceded the reviewer that just finished, so reporting its verdict would assert something the command cannot know), and the error names both branches, the reviewer that was running, the journal the findings actually went to, and the `git switch` back. `HEAD` is never put back automatically. Both halves of the nothing-to-review guard fail **open** — an unresolvable ahead/behind comparison or status check lets the round run, because the guard saves cost rather than protecting correctness. **Explicit-range mode** (`--base --head --journal --report-dir`, all four required together — a partial group is refused by name rather than silently downgraded to a branch review of unrelated code) reviews an arbitrary pair of commits instead of the checkout ([ADR-0023](decisions/ADR-0023-a-pr-review-targets-immutable-shas.md) §5). Both ends take any commit-ish and are resolved to immutable SHAs before a reviewer is launched — a commit this clone does not have is refused there and then, with `git fetch` named, rather than surfacing minutes later inside a reviewer's own tool calls — and `--base` must be the range's **merge base** when the range has to equal a pull request's diff (`pr-review-target` prints one). The prompt, not Go, carries the scope: it names the resolved range, tells the reviewer to take the diff from `devgeta task review-package <base> <head>` (`review-scope` and `branch-diff` read the checkout, so they are named as not applying), and states the journal key and the reviewed revision — the pair the reviewer agents' scoped-journal clause triggers on, so every `review-notes`/`review-note` call they make carries `--branch <key> --rev <sha>`. `--journal` keys the round's journal reads and its round-start snapshot, so findings are never filed under whatever branch happens to be checked out. In this mode **none of the three HEAD-dependent refusals applies, and neither does the after-every-reviewer branch re-check**: each guards an inference about the checkout that the flags supply outright, so a tick runs from the default branch, a detached HEAD, or an unrelated branch, and a `HEAD` that moves mid-round changes nothing the command asserts (it never reads `HEAD` at all). Unlike a branch review, range mode reviews the **immutable SHAs only** — the working tree is never part of the diff, and the prompt says so, because uncommitted files in the reader's checkout belong to other work ([ADR-0019](decisions/ADR-0019-a-review-covers-the-branch-working-state.md) does not carry over). Each run's **full report** — every severity, strengths, evidence — is written to `<report-dir>/<reviewer-agent>+<percent-encoded-model>.md` (the journal's own encoder, since a model id's `/` is a path separator; the two segments join on `+` because that is a byte the encoder can never emit, so no pair of names can ever spell another pair's filename and overwrite its report), and every output line gains a trailing report field: exactly two spaces, then `report: `, then the path — last on the line, so a parser reads it from the right rather than assuming an `ERROR(...)` outcome contains no colon. A run that produced no report writes no file and its field reads `report: none (the reviewer wrote no report)` verbatim; the field is always present so a caller parses one shape either way, and both the two-space prefix and that sentinel are a parsing contract the agent-side loop depends on (pinned by a literal-string test, not just by the constants). The persisted report is always the same attempt's text as the reported outcome, retry included. The directory is created up front, and one that cannot be created is refused before any reviewer starts; a write that fails mid-round stops the round rather than paying for reports with nowhere to go. Branch mode's output is unchanged — verdict lines with nothing appended. |
-
-While a reviewer runs, progress goes to **stderr** as it happens: a line when the reviewer
-starts, a **sampled heartbeat** while it works, and a closing line with the outcome,
-elapsed time, tool count, and what the run cost as OpenCode reported it. The heartbeat
-prints at most once every 30 seconds, on the next tool call after the interval has passed,
-and carries the running counters plus the tool call that triggered it — e.g.
-`[1/2]   ... 1m0.3s, 7 tools, $0.42 - read internal/x.go`. Every tool call is counted
-whether or not it is printed, so the closing count is the whole run. The root `--verbose`
-flag switches to one short line per tool call instead (`[1/2]   read internal/x.go`); that
-was the default until a real round was measured at ~200 lines, which `/review-loop`
-captures and pays tokens for every round. The lines are rendered from the `--format json`
-event stream as it arrives (`CommandParams.OnStdoutLine`), not after the run, so a
-multi-minute round reads as working rather than wedged. Sampling is driven by the tool
-calls themselves, not a timer, so a reviewer that goes quiet prints nothing until it acts
-again — the trade for keeping the reporter single-threaded. The reviewer's own prose is
-never printed there — findings belong in the journal — and stdout is unaffected in either
-mode, staying exactly the contract above.
-
-Each reviewer this round reads the journal as it stood when the round began, not the live
-file, so no reviewer is anchored by what a peer already opened or settled earlier in the
-same round — every configured model is an independent sample of the branch rather than a
-follow-up on the one before it (ADR-0017 §4). Writes are untouched: `review-note --open`
-and `--settle` still hit the live journal immediately and get real, final ids. The
-mechanism is a round-start snapshot: `review-run` copies the journal before launching
-anyone (even when no journal exists yet), points each reviewer's `review-notes` at it with
-a child-only environment variable, and removes the snapshot once the round ends. Every
-other caller of `review-notes`/`review-note` — including a human running it by hand — sees
-no pointer and reads the live journal exactly as before.
-
-`configs/shared/commands/review-loop.md` (`/review-loop`) is the agent-side driver built on
-top of `review-run`: it runs a round, verifies and settles each open finding with the
-`receiving-code-review` skill's rigor, and moves through three phases in order — an
-**opening round** that runs every reviewer configured in `review.reviewers`, **narrowing
-rounds** that run only the reviewers that have not yet approved, and a **confirming round**
-that runs every reviewer again. `review.rounds` caps rounds **per phase**, not the run as a
-whole: the counter restarts at the start of each phase, so the narrowing phase alone can run
-up to `review.rounds` rounds (default 3, max 5), and a full run is at most the cap plus 2
-rounds — the one opening round and the one confirming round bracketing it.
-Only the confirming round can produce a clean approval (every reviewer APPROVEs, the journal
-lists nothing under `open:`, and no agent-authored rejection is still awaiting ratification);
-an approval given during the opening round or a narrowing round is provisional, since the
-branch can keep changing after it was given. The loop stops at one of exactly two outcomes: a
-clean approval, or a report to the human (persistent disagreement, an open finding not yet
-settled, every configured reviewer failing, a failure in the confirming round, or an
-unratified rejection). Hitting the round cap is not a report trigger on its own: reaching
-it ends the current phase, and only the confirming round's ending is the end of the loop. A
-single reviewer failure does not by itself reach the report: it is retried and the reviewer
-stays in the narrowing set; only two consecutive failures drop it from that set, naming it
-failed with its last reason reported verbatim in whatever report the run eventually
-produces.
-Narrowing works by rewriting `review.reviewers` down to the still-blocking reviewers for one
-round, then restoring the original list — after every single round, never left narrowed for a
-whole phase. It refuses to narrow at all unless it has first proved it can restore the exact
-list it found, and it prints that list and the restore command before the first narrowing
-write, not only in the terminal report, so an interruption mid-run (Ctrl-C, a crash) still
-finds the restore instruction already on screen. That does not close the gap itself: a
-process that is gone prints nothing further, so an interrupted run leaves `review.reviewers`
-narrowed until someone runs the printed restore command by hand — and re-running the loop
-before that happens records the narrowed list as the new run's baseline, making the
-narrowing permanent and silent.
-It parses `--reviewer` and `--note` from its own arguments once, before the first round, and
-forwards both to every `review-run` call it makes — the note verbatim, never summarized or
-answered by the loop itself. It reads the open ids from `review-notes` after each round,
-since `review-run` prints only verdicts.
-When the coding agent judges a finding wrong, it settles it `rejected` with a note prefixed
-`agent:` so the rejection is visibly provisional; the report carries every such rejection
-with the exact `--ratify`/`--reopen` command to close it. The loop command itself never
-runs either flag — that decision is the human's alone.
-
 The journal lives at `<git common dir>/devgeta/review/<encoded-branch>.md` — the **common**
 git directory, so the same branch shares one journal across the main checkout and every
 linked worktree. Nothing there is ever committed or appears in a diff (which is also why no
@@ -1104,13 +987,9 @@ message that never claimed to carry a trailer. `--require` only asks
 whether a **declared** key is among what git actually parsed, which still
 catches a required trailer glued to the body with no blank-line separator
 (confirmed: git parses nothing for `Subject\nCo-authored-by: A <a@x.com>`),
-with no false positive on prose the caller never named. `smart-commit`
-(`configs/shared/commands/smart-commit.md`) is the shipped consumer: it
-writes its generated message to a scratch file, runs `commit-trailers
---require <keys it generated for this commit>` (no keys, and a successful
-no-op, when it generated none), then commits the validated bytes with
-`git commit -F <file>` — `-m`/`-m` cannot guarantee the committed bytes are
-the ones that were validated.
+with no false positive on prose the caller never named. A caller should
+commit the validated bytes with `git commit -F <file>` — `-m`/`-m` cannot
+guarantee the committed bytes are the ones that were validated.
 
 **Pull request subcommands** (via `gh`; data-returning ones are formatted by `jq`
 into compact, LLM-oriented output — `gh` fetches/acts, `jq` renders):
@@ -1300,285 +1179,6 @@ Passing it to `approve-pr` changes the route, not just the payload: `gh pr revie
 byte-for-byte. The common case therefore gains no new failure modes — it needs
 neither owner/repo resolution nor a payload file.
 
-**`/pr-review-loop` — the PR review tick.**
-`configs/shared/commands/pr-review-loop.md` is the agent-side driver that reviews one
-pull request — now, when a human runs it, or on watch when a repeat driver fires it —
-assembled from the three pieces above: `pr-review-state` for the trigger,
-`pr-review-target` for the immutable review target, and `review-run`'s explicit-range
-mode for the reviewers. It is the PR-side counterpart to `/review-loop` — the same
-cross-model reviewers, the same journal — with three deliberate differences: it reviews
-and posts, never fixes (that is the author's `/address-feedback`, or `/review-loop` on
-their side); it has no round cap of its own, because a "round" here is triggered from
-outside, so GitHub's re-request button is the round counter and `review.rounds` does not
-apply; and it runs every configured reviewer on every tick, never narrowing to just the
-reviewers still blocking the way `/review-loop`'s narrowing rounds do.
-
-**A tick is explicit or watch, told apart by a flag and not by inference**
-([ADR-0025](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)).
-An **explicit tick** is one a human typed: running the command is itself the request —
-addressed to this tool, by the person running it, about the PR they named — so it
-reviews unless the pull request is over. A **watch tick** is one a repeat driver fired,
-marked by `--on-request`, which only the driver's own handoff writes and no human ever
-types; it stays gated on GitHub's own state exactly as before
-([ADR-0022](decisions/ADR-0022-pr-review-trigger-is-a-polled-state-read.md)): presence
-in the PR's `reviewRequests` is its entire trigger, and submitting any review removes
-the user from it. Nothing is stored between ticks either way. That makes a watch tick
-safe to run twice, by hand or after a crash; an explicit tick is deliberately not
-idempotent instead — typing the command again is asking again, so it reviews and posts
-again.
-
-```
-/pr-review-loop [PR_NUMBER] [code|document|skill ...] [--reviewer <type>] [--note <text>] [--once] [--on-request]
-```
-
-`PR_NUMBER` is optional and resolves from the current branch's PR (`current-pr`) when
-omitted — pass it for the normal case of reviewing someone else's PR, whose branch is
-not the checkout. The PR does not have to be checked out at all: every step reads the
-fetched refs, so no branch is created, switched, stashed, or committed and the working
-tree is never the source. That matters more here than usual, because a tick can fire
-while the human is mid-edit in the same clone.
-
-The bare words are reviewer types, and more than one is allowed — `code document` is
-two reviewer runs, one per type, each covering every configured model internally. The
-three values are exactly `code`, `document`, and `skill`, the keys
-`review-run --reviewer` validates against, forwarded with no translation. **There is
-no `doc` shorthand:** an unknown type stops the tick before any state is read rather
-than being mapped onto a near-miss, because a friendlier second vocabulary here could
-drift from the one the runner validates against. Types omitted is normal, not an
-error — they are judged from the target's `files:` list. `--reviewer <type>` and
-`--reviewer=<type>` are a second spelling of those same three values, accepted because
-it is the flag the sibling `/review-loop` takes and therefore what a human moving
-between the two actually types; the spellings mix freely and mean exactly the same
-thing (`code --reviewer=document` is two runs), and nothing is translated on the way
-through, so `doc` is still an error however it is written. `--note <text>` is the
-human's own emphasis, forwarded verbatim to every reviewer run of the tick; it adds
-context and never narrows what gets reviewed, the same contract `/review-loop --note`
-has.
-
-`--once` reviews and starts no repeat driver — a single look, after which nothing
-watches the PR; that used to be what every bare invocation did. `--on-request` marks a
-tick a repeat driver fired; no human ever types it. It does exactly two things: it
-makes the tick request-gated, so it reviews only when GitHub says a review is asked of
-the user, and it stops that tick from starting a driver of its own
-([ADR-0025 §5](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)).
-
-**One invocation is one tick.** Repetition belongs to the driver, not to this file, but
-starting it is part of the job — and that happens at the **end** of the tick, after the
-outcome is known, not at the start. A repeat driver fires at its next scheduled match and
-never on creation, so handing off first would answer the human who just asked for a
-review with a state read now and the review a whole interval later
-([ADR-0025 §4](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)).
-An explicit tick whose outcome leaves the PR still worth watching starts the harness's own
-repeat driver on itself: on Claude Code,
-`/loop <interval> /pr-review-loop <n> [types] [--note <text>] --on-request`, carrying
-every argument verbatim plus `--on-request`, which marks every tick that driver fires as
-a watch tick; the interval is the one the human named, or the driver's default. Nothing
-is started on a terminal exit (approved, closed, or escalated) or when `--once` was
-passed — the watch is over, or was never asked for — and a watch tick never hands off at
-all, because the driver that fired it is already running and a handoff there would start
-a second one on every tick, each starting another. Where the harness has no repeat driver
-(OpenCode), the handoff is impossible rather than optional: the tick still reviews, and
-the report says plainly that nothing will run another. Either way the review runs at most
-once per tick and at most one review is posted per tick. Running the command **is** the
-authorization for the whole tick — the state read, the fetch, the reviewer runs, the
-posting step, and the handoff itself — so the tick never pauses to ask whether to post or
-whether to start the driver; a watch that stops for a go-ahead each interval costs
-exactly the attention it exists to save.
-
-The state read plus the tick's mode selects **exactly one** row of this table,
-evaluated top to bottom, first match wins — read `requested:` off the matched row
-rather than checking it separately, since that is what keeps the two request states
-apart: an author re-requesting a review on a PR this user already approved lands on
-the `requested: yes` row, never the standing-approval one below it.
-
-| `pr:`             | `requested:` | `my-review:`  | Explicit tick         | Watch tick (`--on-request`)                        |
-| ----------------- | ------------ | ------------- | --------------------- | -------------------------------------------------- |
-| `merged`/`closed` | any          | any           | **Terminal: closed.** | **Terminal: closed.**                              |
-| `draft`           | any          | any           | **Review**            | Wait — a formal review on unfinished work is noise |
-| `open`            | `yes`        | any           | **Review**            | **Review**                                         |
-| `open`            | `no`         | `approved`    | **Review**            | **Terminal: approved.**                            |
-| `open`            | `no`         | anything else | **Review**            | Wait — the ball is with the author                 |
-
-**An explicit tick reviews unless the pull request is over** — only `merged` and
-`closed` stop it, because the human typed the command and that is a request already,
-addressed to this tool about the PR they named; gating it on the GitHub field would
-make this file ask for a permission it was just handed. The two rows it overrides
-exist to protect the **author** from a review they did not ask to receive, and
-neither reason survives a human asking on purpose: a draft is exactly when an author
-wants a private read of unfinished work, and "review it again" is a normal ask after
-a rebase or a late doubt
-([ADR-0025 §2](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)).
-
-**A watch tick takes the rows as written, unchanged from before**
-([ADR-0025 §3](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)):
-draft waits, no request waits, a standing approval is terminal. That is what keeps an
-unattended watch from reposting — submitting any review removes the user from the
-request list, so the tick after a post reads `requested: no` and waits, and the
-author's re-request is the next trigger. Draft is still checked before the request
-state, so a requested draft waits on a watch tick even though it reviews on an
-explicit one. Most watch ticks land on a wait row, which is why they are cheap — no
-fetch, no reviewer, nothing posted.
-
-Two consequences of reading current state rather than a local log look like bugs and
-are neither. A colleague who answers the request first removes the user from the
-request list, so the next **watch** tick simply waits. And a dismissed approval
-reports `my-review: none`, so a watch keeps going on an approval GitHub already threw
-away instead of stopping on it.
-
-The **review** action, in order — nothing in it reads the working tree. (Numbered 1–7
-here, condensed from the command file's own steps 3–9: step 1 below is its step 3, and
-from step 4 below on the file's number is two higher — the aggregation is its step 6,
-the pre-post re-check its step 7.)
-
-1. `pr-review-target --pr <n>` gives the `base`/`head` SHAs, the `journal:` key, and
-   the `files:` list. Its failure ends the tick with that error; there is no fallback
-   to the refs already on disk and none to the checkout. Every later step reuses these
-   values rather than re-resolving a ref name itself, because a review takes minutes
-   and a name resolved twice inside that window can mean two different commits — step 5
-   resolves the head again deliberately, to catch exactly that. `pr-view` then supplies
-   the PR's purpose and linked ticket, read before any code.
-2. Types are fixed — the ones passed, else judged from `files:` (`code` for code,
-   `document` for docs and prose, `skill` for agent skills and commands; a mixed PR
-   takes the matching set). `files: (none)` — an empty range, or one entirely filtered
-   as noise — ends the tick as `nothing to review`: no reviewer, nothing posted, refs
-   kept. It is its own status word rather than a wait, because nothing is pending on
-   anyone; any review request on the PR stays pending, so the tick report is what tells
-   the human to look themselves.
-3. One `review-run` per type, in range mode:
-   `review-run --reviewer <type> --base <base> --head <head> --journal <key> --report-dir "$PR_REVIEW_SCRATCH"`
-   (plus `--note` when one was given), against a `scratch` directory allocated for
-   this tick and named distinctly from `/review-pr`'s own scratch variable, so the two
-   can never be confused with each other in the same session. The runs happen in the main session, not a subagent — the verdict lines
-   are the one thing a tick must never take second-hand — and each line's `report:`
-   field is parsed from the **right**, since a reason inside `ERROR(<reason>)` can
-   contain that same sequence.
-4. **Aggregate every run's verdict once,** across every type times every model. Any
-   single `ERROR(<reason>)` or `NO VERDICT` → **terminal: escalated**, naming the
-   failing run and its reason verbatim: never approve on a run that did not complete,
-   and never re-run it, because `review-run` already relaunched a reviewer that
-   produced no report once inside the same run. Every run `APPROVE` → the approval
-   path. Anything else → the review path. One blocking outcome from one run is enough;
-   the runs are independent opinions, not votes to tally.
-5. **Re-check the state and the head immediately before posting** — the reviewer runs
-   took minutes, and this check is mode-aware. An **explicit tick** only needs `pr:` to
-   still be neither `merged` nor `closed` — `requested: no` cannot cancel the post,
-   since on most explicit ticks it was never `yes`, and requiring it would run the
-   whole cross-model review and then post nothing. A **watch tick** still needs the
-   fresh state to land on the Review row (`open` and `requested: yes`), or the world
-   moved (merged, closed, went draft, or someone else answered) and posting now would
-   be duplicate or unsolicited; either way, failing takes the row the fresh state
-   selects for this tick's mode instead. In both modes, `pr-review-target`'s `head`
-   must still equal the sha the reviewers read, or the author pushed mid-review and an
-   approval would cover commits no reviewer saw. **Either condition failing means post
-   nothing**
-   ([ADR-0025 §6](decisions/ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md)).
-   On the watch side the request is still pending, so the next tick reviews the new
-   head from scratch — an author pushing repeatedly defers the review, which is the
-   correct outcome rather than starvation.
-6. **Post through the unchanged posting commands,** exactly one of them, exactly once:
-   `/approve-pr <n> --target <head>` when every run approved, otherwise
-   `/review-pr <n> --base <base> --target <head> --journal <key>` — both SHAs and the
-   journal key from step 1, so the posted review's diff is the same merge-base range
-   the reviewers read, and any finding `/review-pr` settles lands in this PR's journal
-   rather than the checked-out branch's. `/approve-pr` never reads the journal, so it
-   gets no key. Before `/review-pr` the tick reads every `report:` file and
-   `review-notes --branch <key> --rev <head>`, because the reports carry the full
-   cross-model findings (every severity, the strengths, the evidence) while the journal
-   carries only the blocking entries as one-liners — a review composed from the
-   one-liners alone throws most of what was found away.
-7. **The approval path has one outcome to read.** `/approve-pr` prints
-   `## PR #<num> — <approved | not approved>`. `approved` → **terminal: approved**, and
-   the loop stops there, including on the very first trigger; it never keeps listening
-   past an approval it posted. `not approved` → **one re-ask, approve-only** — this
-   branch is only reachable when every run said `APPROVE`, which is exactly the basis
-   `approve-pr.md` names for approving over live non-blocking comments, so the tick
-   invokes it once more stating that verdict and expecting an approval whose body is
-   `LGWC; <who/what remains>`, naming the leftover non-blocking comments — not a
-   re-review, and not a comment. Approved on the re-ask → terminal: approved; still not approved → **terminal:
-   escalated**, since it is standing on a blocker every run missed. **Never a third
-   ask** bounds the asking in either mode: nothing in the PR's state stops it, and on a
-   watch tick a decline leaves `requested:` at `yes`, so asking forever would post forever.
-   The review path has nothing to parse — posting any review removes the user from the
-   request list, so the next **watch** tick waits and the author's re-request is the next trigger.
-
-**Cleanup is two things with two different scopes,** and the first runs far more often
-than the second. The **scratch directory** goes on every completed exit of the review
-action — approved, escalated, the head moved or the state changed at step 5, a review
-posted, or a submit that failed (a failed submit prints the review into the tick report
-_before_ cleaning, so nothing is lost). The **fetched refs**
-(`refs/devgeta/pr/<n>/head` and `.../base`) go only on the three exits that are
-terminal for the loop — approved, closed, or escalated — including a terminal row
-reached straight from the table, where a previous tick may have left them. They cannot
-go earlier: every step from the target read onward reads them, and holding them is what
-keeps a concurrent `git gc` from collecting the commits under review. A non-terminal
-exit keeps them, because the next tick reviews the same PR. Neither cleanup can cover
-the process being killed mid-tick — a dead process runs no cleanup — and the two
-leftovers are bounded differently. Every tick allocates its **own** scratch directory
-(`os.MkdirTemp` under the scratch root), so ten killed ticks leave ten of them; what
-bounds those is age, not the PR — the stale-directory prune drops an allocation older
-than 24 hours, and it runs from both agents' `ForceConfigure`, meaning
-`dg configure --force` or a first install, never from a `SoftConfigure` that finds its
-marker file. The **refs** are keyed by PR number and reused every tick, so a killed
-tick leaks one pair (`git update-ref -d`) and the leftovers are bounded by the number
-of distinct PRs reviewed, not by ticks.
-
-The tick reports in at most three lines under one status word —
-`waiting | nothing to review | reviewed | approved | closed | escalated | head moved`
-— and on a terminal exit says the watch is over explicitly, because stopping the driver
-is the human's or the harness's action, not the command's. It never edits code, never
-resolves threads, never re-requests reviewers, and never settles a finding it did not go
-through `/review-pr` to settle.
-
-**One accepted risk, decided rather than overlooked.** The aggregation in step 4 reads
-reviewer verdicts only. Neither it nor `/approve-pr` reads the PR's journal, so an
-approval can be posted while findings from an earlier round are still open **at the same
-reviewed commit**: round 1 posts `REQUEST CHANGES` and opens findings, the author
-re-requests with no new commits, and reviewer non-determinism swings round 2 to
-all-`APPROVE`. The sibling `/review-loop` guards exactly this shape
-(`TestReviewLoopCleanApprovalRequiresNothingOpen`, from a real incident); this loop
-deliberately does not. That asymmetry was raised in review and **adjudicated by the
-maintainer (2026-08-07) as ship-as-is** — a known, documented risk, not a defect, and
-not to be "fixed" without asking again.
-
-**`--target` and `--base` on the posting commands.** `/review-pr` and `/approve-pr`
-gained the flags this loop needs, and **without them both files behave word-for-word as
-they always have** — the working tree is the source and nothing changes:
-
-```
-/review-pr  [PR_NUMBER] [--base <merge-base-sha>] [--target <head-sha>] [--journal <key>]
-/approve-pr [PR_NUMBER] [--target <head-sha>]
-```
-
-`--target` names the commit the review judges, for code that is not in the working
-tree. With it, four things change and nothing else: the sha is resolved first with
-`git rev-parse --verify <head-sha>^{commit}` and **a failure stops the command** —
-never a silent fall back to the working tree, which holds different code, so a finding
-would be checked against something the PR never contained; every read of repo content
-resolves at that commit — `git show <head-sha>:<path>` in both, plus
-`git log <head-sha> -- <path>` where `/review-pr` needs a path's own history — with the
-same checks, dedup rules, and verdict rules as before; the submit passes
-`--commit <head-sha>`, which is the attribution described above and not a lock; and,
-given `--journal <key>`, `/review-pr` appends `--branch <key> --rev <head-sha>` to
-every `review-notes`/`review-note` call it makes, settling included — without a key,
-a settle falls back to the checked-out branch's journal, where the same numeric id
-means an unrelated finding on an unrelated branch. `/approve-pr` never touches the
-journal, so it takes no `--journal` and needs none; a PR number must be in hand
-whenever `--target` is given, since an omitted one no longer infers from the checkout
-(that branch is not this PR) — it silently posts against whatever PR the checkout
-happens to have open, so `/approve-pr` stops and asks for one rather than guessing.
-
-`/review-pr` takes `--base` alongside `--target` because it reads a diff and a diff
-needs both ends — a merge base cannot be worked out from a head alone. **Given
-`--target` without `--base` it stops and says it needs the base sha**, guessing neither
-that nor the checked-out branch's diff. `--base` must be the PR's **merge base**, not
-the base branch's tip: once the base branch moves on after the PR opens, a tip-based
-diff renders everything merged since as if this PR reverted it, and those read as real
-findings against work the author never touched. `pr-review-target`'s `base:` line
-already prints a merge base. With `--target`, `review-scope` and `branch-diff` do not
-apply at all — both describe the checked-out branch — so the diff comes from
-`review-package <base-sha> <head-sha>`, which is also what says which lines can carry
-an inline comment. `/approve-pr` never reads a diff, so it takes `--target` alone.
-
 **Release management subcommand** (automates the CLAUDE.md §9 push-and-tag flow):
 
 | Subcommand | Args / Flags                                | Description                                                                   |
@@ -1656,8 +1256,8 @@ keeps under the granted scratch root is left alone regardless of age, and a
 `key-` prefixed directory is skipped entirely (never pruned by age at all,
 per ADR-0033) rather than reaped out from under a hand-off.
 
-This is what `/review-pr` and `/create-pr` allocate their scratch files
-under instead of `/tmp` — see
+It gives an agent a place for working files outside the project instead of
+`/tmp` — see
 [docs/apps/claude.md](apps/claude.md#permissions-model) for why `/tmp` would
 otherwise prompt on every run.
 

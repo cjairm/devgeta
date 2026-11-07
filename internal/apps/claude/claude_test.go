@@ -207,49 +207,6 @@ func TestForceInstall(t *testing.T) {
 	}
 }
 
-func TestForceConfigureParts(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	// Stand up an embedded shared source with a skill and a command.
-	src := t.TempDir()
-	for _, f := range []string{"skills/demo/SKILL.md", "commands/x.md"} {
-		p := filepath.Join(src, f)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = src
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	app := &Claude{}
-	if err := app.ForceConfigureParts([]string{"skills"}); err != nil {
-		t.Fatalf("ForceConfigureParts error: %v", err)
-	}
-
-	// Only the requested part is synced.
-	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "demo", "SKILL.md")); err != nil {
-		t.Fatalf("expected skills synced: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(claudeDir, "commands")); !os.IsNotExist(err) {
-		t.Error("commands should not be synced when only skills was requested")
-	}
-	// The --only path must not write general config.
-	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts should not write settings.json")
-	}
-}
-
 // TestEmbeddedSettingsTemplate renders the real embedded settings.json.tmpl in
 // both opt-in states and asserts the output is valid JSON — the constraint the
 // external consumer (Claude Code) imposes on the rendered file (CLAUDE.md §12).
@@ -535,21 +492,6 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Create shared dirs
-	sharedDir := filepath.Join(tc.AppDir, "configs", "shared")
-	for _, sub := range []string{"skills", "commands", "agents"} {
-		if err := os.MkdirAll(filepath.Join(sharedDir, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(
-		filepath.Join(sharedDir, baseapp.InstructionsFileName),
-		[]byte("# instructions fixture\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
 	// The output-budget runner's own source dir — agent-neutral, like its
 	// deploy destination, not configs/claude/ (see EnsureAgentRuntime).
 	devgetaConfigDir := filepath.Join(tc.AppDir, "configs", "devgeta")
@@ -581,10 +523,6 @@ func TestForceConfigure(t *testing.T) {
 	oldAppConfigsDevgeta := paths.Paths.App.Configs.Devgeta
 	t.Cleanup(func() { paths.Paths.App.Configs.Devgeta = oldAppConfigsDevgeta })
 	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
-
-	oldAppConfigsShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldAppConfigsShared })
-	paths.Paths.App.Configs.Shared = sharedDir
 
 	oldConfigClaude := paths.Paths.Config.Claude
 	t.Cleanup(func() { paths.Paths.Config.Claude = oldConfigClaude })
@@ -645,139 +583,16 @@ func TestForceConfigure(t *testing.T) {
 		t.Errorf("Expected lib/segments.sh: %v", err)
 	}
 
-	// shared dirs deployed
-	for _, dir := range []string{"skills", "commands", "agents"} {
-		if _, err := os.Stat(filepath.Join(userConfigDir, dir)); err != nil {
-			t.Errorf("Expected %s dir: %v", dir, err)
+	// devgeta ships nothing into the agent's context: no skills, commands,
+	// agents or instructions file, and it never touches the user's CLAUDE.md.
+	for _, entry := range []string{"skills", "commands", "agents", "DEVGETA.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(userConfigDir, entry)); !os.IsNotExist(err) {
+			t.Errorf("expected ForceConfigure not to create %s, stat err: %v", entry, err)
 		}
-	}
-
-	// devgeta's instructions deployed and imported from the user's CLAUDE.md
-	if _, err := os.Stat(filepath.Join(userConfigDir, baseapp.InstructionsFileName)); err != nil {
-		t.Errorf("Expected %s: %v", baseapp.InstructionsFileName, err)
-	}
-	userInstructions, err := os.ReadFile(filepath.Join(userConfigDir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("Expected CLAUDE.md: %v", err)
-	}
-	if !strings.Contains(string(userInstructions), instructionsImportLine) {
-		t.Errorf("expected CLAUDE.md to import %s, got: %q", instructionsImportLine, userInstructions)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	testutil.VerifyNoRealConfigChanges(t)
-}
-
-// isolateClaudeConfigDir points paths.Paths.Config.Claude at a fresh
-// directory for the duration of the test and returns that directory.
-func isolateClaudeConfigDir(t *testing.T) string {
-	t.Helper()
-	claudeConfigDir := t.TempDir()
-	previous := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = previous })
-	paths.Paths.Config.Claude = claudeConfigDir
-	return claudeConfigDir
-}
-
-func TestImportInstructionsOnce(t *testing.T) {
-	tests := []struct {
-		name             string
-		existingContent  *string
-		alreadyImported  bool
-		wantContent      string
-		wantImportedFlag bool
-	}{
-		{
-			name:             "creates CLAUDE.md with the import when there is none",
-			wantContent:      "\n@DEVGETA.md",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "appends the import and keeps the user's content",
-			existingContent:  stringPointer("# My rules\nBe brief."),
-			wantContent:      "# My rules\nBe brief.\n@DEVGETA.md",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "does not add a second import when the line is already there",
-			existingContent:  stringPointer("@OTHER.md\n@DEVGETA.md\n"),
-			wantContent:      "@OTHER.md\n@DEVGETA.md\n",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "does not re-add an import the user deleted",
-			existingContent:  stringPointer("# My rules\n"),
-			alreadyImported:  true,
-			wantContent:      "# My rules\n",
-			wantImportedFlag: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			claudeConfigDir := isolateClaudeConfigDir(t)
-			userInstructions := filepath.Join(claudeConfigDir, "CLAUDE.md")
-			if tt.existingContent != nil {
-				if err := os.WriteFile(userInstructions, []byte(*tt.existingContent), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			gc := &config.GlobalConfig{}
-			gc.Integrations.ClaudeInstructionsImported = tt.alreadyImported
-
-			if err := importInstructionsOnce(gc); err != nil {
-				t.Fatalf("importInstructionsOnce error: %v", err)
-			}
-
-			got, err := os.ReadFile(userInstructions)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tt.wantContent {
-				t.Errorf("CLAUDE.md = %q, want %q", got, tt.wantContent)
-			}
-			if gc.Integrations.ClaudeInstructionsImported != tt.wantImportedFlag {
-				t.Errorf(
-					"ClaudeInstructionsImported = %v, want %v",
-					gc.Integrations.ClaudeInstructionsImported,
-					tt.wantImportedFlag,
-				)
-			}
-		})
-	}
-}
-
-func stringPointer(s string) *string { return &s }
-
-func TestSoftConfigure_AlreadyConfigured(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	testutil.IsolateXDGDirs(t)
-
-	userConfigDir := filepath.Join(tc.ConfigDir, "..", ".claude")
-	oldConfigClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldConfigClaude })
-	paths.Paths.Config.Claude = userConfigDir
-
-	// Pre-create marker file so SoftConfigure skips
-	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(userConfigDir, "settings.json"),
-		[]byte(`{}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	app := &Claude{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-
-	if err := app.SoftConfigure(); err != nil {
-		t.Fatalf("SoftConfigure error: %v", err)
-	}
-
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
 func TestExecuteCommand(t *testing.T) {

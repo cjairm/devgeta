@@ -136,7 +136,6 @@ const (
 	Claude             = "claude"
 	OpenCode           = "opencode"
 	Pi                 = "pi"
-	Shared             = "shared"
 	OpenSSL            = "openssl"
 	PkgConfig          = "pkg-config"
 	Powerlevel10k      = "powerlevel10k"

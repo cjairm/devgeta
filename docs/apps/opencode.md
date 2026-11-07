@@ -5,7 +5,7 @@ terminal-based AI code editor, and deploys a curated config to
 `~/.config/opencode/`.
 
 - **Module:** `internal/apps/opencode/`
-- **Config source:** `configs/opencode/` (+ shared content in `configs/shared/`)
+- **Config source:** `configs/opencode/`
 - **Install:** opencode's official script (`https://opencode.ai/install`)
 
 ## Install channel
@@ -59,15 +59,6 @@ ls ~/.config/opencode/
 ```
 
 ---
-
-## Response style and coding defaults
-
-`dg configure opencode` deploys `~/.config/opencode/DEVGETA.md`, an identical
-copy of the file Claude Code gets (see [claude.md](claude.md#response-style-and-coding-defaults-devgetamd)),
-and lists it under `instructions` in `opencode.json`. OpenCode loads it **in
-addition to** your own `~/.config/opencode/AGENTS.md`, which devgeta never
-touches. Put your own rules in `AGENTS.md`. See
-[ADR-0058](../decisions/ADR-0058-devgeta-instructions-live-in-their-own-file.md).
 
 ## Provider
 
@@ -227,6 +218,6 @@ dg configure opencode --force
 ```
 
 `--force` clears only what devgeta generates (`opencode.json`, `themes/`,
-`plugin/`, `skills/`, `commands/`, `agents/`). Your `tui.json`, your
+`plugin/`). Your `tui.json`, your `skills/`, `commands/` and `agents/`, your
 `node_modules`, the `plugins/` directory other tools write to, and anything else in there are left
 alone. See [ADR-0049](../decisions/ADR-0049-opencode-plugins-ship-with-a-lockfile.md).

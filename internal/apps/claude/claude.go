@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
@@ -51,9 +50,8 @@ type settingsTemplateData struct {
 }
 
 var (
-	_ apps.App                 = (*Claude)(nil)
-	_ apps.SelectiveConfigurer = (*Claude)(nil)
-	_ apps.ThemedConfigurer    = (*Claude)(nil)
+	_ apps.App              = (*Claude)(nil)
+	_ apps.ThemedConfigurer = (*Claude)(nil)
 )
 
 type Claude struct {
@@ -224,20 +222,6 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to copy claude hook lib: %w", err)
 	}
 
-	if err := baseapp.SyncSharedParts(
-		paths.Paths.Config.Claude,
-		baseapp.SharedConfigParts,
-	); err != nil {
-		return fmt.Errorf("failed to copy claude shared config: %w", err)
-	}
-
-	if _, err := baseapp.DeployInstructions(paths.Paths.Config.Claude); err != nil {
-		return fmt.Errorf("failed to deploy claude instructions: %w", err)
-	}
-	if err := importInstructionsOnce(gc); err != nil {
-		return err
-	}
-
 	if err := baseapp.MaintainScratchDir(); err != nil {
 		return fmt.Errorf("failed to maintain scratch dir: %w", err)
 	}
@@ -266,40 +250,6 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 	return nil
 }
 
-// instructionsImportLine is the line that makes Claude Code load devgeta's
-// instructions file from the user's own CLAUDE.md.
-const instructionsImportLine = "@" + baseapp.InstructionsFileName
-
-// importInstructionsOnce adds instructionsImportLine to ~/.claude/CLAUDE.md
-// the first time claude is configured, and never again after that: the
-// CLAUDE.md file belongs to the user, so if they delete the line, it stays
-// deleted (ADR-0058). The caller saves gc.
-func importInstructionsOnce(gc *config.GlobalConfig) error {
-	if gc.Integrations.ClaudeInstructionsImported {
-		return nil
-	}
-	userInstructions := filepath.Join(paths.Paths.Config.Claude, "CLAUDE.md")
-	alreadyImported := false
-	if files.FileAlreadyExist(userInstructions) {
-		found, err := files.ContentExistsInFile(userInstructions, instructionsImportLine)
-		if err != nil {
-			return fmt.Errorf("failed to read %s: %w", userInstructions, err)
-		}
-		alreadyImported = found
-	}
-	if !alreadyImported {
-		if err := files.AddLineToFile(instructionsImportLine, userInstructions); err != nil {
-			return fmt.Errorf(
-				"failed to add the devgeta instructions import to %s: %w",
-				userInstructions,
-				err,
-			)
-		}
-	}
-	gc.Integrations.ClaudeInstructionsImported = true
-	return nil
-}
-
 func (c *Claude) SoftConfigure() error {
 	markerFile := filepath.Join(paths.Paths.Config.Claude, "settings.json")
 	if files.FileAlreadyExist(markerFile) {
@@ -323,22 +273,6 @@ func (c *Claude) SoftConfigure() error {
 		return nil
 	}
 	return c.ForceConfigure()
-}
-
-// ConfigurableParts lists the parts --only can refresh: the shared config
-// subtrees.
-func (c *Claude) ConfigurableParts() []string {
-	return slices.Clone(baseapp.SharedConfigParts)
-}
-
-// ForceConfigureParts refreshes only the named shared subtrees (skills,
-// commands, agents) from the embedded configs, leaving settings.json, the
-// scripts, and themes untouched. This is the `--force --only=...` path.
-func (c *Claude) ForceConfigureParts(parts []string) error {
-	if err := os.MkdirAll(paths.Paths.Config.Claude, 0o755); err != nil {
-		return err
-	}
-	return baseapp.SyncSharedParts(paths.Paths.Config.Claude, parts)
 }
 
 func (c *Claude) ExecuteCommand(args ...string) error {

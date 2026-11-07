@@ -6,7 +6,7 @@ import (
 )
 
 func TestContextReport_RendersBothAgents(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	out, err := tm.ContextReport()
 	if err != nil {
 		t.Fatalf("ContextReport: %v", err)

@@ -216,7 +216,6 @@ var Paths = struct {
 			Neovim    string
 			OpenCode  string
 			Pi        string
-			Shared    string
 			Terminal  string
 			Templates string
 			Themes    string
@@ -289,7 +288,6 @@ var Paths = struct {
 			Neovim    string
 			OpenCode  string
 			Pi        string
-			Shared    string
 			Terminal  string
 			Templates string
 			Themes    string
@@ -316,7 +314,6 @@ var Paths = struct {
 			Neovim    string
 			OpenCode  string
 			Pi        string
-			Shared    string
 			Terminal  string
 			Templates string
 			Themes    string
@@ -334,7 +331,6 @@ var Paths = struct {
 			Neovim:    GetAppDir(constants.App.Dir.Configs, constants.Neovim),
 			OpenCode:  GetAppDir(constants.App.Dir.Configs, constants.OpenCode),
 			Pi:        GetAppDir(constants.App.Dir.Configs, constants.Pi),
-			Shared:    GetAppDir(constants.App.Dir.Configs, constants.Shared),
 			Terminal:  GetAppDir(constants.App.Dir.Configs, constants.Terminal),
 			Templates: GetAppDir(constants.App.Dir.Configs, constants.Templates),
 			Themes:    GetAppDir(constants.App.Dir.Configs, constants.Themes),

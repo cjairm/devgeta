@@ -35,7 +35,7 @@ recorded here so the names are not revived by mistake.
 - ❌ **`dg reinstall`** — Force reinstall was never built as its own verb. Re-running
   `dg install` is idempotent, and per-app repair belongs to the `dg list` dashboard above.
 - ❌ **`dg re-configure`** — Shipped instead as a flag: `dg configure <app> --force`,
-  with `--only` to re-render just part of an app's config.
+  re-rendering the app's whole config.
 
 ### Customization
 

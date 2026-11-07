@@ -4,7 +4,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,7 +11,6 @@ import (
 	"testing"
 
 	gitapp "github.com/cjairm/devgeta/internal/apps/git"
-	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/reviewjournal"
 	"github.com/cjairm/devgeta/internal/tooling/worktree"
@@ -21,7 +19,7 @@ import (
 // newJournalSetup is newRepoSetup on the branch these journal tests use.
 func newJournalSetup(t *testing.T) (*TaskManager, string) {
 	t.Helper()
-	tm, root, _ := newRepoSetup(t, "feat")
+	tm, root := newRepoSetup(t, "feat")
 	return tm, root
 }
 
@@ -34,15 +32,7 @@ func newJournalSetup(t *testing.T) (*TaskManager, string) {
 // branch is what `git branch --show-current` reports; pass "" for a detached
 // HEAD, which prints nothing and exits 0. The default branch always resolves
 // to "main".
-//
-// The third return is the mock base the OpenCode wrapper runs through, so a
-// review-run test can script `opencode run`'s output and inspect the exact
-// command line and environment the wrapper assembled. tm.Base is a separate
-// mock that nothing under test should ever touch.
-func newRepoSetup(
-	t *testing.T,
-	branch string,
-) (*TaskManager, string, *commands.MockBaseCommand) {
+func newRepoSetup(t *testing.T, branch string) (*TaskManager, string) {
 	t.Helper()
 
 	// The snapshot pointer is inherited from whatever process runs the suite,
@@ -103,19 +93,11 @@ func newRepoSetup(
 		return "", "", nil
 	}
 
-	openCodeBase := commands.NewMockBaseCommand()
 	tm := &TaskManager{
-		Git:      &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
-		Base:     commands.NewMockBaseCommand(),
-		OpenCode: &opencode.OpenCode{Cmd: commands.NewMockCommand(), Base: openCodeBase},
-		// ReviewRun's progress lines default to os.Stderr (see
-		// TaskManager.progressWriter), which would otherwise spray every
-		// test built from this setup across the real test-run stderr. Only
-		// the handful of tests that actually assert on progress content
-		// override this after the call.
-		ProgressOut: io.Discard,
+		Git:  &gitapp.Git{Cmd: commands.NewMockCommand(), Base: gitBase},
+		Base: commands.NewMockBaseCommand(),
 	}
-	return tm, root, openCodeBase
+	return tm, root
 }
 
 // withRevContents answers the git calls revision mode makes from an in-test

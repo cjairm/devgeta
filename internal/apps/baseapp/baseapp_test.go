@@ -11,7 +11,6 @@ import (
 	"github.com/cjairm/devgeta/internal/apps"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
-	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 func init() { testutil.InitLogger() }
@@ -177,46 +176,6 @@ func writeFileTree(t *testing.T, path, content string) {
 	}
 }
 
-func TestSyncSharedParts(t *testing.T) {
-	src := t.TempDir()
-	dst := t.TempDir()
-
-	// Embedded shared source with two parts.
-	writeFileTree(t, filepath.Join(src, "skills", "demo", "SKILL.md"), "new skill")
-	writeFileTree(t, filepath.Join(src, "commands", "c.md"), "a command")
-
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = src
-
-	// Destination already has a stale skill and a hand-edited general config file.
-	writeFileTree(t, filepath.Join(dst, "skills", "stale", "SKILL.md"), "old")
-	writeFileTree(t, filepath.Join(dst, "settings.json"), "user edits")
-
-	if err := SyncSharedParts(dst, []string{"skills"}); err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	// New skill is synced in.
-	if got, err := os.ReadFile(filepath.Join(dst, "skills", "demo", "SKILL.md")); err != nil ||
-		string(got) != "new skill" {
-		t.Fatalf("skill not synced: got %q err %v", got, err)
-	}
-	// Stale skill is removed — full mirror, not a merge.
-	if _, err := os.Stat(filepath.Join(dst, "skills", "stale")); !os.IsNotExist(err) {
-		t.Fatal("expected stale skill to be removed")
-	}
-	// General config outside the selected parts is untouched.
-	if got, err := os.ReadFile(filepath.Join(dst, "settings.json")); err != nil ||
-		string(got) != "user edits" {
-		t.Fatalf("settings.json should be untouched: got %q err %v", got, err)
-	}
-	// An unselected part is never created.
-	if _, err := os.Stat(filepath.Join(dst, "commands")); !os.IsNotExist(err) {
-		t.Fatal("unselected part 'commands' should not be synced")
-	}
-}
-
 func TestMaintainScratchDir(t *testing.T) {
 	t.Run("creates the scratch dir when absent", func(t *testing.T) {
 		home := t.TempDir()
@@ -378,35 +337,4 @@ func TestMaintainScratchDir(t *testing.T) {
 			t.Errorf("expected a stray file (not a directory) to survive pruning, stat err=%v", err)
 		}
 	})
-}
-
-func TestDeployInstructions_CopiesSharedFileAndOverwritesOldCopy(t *testing.T) {
-	sharedDir := t.TempDir()
-	previousShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = previousShared })
-	paths.Paths.App.Configs.Shared = sharedDir
-
-	const shippedContent = "# shipped instructions\n"
-	if err := os.WriteFile(filepath.Join(sharedDir, InstructionsFileName), []byte(shippedContent), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	agentConfigDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(agentConfigDir, InstructionsFileName), []byte("outdated"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	deployedPath, err := DeployInstructions(agentConfigDir)
-	if err != nil {
-		t.Fatalf("DeployInstructions error: %v", err)
-	}
-	if want := filepath.Join(agentConfigDir, InstructionsFileName); deployedPath != want {
-		t.Errorf("deployed path = %q, want %q", deployedPath, want)
-	}
-	got, err := os.ReadFile(deployedPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != shippedContent {
-		t.Errorf("deployed content = %q, want %q", got, shippedContent)
-	}
 }

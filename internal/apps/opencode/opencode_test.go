@@ -10,10 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
-	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
@@ -112,67 +110,6 @@ func writeOpenCodeThemeTemplateFixture(t *testing.T, appConfigDir, content strin
 	); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestForceConfigureParts(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	src := t.TempDir()
-	for _, f := range []string{"skills/demo/SKILL.md", "commands/x.md"} {
-		p := filepath.Join(src, f)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = src
-
-	ocDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOC := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOC })
-	paths.Paths.Config.OpenCode = ocDir
-
-	app := &OpenCode{}
-	if err := app.ForceConfigureParts([]string{"skills"}); err != nil {
-		t.Fatalf("ForceConfigureParts error: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(ocDir, "skills", "demo", "SKILL.md")); err != nil {
-		t.Fatalf("expected skills synced: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(ocDir, "commands")); !os.IsNotExist(err) {
-		t.Error("commands should not be synced when only skills was requested")
-	}
-	// The --only path must not regenerate opencode.json.
-	if _, err := os.Stat(filepath.Join(ocDir, "opencode.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts should not write opencode.json")
-	}
-}
-
-func setupSharedDir(t *testing.T, baseDir string) {
-	t.Helper()
-	sharedDir := filepath.Join(baseDir, "configs", "shared")
-	for _, sub := range []string{"skills", "commands", "agents"} {
-		if err := os.MkdirAll(filepath.Join(sharedDir, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(
-		filepath.Join(sharedDir, baseapp.InstructionsFileName),
-		[]byte("# instructions fixture\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = sharedDir
 }
 
 // setupOutputBudgetRunnerSource stubs the runner source
@@ -583,7 +520,6 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -686,7 +622,6 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
@@ -747,7 +682,6 @@ func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -887,7 +821,6 @@ func TestSoftConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
@@ -960,7 +893,6 @@ shell:
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
 		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
@@ -1033,138 +965,6 @@ func TestDefaultThemeName(t *testing.T) {
 	}
 }
 
-func TestRun(t *testing.T) {
-	t.Run("WithModelAndEnv", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
-
-		out, err := app.Run(RunOptions{
-			Agent:   "code-reviewer",
-			Model:   "openai/gpt-5.2",
-			Prompt:  "review this branch",
-			Dir:     "/tmp/some-worktree",
-			Timeout: 30 * time.Minute,
-			Env:     []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"},
-		})
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-		if out.Stdout != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
-		}
-
-		lastCall := mockApp.Base.GetLastExecCommandCall()
-		if lastCall == nil {
-			t.Fatal("expected ExecCommand to be called")
-		}
-		if lastCall.Command != constants.OpenCode {
-			t.Fatalf("expected command %q, got %q", constants.OpenCode, lastCall.Command)
-		}
-		wantArgs := []string{
-			"run", "--agent", "code-reviewer", "--format", "json",
-			"-m", "openai/gpt-5.2", "review this branch",
-		}
-		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
-			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
-		}
-		if lastCall.Dir != "/tmp/some-worktree" {
-			t.Fatalf("expected Dir to land on params, got %q", lastCall.Dir)
-		}
-		if lastCall.Timeout != 30*time.Minute {
-			t.Fatalf("expected Timeout to land on params, got %v", lastCall.Timeout)
-		}
-		wantEnv := []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"}
-		if !reflect.DeepEqual(lastCall.Env, wantEnv) {
-			t.Fatalf("expected Env %v, got %v", wantEnv, lastCall.Env)
-		}
-		// A headless run must never be handed a terminal: a prompt it decided
-		// to raise could only wedge the caller until the timeout. It is also
-		// what lets the executor put the run in its own process group, so the
-		// timeout kills the whole tree the agent spawns instead of just the
-		// `opencode` process.
-		if !lastCall.NoStdin {
-			t.Fatal("expected a headless run to disconnect stdin")
-		}
-
-		// Exactly one call, and it went through the mock — never a real
-		// binary invocation.
-		if mockApp.Base.GetExecCommandCallCount() != 1 {
-			t.Fatalf(
-				"expected exactly 1 ExecCommand call, got %d",
-				mockApp.Base.GetExecCommandCallCount(),
-			)
-		}
-	})
-
-	t.Run("WithoutModelWithoutEnv", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
-
-		out, err := app.Run(RunOptions{
-			Agent:   "code-reviewer",
-			Prompt:  "review this branch",
-			Dir:     "/tmp/some-worktree",
-			Timeout: 30 * time.Minute,
-		})
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-		if out.Stdout != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
-		}
-
-		lastCall := mockApp.Base.GetLastExecCommandCall()
-		if lastCall == nil {
-			t.Fatal("expected ExecCommand to be called")
-		}
-		// No -m flag when Model is empty.
-		wantArgs := []string{
-			"run", "--agent", "code-reviewer", "--format", "json", "review this branch",
-		}
-		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
-			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
-		}
-		// Env left nil (not empty-non-nil) so ExecCommand's overlay stays
-		// off and the child keeps today's full inheritance — see
-		// CommandParams.Env's doc comment.
-		if len(lastCall.Env) != 0 {
-			t.Fatalf("expected no Env overlay, got %v", lastCall.Env)
-		}
-
-		if mockApp.Base.GetExecCommandCallCount() != 1 {
-			t.Fatalf(
-				"expected exactly 1 ExecCommand call, got %d",
-				mockApp.Base.GetExecCommandCallCount(),
-			)
-		}
-	})
-
-	t.Run("PropagatesErrorButStillReturnsStdout", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(
-			`{"type":"error"}`,
-			"stderr noise",
-			fmt.Errorf("exit status 1"),
-		)
-
-		out, err := app.Run(RunOptions{Agent: "code-reviewer", Prompt: "review"})
-		if err == nil {
-			t.Fatal("expected Run to return an error")
-		}
-		if !strings.Contains(err.Error(), "opencode run failed") {
-			t.Fatalf("expected wrapped error, got: %v", err)
-		}
-		// Partial/diagnostic output must still be handed back to the caller
-		// even on failure — a nonzero exit can still carry an error event.
-		if out.Stdout != `{"type":"error"}` {
-			t.Fatalf("expected stdout on error path, got %q", out.Stdout)
-		}
-	})
-}
-
 // TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime is the
 // cycle-level case Step 5's design exists to protect against: on a machine
 // with no Claude config at all, `dg configure opencode --force` alone must
@@ -1202,7 +1002,6 @@ func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testi
 		t.Fatal(err)
 	}
 
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 	setupThemeFixture(t, "#282828")
 
@@ -1385,7 +1184,6 @@ func TestForceConfigure_LocksBothOpenCodeDirs(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -1451,7 +1249,6 @@ func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -1540,7 +1337,6 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -1597,7 +1393,6 @@ func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
 	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -1659,64 +1454,4 @@ func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
 	if strings.Contains(string(regenerated), "stale") {
 		t.Error("opencode.json was preserved but devgeta generates it — it must be regenerated")
 	}
-}
-
-// TestForceConfigure_PointsInstructionsAtDeployedFile checks that OpenCode
-// loads devgeta's instructions: the file is deployed into the config dir and
-// opencode.json lists that exact path under "instructions" (ADR-0058).
-func TestForceConfigure_PointsInstructionsAtDeployedFile(t *testing.T) {
-	testutil.IsolateXDGDirs(t)
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
-	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"instructions": [{{ .InstructionsPath }}]}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
-	setupThemeFixture(t, "#ebdbb2")
-
-	oldAppConfigs := paths.Paths.App.Configs.OpenCode
-	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
-	paths.Paths.App.Configs.OpenCode = appConfigDir
-
-	oldConfigOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
-	paths.Paths.Config.OpenCode = userConfigDir
-	isolateOpenCodeInstallPrefix(t)
-
-	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-	if err := app.ForceConfigure(); err != nil {
-		t.Fatalf("ForceConfigure error: %v", err)
-	}
-
-	rendered, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
-	if err != nil {
-		t.Fatalf("opencode.json missing: %v", err)
-	}
-	var cfg struct {
-		Instructions []string `json:"instructions"`
-	}
-	if err := json.Unmarshal(rendered, &cfg); err != nil {
-		t.Fatalf("rendered opencode.json is not valid JSON: %v\n%s", err, rendered)
-	}
-	wantPath := filepath.Join(userConfigDir, baseapp.InstructionsFileName)
-	if len(cfg.Instructions) != 1 || cfg.Instructions[0] != wantPath {
-		t.Fatalf("instructions = %v, want [%q]", cfg.Instructions, wantPath)
-	}
-	if _, err := os.Stat(wantPath); err != nil {
-		t.Errorf("instructions file not deployed: %v", err)
-	}
-
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }

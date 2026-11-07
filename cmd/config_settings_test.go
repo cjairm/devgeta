@@ -24,11 +24,6 @@ var knownStateFields = map[string]string{
 		"written by internal/tooling/worktree on every `dg ws` create - not a " +
 		"user preference (cycle doc docs/plans/cycles/2026-07-29-dg-config-command.md " +
 		"§4 Explicitly Out of Scope: \"Editing state\").",
-	"integrations.claude_instructions_imported": "a deploy record, not a " +
-		"preference: `dg configure claude` sets it the first time it adds the " +
-		"@DEVGETA.md import to ~/.claude/CLAUDE.md, so a user who deletes that " +
-		"line does not get it back (ADR-0058). Opting out means deleting the " +
-		"line, not flipping this flag.",
 }
 
 // settingsBearingStructs pairs each struct this completeness test reflects
@@ -42,7 +37,6 @@ var settingsBearingStructs = []struct {
 }{
 	{"worktree", config.WorktreeConfig{}},
 	{"integrations", config.IntegrationsConfig{}},
-	{"review", config.ReviewConfig{}},
 }
 
 // yamlKeyFromTag extracts the field name a yaml tag serializes as, stripping
@@ -181,7 +175,6 @@ func TestSettingsRegistry_EveryEntryHasADescription(t *testing.T) {
 // silent addition.
 var settingsWithEmptyDefaultAllowed = map[string]bool{
 	"worktree.search_paths": true,
-	"review.reviewers":      true,
 }
 
 // TestSettingsRegistry_EveryDefaultIsNonEmpty guards against a Default that

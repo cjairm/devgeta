@@ -14,8 +14,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
-	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
@@ -29,9 +27,8 @@ import (
 )
 
 var (
-	_ apps.App                 = (*OpenCode)(nil)
-	_ apps.SelectiveConfigurer = (*OpenCode)(nil)
-	_ apps.ThemedConfigurer    = (*OpenCode)(nil)
+	_ apps.App              = (*OpenCode)(nil)
+	_ apps.ThemedConfigurer = (*OpenCode)(nil)
 )
 
 const DEFAULT_THEME_NAME = "default"
@@ -198,35 +195,15 @@ func (o *OpenCode) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to encode scratch dir: %w", err)
 	}
 
-	instructionsPath, err := baseapp.DeployInstructions(paths.Paths.Config.OpenCode)
-	if err != nil {
-		return fmt.Errorf("failed to deploy opencode instructions: %w", err)
-	}
-	// JSON-encoded for the same reason as ScratchDirGlob: the path is derived
-	// from XDG_CONFIG_HOME and the template does no escaping of its own.
-	instructionsPathJSON, err := json.Marshal(instructionsPath)
-	if err != nil {
-		return fmt.Errorf("failed to encode instructions path: %w", err)
-	}
-
 	if err := files.GenerateFromTemplate(tmplPath, configFilePath, map[string]string{
-		"Theme":            def.Name,
-		"ScratchDirGlob":   string(scratchDirGlobJSON),
-		"InstructionsPath": string(instructionsPathJSON),
+		"Theme":          def.Name,
+		"ScratchDirGlob": string(scratchDirGlobJSON),
 	}); err != nil {
 		return fmt.Errorf("failed to generate opencode configuration: %w", err)
 	}
-	if err := baseapp.SyncSharedParts(
-		paths.Paths.Config.OpenCode,
-		baseapp.SharedConfigParts,
-	); err != nil {
-		return fmt.Errorf("failed to copy opencode shared config: %w", err)
-	}
 
 	// The task-redirect plugin (and any future local OpenCode plugins) ships
-	// from configs/opencode/plugin/, not configs/shared/ — plugins are an
-	// OpenCode-specific mechanism, outside SharedConfigParts' skills/commands/
-	// agents sync surface. OpenCode loads plugin files from
+	// from configs/opencode/plugin/. OpenCode loads plugin files from
 	// ~/.config/opencode/plugin/ (or the singular/plural "plugins" variant;
 	// see task-redirect.js's header comment).
 	// CopyDir creates its destination directory itself (see pkg/files.CopyDir),
@@ -299,23 +276,6 @@ func (o *OpenCode) SoftConfigure() error {
 	return o.ForceConfigure()
 }
 
-// ConfigurableParts lists the parts --only can refresh: the shared config
-// subtrees.
-func (o *OpenCode) ConfigurableParts() []string {
-	return slices.Clone(baseapp.SharedConfigParts)
-}
-
-// ForceConfigureParts refreshes only the named shared subtrees (skills,
-// commands, agents) from the embedded configs. Unlike full ForceConfigure
-// this does not remove or regenerate opencode.json or themes, so a
-// hand-edited config survives. This is the `--force --only=...` path.
-func (o *OpenCode) ForceConfigureParts(parts []string) error {
-	if err := os.MkdirAll(paths.Paths.Config.OpenCode, 0o755); err != nil {
-		return err
-	}
-	return baseapp.SyncSharedParts(paths.Paths.Config.OpenCode, parts)
-}
-
 func (o *OpenCode) ExecuteCommand(args ...string) error {
 	params := cmd.CommandParams{
 		Command: constants.OpenCode,
@@ -326,110 +286,6 @@ func (o *OpenCode) ExecuteCommand(args ...string) error {
 		return fmt.Errorf("opencode command execution failed: %w", err)
 	}
 	return nil
-}
-
-// RunOptions configures a headless `opencode run` invocation (see (*OpenCode).Run).
-type RunOptions struct {
-	// Agent selects the OpenCode agent to run as (`--agent <name>`), e.g. a
-	// reviewer agent's name.
-	Agent string
-	// Model, when non-empty, pins the run to a specific `provider/model`
-	// (`-m provider/model`). Empty lets OpenCode use its configured default.
-	Model string
-	// Prompt is the run's message argument.
-	Prompt string
-	// Dir sets the command's working directory (e.g. a worktree path), so the
-	// agent operates against a specific checkout rather than devgeta's own cwd.
-	//
-	// Every production caller today (`dg task review-run`) deliberately leaves
-	// it empty: a review is always of the checkout the command was run from,
-	// so inheriting the process's cwd is the correct behavior there, not an
-	// oversight. The field stays because the working directory is part of this
-	// wrapper's contract — a caller that runs an agent against a different
-	// checkout must be able to say so here rather than reach around the
-	// wrapper (CLAUDE.md §6).
-	Dir string
-	// Timeout bounds the run. Headless review runs can take a long time, so
-	// callers are expected to pass a generous value rather than leave this
-	// zero (unbounded).
-	Timeout time.Duration
-	// Env adds child-only environment variables on top of devgeta's own
-	// environment (e.g. a review-round snapshot pointer) — see
-	// CommandParams.Env for the overlay semantics.
-	Env []string
-	// OnStdoutLine, when non-nil, receives each stdout line as the run
-	// produces it, so a caller can report live progress during a run that
-	// takes minutes. The lines are the raw `--format json` event stream:
-	// interpreting them stays with the caller for the same reason reading the
-	// returned stdout does (see Run). Passed straight through to
-	// CommandParams.OnStdoutLine — its concurrency note applies here too.
-	OnStdoutLine func(string)
-}
-
-// RunResult is everything one headless `opencode run` produced.
-//
-// Stderr is carried alongside Stdout rather than discarded because it is
-// sometimes the ONLY record of why a run produced nothing. An auto-rejected
-// permission request — "! permission requested: external_directory (...);
-// auto-rejecting", which is what a headless run does with any permission it
-// cannot ask a human about — is written there and never appears as an event.
-// A caller reading only the event stream therefore sees a run that exited 0,
-// wrote no report, and explained itself nowhere: exactly the silent NO VERDICT
-// this field exists to make impossible.
-//
-// The text is raw, including the ANSI color escapes OpenCode wraps its
-// warnings in. Stripping them belongs to whoever renders the text, not here —
-// this wrapper's job is to hand back what OpenCode actually wrote.
-type RunResult struct {
-	// Stdout is the raw `--format json` NDJSON event stream.
-	Stdout string
-	// Stderr is everything OpenCode wrote outside that stream.
-	Stderr string
-}
-
-// Run executes `opencode run` headlessly and returns what it produced.
-//
-// This is the only place in devgeta that assembles the `opencode run` command
-// line (CLAUDE.md §6): every caller that needs a headless agent run — e.g.
-// `dg task review-run` spawning reviewer agents — goes through here rather
-// than building its own CommandParams. `--format json` is always requested:
-// a headless run's whole point is to be machine-read, and every caller of
-// this method needs that, so it is not a caller-chosen option. Interpreting
-// the resulting NDJSON events and the `**Status:**` verdict line stays out of
-// this method and belongs to the caller. Unlike ExecuteCommand, which
-// discards output, Run returns what the child wrote because the caller's whole
-// job is to read what the agent produced — the result is returned even when
-// err is non-nil, since a non-zero exit can still carry a partial or
-// diagnostic event stream worth inspecting.
-func (o *OpenCode) Run(opts RunOptions) (RunResult, error) {
-	args := []string{"run", "--agent", opts.Agent, "--format", "json"}
-	if opts.Model != "" {
-		args = append(args, "-m", opts.Model)
-	}
-	args = append(args, opts.Prompt)
-
-	params := cmd.CommandParams{
-		Command: constants.OpenCode,
-		Args:    args,
-		Dir:     opts.Dir,
-		Timeout: opts.Timeout,
-		Env:     opts.Env,
-		// Headless means headless: nothing is watching a terminal for this,
-		// so a prompt the agent CLI decides to raise could only wedge the
-		// caller until its timeout instead of failing. Disconnecting stdin is
-		// also what lets the executor put the run in its own process group,
-		// so the timeout kills the whole tree the agent spawns rather than
-		// just the `opencode` process — this is the largest process tree
-		// devgeta creates and it runs on a 30-minute deadline.
-		NoStdin:      true,
-		OnStdoutLine: opts.OnStdoutLine,
-	}
-	stdout, stderr, err := o.Base.ExecCommand(params)
-	result := RunResult{Stdout: stdout, Stderr: stderr}
-	if err != nil {
-		return result, fmt.Errorf("opencode run failed: %w", err)
-	}
-	return result, nil
 }
 
 func (o *OpenCode) Update() error {
@@ -447,10 +303,7 @@ var pluginLockfiles = []string{"package-lock.json", "bun.lock", "bun.lockb"}
 // tools install their own plugins.
 //
 // Keep this in step with what ForceConfigureTheme writes.
-var devgetaManagedEntries = append(
-	[]string{"opencode.json", "themes", "plugin", baseapp.InstructionsFileName},
-	baseapp.SharedConfigParts...,
-)
+var devgetaManagedEntries = []string{"opencode.json", "themes", "plugin"}
 
 // clearManagedConfig removes devgeta's own generated files from dir, leaving
 // everything else untouched.

@@ -34,20 +34,6 @@ type App interface {
 	ExecuteCommand(args ...string) error
 }
 
-// SelectiveConfigurer is an optional interface for apps whose configuration
-// includes discrete, separately-refreshable parts. It backs
-// `dg configure <app> --force --only=...`. What a "part" is belongs to the
-// app: the AI coders (claude, opencode) expose their shared
-// skills/commands/agents subtrees so those can be overwritten without
-// disturbing edited config. Apps that don't implement it reject --only.
-type SelectiveConfigurer interface {
-	// ConfigurableParts lists the part names accepted by --only.
-	ConfigurableParts() []string
-	// ForceConfigureParts overwrites only the named parts, leaving all other
-	// configuration in place.
-	ForceConfigureParts(parts []string) error
-}
-
 // ThemedConfigurer is implemented by the eight apps with a theme surface
 // (Alacritty, Ghostty, tmux, Neovim, OpenCode, Claude, Pi, i3). It exists because
 // ForceConfigure() takes no arguments and resolves its theme from

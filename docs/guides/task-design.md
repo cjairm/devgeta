@@ -61,9 +61,9 @@ PRRT_abc`. Never bare `ok` (the echoed target lets an agent verify it acted on t
    right object and reuse the id without re-fetching) and never more than one line.
    Success/failure for scripts lives in the exit code, not the text.
 4. **Stable sentinels.** Fixed phrases agents match verbatim (`No unresolved review
-threads.`, `On <default> — no branch to compare…`) are contracts with the shared
-   configs in `configs/shared/` — changing one is a breaking change and needs the
-   consuming config updated in the same commit. Empty results always get a sentinel;
+threads.`, `On <default> — no branch to compare…`) are contracts with whatever
+   consumes them — changing one is a breaking change and needs every consumer
+   updated in the same commit. Empty results always get a sentinel;
    empty stdout is ambiguous to an agent (success? nothing found? crash?).
 5. **Lossy is allowed only with a receipt.** Filtering noise (lockfiles, generated
    files) is encouraged, but every omission must be announced with a one-line note
@@ -74,17 +74,13 @@ threads.`, `On <default> — no branch to compare…`) are contracts with the sh
    enough to leave a caller watching silence (a multi-minute headless review, a
    multi-step install) may emit human-readable progress — start/finish, elapsed
    time — but it belongs on stderr, never stdout: stdout stays exactly the
-   parseable payload principles 1-4 describe. `review-run` is the precedent: it
-   streams a `[n/total] <label>: running` / `<label>: <outcome> (<elapsed>)` line
-   per reviewer to stderr while its stdout return stays the `<label> → <outcome>`
-   contract, unaffected.
+   parseable payload principles 1-4 describe.
 
    **Progress is only progress if it arrives during the work.** Lines emitted
    around a long call (before it, then after it) leave the same silence in the
    middle that they were added to fix. When the tool itself reports what it is
    doing, render that as it arrives: `CommandParams.OnStdoutLine` hands a caller
-   each stdout line while the child still runs, which is how `review-run` reports
-   what a reviewer is doing instead of nothing for four minutes. Keep each line
+   each stdout line while the child still runs. Keep each line
    short and summarized — a tool name and what it was pointed at — never the
    tool's raw output.
 
@@ -93,16 +89,13 @@ threads.`, `On <default> — no branch to compare…`) are contracts with the sh
    agent caller. Print at most one line per interval — carrying the running
    counters and the most recent event, so the sample says where the work is and
    not merely that it lives — and keep counting everything in between so the
-   closing line still totals the whole run. `review-run` samples at 30s, which
-   turned ~200 lines a round into a handful. Put the full stream behind the root
+   closing line still totals the whole run. Put the full stream behind the root
    `--verbose` flag rather than a per-command flag of its own: "how much progress
    detail" is one decision a user makes for the whole CLI, not per task.
 
 7. **A payload states an outcome; it does not carry the record.** When a task's
    result already lives somewhere a caller can read (the review journal, a config
-   file, a PR), the payload names the outcome and stops. `review-run` prints one
-   verdict line per reviewer and nothing else: the findings are journal entries,
-   and `review-notes` is the command that reads them. Reprinting the record in
+   file, a PR), the payload names the outcome and stops. Reprinting the record in
    every round costs tokens for output the caller must re-read anyway, and gives
    the same fact two spellings that can disagree.
 

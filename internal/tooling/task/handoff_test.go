@@ -28,7 +28,7 @@ func withHeadResolvesTo(t *testing.T, tm *TaskManager, sha string) {
 }
 
 func TestHandoffWriteThenReadRoundTrips(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	withHeadResolvesTo(t, tm, "abc123abc123abc123abc123abc123abc123abc")
 
 	if _, err := tm.HandoffWrite("", "Left off wiring the OAuth callback."); err != nil {
@@ -47,7 +47,7 @@ func TestHandoffWriteThenReadRoundTrips(t *testing.T) {
 }
 
 func TestHandoffReadWithNoNoteIsACleanSentinelNotAnError(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	out, err := tm.HandoffRead("")
 	if err != nil {
 		t.Fatalf("HandoffRead: %v", err)
@@ -59,7 +59,7 @@ func TestHandoffReadWithNoNoteIsACleanSentinelNotAnError(t *testing.T) {
 }
 
 func TestHandoffClearRemovesTheNote(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	withHeadResolvesTo(t, tm, "abc123abc123abc123abc123abc123abc123abc")
 
 	if _, err := tm.HandoffWrite("", "some note"); err != nil {
@@ -78,14 +78,14 @@ func TestHandoffClearRemovesTheNote(t *testing.T) {
 }
 
 func TestHandoffClearOnAnAbsentNoteIsNotAnError(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	if _, err := tm.HandoffClear(""); err != nil {
 		t.Errorf("HandoffClear on an absent note: %v", err)
 	}
 }
 
 func TestHandoffWriteOverMaxBytesLeavesThePreviousNoteUntouched(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	withHeadResolvesTo(t, tm, "abc123abc123abc123abc123abc123abc123abc")
 
 	if _, err := tm.HandoffWrite("", "the original note"); err != nil {
@@ -107,7 +107,7 @@ func TestHandoffWriteOverMaxBytesLeavesThePreviousNoteUntouched(t *testing.T) {
 }
 
 func TestHandoffOnDetachedHeadReturnsTheNoBranchSentinel(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "")
+	tm, _ := newRepoSetup(t, "")
 
 	writeOut, err := tm.HandoffWrite("", "some note")
 	if err != nil {
@@ -127,7 +127,7 @@ func TestHandoffOnDetachedHeadReturnsTheNoBranchSentinel(t *testing.T) {
 }
 
 func TestHandoffReadReportsHeadDrift(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	withHeadResolvesTo(t, tm, "1111111111111111111111111111111111111111")
 
 	if _, err := tm.HandoffWrite("", "some note"); err != nil {
@@ -146,7 +146,7 @@ func TestHandoffReadReportsHeadDrift(t *testing.T) {
 }
 
 func TestHandoffExplicitBranchOverridesCurrent(t *testing.T) {
-	tm, _, _ := newRepoSetup(t, "feat")
+	tm, _ := newRepoSetup(t, "feat")
 	withHeadResolvesTo(t, tm, "abc123abc123abc123abc123abc123abc123abc")
 
 	if _, err := tm.HandoffWrite("other-branch", "note for another branch"); err != nil {
