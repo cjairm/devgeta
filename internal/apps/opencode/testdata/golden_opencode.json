@@ -130,7 +130,6 @@
       "~/.claude/*.md": "deny",
 
       "**/.claude/CLAUDE.md": "deny",
-      "**/.claude/RTK.md": "deny",
       "**/.claude/statusline.sh": "deny",
       "**/.claude/format.sh": "deny",
       "**/.claude/task-redirect.sh": "deny",
@@ -139,7 +138,6 @@
       "**/.claude/agent-config-guard.sh": "deny",
       "**/.claude/agent-state.sh": "deny",
       "**/.claude/output-budget.sh": "deny",
-      "**/.claude/rtk-shim.sh": "deny",
 
       "~/.claude/agents/**": "deny",
       "**/.claude/agents/**": "deny",

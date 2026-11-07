@@ -818,7 +818,7 @@ func noReportCapture() string {
 	return strings.Join([]string{
 		`{"type":"step_start","part":{"type":"step-start"}}`,
 		`{"type":"tool_use","part":{"type":"tool","tool":"read","callID":"c1",` +
-			`"state":{"input":{"filePath":"/Users/x/.claude/RTK.md"}}}}`,
+			`"state":{"input":{"filePath":"/Users/x/.claude/CLAUDE.md"}}}}`,
 		stepFinishWithReason("tool-calls"),
 	}, "\n") + "\n"
 }

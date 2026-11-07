@@ -97,17 +97,16 @@ so the hook declines instead. If you want a compound command capped, run its
 test step on its own.
 
 **One known limitation, by design, not by oversight:** on Claude Code, this
-hook and a separately-installed `rtk` command-rewrite hook race if both are
-enabled and both would rewrite the same call — `PreToolUse` hooks run in
+hook and any other command-rewriting hook race if both are enabled and both
+would rewrite the same call — `PreToolUse` hooks run in
 parallel there with no chaining between them, confirmed against Claude Code's
-own hook execution model. If rtk's hook happens to finish last, this hook's
+own hook execution model. If the other hook happens to finish last, this hook's
 cap is silently skipped for that one call; the command still runs correctly
 and in full, just uncapped. There is no way to make this deterministic from
 either hook's own code. See
 [the runner contract's §9](output-budget-runner.md#9-known-limitations---document-do-not-paper-over)
 for the full reasoning. OpenCode has no equivalent limitation — its plugin
-hooks run in sequence, so a plugin registered after rtk's genuinely sees
-rtk's already-rewritten command.
+hooks run in sequence, so a later plugin sees an earlier one's rewrite.
 
 ## 4. Session handoff: end a session instead of growing it
 
@@ -151,7 +150,5 @@ never committed.
   [ADR-0031](../decisions/ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md).
 - **No automatic memory capture, retrieval, or injection.** See
   [ADR-0032](../decisions/ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) §4.
-- **`rtk`'s command-rewriting hook stays opt-in**, tracked separately in
-  [ROADMAP.md](../../ROADMAP.md) — not something this cycle changed.
 - **User-defined output-budget rules.** v1 ships built-in defaults only; see
   [the runner contract](output-budget-runner.md#84-the-default-rule-set).

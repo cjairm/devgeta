@@ -78,13 +78,13 @@ func TestClaudeMemoryRowFollowsImportsFromTheUserLayer(t *testing.T) {
 	home := t.TempDir()
 	repo := t.TempDir()
 
-	writeFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "@RTK.md\n")
-	writeFile(t, filepath.Join(home, ".claude", "RTK.md"), "rtk instructions\n")
+	writeFile(t, filepath.Join(home, ".claude", "CLAUDE.md"), "@OTHER.md\n")
+	writeFile(t, filepath.Join(home, ".claude", "OTHER.md"), "other instructions\n")
 
 	row := claudeMemoryRow(repo, home)
 	items := itemsUnder(t, row, home, repo)
 	if len(items) != 2 {
-		t.Fatalf("items = %+v, want 2 (CLAUDE.md + imported RTK.md)", items)
+		t.Fatalf("items = %+v, want 2 (CLAUDE.md + imported OTHER.md)", items)
 	}
 }
 

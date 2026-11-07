@@ -146,9 +146,8 @@ these lean on tmux's own idioms (status bar, popups) instead of chasing that lit
 
 ### AI & Development Tools
 
-**Category `ai-tools`** — shipped 2026-07-23 with rtk as first app ([ADR-0004](docs/decisions/ADR-0004-ai-tools-install-category.md))
+rtk shipped here as the first app of an `ai-tools` category and was removed on 2026-11-06, along with the category ([ADR-0065](docs/decisions/ADR-0065-devgeta-does-not-ship-rtk.md)). Don't re-add an output-rewriting tool without a measured result.
 
-- ~~**rtk** — Token-compressing CLI proxy~~ ✅ Shipped: `dg install --only rtk` (brew on macOS, GitHub release binary on Debian); the command-rewriting hook (`rtk init -g`) stays opt-in — see [docs/apps/rtk.md](docs/apps/rtk.md). Revisit automating the hook once the project stabilizes.
 - **Ollama** — Local LLM inference engine
 - Gemini CLI integration
 - IDE AI integrations (Claude Code, Opencode configuration)
@@ -156,7 +155,7 @@ these lean on tmux's own idioms (status bar, popups) instead of chasing that lit
 
 **Related Questions:**
 
-- ~~Should this be a separate category or extend existing categories?~~ Answered: separate `ai-tools` category (ADR-0004)
+- Should this be a separate category or extend existing categories? (An `ai-tools` category existed for rtk alone and was removed with it, ADR-0065.)
 - How to integrate with Opencode / Claude Code setup?
 
 ### Alternative Tools

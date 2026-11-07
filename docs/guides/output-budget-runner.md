@@ -140,7 +140,7 @@ between them.** Each hook decides against the _original_ `tool_input`; none
 of them see another hook's rewrite. When more than one hook on the same
 matcher returns `updatedInput` for the same call, the last process to finish
 wins, non-deterministically — registration order in `settings.json` has no
-bearing on this. See §9 for the concrete consequence with rtk. Whether a
+bearing on this. See §9 for the concrete consequence. Whether a
 rewritten command is re-checked by the permission system before running is
 undocumented in every source checked; treat it as unverified rather than
 assume either answer.
@@ -166,8 +166,8 @@ export const OutputBudgetPlugin = async ({
 Plugin hooks on `tool.execute.before` **run in sequence**, and later plugins
 see earlier plugins' mutations to the same `output.args` object — confirmed
 independently of the single-field caveat above, and the opposite of Claude's
-behavior. This is what makes "register the output-budget plugin after rtk's"
-a real, working ordering rule on OpenCode, even though the identically-worded
+behavior. This is what makes "register the output-budget plugin after another
+rewriting plugin" a real, working ordering rule on OpenCode, even though the identically-worded
 idea does nothing on Claude (§9).
 
 Neither difference is the asymmetry CLAUDE.md §12 forbids: it compares
@@ -812,15 +812,15 @@ point of the command), anything interactive, and anything with a TTY requirement
 
 ## 9. Known limitations — document, do not paper over
 
-- **On Claude Code, this hook and rtk's race when both are enabled.** §2.3
+- **On Claude Code, this hook races any other command-rewriting hook.** §2.3
   established that `PreToolUse` hooks on one matcher run in parallel with no
   chaining, and when two of them return `updatedInput` for the same call the
-  last process to finish wins non-deterministically. If rtk's hook happens to
-  finish last, this hook's cap is silently skipped for that call — the
-  command runs through rtk's rewrite, uncapped. There is no code fix for this
+  last process to finish wins non-deterministically. If the other hook happens
+  to finish last, this hook's cap is silently skipped for that call — the
+  command runs through the other rewrite, uncapped. There is no code fix for this
   within Claude Code's current hook model; the accepted mitigation is that
-  this hook never depends on rtk's behavior at all (it matches and rewrites
-  purely against the original command, exactly as if rtk did not exist), so
+  this hook never depends on another hook's behavior (it matches and rewrites
+  purely against the original command), so
   the failure mode on a race loss is "uncapped for this one call," not a
   wrong or corrupted rewrite. OpenCode has no equivalent limitation — its
   plugin hooks chain in registration order (§2.3).

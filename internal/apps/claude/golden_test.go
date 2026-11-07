@@ -67,7 +67,7 @@ func compareToGolden(t *testing.T, gotPath, goldenPath string) {
 
 // TestForceConfigureTheme_SettingsMatchesGoldenRender renders the real
 // shipped settings.json.tmpl with a deterministic, zero-value
-// IntegrationsConfig (no rtk/output-budget opt-ins) and compares it
+// IntegrationsConfig (no output-budget opt-in) and compares it
 // byte-for-byte against a committed golden. Update
 // testdata/golden_settings.json deliberately when the change is intended.
 func TestForceConfigureTheme_SettingsMatchesGoldenRender(t *testing.T) {

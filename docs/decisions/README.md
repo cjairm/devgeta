@@ -23,7 +23,7 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0001](ADR-0001-in-tui-overlays-over-external-pickers.md) — In-TUI floating overlays instead of external picker processes
 - [ADR-0002](ADR-0002-recent-repos-store-in-global-config.md) — Recent-repos store in global config
 - [ADR-0003](ADR-0003-sessions-in-workspace-dashboard.md) — A single `dg ws` dashboard for sessions and worktrees
-- [ADR-0004](ADR-0004-ai-tools-install-category.md) — New `ai-tools` install category, rtk as first app
+- [ADR-0004](ADR-0004-ai-tools-install-category.md) — New `ai-tools` install category, rtk as first app (superseded by ADR-0065)
 - [ADR-0005](ADR-0005-agent-activity-state-in-tmux-pane-options.md) — Agent activity state lives in a tmux pane option
 - [ADR-0006](ADR-0006-hook-guardrails-scope-and-sharing.md) — Scope and code-sharing for the secret-commit and lint-suppression guardrail hooks
 - [ADR-0007](ADR-0007-task-redirects-stay-hard-deny.md) — The task redirects stay hard-deny, not `ask`
@@ -57,7 +57,7 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0035](ADR-0035-an-issue-is-matched-by-number-never-by-a-branch-naming-scheme.md) — An issue is matched by number, never by a branch-naming scheme
 - [ADR-0036](ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present
 - [ADR-0037](ADR-0037-a-desktop-app-is-chosen-by-the-user-from-what-the-platform-can-install.md) — A desktop app is chosen by the user from what the platform can install
-- [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission
+- [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission (superseded by ADR-0065)
 - [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name
 - [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
 - [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable
@@ -84,3 +84,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0062](ADR-0062-pi-powerline-footer-colors-come-from-the-active-pi-theme.md) — pi-powerline-footer's colors come from the active Pi theme
 - [ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md) — Pi formats through devgeta's shared Mason script; pi-lens only diagnoses
 - [ADR-0064](ADR-0064-pi-hides-thinking-blocks-by-default.md) — Pi hides thinking blocks by default
+- [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md) — Devgeta does not ship rtk, and does not re-add an output-rewriting tool without a measured result

@@ -143,7 +143,6 @@ const (
 	Raycast            = "raycast"
 	Readline           = "readline"
 	Ripgrep            = "rg"
-	Rtk                = "rtk"
 	Shottr             = "shottr"
 	Syntaxhighlighting = "zsh-syntax-highlighting"
 	Tldr               = "tldr"

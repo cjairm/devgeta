@@ -50,18 +50,13 @@ for those projects along with the chats.
 | `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                                                      |
 | `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                                                      |
 | `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below                                         |
-| `configs/claude/rtk-shim.sh`               | `~/.claude/rtk-shim.sh`               | `chmod 0755`; deployed always, hook entry gated on `integrations.rtk_claude_hook` |
 | `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly                                            |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
 | `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                                                              |
 | `configs/shared/DEVGETA.md`                | `~/.claude/DEVGETA.md`                | response style and coding defaults; shared with OpenCode, see below               |
 
-`settings.json` is rendered from a template so tracked opt-ins survive a
-`--force` re-render: when `integrations.rtk_claude_hook` is set in
-`global_config.yaml` (via `dg configure claude --force --only=rtk`, the
-explicit opt-in required by [ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md)),
-the rendered file includes rtk's `PreToolUse` hook entry alongside devgeta's
-own hooks. `dg uninstall rtk` clears the flag. See [rtk.md](rtk.md).
+`settings.json` is rendered from a template so tracked opt-ins (such as
+`integrations.output_budget`) survive a `--force` re-render.
 
 ### Response style and coding defaults (`DEVGETA.md`)
 
@@ -87,10 +82,7 @@ override the broad allow:
 - **allow** — `Bash(*)`, `Read`, `Edit`: day-to-day work never prompts.
 - **ask** — rare-but-legitimate commands (remote copies, force pushes, infra
   applies, and four `gh` writes — `pr merge`, `release delete`, `pr close`,
-  `issue delete`) prompt instead of being blocked. **Caveat, verified
-  2026-09-10:** on a machine with the rtk Claude Code integration enabled,
-  none of these reliably prompt for a command rtk rewrites — see "rtk
-  command-rewrite shim" below.
+  `issue delete`) prompt instead of being blocked.
 - **deny** — never allowed: network exfiltration tools, credential file reads
   (SSH keys, cloud CLI configs, token files, shell history), privilege
   escalation, persistence mechanisms (crontab/launchctl), destructive disk ops,
@@ -503,86 +495,12 @@ The cost is real — that `cd sub && go test` case is common and goes uncapped �
 and it is the intended trade. Reasoning in
 [the runner contract's §2.4](../guides/output-budget-runner.md#24-the-hook-caps-output-it-never-widens-permission).
 
-**Known race with rtk, by design:** `PreToolUse` hooks on the same matcher run
-in parallel on Claude Code, with no chaining between them — confirmed against
-Claude Code's own hook execution model, not assumed. If rtk's command-
-rewriting hook is also enabled and both hooks would rewrite the same call,
-whichever process finishes last wins; there is no ordering either hook's own
-code can enforce. The accepted failure mode is narrow: the command still runs
-correctly and in full, and the only thing that can be lost is this hook's own
-cap for that one call (rtk's compaction is unaffected either way). See the
-runner contract's §9 for the full reasoning; this is not the deny/ask-rule
-asymmetry CLAUDE.md §12 forbids — it changes nothing about what either agent
-is permitted to do.
-
 The OpenCode plugin equivalent (`~/.config/opencode/plugin/output-budget.js`)
 mirrors the same matching/rewrite decision, reading a generated sidecar
 (`~/.config/devgeta/agent-runtime.json`) at runtime for its own gate rather
 than a render-time template conditional — `opencode.json` is validated
 against OpenCode's own schema, so an unrecognized devgeta key there risks
-rejection by a tool devgeta does not control. Unlike Claude Code, OpenCode's
-plugin hooks run in **sequence** and mutate a shared object, so a plugin
-registered after rtk's genuinely sees rtk's already-rewritten command — no
-equivalent race exists there.
-
-## rtk command-rewrite shim (PreToolUse hook)
-
-Opt-in, off by default. When `integrations.rtk_claude_hook` is set (via
-`dg configure claude --force --only=rtk`), `settings.json` registers
-`~/.claude/rtk-shim.sh` under its own `Bash` `PreToolUse` matcher, in place of
-running `rtk hook claude` directly. It pipes the hook payload straight to
-`rtk hook claude`, then re-emits the same JSON with the
-`permissionDecision`/`permissionDecisionReason` keys removed — `updatedInput`
-(rtk's command rewrite, the source of its token savings) passes through
-unchanged.
-
-**Why it exists:** rtk's own hook returns `permissionDecision: "allow"` for
-most `git`/`gh` families it rewrites (verified on rtk 0.43.0), and a
-`PreToolUse` hook's `allow` overrides both `ask` and `deny` — so with the raw
-hook wired in, rtk's own auto-allow list is the effective policy for those
-commands, not devgeta's `ask`/`deny` lists. See
-[ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md).
-
-**What it fixes, and what it does not — verified 2026-09-10.** The shim
-correctly removes rtk's own decision: with the shim in place, a real `deny`
-rule (`Bash(git status*)`) still fires even though rtk rewrote the command
-underneath it. But a **second, independent** bypass sits underneath that one
-and the shim cannot touch it: devgeta's baseline `"allow": ["Bash(*)"]` —
-present unconditionally, rtk or not — appears to be matched against the
-_rewritten_ command whenever _any_ `PreToolUse` hook returns `updatedInput`,
-and an allow match there beats an `ask`/`deny` rule that only matches the
-_original_ text. This reproduces with the shim's own rewrite, decision fully
-stripped, for both a real `deny` and a real `ask` rule. Practically: on a
-machine with this integration enabled, the four `gh` write gates above (and
-the pre-existing `gh api *` ask) do not reliably prompt for a command rtk
-rewrites. Full evidence, including the four-run A/B table that isolates this
-from the shim's own logic:
-[agent-permission-matching.md §6](../guides/agent-permission-matching.md),
-[ADR-0038's correction](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md#consequences).
-This is a Claude Code resolution-order behavior, not a bug in the shim or in
-rtk's JSON shape — no hook devgeta could write closes it, including
-`output-budget.sh` below, which rewrites commands for an unrelated reason and
-is a candidate for the same interaction (not measured).
-
-**Fail-open to silence**, matching the sibling hooks: the rtk binary missing
-from PATH, a non-zero exit from `rtk hook claude`, empty output, or output
-that isn't valid JSON all mean the shim emits nothing and the call proceeds
-through the normal permission flow unaffected.
-
-**Bypass:** export `DEVGETA_SKIP_RTK_SHIM=1` in the shell that launches this
-agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
-command — because the hook reads its own environment.
-
-**No OpenCode mirror.** rtk installs its own plugin file on the OpenCode side
-(`~/.config/opencode/plugins/rtk.ts`) and devgeta does not touch it
-(`internal/apps/opencode/opencode.go`). That plugin only rewrites commands —
-it never emits a permission decision there — but the rewrite alone is enough
-to defeat OpenCode's own `ask` rules too, by a related but distinct
-mechanism: OpenCode's permission engine matches against the _rewritten_
-command text, so a rewritten `gh pr merge …` no longer matches a
-`"gh pr merge *": "ask"` rule at all. Measured in
-`docs/plans/cycles/2026-09-10-gh-permission-granularity-probe-notes.md`
-("1c"). There is no devgeta-owned fix for this on either agent today.
+rejection by a tool devgeta does not control.
 
 ## Agent activity state (SessionStart / SessionEnd / Stop / UserPromptSubmit / PostToolUse / Notification hooks)
 

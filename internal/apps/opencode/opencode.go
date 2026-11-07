@@ -15,12 +15,10 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"testing"
 	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
-	"github.com/cjairm/devgeta/internal/apps/rtk"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/theme"
@@ -41,9 +39,6 @@ const DEFAULT_THEME_NAME = "default"
 type OpenCode struct {
 	Cmd  cmd.Command
 	Base cmd.BaseCommandExecutor
-	// rtkInit overrides the `rtk init` invocation used by the rtk part
-	// (used in tests).
-	rtkInit func() error
 }
 
 func (o *OpenCode) Name() string       { return constants.OpenCode }
@@ -305,59 +300,20 @@ func (o *OpenCode) SoftConfigure() error {
 }
 
 // ConfigurableParts lists the parts --only can refresh: the shared config
-// subtrees plus the rtk integration (installs rtk's OpenCode plugin — the
-// explicit opt-in required by ADR-0004).
+// subtrees.
 func (o *OpenCode) ConfigurableParts() []string {
-	return append(slices.Clone(baseapp.SharedConfigParts), constants.Rtk)
+	return slices.Clone(baseapp.SharedConfigParts)
 }
 
-// ForceConfigureParts refreshes only the named parts. Shared subtrees
-// (skills, commands, agents) are overwritten from the embedded configs;
-// the rtk part runs `rtk init -g --opencode`, which installs rtk's plugin
-// as its own file (plugins/rtk.ts) — devgeta never touches that file, so no
-// opt-in state needs tracking here, unlike claude's settings.json hook.
-// Unlike full ForceConfigure this does not remove or regenerate
-// opencode.json or themes, so a hand-edited config survives. This is the
-// `--force --only=...` path.
+// ForceConfigureParts refreshes only the named shared subtrees (skills,
+// commands, agents) from the embedded configs. Unlike full ForceConfigure
+// this does not remove or regenerate opencode.json or themes, so a
+// hand-edited config survives. This is the `--force --only=...` path.
 func (o *OpenCode) ForceConfigureParts(parts []string) error {
 	if err := os.MkdirAll(paths.Paths.Config.OpenCode, 0o755); err != nil {
 		return err
 	}
-	shared := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part == constants.Rtk {
-			if err := o.runRtkInit(); err != nil {
-				return fmt.Errorf(
-					"failed to wire rtk into opencode (is rtk installed? try `dg install --only rtk`): %w",
-					err,
-				)
-			}
-			continue
-		}
-		shared = append(shared, part)
-	}
-	if len(shared) == 0 {
-		return nil
-	}
-	return baseapp.SyncSharedParts(paths.Paths.Config.OpenCode, shared)
-}
-
-// runRtkInit executes rtk's OpenCode integration through the rtk app
-// wrapper; injectable for tests. InitOpenCode streams output so rtk's
-// one-time interactive consent prompt is visible instead of hanging in a
-// captured buffer.
-func (o *OpenCode) runRtkInit() error {
-	if o.rtkInit != nil {
-		return o.rtkInit()
-	}
-	// Same philosophy as pkg/paths' test sandbox: a test that forgets to
-	// inject rtkInit must fail loudly, never execute the real rtk binary.
-	if testing.Testing() {
-		return fmt.Errorf(
-			"refusing to run real `rtk init` under go test — inject rtkInit in the test",
-		)
-	}
-	return rtk.New().InitOpenCode()
+	return baseapp.SyncSharedParts(paths.Paths.Config.OpenCode, parts)
 }
 
 func (o *OpenCode) ExecuteCommand(args ...string) error {
@@ -487,8 +443,8 @@ var pluginLockfiles = []string{"package-lock.json", "bun.lock", "bun.lockb"}
 // devgetaManagedEntries is everything devgeta generates inside
 // ~/.config/opencode, and therefore everything a --force reconfigure is
 // entitled to delete. "plugin" is singular on purpose: OpenCode also loads a
-// sibling "plugins" directory, which devgeta never creates and which is where
-// `rtk init -g --opencode` installs rtk's plugin.
+// sibling "plugins" directory, which devgeta never creates and where other
+// tools install their own plugins.
 //
 // Keep this in step with what ForceConfigureTheme writes.
 var devgetaManagedEntries = append(
@@ -502,9 +458,9 @@ var devgetaManagedEntries = append(
 // This deletes by allowlist rather than wiping the directory, because devgeta
 // is one of several writers here and by far the least entitled. OpenCode
 // keeps ~60MB of resolved node_modules, the package.json and lockfile
-// describing them, its tui.json, and whatever backups a user made; rtk keeps
-// its plugin. A blanket wipe took all of it, which cost users their rtk
-// integration and scheduled a full cold dependency install on the next launch
+// describing them, its tui.json, whatever backups a user made, and other
+// tools' plugins. A blanket wipe took all of it, which cost users those
+// plugins and scheduled a full cold dependency install on the next launch
 // — the worst case of the stall ADR-0049 removes.
 //
 // An allowlist also fails safe: a file devgeta has not heard of survives,

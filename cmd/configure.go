@@ -47,18 +47,13 @@ Use --force to overwrite existing configuration files.
 The AI coders (claude, opencode) expose discrete, separately-refreshable parts
 via --only (must be combined with --force): the shared config subtrees
 (skills, commands, agents) overwrite only those folders, leaving settings,
-themes, and other config you may have edited untouched; the rtk part runs
-"rtk init" to wire rtk's command-rewriting hook into that AI coder — the
-explicit opt-in required by ADR-0004, recorded so the hook survives future
---force re-renders of claude's settings.json.
+themes, and other config you may have edited untouched.
 
 Examples:
   dg configure git                              # Apply git config if not already present
   dg configure neovim --force                   # Overwrite existing neovim config
   dg configure claude --force --only=skills     # Refresh only the skills folder
   dg configure opencode --force --only=skills,commands
-  dg configure claude --force --only=rtk        # Opt into rtk's hook for Claude Code
-  dg configure opencode --force --only=rtk      # Install rtk's OpenCode plugin
 `,
 	Args: cobra.ExactArgs(1),
 	RunE: runConfigure,
@@ -70,7 +65,7 @@ func init() {
 	configureCmd.Flags().
 		BoolVar(&configureForce, "force", false, "Overwrite existing configuration files")
 	configureCmd.Flags().
-		StringSliceVar(&configureOnly, "only", nil, "Refresh only these app-defined config parts (claude/opencode: skills,commands,agents,rtk); requires --force")
+		StringSliceVar(&configureOnly, "only", nil, "Refresh only these app-defined config parts (claude/opencode: skills,commands,agents); requires --force")
 }
 
 func runConfigure(cmd *cobra.Command, args []string) error {

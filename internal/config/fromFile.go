@@ -57,12 +57,8 @@ type ShellFeatures struct {
 }
 
 // IntegrationsConfig tracks explicit cross-app opt-ins that devgeta must
-// preserve when re-rendering another app's config. RtkClaudeHook records that
-// the user opted into rtk's command-rewriting hook (ADR-0004: the hook is
-// never enabled automatically), so claude's settings.json template keeps the
-// hook entry across every `dg configure claude --force`.
+// preserve when re-rendering another app's config.
 type IntegrationsConfig struct {
-	RtkClaudeHook bool `yaml:"rtk_claude_hook,omitempty"`
 	// OutputBudget is the tri-state opt-in for the output-budget hook
 	// (docs/plans/cycles/2026-08-25-token-and-context-efficiency.md, Step
 	// 3b): nil means unset (falls back to the default, currently off), so a

@@ -24,11 +24,6 @@ var knownStateFields = map[string]string{
 		"written by internal/tooling/worktree on every `dg ws` create - not a " +
 		"user preference (cycle doc docs/plans/cycles/2026-07-29-dg-config-command.md " +
 		"§4 Explicitly Out of Scope: \"Editing state\").",
-	"integrations.rtk_claude_hook": "a deploy record, not a preference: it is " +
-		"set by `dg configure claude --force --only=rtk` (ADR-0004:64-70), which " +
-		"also re-renders settings.json. A bare `set` here would desync the " +
-		"recorded flag from what's actually deployed, so it is refused as a " +
-		"settable key rather than exposed.",
 	"integrations.claude_instructions_imported": "a deploy record, not a " +
 		"preference: `dg configure claude` sets it the first time it adds the " +
 		"@DEVGETA.md import to ~/.claude/CLAUDE.md, so a user who deletes that " +

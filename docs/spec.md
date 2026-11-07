@@ -90,7 +90,6 @@ dg install --only neovim --only docker    # neovim (terminal) + docker (desktop)
 | ----------- | --------------------------------------------------------------------------------------------- |
 | terminal    | claude, fastfetch, git, lazydocker, lazygit, mise, neovim, opencode, pi, tmux                 |
 | desktop     | aerospace, alacritty, brave, docker, flameshot, ghostty, gimp, i3, raycast, shottr, ulauncher |
-| ai-tools    | rtk                                                                                           |
 
 **Note on alacritty and ghostty:** both have `KindTerminal` in the registry
 but are installed by the desktop coordinator. Use `--only alacritty` or
@@ -179,12 +178,6 @@ _Linux (Debian/Ubuntu)_ (resolves to `alacritty` + `flameshot` today):
 - GIMP
 - Flameshot
 
-**AI Tools** (no selection, installed with full setup or via `--only ai-tools`)
-
-- rtk — token-compressing CLI proxy for coding agents (binary only; its
-  command-rewriting hook is opt-in — see [docs/apps/rtk.md](apps/rtk.md) and
-  [ADR-0004](decisions/ADR-0004-ai-tools-install-category.md))
-
 ---
 
 ### 2. Configuration Management
@@ -239,11 +232,11 @@ dg configure <app> [--force] [--only=<parts>]
 **Flags**:
 
 - `--force` — Overwrite existing configuration files. Without this flag, configuration is only applied if files do not already exist (soft mode).
-- `--only=<parts>` — Refresh only the named app-defined parts; requires `--force` and an app implementing `SelectiveConfigurer`. The AI coders (`claude`, `opencode`) expose their shared config subtrees (`skills`, `commands`, `agents`) plus an `rtk` part that runs the matching `rtk init` to wire rtk's command-rewriting hook into that coder — the explicit opt-in required by ADR-0004. The Claude opt-in is recorded in `global_config.yaml` (`integrations.rtk_claude_hook`) and claude's `settings.json` is rendered from a template honoring it, so the hook survives later `--force` re-renders; `dg uninstall rtk` clears it.
+- `--only=<parts>` — Refresh only the named app-defined parts; requires `--force` and an app implementing `SelectiveConfigurer`. The AI coders (`claude`, `opencode`) expose their shared config subtrees (`skills`, `commands`, `agents`).
 
 **Behavior**:
 
-- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `pi`, `raycast`, `rtk`, `shottr`, `tmux`, `ulauncher`.
+- Exact app name required (case-sensitive). Supported apps: `aerospace`, `alacritty`, `brave`, `claude`, `devgeta`, `docker`, `fastfetch`, `flameshot`, `ghostty`, `gimp`, `git`, `i3`, `lazydocker`, `lazygit`, `mise`, `neovim`, `opencode`, `pi`, `raycast`, `shottr`, `tmux`, `ulauncher`.
 - Apps that have no configuration to deploy (e.g., `brave`) return `ErrConfigureNotSupported` — the command prints an info message and exits zero.
 - Unknown app names print a sorted list of supported apps and exit non-zero.
 - Unknown `--only` values list the app's valid parts and exit non-zero; `--only` without `--force` is an error; apps without parts reject `--only`.
@@ -256,8 +249,6 @@ dg configure neovim --force # Overwrite existing neovim config
 dg configure brave          # Info: configure not supported for brave (exit 0)
 dg configure foo            # Error: unknown app "foo" + supported list (exit non-zero)
 dg configure claude --force --only=skills          # Refresh only the skills folder
-dg configure claude --force --only=rtk             # Opt into rtk's hook for Claude Code
-dg configure opencode --force --only=rtk           # Install rtk's OpenCode plugin
 ```
 
 **Planned commands**: See [ROADMAP.md](ROADMAP.md) for planned features and future commands.
@@ -1735,13 +1726,7 @@ path the marker names, so nothing is ever truly lost, only redirected to a
 targeted `grep` instead of scrolling past in the transcript. Matching never
 parses shell (a whitespace-only token split that refuses to compare anything
 containing a quote, backslash, or `$`), so a command it cannot confidently
-tokenize just runs unmodified rather than risking a wrong match. On Claude
-Code specifically, this hook and a separately-installed `rtk` command-rewrite
-hook race if both are enabled and both would rewrite the same call — Claude
-Code's `PreToolUse` hooks run in parallel with no chaining between them, so
-there is no way to make the outcome deterministic from either hook's own
-code; see the guide's §9 for the accepted, documented trade-off. OpenCode has
-no equivalent limitation, since its plugin hooks run in sequence.
+tokenize just runs unmodified rather than risking a wrong match.
 
 **Redirect hook** (steers agents from raw git to the task equivalents above):
 a Claude Code `PreToolUse` hook (`configs/claude/task-redirect.sh`, deployed to
@@ -2085,7 +2070,7 @@ dg theme set <name>      # switch every installed themed app to <name>
   their own filesystem work.
 - `current_theme` is **not** a `dg config` key — `dg config get/set/unset
 current_theme` is refused as an unknown setting, the same treatment
-  `integrations.rtk_claude_hook` gets, because a bare `set` there would
+  `integrations.claude_instructions_imported` gets, because a bare `set` there would
   desync the recorded name from what the machine is actually configured with.
 
 **Examples**:

@@ -207,7 +207,7 @@ So the floor ships **both** halves, and they are not redundant:
 
 The enumerated filenames are exactly what devgeta and Claude Code put at the top
 level of `~/.claude/`: `settings.json`, `settings.local.json`, the global
-`CLAUDE.md`, `RTK.md` (devgeta's rtk integration), and the seven hook scripts
+`CLAUDE.md`, and the seven hook scripts
 `internal/apps/claude/claude.go` deploys — `statusline.sh`, `format.sh`,
 `task-redirect.sh`, `secret-guard.sh`, `suppression-guard.sh`,
 `agent-config-guard.sh`, `agent-state.sh`.
@@ -298,23 +298,23 @@ Four isolated `claude -p --setting-sources ''` runs against a scratch
 | `["Bash(*)"]`    | **yes**                     | **bypassed** — the command actually runs    |
 
 Reproduced with a real `deny` (`Bash(git status*)`) and, separately, a real
-`ask` (`Bash(gh pr merge *)`) — same result both times. The hook used was
-`configs/claude/rtk-shim.sh`, whose entire job is to strip
-`permissionDecision`, so the decision field is not the deciding factor here;
-the rewrite alone is enough. `output-budget.sh` also rewrites
+`ask` (`Bash(gh pr merge *)`) — same result both times. The hook used
+stripped `permissionDecision` from its output (it was rtk's shim, removed with
+rtk in ADR-0065), so the decision field is not the deciding factor here; the
+rewrite alone is enough. `output-budget.sh` also rewrites
 `tool_input.command` via `updatedInput`, for an unrelated reason (capping
 output), and is therefore a candidate for the same bypass — not measured, a
 follow-up.
 
-**Practically:** on a machine with the rtk Claude Code integration enabled,
-no `ask`/`deny` rule reliably fires for a command rtk rewrites, regardless of
-what devgeta's own config says — including the four write gates
+**Practically:** while any `PreToolUse` hook rewrites a command, no
+`ask`/`deny` rule reliably fires for that command, regardless of what
+devgeta's own config says — including the four write gates
 (`gh pr merge *`, `gh release delete *`, `gh pr close *`, `gh issue delete
 *`) added for exactly this purpose (ADR-0038, ADR-0039). This is not a gap in
 those rules' wording; it reproduces identically with the sole difference
 being whether a hook rewrote the command at all. It is a Claude Code
-resolution-order behavior, not something a devgeta-owned hook can close —
-the same conclusion ADR-0038's correction reaches for the shim specifically.
+resolution-order behavior, not something a devgeta-owned hook can close, and
+one reason ADR-0065 removed rtk.
 
 ---
 

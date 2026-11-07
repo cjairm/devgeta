@@ -250,93 +250,6 @@ func TestForceConfigureParts(t *testing.T) {
 	}
 }
 
-func TestConfigurableParts_IncludesRtk(t *testing.T) {
-	app := &Claude{}
-	parts := app.ConfigurableParts()
-	if parts[len(parts)-1] != "rtk" {
-		t.Errorf("expected rtk as a configurable part, got %v", parts)
-	}
-	// The shared slice must not be mutated by the append.
-	for _, p := range baseapp.SharedConfigParts {
-		if p == "rtk" {
-			t.Fatal("baseapp.SharedConfigParts was mutated to include rtk")
-		}
-	}
-}
-
-func TestForceConfigureParts_Rtk(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	rtkInitCalled := 0
-	app := &Claude{rtkInit: func() error {
-		rtkInitCalled++
-		return nil
-	}}
-
-	if err := app.ForceConfigureParts([]string{"rtk"}); err != nil {
-		t.Fatalf("ForceConfigureParts(rtk) error: %v", err)
-	}
-
-	if rtkInitCalled != 1 {
-		t.Errorf("expected rtk init to run once, got %d", rtkInitCalled)
-	}
-	// Opt-in recorded so future settings renders keep the hook entry.
-	gc := &config.GlobalConfig{}
-	if err := gc.Load(); err != nil {
-		t.Fatalf("failed to load global config: %v", err)
-	}
-	if !gc.Integrations.RtkClaudeHook {
-		t.Error("expected RtkClaudeHook opt-in to be recorded in global config")
-	}
-	// A hand-written settings.json must survive --only=rtk untouched.
-	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts(rtk) should not write settings.json")
-	}
-}
-
-func TestForceConfigureParts_RtkInitFailure(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	app := &Claude{rtkInit: func() error { return fmt.Errorf("rtk not found") }}
-
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil {
-		t.Fatal("expected error when rtk init fails")
-	}
-	if !strings.Contains(err.Error(), "dg install --only rtk") {
-		t.Errorf("expected install hint in error, got: %v", err)
-	}
-
-	// A failed init must not persist the opt-in — otherwise the next
-	// settings render would emit a hook entry for an integration that
-	// never succeeded. (Create first: the failure path returns before
-	// enableRtkHook ever creates the global config file.)
-	gc := &config.GlobalConfig{}
-	if err := gc.Create(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gc.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if gc.Integrations.RtkClaudeHook {
-		t.Fatal("rtk hook opt-in must remain false when rtk init fails")
-	}
-}
-
 // TestEmbeddedSettingsTemplate renders the real embedded settings.json.tmpl in
 // both opt-in states and asserts the output is valid JSON — the constraint the
 // external consumer (Claude Code) imposes on the rendered file (CLAUDE.md §12).
@@ -344,18 +257,18 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 	tmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
 
 	for _, tt := range []struct {
-		name    string
-		flags   config.IntegrationsConfig
-		wantRtk bool
+		name             string
+		outputBudget     bool
+		wantOutputBudget bool
 	}{
-		{"hook opted in", config.IntegrationsConfig{RtkClaudeHook: true}, true},
-		{"hook not opted in", config.IntegrationsConfig{}, false},
+		{"output budget on", true, true},
+		{"output budget off", false, false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "settings.json")
 			renderData := settingsTemplateData{
-				IntegrationsConfig: tt.flags,
-				ScratchDir:         `"/tmp/placeholder-scratch"`,
+				ScratchDir:          `"/tmp/placeholder-scratch"`,
+				OutputBudgetEnabled: tt.outputBudget,
 			}
 			if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 				t.Fatalf("failed to render template: %v", err)
@@ -367,9 +280,9 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 			if !json.Valid(data) {
 				t.Fatalf("rendered settings.json is not valid JSON:\n%s", data)
 			}
-			gotRtk := strings.Contains(string(data), "~/.claude/rtk-shim.sh")
-			if gotRtk != tt.wantRtk {
-				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
+			gotOutputBudget := strings.Contains(string(data), "~/.claude/output-budget.sh")
+			if gotOutputBudget != tt.wantOutputBudget {
+				t.Errorf("output-budget hook entry present=%v, want %v", gotOutputBudget, tt.wantOutputBudget)
 			}
 			// devgeta's own hooks must be present in every rendering.
 			for _, hook := range []string{
@@ -546,7 +459,7 @@ func TestForceConfigure(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "settings.json.tmpl"),
-		[]byte(`{"theme":"default"{{if .RtkClaudeHook}},"rtk":true{{end}}}`),
+		[]byte(`{"theme":"default"{{if .OutputBudgetEnabled}},"budget":true{{end}}}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -602,13 +515,6 @@ func TestForceConfigure(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "output-budget.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "rtk-shim.sh"),
 		[]byte(`#!/bin/bash`),
 		0o644,
 	); err != nil {
@@ -691,7 +597,7 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	// settings.json rendered from the template; opt-in flag unset → no rtk entry
+	// settings.json rendered from the template; opt-in flag unset → no output-budget entry
 	rendered, err := os.ReadFile(filepath.Join(userConfigDir, "settings.json"))
 	if err != nil {
 		t.Errorf("Expected settings.json at %s: %v", userConfigDir, err)
@@ -702,7 +608,7 @@ func TestForceConfigure(t *testing.T) {
 
 	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
 	// suppression-guard.sh, agent-config-guard.sh, agent-state.sh,
-	// output-budget.sh, and rtk-shim.sh deployed and executable
+	// and output-budget.sh deployed and executable
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
@@ -712,7 +618,6 @@ func TestForceConfigure(t *testing.T) {
 		"agent-config-guard.sh",
 		"agent-state.sh",
 		"output-budget.sh",
-		"rtk-shim.sh",
 	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
@@ -795,8 +700,8 @@ func TestImportInstructionsOnce(t *testing.T) {
 		},
 		{
 			name:             "does not add a second import when the line is already there",
-			existingContent:  stringPointer("@RTK.md\n@DEVGETA.md\n"),
-			wantContent:      "@RTK.md\n@DEVGETA.md\n",
+			existingContent:  stringPointer("@OTHER.md\n@DEVGETA.md\n"),
+			wantContent:      "@OTHER.md\n@DEVGETA.md\n",
 			wantImportedFlag: true,
 		},
 		{
@@ -892,24 +797,6 @@ func TestExecuteCommand(t *testing.T) {
 	}
 }
 
-func TestForceConfigureParts_RtkRefusesRealExecInTests(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	// No rtkInit injected: the guard must refuse instead of executing rtk.
-	app := &Claude{}
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
-		t.Fatalf("expected test-guard refusal, got: %v", err)
-	}
-}
-
 // renderRealSettingsTemplate renders the ACTUAL configs/claude/settings.json.tmpl
 // (not a test fixture stub) with the given data, and returns the result.
 // This is what proves settingsTemplateData.OutputBudgetEnabled — not the
@@ -974,66 +861,6 @@ func TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook(t *testing.T)
 	if strings.Contains(rendered, outputBudgetHookRegistration) {
 		t.Errorf(
 			"an explicit false must not enable the hook, got:\n%s", rendered,
-		)
-	}
-}
-
-// TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks is the
-// Claude-side half of the rtk-composition case (cycle doc Step 6): since
-// Step 0 found PreToolUse hooks on Claude Code run in parallel with no
-// chaining (docs/guides/output-budget-runner.md §2.3, §9), there is no
-// ordering behavior to assert — only that enabling both leaves each hook
-// registered as its own independent matcher block, neither one folded into
-// or gated by the other's presence.
-func TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks(t *testing.T) {
-	rendered := renderRealSettingsTemplate(t, settingsTemplateData{
-		IntegrationsConfig:  config.IntegrationsConfig{RtkClaudeHook: true},
-		ScratchDir:          `"/tmp"`,
-		OutputBudgetEnabled: true,
-	})
-	var js any
-	if err := json.Unmarshal([]byte(rendered), &js); err != nil {
-		t.Fatalf(
-			"rendered settings.json is not valid JSON with both hooks on: %v\n%s",
-			err,
-			rendered,
-		)
-	}
-	if !strings.Contains(rendered, `"command": "~/.claude/rtk-shim.sh"`) {
-		t.Errorf("expected the rtk shim hook entry, got:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, outputBudgetHookRegistration) {
-		t.Errorf("expected the output-budget hook entry, got:\n%s", rendered)
-	}
-
-	// Each is registered as its own object in the "PreToolUse"/"Bash"
-	// matcher array, not nested inside the other's "hooks" list — this is
-	// what would break if a future edit accidentally folded one template
-	// conditional inside the other's braces.
-	top, ok := js.(map[string]any)
-	if !ok {
-		t.Fatalf("rendered settings.json root is not an object")
-	}
-	hooks, ok := top["hooks"].(map[string]any)
-	if !ok {
-		t.Fatalf("rendered settings.json has no top-level \"hooks\" object")
-	}
-	preToolUse, ok := hooks["PreToolUse"].([]any)
-	if !ok {
-		t.Fatalf("rendered settings.json has no \"PreToolUse\" array")
-	}
-	bashMatcherBlocks := 0
-	for _, entry := range preToolUse {
-		m, ok := entry.(map[string]any)
-		if !ok || m["matcher"] != "Bash" {
-			continue
-		}
-		bashMatcherBlocks++
-	}
-	if bashMatcherBlocks < 3 {
-		t.Errorf(
-			"expected at least 3 independent Bash matcher blocks (task-redirect+secret-guard, rtk, output-budget), got %d",
-			bashMatcherBlocks,
 		)
 	}
 }

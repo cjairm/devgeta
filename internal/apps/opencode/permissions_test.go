@@ -421,7 +421,6 @@ func TestGlobalClaudeFloorLeavesMemoryWritable(t *testing.T) {
 		"**/.claude/settings.json",
 		"**/.claude/settings.local.json",
 		"**/.claude/CLAUDE.md",
-		"**/.claude/RTK.md",
 		"**/.claude/statusline.sh",
 		"**/.claude/format.sh",
 		"**/.claude/task-redirect.sh",

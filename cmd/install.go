@@ -10,7 +10,6 @@ import (
 
 	"github.com/cjairm/devgeta/internal/apps/devgeta"
 	"github.com/cjairm/devgeta/internal/commands"
-	"github.com/cjairm/devgeta/internal/tooling/aitools"
 	"github.com/cjairm/devgeta/internal/tooling/databases"
 	"github.com/cjairm/devgeta/internal/tooling/desktop"
 	"github.com/cjairm/devgeta/internal/tooling/languages"
@@ -27,7 +26,7 @@ var (
 )
 
 // knownCategories are the install categories accepted by --only/--skip.
-var knownCategories = []string{"terminal", "languages", "databases", "desktop", "ai-tools"}
+var knownCategories = []string{"terminal", "languages", "databases", "desktop"}
 
 // appToCoordinator maps each registry app to the coordinator that installs it.
 // alacritty has KindTerminal but is installed by the desktop coordinator.
@@ -38,7 +37,6 @@ var appToCoordinator = map[string]string{
 	"git":        "terminal",
 	"lazydocker": "terminal",
 	"lazygit":    "terminal",
-	"rtk":        "ai-tools",
 	"mise":       "terminal",
 	"neovim":     "terminal",
 	"opencode":   "terminal",
@@ -64,14 +62,11 @@ type installConfig struct {
 	runLanguages bool
 	runDatabases bool
 	runDesktop   bool
-	runAITools   bool
 	// Per-coordinator filters (nil = no filter, non-nil = only these apps)
 	terminalAppFilter  map[string]bool
 	terminalSkipFilter map[string]bool
 	desktopAppFilter   map[string]bool
 	desktopSkipFilter  map[string]bool
-	aiToolsAppFilter   map[string]bool
-	aiToolsSkipFilter  map[string]bool
 }
 
 var installCmd = &cobra.Command{
@@ -83,7 +78,7 @@ This command performs the following steps:
   - Validates your OS version
   - Installs the package manager (Homebrew on macOS, apt on Debian/Ubuntu)
   - Extracts embedded configuration templates
-  - Installs terminal tools, programming languages, databases, and AI tools
+  - Installs terminal tools, programming languages, and databases
   - Optionally installs desktop applications and shell configuration
 
 Supported platforms:
@@ -191,15 +186,6 @@ func run(cmd *cobra.Command, args []string) error {
 		utils.PrintInfo("Skipping desktop applications installation")
 	}
 
-	if stopIfInterrupted("AI tools") {
-		return nil
-	}
-	if cfg.runAITools {
-		installAITools(cfg.aiToolsAppFilter, cfg.aiToolsSkipFilter)
-	} else {
-		utils.PrintInfo("Skipping AI tools installation")
-	}
-
 	return nil
 }
 
@@ -261,14 +247,11 @@ func parseInstallFlags(onlyFlags, skipFlags []string) (*installConfig, error) {
 
 	terminalAppFilter := buildAppFilter("terminal", onlyCategorySet, onlyAppSet, skipAppSet)
 	desktopAppFilter := buildAppFilter("desktop", onlyCategorySet, onlyAppSet, skipAppSet)
-	aiToolsAppFilter := buildAppFilter("ai-tools", onlyCategorySet, onlyAppSet, skipAppSet)
 	terminalSkipFilter := buildSkipFilter("terminal", skipAppSet)
 	desktopSkipFilter := buildSkipFilter("desktop", skipAppSet)
-	aiToolsSkipFilter := buildSkipFilter("ai-tools", skipAppSet)
 
 	hasTerminalApps := hasAppsForCoordinator("terminal", onlyAppSet)
 	hasDesktopApps := hasAppsForCoordinator("desktop", onlyAppSet)
-	hasAIToolsApps := hasAppsForCoordinator("ai-tools", onlyAppSet)
 
 	return &installConfig{
 		runTerminal: shouldRunCategory(
@@ -299,19 +282,10 @@ func parseInstallFlags(onlyFlags, skipFlags []string) (*installConfig, error) {
 			hasAnyOnly,
 			hasDesktopApps,
 		),
-		runAITools: shouldRunCategory(
-			"ai-tools",
-			onlyCategorySet,
-			skipCategorySet,
-			hasAnyOnly,
-			hasAIToolsApps,
-		),
 		terminalAppFilter:  terminalAppFilter,
 		terminalSkipFilter: terminalSkipFilter,
 		desktopAppFilter:   desktopAppFilter,
 		desktopSkipFilter:  desktopSkipFilter,
-		aiToolsAppFilter:   aiToolsAppFilter,
-		aiToolsSkipFilter:  aiToolsSkipFilter,
 	}, nil
 }
 
@@ -440,9 +414,4 @@ func installDatabases(ctx context.Context) {
 func installDesktopTools(appFilter, skipFilter map[string]bool) {
 	desktopTool := desktop.New()
 	desktopTool.InstallAndConfigure(appFilter, skipFilter)
-}
-
-func installAITools(appFilter, skipFilter map[string]bool) {
-	a := aitools.New()
-	a.InstallAndConfigure(appFilter, skipFilter)
 }

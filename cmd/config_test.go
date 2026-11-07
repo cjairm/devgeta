@@ -503,7 +503,7 @@ func TestConfigUnset_UnknownKey(t *testing.T) {
 func TestConfigUnset_StateKeyRejected(t *testing.T) {
 	isolateConfigPaths(t)
 
-	_, err := runConfigCmd(t, configUnsetCmd, []string{"integrations.rtk_claude_hook"})
+	_, err := runConfigCmd(t, configUnsetCmd, []string{"integrations.claude_instructions_imported"})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown setting")

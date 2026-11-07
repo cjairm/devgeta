@@ -109,7 +109,7 @@ shortcuts:
   bench-run: "dg task bench-run"
   release-cut: "devgeta task release"
   ws-dashboard: "dg ws"
-  gain-report: "rtk gain"
+  gain-report: "dg task bench-report"
 shell:
   is_mac: true
   mise: true
@@ -181,7 +181,7 @@ worktree:
   attach_after_create: true
   notify_sound: true
 integrations:
-  rtk_claude_hook: true
+  claude_instructions_imported: true
 review:
   reviewers:
     - anthropic/claude-opus-4-6

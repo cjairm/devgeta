@@ -33,8 +33,9 @@ from raw commands. The three justifications, strongest first:
 
 - The saving is negligible — measure first (see below). `git status` → `--porcelain`
   saves ~350 bytes; that's prompt guidance, not a subcommand.
-- Only generic compression is needed, with no orchestration or policy. That is a
-  general-purpose tool's job, not bespoke Go code — see [rtk](#future-rtk) below.
+- Only generic compression is needed, with no orchestration or policy. That is
+  not bespoke Go code's job. Devgeta tried a generic output-rewriting proxy and
+  removed it ([ADR-0065](../decisions/ADR-0065-devgeta-does-not-ship-rtk.md)).
 - The output feeds a human only. Streaming raw output (`Stream: true`) is fine there.
 
 **Keep every task (and any redirect that steers agents to it) generic.** This is the
@@ -166,33 +167,3 @@ isn't clearly worth a Go file and its tests, don't build it. Reference baselines
 the 2026-07-14 cycle: a 25-file branch diff was 192 KB (~50k tokens) raw vs 3.3 KB
 (~950 tokens) as a stat table; npm-repo lockfile diffs alone run 10–50k tokens.
 
----
-
-## rtk
-
-[rtk](https://github.com/rtk-ai/rtk) ("Rust Token Killer", Apache-2.0) is a CLI proxy
-that compresses the output of 100+ common commands (`git`, test runners, `docker`,
-`cat`, `grep`, …) before it reaches the LLM — claiming 60–90% reduction — and hooks
-into Claude Code by auto-rewriting Bash calls (`rtk init -g`). Verified 2026-07-14:
-~71k stars, single Rust binary, official Homebrew formula, very active; young
-(created 2026-01) with a large open-issue count.
-
-**Relationship to `dg task`: complementary, not competing.** rtk is _generic lossy
-compression_ of whatever command runs; `dg task` is _semantic orchestration + policy_
-(one-call flows, dedup contracts, stable sentinels, atomic reviews) that no generic
-proxy can provide. rtk would cover the long tail this guide says **not** to build
-tasks for: test-runner output, `docker ps`, `cat`/`grep` noise.
-
-Adoption stance (decided in
-[ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md), shipped
-2026-07-23):
-
-- Shipped as the first app of the `ai-tools` category — `dg install --only rtk`;
-  brew on macOS, GitHub-release binary on Debian. See
-  [docs/apps/rtk.md](../apps/rtk.md).
-- **The binary is installed; the hook stays opt-in.** `rtk init -g` rewrites
-  _every_ agent Bash call, including inside our carefully designed flows, and
-  lossy compression must never silently apply to a reviewer's diff payload
-  (principle 5). Users run `rtk init -g` themselves if they want it.
-- Revisit automating the hook once the project stabilizes (created 2026-01 and
-  moving fast).

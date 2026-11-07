@@ -327,7 +327,6 @@ Verify these before changing code in these areas:
 - Languages: Node.js, Python, Go, Rust, PHP (via Mise or native)
 - Databases: PostgreSQL, Redis, MySQL, MongoDB, SQLite
 - Desktop apps: Platform-specific GUIs (Docker, browsers, window managers, etc.)
-- AI tools: agent-support CLIs (rtk today; Ollama, Gemini CLI planned)
 
 **Single-command installation:**
 
@@ -623,7 +622,7 @@ Quick reference to where things live:
 | **Testing Patterns**    | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                                                                                                 |
 | **Error Handling**      | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                                                                                          |
 | **CLI Patterns**        | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                                                                                         |
-| **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                                                   |
+| **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles                                                                   |
 | **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders                                 |
 | **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                                                       |
 | **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure                                                          |

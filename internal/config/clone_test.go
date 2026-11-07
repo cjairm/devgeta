@@ -67,7 +67,7 @@ func newFullyPopulatedGlobalConfig() *GlobalConfig {
 			AttachAfterCreate: &attach,
 			NotifySound:       true,
 		},
-		Integrations: IntegrationsConfig{RtkClaudeHook: true},
+		Integrations: IntegrationsConfig{ClaudeInstructionsImported: true},
 		Review:       ReviewConfig{Reviewers: []string{"anthropic/x"}, Rounds: 3},
 	}
 }

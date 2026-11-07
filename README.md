@@ -164,9 +164,6 @@ dg install --only databases
 # Install only desktop applications
 dg install --only desktop
 
-# Install only AI tools (rtk, …)
-dg install --only ai-tools
-
 # Combine multiple categories
 dg install --only terminal,languages
 ```
@@ -186,7 +183,7 @@ dg install --skip databases,desktop
 ### Available Commands
 
 - `dg install` - Install and configure development environment
-  - `--only <categories>` - Install only specified categories (terminal, languages, databases, desktop, ai-tools)
+  - `--only <categories>` - Install only specified categories (terminal, languages, databases, desktop)
   - `--skip <categories>` - Install everything except specified categories
   - `--verbose` - Enable verbose logging
 - `dg worktree` (alias: `dg wt`) - Manage git worktrees with tmux windows and AI coders

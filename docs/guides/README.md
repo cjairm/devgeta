@@ -31,7 +31,6 @@ How to design `dg task` output for LLM agents:
 - Output principles: labeled plain text, payload only, one-line confirmations, stable sentinels, lossy-with-a-receipt
 - Orchestrate/format separation (jq for JSON, pure Go for text) and its testing payoff
 - Measuring token cost before and after
-- Future: rtk and how it complements `dg task`
 
 **When to read:** Before adding or changing any `dg task` subcommand whose consumer is an agent.
 

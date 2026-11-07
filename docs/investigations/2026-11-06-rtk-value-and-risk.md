@@ -207,7 +207,8 @@ claude"` and no shim entry, even though `global_config.yaml` has
    a behavior change for every user, so it needs its own ADR.
 3. **Existing users** need a migration note: devgeta never ran `rtk init` for
    them unless they opted in, and `rtk init -g --uninstall` removes the hook,
-   `RTK.md` and the `@RTK.md` line. That would go in `docs/migrations/`.
+   `RTK.md` and the `@RTK.md` line. Written as
+   [docs/migrations/rtk-removal.md](../migrations/rtk-removal.md).
 
 ## Verification still needed
 

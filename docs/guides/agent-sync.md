@@ -21,7 +21,6 @@ deliberate.
 | Agent activity state    | `configs/claude/agent-state.sh`                                   | `configs/opencode/plugin/notify.js`                                               |
 | Agent-config protection | `configs/claude/agent-config-guard.sh` + settings.json.tmpl floor | `configs/opencode/plugin/agent-config-guard.js` + opencode.json.tmpl floor        |
 | Scratch dir grant       | `additionalDirectories` in `settings.json.tmpl`                   | `external_directory` in `opencode.json.tmpl`                                      |
-| rtk hook wiring         | `configs/claude/rtk-shim.sh` (devgeta-owned)                      | rtk's own plugin (`~/.config/opencode/plugins/rtk.ts`) — devgeta never touches it |
 | Agents / commands       | `configs/shared/` (synced to both)                                | `configs/shared/` (synced to both)                                                |
 | Global instructions     | `configs/shared/DEVGETA.md`, imported from `~/.claude/CLAUDE.md`  | `configs/shared/DEVGETA.md`, listed in `instructions` in `opencode.json.tmpl`     |
 
@@ -82,15 +81,6 @@ Deliberate — do not "fix" these by halves.
   them to the tool result, both from the shared `format-file.sh`; OpenCode's `formatter` block cannot
   return context, and OpenCode surfaces LSP diagnostics instead.
 - **`statusLine` has no OpenCode equivalent.**
-- **`rtk-shim.sh` has no OpenCode mirror, deliberately.** rtk installs its own
-  plugin file there (`~/.config/opencode/plugins/rtk.ts`), and devgeta
-  explicitly does not touch it (`internal/apps/opencode/opencode.go`). This
-  is not parity devgeta can close by writing a mirror: even a devgeta-owned
-  OpenCode plugin could only rewrite the same shared object rtk's plugin
-  reads, not intercept rtk's own file. See
-  [ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md)
-  and its 2026-09-10 correction for what this gap means in practice on both
-  agents.
 - **The "agent ends" lifecycle hook is reliable on Claude Code, best-effort on
   OpenCode — the code is symmetric, the runtime isn't.** Both
   `agent-state.sh`'s `end` case and `notify.js`'s `server.instance.disposed` +

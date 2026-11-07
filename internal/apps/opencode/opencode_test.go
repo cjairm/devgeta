@@ -1033,86 +1033,6 @@ func TestDefaultThemeName(t *testing.T) {
 	}
 }
 
-func TestConfigurablePartsIncludesRtk(t *testing.T) {
-	app := &OpenCode{}
-	parts := app.ConfigurableParts()
-	if parts[len(parts)-1] != "rtk" {
-		t.Errorf("expected rtk as a configurable part, got %v", parts)
-	}
-	for _, p := range baseapp.SharedConfigParts {
-		if p == "rtk" {
-			t.Fatal("baseapp.SharedConfigParts was mutated to include rtk")
-		}
-	}
-}
-
-func TestForceConfigurePartsRtk(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	rtkInitCalled := 0
-	app := &OpenCode{rtkInit: func() error {
-		rtkInitCalled++
-		return nil
-	}}
-
-	if err := app.ForceConfigureParts([]string{"rtk"}); err != nil {
-		t.Fatalf("ForceConfigureParts(rtk) error: %v", err)
-	}
-	if rtkInitCalled != 1 {
-		t.Errorf("expected rtk init to run once, got %d", rtkInitCalled)
-	}
-	// The --only=rtk path must not touch opencode.json.
-	if _, err := os.Stat(filepath.Join(opencodeDir, "opencode.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts(rtk) should not write opencode.json")
-	}
-}
-
-func TestForceConfigurePartsRtkInitFailure(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	app := &OpenCode{rtkInit: func() error { return fmt.Errorf("rtk not found") }}
-
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil {
-		t.Fatal("expected error when rtk init fails")
-	}
-	if !strings.Contains(err.Error(), "dg install --only rtk") {
-		t.Errorf("expected install hint in error, got: %v", err)
-	}
-}
-
-func TestForceConfigurePartsRtkRefusesRealExecInTests(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	// No rtkInit injected: the guard must refuse instead of executing rtk.
-	app := &OpenCode{}
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
-		t.Fatalf("expected test-guard refusal, got: %v", err)
-	}
-}
-
 func TestRun(t *testing.T) {
 	t.Run("WithModelAndEnv", func(t *testing.T) {
 		mockApp := testutil.NewMockApp()
@@ -1598,10 +1518,10 @@ func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
 }
 
 // devgeta owns plugin/ (singular) and regenerates it from embedded configs.
-// plugins/ (plural) is a sibling directory OpenCode also loads, and it is
-// where `rtk init -g --opencode` installs rtk's plugin. devgeta never creates
-// it, so devgeta must not delete it: doing so silently tears out an
-// integration the user opted into (ADR-0004) on every --force reconfigure.
+// plugins/ (plural) is a sibling directory OpenCode also loads, where other
+// tools install their own plugins. devgeta never creates it, so devgeta must
+// not delete it: doing so silently tears out another tool's integration on
+// every --force reconfigure.
 func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
@@ -1632,13 +1552,13 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 	paths.Paths.Config.OpenCode = userConfigDir
 	isolateOpenCodeInstallPrefix(t)
 
-	rtkPlugin := filepath.Join(userConfigDir, "plugins", "rtk.ts")
-	if err := os.MkdirAll(filepath.Dir(rtkPlugin), 0o755); err != nil {
+	thirdPartyPlugin := filepath.Join(userConfigDir, "plugins", "other-tool.ts")
+	if err := os.MkdirAll(filepath.Dir(thirdPartyPlugin), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		rtkPlugin,
-		[]byte("export const RtkOpenCodePlugin = 1"),
+		thirdPartyPlugin,
+		[]byte("export const OtherToolPlugin = 1"),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -1650,7 +1570,7 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	if _, err := os.Stat(rtkPlugin); err != nil {
+	if _, err := os.Stat(thirdPartyPlugin); err != nil {
 		t.Errorf("ForceConfigure deleted the third-party plugins/ dir: %v", err)
 	}
 }

@@ -55,7 +55,6 @@ func assertRunsOnly(t *testing.T, cfg *installConfig, categories ...string) {
 		"languages": cfg.runLanguages,
 		"databases": cfg.runDatabases,
 		"desktop":   cfg.runDesktop,
-		"ai-tools":  cfg.runAITools,
 	}
 	for cat, shouldRun := range got {
 		if shouldRun != want[cat] {
@@ -75,15 +74,12 @@ func TestParseFlags_NoFlags_RunsAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop")
 	if cfg.terminalAppFilter != nil {
 		t.Error("expected terminalAppFilter nil with no flags")
 	}
 	if cfg.desktopAppFilter != nil {
 		t.Error("expected desktopAppFilter nil with no flags")
-	}
-	if cfg.aiToolsAppFilter != nil {
-		t.Error("expected aiToolsAppFilter nil with no flags")
 	}
 }
 
@@ -103,7 +99,7 @@ func TestParseFlags_SkipDatabases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "desktop")
 }
 
 func TestParseFlags_OnlyDesktop(t *testing.T) {
@@ -161,46 +157,13 @@ func TestParseFlags_SkipGit_TerminalRunsWithSkipFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop")
 	if cfg.terminalAppFilter != nil {
 		t.Error("expected terminalAppFilter nil when only skip flags given")
 	}
 	if !cfg.terminalSkipFilter["git"] {
 		t.Error("expected terminalSkipFilter to include git")
 	}
-}
-
-func TestParseFlags_OnlyAITools(t *testing.T) {
-	cfg, err := parseInstallFlags([]string{"ai-tools"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "ai-tools")
-	if cfg.aiToolsAppFilter != nil {
-		t.Error("expected aiToolsAppFilter nil for category-only flag")
-	}
-}
-
-func TestParseFlags_OnlyRtk_RunsAITools(t *testing.T) {
-	cfg, err := parseInstallFlags([]string{"rtk"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "ai-tools")
-	if !cfg.aiToolsAppFilter["rtk"] {
-		t.Error("expected aiToolsAppFilter to include rtk")
-	}
-	if len(cfg.aiToolsAppFilter) != 1 {
-		t.Errorf("expected aiToolsAppFilter length 1, got %d", len(cfg.aiToolsAppFilter))
-	}
-}
-
-func TestParseFlags_SkipAITools(t *testing.T) {
-	cfg, err := parseInstallFlags(nil, []string{"ai-tools"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop")
 }
 
 // --- mixed category + app ---

@@ -1,7 +1,7 @@
 # ADR-0004 — New `ai-tools` install category, rtk as first app
 
 **Date:** 2026-07-23
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md)
 
 ## Context
 

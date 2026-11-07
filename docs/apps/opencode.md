@@ -228,5 +228,5 @@ dg configure opencode --force
 
 `--force` clears only what devgeta generates (`opencode.json`, `themes/`,
 `plugin/`, `skills/`, `commands/`, `agents/`). Your `tui.json`, your
-`node_modules`, rtk's `plugins/` directory and anything else in there are left
+`node_modules`, the `plugins/` directory other tools write to, and anything else in there are left
 alone. See [ADR-0049](../decisions/ADR-0049-opencode-plugins-ship-with-a-lockfile.md).

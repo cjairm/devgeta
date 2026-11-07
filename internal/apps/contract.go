@@ -39,9 +39,7 @@ type App interface {
 // `dg configure <app> --force --only=...`. What a "part" is belongs to the
 // app: the AI coders (claude, opencode) expose their shared
 // skills/commands/agents subtrees so those can be overwritten without
-// disturbing edited config, plus an "rtk" part that wires rtk's
-// command-rewriting hook into that coder — the explicit opt-in required by
-// ADR-0004. Apps that don't implement it reject --only.
+// disturbing edited config. Apps that don't implement it reject --only.
 type SelectiveConfigurer interface {
 	// ConfigurableParts lists the part names accepted by --only.
 	ConfigurableParts() []string
