@@ -56,15 +56,15 @@ for those projects along with the chats.
 
 `ForceConfigure` copies the following into `~/.claude/`:
 
-| Source                                     | Destination                           | Notes                                                                             |
-| ------------------------------------------ | ------------------------------------- | --------------------------------------------------------------------------------- |
-| `configs/claude/settings.json.tmpl`        | `~/.claude/settings.json`             | rendered template: theme, permissions, hooks                                      |
-| `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                                                      |
-| `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                                                      |
-| `configs/devgeta/format-file.sh`           | `~/.config/devgeta/format-file.sh`    | `chmod 0755`; the formatter table the hook calls                                  |
-| `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                                                      |
-| `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                                                      |
-| `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
+| Source                                 | Destination                        | Notes                                            |
+| -------------------------------------- | ---------------------------------- | ------------------------------------------------ |
+| `configs/claude/settings.json.tmpl`    | `~/.claude/settings.json`          | rendered template: theme, permissions, hooks     |
+| `configs/claude/statusline.sh`         | `~/.claude/statusline.sh`          | `chmod 0755`                                     |
+| `configs/claude/format.sh`             | `~/.claude/format.sh`              | `chmod 0755`                                     |
+| `configs/devgeta/format-file.sh`       | `~/.config/devgeta/format-file.sh` | `chmod 0755`; the formatter table the hook calls |
+| `configs/claude/agent-config-guard.sh` | `~/.claude/agent-config-guard.sh`  | `chmod 0755`                                     |
+| `configs/claude/agent-state.sh`        | `~/.claude/agent-state.sh`         | `chmod 0755`                                     |
+| `configs/claude/themes/`               | `~/.claude/themes/`                |                                                  |
 
 `settings.json` is rendered from a template (theme, scratch directory, and the
 agent packs), so a `--force` re-render rewrites the whole file: hand edits to it
@@ -171,6 +171,11 @@ Notes:
   run while it builds its cache).
 - `eslint_d` on a project without an ESLint config will report a config error as
   a "finding"; this is expected outside configured JS/TS repos.
+- prettier is the exception to "Mason's binaries": the nearest
+  `node_modules/.bin/prettier` above the file wins, and Mason's copy is only the
+  fallback. A project's CI lints against its own pinned prettier, and prettier 2
+  and 3 lay out the same code differently. OpenCode's `formatter` block does the
+  same lookup.
 
 ## Agent-config guard (PreToolUse hook)
 

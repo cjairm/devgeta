@@ -301,22 +301,32 @@ func applySettingDefaults(force bool) error {
 }
 
 // formatExtensionName is the devgeta-owned extension that runs the shared
-// format script after each edit (ADR-0063). Unlike the footer override it is
-// devgeta code, not user config, so it is rewritten on every configure.
+// format script after each edit (ADR-0063).
 const formatExtensionName = "devgeta-format.js"
 
-func formatExtensionFile() string {
-	return filepath.Join(piAgentDir(), "extensions", formatExtensionName)
+// devgetaExtensions are the extensions devgeta ships in configs/pi/extensions.
+// Unlike the footer override they are devgeta code, not user config, so they
+// are rewritten on every configure. devgeta-quiet-bash shows only the command
+// of a bash call until ctrl+o expands it.
+var devgetaExtensions = []string{formatExtensionName, "devgeta-quiet-bash.js"}
+
+func devgetaExtensionFile(name string) string {
+	return filepath.Join(piAgentDir(), "extensions", name)
 }
 
-func writeFormatExtension() error {
-	source := filepath.Join(paths.Paths.App.Configs.Pi, "extensions", formatExtensionName)
-	data, err := os.ReadFile(source)
-	if err != nil {
-		return fmt.Errorf("failed to read %s: %w", source, err)
-	}
-	if err := files.WriteFileAtomic(formatExtensionFile(), data, files.FilePermission); err != nil {
-		return fmt.Errorf("failed to write %s: %w", formatExtensionFile(), err)
+func formatExtensionFile() string { return devgetaExtensionFile(formatExtensionName) }
+
+func writeDevgetaExtensions() error {
+	for _, name := range devgetaExtensions {
+		source := filepath.Join(paths.Paths.App.Configs.Pi, "extensions", name)
+		data, err := os.ReadFile(source)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", source, err)
+		}
+		target := devgetaExtensionFile(name)
+		if err := files.WriteFileAtomic(target, data, files.FilePermission); err != nil {
+			return fmt.Errorf("failed to write %s: %w", target, err)
+		}
 	}
 	return nil
 }
@@ -373,7 +383,7 @@ func (p *Pi) configure(force bool) error {
 	if err := baseapp.EnsureFormatScript(); err != nil {
 		return err
 	}
-	if err := writeFormatExtension(); err != nil {
+	if err := writeDevgetaExtensions(); err != nil {
 		return err
 	}
 	if err := applyPiLensDefaults(force); err != nil {

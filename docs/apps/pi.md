@@ -353,6 +353,19 @@ than the full text, the same way Claude Code and OpenCode show it.
   `dg configure pi` keeps it from then on. Only `dg configure pi --force` sets
   it back to hidden.
 
+## Command output
+
+`~/.pi/agent/extensions/devgeta-quiet-bash.js` shows each bash call as just its
+command line, with no output under it. `Ctrl+O` shows the full output of every
+call, using Pi's own renderer, and hides it again. Only the display changes: the
+model still gets the full output, and the command runs through Pi's built-in
+bash tool. Without the extension, Pi shows the last five lines of every command.
+
+It is adapted from Pi's `examples/extensions/minimal-mode.ts`, which also hides
+the output of `edit`, `write`, `read` and the search tools. Those overrides are
+left out because they replace Pi's diff view of an edit with plain text.
+`dg configure pi` rewrites the file every time, like `devgeta-format.js`.
+
 ## Formatting
 
 After every `edit` or `write`, Pi formats and lints the file with the same
@@ -360,7 +373,9 @@ Mason binaries and settings as Claude Code (ADR-0063). Three pieces:
 
 - `~/.config/devgeta/format-file.sh` is the one table of formatters and
   linters, shared with Claude's hook. Mason (`$XDG_DATA_HOME/nvim/mason/bin`,
-  default `~/.local/share/nvim/mason/bin`) is the only source of tools.
+  default `~/.local/share/nvim/mason/bin`) is the source of tools, except that
+  a project's own `node_modules/.bin/prettier` wins over Mason's, because the
+  project's CI checks against that pinned version.
 - `~/.pi/agent/extensions/devgeta-format.js` runs it after each edit. If the
   file changed, the tool result says `Formatted by devgeta: lines N–M changed`
   and shows those lines (capped; over the cap it tells the model to re-read the

@@ -139,6 +139,25 @@ lint_go() {
 	esac
 }
 
+# project_bin <name> — the nearest node_modules/.bin/<name> above the file,
+# falling back to Mason's copy. A project pins its own formatter version and its
+# CI checks against that version; prettier 2 and 3 lay out the same code
+# differently, so Mason's copy would undo what the project's lint expects.
+project_bin() {
+	local dir
+	dir=$(cd "$(dirname "$FILE")" 2>/dev/null && pwd) || dir=/
+	while :; do
+		if [ -x "$dir/node_modules/.bin/$1" ]; then
+			printf '%s' "$dir/node_modules/.bin/$1"
+			return
+		fi
+		[ "$dir" = / ] && break
+		dir=$(dirname "$dir")
+	done
+	printf '%s' "$BIN/$1"
+}
+PRETTIER=$(project_bin prettier)
+
 case "$FILE" in
 *.js | *.jsx | *.ts | *.tsx | *.mjs | *.cjs)
 	# eslint_d keeps a node daemon alive between runs, and that is the point of
@@ -154,17 +173,17 @@ case "$FILE" in
 	# know them, which is the same as today's behaviour.
 	export ESLINT_D_PPID=0 ESLINT_D_IDLE=15
 	fmt "$BIN/eslint_d" "$FILE" --fix
-	fmt "$BIN/prettier" "$FILE" --write
+	fmt "$PRETTIER" "$FILE" --write
 	lint "eslint" "$BIN/eslint_d" "$FILE"
 	;;
 *.json | *.css | *.scss | *.less | *.yaml | *.yml)
-	fmt "$BIN/prettier" "$FILE" --write
+	fmt "$PRETTIER" "$FILE" --write
 	;;
 *.html)
-	fmt "$BIN/prettier" "$FILE" --write
+	fmt "$PRETTIER" "$FILE" --write
 	;;
 *.md | *.markdown)
-	fmt "$BIN/prettier" "$FILE" --write
+	fmt "$PRETTIER" "$FILE" --write
 	;;
 *.py)
 	fmt "$BIN/isort" "$FILE"

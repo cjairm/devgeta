@@ -1182,12 +1182,14 @@ func TestConfigureDeploysFormatPieces(t *testing.T) {
 		if err := app.SoftConfigure(); err != nil {
 			t.Fatalf("SoftConfigure error: %v", err)
 		}
-		got, err := os.ReadFile(formatExtensionFile())
-		if err != nil {
-			t.Fatalf("extension not deployed: %v", err)
-		}
-		if string(got) != shipped(t, "pi", "extensions", "devgeta-format.js") {
-			t.Error("deployed extension differs from the shipped one")
+		for _, name := range devgetaExtensions {
+			got, err := os.ReadFile(devgetaExtensionFile(name))
+			if err != nil {
+				t.Fatalf("%s not deployed: %v", name, err)
+			}
+			if string(got) != shipped(t, "pi", "extensions", name) {
+				t.Errorf("deployed %s differs from the shipped one", name)
+			}
 		}
 		script := filepath.Join(paths.Paths.Config.Devgeta, "format-file.sh")
 		info, err := os.Stat(script)

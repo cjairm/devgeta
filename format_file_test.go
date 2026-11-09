@@ -244,6 +244,36 @@ func TestFormatFile(t *testing.T) {
 		}
 	})
 
+	// A project's CI lints against its own pinned prettier; Mason's newer copy
+	// laid out a TypeScript union differently and failed that lint.
+	t.Run("prefers the project's own prettier over Mason's", func(t *testing.T) {
+		env := newFormatFileEnv(t, nil)
+		env.tool(t, "prettier", "#!/bin/sh\nprintf 'from mason\\n' > \"$1\"\n")
+		project := t.TempDir()
+		projectBin := filepath.Join(project, "node_modules", ".bin")
+		mustMkdirAll(t, projectBin)
+		if err := os.WriteFile(filepath.Join(projectBin, "prettier"),
+			[]byte("#!/bin/sh\nprintf 'from project\\n' > \"$1\"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		nested := filepath.Join(project, "src", "deep")
+		mustMkdirAll(t, nested)
+		inProject := filepath.Join(nested, "a.ts")
+		mustWriteFile(t, inProject, "x\n")
+		outside := filepath.Join(t.TempDir(), "b.json")
+		mustWriteFile(t, outside, "{}\n")
+
+		env.run(t, inProject)
+		env.run(t, outside)
+
+		if got, _ := os.ReadFile(inProject); string(got) != "from project\n" {
+			t.Errorf("file inside a project: want the project's prettier, got %q", got)
+		}
+		if got, _ := os.ReadFile(outside); string(got) != "from mason\n" {
+			t.Errorf("file outside any project: want Mason's prettier, got %q", got)
+		}
+	})
+
 	// Mason installs under Neovim's stdpath("data"), which honors XDG_DATA_HOME;
 	// the old hook hard-coded $HOME/.local/share.
 	t.Run("looks for Mason under XDG_DATA_HOME, not under HOME", func(t *testing.T) {
