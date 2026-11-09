@@ -192,7 +192,7 @@ message file, tag-not-exists) runs before any mutation.
 
 Without --push, nothing is pushed: the final line states exactly what remains
 to run, e.g. "Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push
-origin main --tags".`,
+origin main refs/tags/v0.12.0".`,
 	Example: `  dg task release v0.12.0 --message-file release-notes.txt
   dg task release v0.12.0 --message-file release-notes.txt --push`,
 	Args: cobra.ExactArgs(1),

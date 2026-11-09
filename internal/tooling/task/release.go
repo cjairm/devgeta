@@ -112,18 +112,19 @@ func (tm *TaskManager) Release(version, messageFile string, push bool) (string, 
 
 	summary := releaseSummary(version, ahead, squashed)
 
+	// Only this tag: --tags would also publish every unrelated local tag.
+	tagRef := "refs/tags/" + version
+	pushCommand := fmt.Sprintf("git push origin %s %s", defaultBranch, tagRef)
+
 	if !push {
-		return fmt.Sprintf(
-			"%s Not pushed — run: git push origin %s --tags",
-			summary, defaultBranch,
-		), nil
+		return fmt.Sprintf("%s Not pushed — run: %s", summary, pushCommand), nil
 	}
 
-	if err := tm.Git.ExecuteCommand("push", "origin", defaultBranch, "--tags"); err != nil {
+	if err := tm.Git.ExecuteCommand("push", "origin", defaultBranch, tagRef); err != nil {
 		return "", fmt.Errorf(
 			"release: tag %s was created locally but the push failed — run "+
-				"'git push origin %s --tags' to finish: %w",
-			version, defaultBranch, err,
+				"'%s' to finish: %w",
+			version, pushCommand, err,
 		)
 	}
 	return fmt.Sprintf("%s Pushed to origin/%s.", summary, defaultBranch), nil

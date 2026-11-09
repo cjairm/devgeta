@@ -406,7 +406,7 @@ curl -fsSL https://raw.githubusercontent.com/cjairm/devgeta/main/install.sh | ba
 devgeta --version
 ```
 
-Without `--push`, review the result and run the `git push origin main --tags`
+Without `--push`, review the result and run the `git push origin main refs/tags/<version>`
 the command prints. Never tag by hand — a bare `git tag` is unannotated, and
 the release page is built from the tag's annotation.
 

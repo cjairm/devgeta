@@ -373,7 +373,8 @@ meant; that question has been answered and asking again is friction:
 2. **Notes** — write the message file from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md).
 3. **Commit** — `git add`, then `git commit`.
 4. **Tag** — `devgeta task release <version> --message-file <file>`.
-5. **Push** — `git push origin main --tags` (or pass `--push` in step 4).
+5. **Push** — `git push origin main refs/tags/<version>` (or pass `--push` in step 4).
+   Never `--tags`: it publishes every local tag, not just the release.
 6. **Confirm** — the Release workflow ran, and the release page shows the tag's
    notes with all four binaries attached.
 

@@ -179,7 +179,7 @@ func TestRelease_HappyPath_SquashNoPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main --tags"
+	want := "Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main refs/tags/v0.12.0"
 	if out != want {
 		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", out, want)
 	}
@@ -215,7 +215,7 @@ func TestRelease_HappyPath_SquashAtBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "Tagged v0.12.0 (squashed 2 commits). Not pushed — run: git push origin main --tags"
+	want := "Tagged v0.12.0 (squashed 2 commits). Not pushed — run: git push origin main refs/tags/v0.12.0"
 	if out != want {
 		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", out, want)
 	}
@@ -258,7 +258,7 @@ func TestRelease_HappyPath_SquashWithPush(t *testing.T) {
 	if len(calls) != 9 {
 		t.Fatalf("expected exactly 9 git calls, got %d: %+v", len(calls), calls)
 	}
-	assertCmd(t, calls[8], "git", "push", "origin", "main", "--tags")
+	assertCmd(t, calls[8], "git", "push", "origin", "main", "refs/tags/v0.12.0")
 }
 
 func TestRelease_NoSquashNeeded_ZeroAhead(t *testing.T) {
@@ -277,7 +277,7 @@ func TestRelease_NoSquashNeeded_ZeroAhead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "Tagged v0.12.0 (no unpushed commits). Not pushed — run: git push origin main --tags"
+	want := "Tagged v0.12.0 (no unpushed commits). Not pushed — run: git push origin main refs/tags/v0.12.0"
 	if out != want {
 		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", out, want)
 	}
@@ -313,7 +313,7 @@ func TestRelease_NoSquashNeeded_OneAhead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "Tagged v0.12.0 (1 commit, no squash needed). Not pushed — run: git push origin main --tags"
+	want := "Tagged v0.12.0 (1 commit, no squash needed). Not pushed — run: git push origin main refs/tags/v0.12.0"
 	if out != want {
 		t.Fatalf("unexpected output:\ngot:  %q\nwant: %q", out, want)
 	}
@@ -451,7 +451,7 @@ func TestRelease_PushFailsAfterTag(t *testing.T) {
 	if !strings.Contains(err.Error(), "push failed") {
 		t.Fatalf("expected error to describe the push failure, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "git push origin main --tags") {
+	if !strings.Contains(err.Error(), "git push origin main refs/tags/v0.12.0") {
 		t.Fatalf("expected error to name the push command to finish with, got: %v", err)
 	}
 }

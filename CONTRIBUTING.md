@@ -253,7 +253,7 @@ fills the release body.
    Nothing is pushed yet.
 
 3. **Push** the commit and tag together — re-run step 2 with `--push`, or run
-   the `git push origin main --tags` command the tool prints. Always tag
+   the `git push origin main refs/tags/<version>` command the tool prints. Always tag
    **before** pushing: `devgeta task release` decides what to squash by counting
    commits ahead of the remote, so pushing first silently skips the squash.
 

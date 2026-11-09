@@ -980,10 +980,11 @@ actionable one-liner and nothing is changed if any of them fails:
 Once all guards pass: count commits ahead of `origin/<default>`
 (`git rev-list --count`); if 2 or more, `git reset --soft HEAD~N` followed by
 `git commit -F <message-file>`; then `git tag -a <version> -F <message-file>`.
-Only when `--push` is passed: `git push origin <default> --tags`.
+Only when `--push` is passed: `git push origin <default> refs/tags/<version>`, so only
+the release tag is published, never other local tags.
 
 Without `--push`, nothing is pushed — the final line states exactly what remains,
-e.g. `Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main --tags`.
+e.g. `Tagged v0.12.0 (squashed 3 commits). Not pushed — run: git push origin main refs/tags/v0.12.0`.
 A failure partway through a mutation (reset, commit, tag, or push) reports the exact
 state left behind and the raw git command to finish or undo it by hand, since these
 steps are hard to reverse once they run.
