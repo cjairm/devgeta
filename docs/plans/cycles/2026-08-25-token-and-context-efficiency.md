@@ -33,7 +33,7 @@ is not re-argued here. The one-line rule that governs every step in this cycle:
 
 Relevant reading: [ADR-0004](../../decisions/ADR-0004-ai-tools-install-category.md)
 (rtk, the existing write-time filter), [ADR-0012](../../decisions/ADR-0012-review-knowledge-in-a-local-journal.md)
-(the per-branch journal this cycle's storage mirrors), [docs/apps/rtk.md](../../apps/rtk.md),
+(the per-branch journal this cycle's storage mirrors), `docs/apps/rtk.md` (removed, ADR-0065),
 [docs/apps/claude.md](../../apps/claude.md).
 
 ---

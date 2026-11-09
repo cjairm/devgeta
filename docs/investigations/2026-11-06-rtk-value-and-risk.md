@@ -1,8 +1,16 @@
 # Investigation — Is rtk worth keeping?
 
 **Date:** 2026-11-06
-**Status:** Open
-**Feeds:** none yet. If acted on, an ADR that removes rtk and amends ADR-0004 and ADR-0038.
+**Status:** Done
+**Feeds:** [ADR-0065](../decisions/ADR-0065-devgeta-does-not-ship-rtk.md) (rtk removed in `d7adb89`).
+Recommendation 2 (output-budget) is acted on by
+cycle [2026-11-07-agent-customizations-rollback.md](../plans/cycles/2026-11-07-agent-customizations-rollback.md)
+and [ADR-0066](../decisions/ADR-0066-devgeta-removes-its-token-reduction-layer.md).
+**Branch:** `agentsv2`. Work that acts on this investigation, together with
+[2026-11-06-skills-and-agents-reset.md](2026-11-06-skills-and-agents-reset.md)
+and [2026-11-06-agent-customizations-rollback.md](2026-11-06-agent-customizations-rollback.md),
+happens there. The rollback investigation supersedes recommendation 2 below
+(output-budget is removed, not made the default). This file was committed to `main` before the branch existed.
 
 ## Question
 
@@ -202,7 +210,8 @@ claude"` and no shim entry, even though `global_config.yaml` has
    a behavior change for every user, so it needs its own ADR.
 3. **Existing users** need a migration note: devgeta never ran `rtk init` for
    them unless they opted in, and `rtk init -g --uninstall` removes the hook,
-   `RTK.md` and the `@RTK.md` line. That would go in `docs/migrations/`.
+   `RTK.md` and the `@RTK.md` line. Written as
+   [docs/migrations/rtk-removal.md](../migrations/rtk-removal.md).
 
 ## Verification still needed
 

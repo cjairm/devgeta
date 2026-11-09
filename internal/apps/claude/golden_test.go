@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -66,8 +67,7 @@ func compareToGolden(t *testing.T, gotPath, goldenPath string) {
 }
 
 // TestForceConfigureTheme_SettingsMatchesGoldenRender renders the real
-// shipped settings.json.tmpl with a deterministic, zero-value
-// IntegrationsConfig (no rtk/output-budget opt-ins) and compares it
+// shipped settings.json.tmpl with deterministic data and compares it
 // byte-for-byte against a committed golden. Update
 // testdata/golden_settings.json deliberately when the change is intended.
 func TestForceConfigureTheme_SettingsMatchesGoldenRender(t *testing.T) {
@@ -76,9 +76,8 @@ func TestForceConfigureTheme_SettingsMatchesGoldenRender(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "settings.json")
 	tmplPath := filepath.Join(repoRoot, "configs", "claude", "settings.json.tmpl")
 	if err := files.GenerateFromTemplate(tmplPath, out, settingsTemplateData{
-		ScratchDir:          `"/home/tester/.cache/devgeta/scratch"`,
-		OutputBudgetEnabled: false,
-		Theme:               theme.DefaultThemeName,
+		ScratchDir: `"/home/tester/.cache/devgeta/scratch"`,
+		Theme:      theme.DefaultThemeName,
 	}); err != nil {
 		t.Fatalf("failed to render settings.json.tmpl: %v", err)
 	}
@@ -102,4 +101,40 @@ func TestForceConfigureTheme_ThemeJSONMatchesGoldenRender(t *testing.T) {
 	}
 
 	compareToGolden(t, out, filepath.Join("testdata", "golden_theme.json"))
+}
+
+// TestForceConfigureTheme_SettingsWithPacksMatchesGoldenRender covers the
+// other half of the template: with agent packs installed in Claude Code, the
+// marketplace and the enabled plugins are rendered from state, so a `--force`
+// re-render keeps them instead of silently disabling every pack.
+func TestForceConfigureTheme_SettingsWithPacksMatchesGoldenRender(t *testing.T) {
+	repoRoot, _ := repoDefaultClaudePalette(t)
+
+	out := filepath.Join(t.TempDir(), "settings.json")
+	tmplPath := filepath.Join(repoRoot, "configs", "claude", "settings.json.tmpl")
+	if err := files.GenerateFromTemplate(tmplPath, out, settingsTemplateData{
+		ScratchDir:          `"/home/tester/.cache/devgeta/scratch"`,
+		Theme:               theme.DefaultThemeName,
+		PackMarketplaceName: `"devgeta"`,
+		PackMarketplacePath: `"/home/tester/.local/share/devgeta/agent-packs"`,
+		PackPlugins:         []string{`"ponytail@devgeta"`, `"superpowers@devgeta"`},
+	}); err != nil {
+		t.Fatalf("failed to render settings.json.tmpl: %v", err)
+	}
+
+	compareToGolden(t, out, filepath.Join("testdata", "golden_settings_packs.json"))
+	// A golden that is not JSON would still compare equal to itself.
+	var parsed map[string]any
+	if err := json.Unmarshal(mustRead(t, out), &parsed); err != nil {
+		t.Fatalf("the rendered settings are not valid JSON: %v", err)
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

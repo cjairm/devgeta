@@ -1,7 +1,7 @@
 # ADR-0027 — A merge refuses on any dirty checkout and any non-stale open finding
 
 **Date:** 2026-08-18
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 
 ## Context
 

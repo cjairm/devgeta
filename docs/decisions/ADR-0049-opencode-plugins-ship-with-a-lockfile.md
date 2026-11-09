@@ -1,7 +1,9 @@
 # ADR-0049 — OpenCode plugins ship with a lockfile
 
 **Date:** 2026-09-22
-**Status:** ACCEPTED
+**Status:** SUPERSEDED (2026-11-08). OpenCode 2 does not resolve plugin
+dependencies at startup, and devgeta's plugins have none, so the lockfile is no
+longer generated. See [docs/apps/opencode.md](../apps/opencode.md).
 
 ## Context
 

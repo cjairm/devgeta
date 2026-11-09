@@ -1,7 +1,7 @@
 # ADR-0012 — Review knowledge lives in a local journal devgeta owns
 
 **Date:** 2026-08-05
-**Status:** ACCEPTED — amended 2026-08-05, see [Amendment](#amendment--2026-08-05-journal-every-blocking-finding-not-only-the-unanswerable-ones)
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 
 ## Context
 

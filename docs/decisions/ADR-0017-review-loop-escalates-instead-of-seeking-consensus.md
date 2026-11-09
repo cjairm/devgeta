@@ -1,6 +1,6 @@
 # ADR-0017: The review loop escalates instead of seeking consensus
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-06
 **Deciders:** cjairm
 **Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) (narrows the "Auto-retry a failed reviewer" alternative below), [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) (amends §1's round cap and §3's no-retry rule; everything else here stands), [cycle 2026-08-05-review-loop](../plans/cycles/2026-08-05-review-loop.md)

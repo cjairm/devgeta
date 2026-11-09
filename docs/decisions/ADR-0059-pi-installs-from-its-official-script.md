@@ -63,7 +63,11 @@ Pi installs a curated extension set at configure time. Amended by
 [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
 themes are now in scope. Amended by
 [ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md):
-Pi formats through devgeta's shared Mason script.)_
+Pi formats through devgeta's shared Mason script. Amended by
+[ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md):
+parity with Claude Code and OpenCode is now in scope. Agent packs go to Pi
+like the other coders, and the sync guide and parity tests widen from "the two
+agents" to every coder.)_
 
 ## Consequences
 

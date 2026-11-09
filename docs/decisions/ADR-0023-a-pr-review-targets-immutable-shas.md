@@ -1,6 +1,6 @@
 # ADR-0023: A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-07
 **Deciders:** cjairm
 **Related:** [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md), [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)

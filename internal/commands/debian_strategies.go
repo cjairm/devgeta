@@ -178,6 +178,8 @@ func verifySHA256(filePath, checksumsPath, assetName string) error {
 // broken download is reported as a successful install.
 //
 // label identifies the caller in error messages (a package or app name).
+// scriptArgs are passed to the script after its path, the same as
+// `curl … | bash -s -- <scriptArgs>` (for example a pinned `--version`).
 // Both stages run through base.ExecCommand — the shared executor's
 // streaming/timeout/error-wrapping behavior, and mockability — rather than a
 // raw exec.Command (CLAUDE.md §6, "Route external tools through their app
@@ -191,7 +193,11 @@ func verifySHA256(filePath, checksumsPath, assetName string) error {
 // caller loses interactive stdin it depended on, and it is what lets a
 // Timeout's cancellation reach an install script's own child processes
 // rather than leaving them running (see CommandParams.NoStdin).
-func RunInstallScript(base BaseCommandExecutor, label, scriptURL, interpreter string) error {
+func RunInstallScript(
+	base BaseCommandExecutor,
+	label, scriptURL, interpreter string,
+	scriptArgs ...string,
+) error {
 	return withStagingDir("install-script", func(stagingDir string) error {
 		scriptPath := filepath.Join(stagingDir, "install.sh")
 
@@ -214,7 +220,7 @@ func RunInstallScript(base BaseCommandExecutor, label, scriptURL, interpreter st
 
 		if _, stderr, err := base.ExecCommand(CommandParams{
 			Command: interpreter,
-			Args:    []string{scriptPath},
+			Args:    append([]string{scriptPath}, scriptArgs...),
 			Timeout: InstallScriptExecTimeout,
 			NoStdin: true,
 		}); err != nil {

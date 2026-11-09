@@ -75,6 +75,13 @@ type InstallationSummary struct {
 	Failed    int                  // Count of failed installations
 	Skipped   int                  // Count of skipped installations (already present)
 	Results   []InstallationResult // Detailed results for each package
+	// FreshlyInstalled names the apps that were absent before this run and are
+	// present after it. AlreadyPresent names the apps that were there before.
+	// Only apps that can say whether they are installed (IsInstalled) appear in
+	// either list. `dg install` uses them to put agent packs into the coders
+	// this run installed, and to leave the others' agent content alone.
+	FreshlyInstalled []string
+	AlreadyPresent   []string
 }
 
 // Total returns the total number of packages processed
@@ -138,7 +145,7 @@ func (t *Terminal) getApps() []namedInstallable {
 // InstallAndConfigure runs the full terminal setup.
 // appFilter: when non-empty, only those registry apps are installed (devtools/corelibs skipped).
 // skipFilter: those registry apps are always skipped regardless of appFilter.
-func (t *Terminal) InstallAndConfigure(appFilter, skipFilter map[string]bool) {
+func (t *Terminal) InstallAndConfigure(appFilter, skipFilter map[string]bool) *InstallationSummary {
 	summary := &InstallationSummary{}
 
 	err := t.DisplayGithubInstructions()
@@ -150,6 +157,7 @@ func (t *Terminal) InstallAndConfigure(appFilter, skipFilter map[string]bool) {
 	}
 
 	utils.PrintInfo(fmt.Sprintf("Installation complete: %s", summary.FormatSummary()))
+	return summary
 }
 
 // InstallTerminalApps installs registry-managed terminal apps with optional filtering.
@@ -168,15 +176,47 @@ func (t *Terminal) InstallTerminalApps(
 		if len(appFilter) > 0 && !appFilter[entry.name] {
 			continue
 		}
+		present := presenceOf(entry.app)
 		if err := entry.app.SoftInstall(); err != nil {
 			displayMessage(err, entry.name)
 			trackResult(summary, entry.name, err)
 			continue
 		}
 		trackResult(summary, entry.name, nil)
+		recordPresence(summary, entry.name, present, presenceOf(entry.app))
 		if err := entry.app.SoftConfigure(); err != nil {
 			displayMessage(err, entry.name, true)
 		}
+	}
+}
+
+// presenceReporter is implemented by apps that can say whether they are
+// installed (the coders). It is optional: an app that can't is not tracked.
+type presenceReporter interface{ IsInstalled() bool }
+
+// presenceOf returns whether app is installed, or nil when it can't say.
+func presenceOf(app softInstallable) *bool {
+	r, ok := app.(presenceReporter)
+	if !ok {
+		return nil
+	}
+	v := r.IsInstalled()
+	return &v
+}
+
+// recordPresence files an app under FreshlyInstalled (absent before this run,
+// present after) or AlreadyPresent (there before it). An app that was already
+// there and was upgraded to the pin by SoftInstall is still already present: it
+// is the user's, and `dg install` does not change its agent content.
+func recordPresence(summary *InstallationSummary, name string, before, after *bool) {
+	if before == nil || after == nil {
+		return
+	}
+	switch {
+	case *before:
+		summary.AlreadyPresent = append(summary.AlreadyPresent, name)
+	case *after:
+		summary.FreshlyInstalled = append(summary.FreshlyInstalled, name)
 	}
 }
 

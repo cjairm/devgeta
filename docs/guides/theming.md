@@ -61,7 +61,7 @@ last rendered with. Every themed app's plain`ForceConfigure()`reads it via`theme
   `dg theme set <name>` is its only write path (see `cmd/theme.go`), because
   writing it has to be coupled to actually reconfiguring every themed app,
   transactionally. `dg config get/set/unset current_theme` is refused the
-  same way `integrations.rtk_claude_hook` already is; `dg theme` is the read
+  same way `integrations.claude_instructions_imported` already is; `dg theme` is the read
   path.
 - `dg theme` shows the current theme and what else is available. `dg theme
 list` lists available themes. `dg theme set <name>` switches every

@@ -46,9 +46,9 @@ Read these **in order** before starting work:
 5. **Modular architecture** — Each app is independent; failures in one app don't cascade to others
 6. **Transparent state** — All installation state tracked in `~/.config/devgeta/global_config.yaml`; users can inspect what was installed
 7. **Visual consistency** — Alacritty, tmux, Neovim, and the AI-coder configs share one palette (Gruvbox dark) and a transparency convention; a color/theme change in one must be mirrored in the others. See [docs/guides/theming.md](docs/guides/theming.md)
-8. **Everything general, never bespoke** — Every feature devgeta ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgeta's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — see the `release` redirect's `go.mod` gate in `configs/claude/task-redirect.sh` — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
+8. **Everything general, never bespoke** — Every feature devgeta ships — commands, installers, app modules, configs, TUIs, `dg task` subcommands, hooks, plugins, aliases — is built to be general-purpose and reusable by anyone. We never add a custom, one-off feature that only serves a single person, repo, or situation. This protects every user's experience: what ships has to work for all of them, not just whoever asked for it. (Opinionated _defaults_ are not "custom" and are expected — a curated tool set, the Gruvbox palette, ready-made app configs — because those are a general setup anyone can adopt; what's forbidden is a feature whose value exists only for one narrow case.) Where devgeta's own internal process is unavoidably specific (e.g. the §9 release flow), gate it so it never imposes itself on a user's environment — never ship it as a global default. When a change would only help one narrow case: generalize it, or don't build it.
 
-   **This applies to every change, not just new features.** A bug fix, a refactor, a doc tweak, a one-line default, a hook edit — each one is subject to the same test: _would this still make sense to someone who has never seen this repo?_ The rule runs in both directions, and the second is the one that gets missed: as well as not building one-off features for one user, never bend a shipped artifact to carry a devgeta-specific decision. Our test policy, our release chain, our branch conventions are **project law, not product** — they belong in `CLAUDE.md` and `docs/`, never inside something a stranger installs. The trap that keeps catching us is `configs/shared/`; see [§12](#anything-we-ship-is-built-for-strangers).
+   **This applies to every change, not just new features.** A bug fix, a refactor, a doc tweak, a one-line default, a hook edit — each one is subject to the same test: _would this still make sense to someone who has never seen this repo?_ The rule runs in both directions, and the second is the one that gets missed: as well as not building one-off features for one user, never bend a shipped artifact to carry a devgeta-specific decision. Our test policy, our release chain, our branch conventions are **project law, not product** — they belong in `CLAUDE.md` and `docs/`, never inside something a stranger installs. The trap that keeps catching us is anything that loads into an agent's context in other people's repos; see [§12](#anything-we-ship-is-built-for-strangers).
 
 ---
 
@@ -210,8 +210,7 @@ one level further out as well.
 When the **root package** (`github.com/cjairm/devgeta`, i.e. `go test .`) shows up
 in the list, include it only if you changed something under `configs/` or one of
 the hook scripts. Its test files cover exactly that — embedded configs, the
-reviewer agents, and the `agent-config-guard` / `secret-guard` /
-`suppression-guard` / `task-redirect` / `agent-state` shells — and nothing about
+reviewer agents, and the `agent-config-guard` / `agent-state` shells — and nothing about
 app or tooling logic, so for any other change it is 4.8 minutes of pure cost.
 
 The full `go test ./...` belongs in exactly two situations:
@@ -327,7 +326,6 @@ Verify these before changing code in these areas:
 - Languages: Node.js, Python, Go, Rust, PHP (via Mise or native)
 - Databases: PostgreSQL, Redis, MySQL, MongoDB, SQLite
 - Desktop apps: Platform-specific GUIs (Docker, browsers, window managers, etc.)
-- AI tools: agent-support CLIs (rtk today; Ollama, Gemini CLI planned)
 
 **Single-command installation:**
 
@@ -373,9 +371,7 @@ meant; that question has been answered and asking again is friction:
    the entire tree. Never tag on a partial run. If any of the three fail, stop
    and report. Never tag over a red test.
 2. **Notes** — write the message file from [docs/guides/RELEASE-NOTES-TEMPLATE.md](docs/guides/RELEASE-NOTES-TEMPLATE.md).
-3. **Commit** — `git add` and `git commit` as **two separate commands**. A
-   pre-commit hook rejects them combined, because it can only scan for secrets
-   that are already staged.
+3. **Commit** — `git add`, then `git commit`.
 4. **Tag** — `devgeta task release <version> --message-file <file>`.
 5. **Push** — `git push origin main --tags` (or pass `--push` in step 4).
 6. **Confirm** — the Release workflow ran, and the release page shows the tag's
@@ -432,7 +428,7 @@ Things that must never happen silently (always require explicit PR discussion an
 - Removing support for a platform (macOS or Linux) without major version bump
 - Modifying what "terminal tools" category includes — users depend on this being stable
 - Changing installation paths or config directories — affects existing installations
-- Changing an AI agent's permissions or formatters in only one of the two agents — see [Keeping the two AI agents in sync](#keeping-the-two-ai-agents-in-sync)
+- Changing an AI coder's permissions, formatters or instructions in only one coder when the others can express it — see [Keeping every AI coder in sync](#keeping-every-ai-coder-in-sync)
 - Bending any shipped artifact — a config, hook, plugin, command, skill, alias, theme — to a devgeta-specific decision, in a change of any size; see [Anything we ship is built for strangers](#anything-we-ship-is-built-for-strangers)
 
 ### Spec-driven development
@@ -512,7 +508,6 @@ Where to find and add code:
 | **TUI components**         | `internal/tui/`                | TUIs live here; `internal/tui/components` is the shared toolkit (palette, hint bar, help overlay, filter field, list navigation) — new TUIs must be assembled from it, and logic needed by a second TUI moves into it |
 | **Shared utilities**       | `pkg/`                         | Logger, paths, file ops, constants, package mappings, `progress` (byte meter for long streaming work)                                                                                                                 |
 | **Embedded configs**       | `configs/`                     | Templates and static files (embedded at compile time)                                                                                                                                                                 |
-| **Shared agent artifacts** | `configs/shared/`              | Skills, commands, agents shipped to both AI coders **and to every user's other repos** — nothing here may carry a devgeta-specific decision (see below)                                                               |
 | **Tests**                  | `*_test.go` alongside impl     | Use testutil mocks; never execute real commands                                                                                                                                                                       |
 | **User docs**              | `docs/`                        | Feature docs, architecture, app guides, tooling details                                                                                                                                                               |
 | **Developer docs**         | `CLAUDE.md`, `CONTRIBUTING.md` | This file and contributor guide                                                                                                                                                                                       |
@@ -545,7 +540,6 @@ Where to find and add code:
 3. Deploy with `dg configure <app> --force` — the maintainer runs steps 2 and 3, or you run them only after asking
 4. If the config must satisfy a constraint imposed by an external tool (a plugin or program that parses, splices, or re-executes the value), enforce that constraint with a test against the embedded configs FS — a comment in the config alone will not survive future edits
 5. If the config governs an AI coding agent, apply the change to **both** agents — see below
-6. If the file lives under `configs/shared/skills/`, stop and read the next section first — it is almost certainly the wrong file to change
 
 ### Anything we ship is built for strangers
 
@@ -560,37 +554,37 @@ belongs in `CLAUDE.md` or `docs/` — project law, not product ([principle 8](#3
 
 Two places where the line is easy to cross:
 
-- **`configs/shared/skills/`** — these run inside other people's repositories,
-  which have no test suite of ours, no release gate, no branch conventions.
-  Putting our policy in one is not just useless there, it is a wrong instruction.
-  Most are also **vendored from upstream** — [docs/guides/vendored-skills.md](docs/guides/vendored-skills.md)
-  lists which, and how to sync them (see also
-  [ADR-0015 §7](docs/decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md#7-vendored-skills-keep-tmp-knowingly)),
-  so local edits buy a merge conflict on every sync. `dg-worktree` is the
-  exception that shows the shape of a legitimate one: devgeta's own skill about
-  devgeta's own command.
+- **Anything that loads into an agent's context** — a skill, command, subagent
+  or instructions file runs inside other people's repositories, which have no
+  test suite of ours, no release gate, no branch conventions. Putting our policy
+  in one is not just useless there, it is a wrong instruction.
 - **Devgeta's own process, when it has to be automated** — gate it so it can
-  never fire in a user's environment, the way the `release` redirect is gated on
-  `go.mod` in `configs/claude/task-redirect.sh`. Never ship it as a global
-  default.
+  never fire in a user's environment. Never ship it as a global default.
 
-### Keeping the two AI agents in sync
+### Keeping every AI coder in sync
 
-Devgeta configures two AI coding agents, Claude Code and OpenCode, and they must
-behave the same. **Never add a deny/ask rule, a formatter language, or any other
-policy to one agent only** — `internal/apps/opencode/permissions_test.go` fails
-the build on asymmetry in either direction, and weakening it to land a one-sided
-change is not an option. If a rule can't be expressed in one agent, drop it from
-both. Both must be deployed after any change: `dg configure claude --force`
-**and** `dg configure opencode --force` — ask before running them.
+Devgeta configures three AI coding agents ("coders"): Claude Code, OpenCode and
+Pi. They must behave the same wherever each one can. **Never add a deny/ask
+rule, a formatter language, an instruction, or any other policy to one coder
+only when the others can express it.** Two tests fail the build on drift:
+`internal/apps/opencode/permissions_test.go` compares Claude Code and OpenCode in
+either direction, and `internal/apps/opencode/coder_parity_test.go` checks that
+`docs/guides/agent-sync.md` names where every concern lives for every coder,
+including Pi. Weakening either to land a one-sided change is not an option. If a
+rule can't be expressed in one of the two permission-bearing coders, drop it from
+both; where a coder has no equivalent at all (Pi has no permission system), the
+gap is listed under "Accepted differences" in that guide, not skipped. Deploy
+every coder you changed: `dg configure claude --force`, `dg configure opencode
+--force`, `dg configure pi --force` — ask before running them.
 
 Two traps that have each cost a debugging session:
 
-- That test compares pattern **strings**, not what they match — identical rules
-  can still enforce nothing (see
+- The permission test compares pattern **strings**, not what they match —
+  identical rules can still enforce nothing (see
   [docs/guides/agent-permission-matching.md](docs/guides/agent-permission-matching.md)).
-- Command frontmatter is ignored by both agents, so a command that posts outward
-  or acts unattended must grant that authorization **in its own prose**.
+- Command frontmatter is ignored by Claude Code and OpenCode, so a command that
+  posts outward or acts unattended must grant that authorization **in its own
+  prose**.
 
 Which file holds which concern, and the deliberate differences that must not be
 "fixed" by halves: [docs/guides/agent-sync.md](docs/guides/agent-sync.md).
@@ -623,16 +617,13 @@ Quick reference to where things live:
 | **Testing Patterns**    | `docs/guides/testing-patterns.md`            | Mocking, dependency injection, test isolation                                                                                                                 |
 | **Error Handling**      | `docs/guides/error-handling.md`              | Error patterns, user-facing messages                                                                                                                          |
 | **CLI Patterns**        | `docs/guides/cli-patterns.md`                | Command structure, Cobra patterns, flags, subcommands                                                                                                         |
-| **Task Design**         | `docs/guides/task-design.md`                 | AI-first, token-wise `dg task` output — when to build a task, output principles, rtk stance                                                                   |
 | **Permission matching** | `docs/guides/agent-permission-matching.md`   | What the agents' permission patterns actually match at runtime — dead `~/` rules, `*` crossing `/`, the two resolution orders                                 |
 | **Agent sync**          | `docs/guides/agent-sync.md`                  | Which file holds which concern for Claude Code vs OpenCode, and the deliberate differences between them                                                       |
-| **Vendored skills**     | `docs/guides/vendored-skills.md`             | Which shared skills are upstream copies, the commit each is pinned to, and the manual sync procedure                                                          |
-| **Output budget**       | `docs/guides/output-budget-runner.md`        | The write-time output-cap contract: argv/sidecar schema, bounded capture, marker accounting, the bash/JS numeric contract, tokenization (not yet implemented) |
 | **Recent changes**      | `docs/recent-changes.md`                     | Prose summaries of recent work, last two releases only — the changelog that used to live at the bottom of this file                                           |
 | **Cross-Platform**      | `docs/guides/cross-platform-installation.md` | Strategy pattern, package mappings, Debian strategies                                                                                                         |
 | **Theming**             | `docs/guides/theming.md`                     | Shared Gruvbox palette, `.Theme` flow, transparency convention, the "match the others" rule                                                                   |
 | **Claude Code app**     | `docs/apps/claude.md`                        | Claude config, format/lint hook (reuses neovim Mason), statusline                                                                                             |
-| **OpenCode app**        | `docs/apps/opencode.md`                      | Install channel, provider/model guidance, the `notify.js` activity plugin                                                                                     |
+| **OpenCode app**        | `docs/apps/opencode.md`                      | Pinned install, 2.x config, the guard and activity plugins, provider/model guidance                                                                          |
 | **Brave app**           | `docs/apps/brave.md`                         | What `dg export brave` / `dg import brave` move, what they never move, and how to undo an import                                                              |
 | **Releasing**           | `docs/guides/releasing.md`                   | GitHub releases workflow, versioning                                                                                                                          |
 | **Release notes**       | `docs/guides/RELEASE-NOTES-TEMPLATE.md`      | Template + structure for the `--message-file` that becomes the GitHub release body                                                                            |

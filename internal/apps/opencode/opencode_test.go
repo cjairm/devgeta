@@ -6,14 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/cjairm/devgeta/internal/apps"
-	"github.com/cjairm/devgeta/internal/apps/baseapp"
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/testutil"
@@ -112,92 +109,6 @@ func writeOpenCodeThemeTemplateFixture(t *testing.T, appConfigDir, content strin
 	); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func TestForceConfigureParts(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	src := t.TempDir()
-	for _, f := range []string{"skills/demo/SKILL.md", "commands/x.md"} {
-		p := filepath.Join(src, f)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = src
-
-	ocDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOC := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOC })
-	paths.Paths.Config.OpenCode = ocDir
-
-	app := &OpenCode{}
-	if err := app.ForceConfigureParts([]string{"skills"}); err != nil {
-		t.Fatalf("ForceConfigureParts error: %v", err)
-	}
-
-	if _, err := os.Stat(filepath.Join(ocDir, "skills", "demo", "SKILL.md")); err != nil {
-		t.Fatalf("expected skills synced: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(ocDir, "commands")); !os.IsNotExist(err) {
-		t.Error("commands should not be synced when only skills was requested")
-	}
-	// The --only path must not regenerate opencode.json.
-	if _, err := os.Stat(filepath.Join(ocDir, "opencode.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts should not write opencode.json")
-	}
-}
-
-func setupSharedDir(t *testing.T, baseDir string) {
-	t.Helper()
-	sharedDir := filepath.Join(baseDir, "configs", "shared")
-	for _, sub := range []string{"skills", "commands", "agents"} {
-		if err := os.MkdirAll(filepath.Join(sharedDir, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(
-		filepath.Join(sharedDir, baseapp.InstructionsFileName),
-		[]byte("# instructions fixture\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = sharedDir
-}
-
-// setupOutputBudgetRunnerSource stubs the runner source
-// baseapp.EnsureAgentRuntime deploys — configs/devgeta/, its own agent-
-// neutral source dir (not configs/claude/: output-budget.sh, the HOOK,
-// lives there, but the shared runner does not) — so OpenCode's own
-// ForceConfigure, which also calls EnsureAgentRuntime (cycle doc Step 5),
-// has something to copy even though these tests otherwise only stub
-// configs/opencode/.
-func setupOutputBudgetRunnerSource(t *testing.T, baseDir string) {
-	t.Helper()
-	devgetaConfigDir := filepath.Join(baseDir, "configs", "devgeta")
-	if err := os.MkdirAll(devgetaConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(devgetaConfigDir, "output-budget-run.sh"),
-		[]byte("#!/usr/bin/env bash\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	oldDevgeta := paths.Paths.App.Configs.Devgeta
-	t.Cleanup(func() { paths.Paths.App.Configs.Devgeta = oldDevgeta })
-	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
 }
 
 func TestNew(t *testing.T) {
@@ -299,6 +210,11 @@ func TestInstall(t *testing.T) {
 	if execute.Timeout == 0 {
 		t.Error("expected execute step to carry a non-zero Timeout")
 	}
+	// The v2 script installs the latest release unless told a version; devgeta
+	// always installs the pin.
+	if want := []string{"--version", constants.PinnedVersion.OpenCode}; !slices.Equal(execute.Args[1:], want) {
+		t.Errorf("expected script args %v, got %v", want, execute.Args[1:])
+	}
 
 	// No package manager is involved on either platform any more: brew on
 	// macOS offered no pin and no downgrade, and apt never had opencode at
@@ -382,7 +298,7 @@ func TestSoftInstall(t *testing.T) {
 	// the user's, until they open a new shell), so a PATH-only check would
 	// re-run the installer on every `dg install` - the Debian idempotency
 	// defect in ADR-0047.
-	t.Run("skips when the script's own binary is present, even off PATH", func(t *testing.T) {
+	t.Run("skips when the script's own binary is present at the pin, even off PATH", func(t *testing.T) {
 		prefix := isolateOpenCodeInstallPrefix(t)
 		writeOpenCodeBinaryFixture(t, prefix)
 		stubLookPath(t, func(string) (string, error) {
@@ -390,13 +306,17 @@ func TestSoftInstall(t *testing.T) {
 		})
 
 		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResults(
+			commands.ExecCommandResult("opencode v"+constants.PinnedVersion.OpenCode+"\n", "", nil),
+		)
 		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
 
 		if err := app.SoftInstall(); err != nil {
 			t.Fatalf("SoftInstall error: %v", err)
 		}
-		if got := mockApp.Base.GetExecCommandCallCount(); got != 0 {
-			t.Errorf("expected no commands when opencode is already installed, got %d", got)
+		calls := mockApp.Base.ExecCommandCalls
+		if len(calls) != 1 || calls[0].Command != installedBinary() || calls[0].Args[0] != "--version" {
+			t.Errorf("expected only the managed binary's --version, got %+v", calls)
 		}
 		if mockApp.Cmd.MaybeInstalled != "" || mockApp.Cmd.InstalledPkg != "" {
 			t.Errorf(
@@ -405,6 +325,39 @@ func TestSoftInstall(t *testing.T) {
 			)
 		}
 	})
+
+	// An OpenCode 1 install (or anything older than the pin, or a version it
+	// cannot read) is replaced: devgeta's config only means what it says on
+	// the pinned release. A newer one the user installed stays.
+	for _, tt := range []struct {
+		name, versionOutput string
+		wantInstall         bool
+	}{
+		{"upgrades an OpenCode 1 install", "1.19.0\n", true},
+		{"reinstalls an unreadable version", "opencode\n", true},
+		{"keeps a newer version", "opencode v99.0.0\n", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			prefix := isolateOpenCodeInstallPrefix(t)
+			writeOpenCodeBinaryFixture(t, prefix)
+			stubLookPath(t, func(string) (string, error) {
+				return "/usr/local/bin/opencode", nil
+			})
+
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResults(commands.ExecCommandResult(tt.versionOutput, "", nil))
+			app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+			if err := app.SoftInstall(); err != nil {
+				t.Fatalf("SoftInstall error: %v", err)
+			}
+			calls := mockApp.Base.ExecCommandCalls
+			installed := len(calls) == 3 && calls[1].Command == "curl" && calls[2].Command == "bash"
+			if installed != tt.wantInstall {
+				t.Errorf("install ran = %v, want %v (calls %+v)", installed, tt.wantInstall, calls)
+			}
+		})
+	}
 
 	// A user who already has opencode from somewhere else (npm, brew, their
 	// own build) keeps it: devgeta does not install a second copy over it.
@@ -554,7 +507,6 @@ func TestForceConfigure(t *testing.T) {
 
 		templateContent := `{
   "version": "1.0.0",
-  "theme": "{{ .Theme }}",
   "settings": {
     "fontSize": 14,
     "fontFamily": "JetBrains Mono"
@@ -571,20 +523,7 @@ func TestForceConfigure(t *testing.T) {
 			`{"name": "Devgeta Gruvbox", "foreground": "{{.Palette.Foreground}}"}`,
 		)
 
-		pluginDir := filepath.Join(appConfigDir, "plugin")
-		if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(
-			filepath.Join(pluginDir, "task-redirect.js"),
-			[]byte(`export const TaskRedirect = async () => ({});`),
-			0o644,
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		setupSharedDir(t, tc.AppDir)
-		setupOutputBudgetRunnerSource(t, tc.AppDir)
+		writePluginFixtures(t, appConfigDir)
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
 		t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -611,8 +550,8 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatalf("Failed to read config: %v", err)
 		}
 		configStr := string(content)
-		if !strings.Contains(configStr, `"theme": "default"`) {
-			t.Errorf("Expected theme to be 'default', got: %s", configStr)
+		if got := cliThemeName(t, userConfigDir); got != "default" {
+			t.Errorf("expected cli.json theme.name 'default', got %q", got)
 		}
 		if !strings.Contains(configStr, "JetBrains Mono") {
 			t.Error("Expected config to contain font family")
@@ -634,10 +573,12 @@ func TestForceConfigure(t *testing.T) {
 			t.Error("Expected theme file to be rendered with the current theme's palette")
 		}
 
-		// task-redirect.js plugin deployed
-		pluginPath := filepath.Join(userConfigDir, "plugin", "task-redirect.js")
-		if _, err := os.Stat(pluginPath); err != nil {
-			t.Fatalf("Expected plugin file at %s: %v", pluginPath, err)
+		// every devgeta plugin folder deployed
+		for _, name := range devgetaPlugins {
+			pluginPath := filepath.Join(userConfigDir, "plugins", name, "server.js")
+			if _, err := os.Stat(pluginPath); err != nil {
+				t.Errorf("Expected plugin file at %s: %v", pluginPath, err)
+			}
 		}
 
 		testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
@@ -657,14 +598,12 @@ func TestForceConfigure(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(appConfigDir, "themes"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writePluginFixtures(t, appConfigDir)
 
 		templatePath := filepath.Join(appConfigDir, "opencode.json.tmpl")
 		if err := os.WriteFile(
 			templatePath,
-			[]byte(`{"theme": "{{ .Theme }}"}`),
+			[]byte(`{"permissions": []}`),
 			0o644,
 		); err != nil {
 			t.Fatal(err)
@@ -686,8 +625,6 @@ func TestForceConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
-		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -720,7 +657,7 @@ func TestForceConfigure(t *testing.T) {
 // TestForceConfigure_RendersCurrentThemePalette proves ForceConfigure reads
 // the theme through theme.CurrentDefinition rather than a hardcoded name:
 // with current_theme set to a fixture theme whose colors are distinguishable
-// from "default", both opencode.json's "theme" field and the rendered
+// from "default", both cli.json's theme.name and the rendered
 // themes/<name>.json must reflect it.
 func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
@@ -735,20 +672,14 @@ func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
+		[]byte(`{"permissions": []}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"foreground": "{{.Palette.Foreground}}"}`)
 
-	pluginDir := filepath.Join(appConfigDir, "plugin")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
+	writePluginFixtures(t, appConfigDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -796,12 +727,8 @@ func TestForceConfigure_RendersCurrentThemePalette(t *testing.T) {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	configContent, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
-	if err != nil {
-		t.Fatalf("failed to read opencode.json: %v", err)
-	}
-	if !strings.Contains(string(configContent), `"theme": "custom"`) {
-		t.Errorf("expected opencode.json to name the current theme, got: %s", configContent)
+	if got := cliThemeName(t, userConfigDir); got != "custom" {
+		t.Errorf("expected cli.json to select the current theme 'custom', got %q", got)
 	}
 
 	themePath := filepath.Join(userConfigDir, "themes", "custom.json")
@@ -870,14 +797,12 @@ func TestSoftConfigure(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(appConfigDir, "themes"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writePluginFixtures(t, appConfigDir)
 
 		templatePath := filepath.Join(appConfigDir, "opencode.json.tmpl")
 		if err := os.WriteFile(
 			templatePath,
-			[]byte(`{"theme": "{{ .Theme }}"}`),
+			[]byte(`{"permissions": []}`),
 			0o644,
 		); err != nil {
 			t.Fatal(err)
@@ -887,8 +812,6 @@ func TestSoftConfigure(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
-		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -944,13 +867,11 @@ shell:
 		if err := os.MkdirAll(filepath.Join(appConfigDir, "themes"), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		writePluginFixtures(t, appConfigDir)
 		templatePath := filepath.Join(appConfigDir, "opencode.json.tmpl")
 		if err := os.WriteFile(
 			templatePath,
-			[]byte(`{"theme": "{{ .Theme }}"}`),
+			[]byte(`{"permissions": []}`),
 			0o644,
 		); err != nil {
 			t.Fatal(err)
@@ -960,8 +881,6 @@ shell:
 			t.Fatal(err)
 		}
 
-		setupSharedDir(t, tc.AppDir)
-		setupOutputBudgetRunnerSource(t, tc.AppDir)
 		setupThemeFixture(t, "#282828")
 
 		oldAppConfigs := paths.Paths.App.Configs.OpenCode
@@ -1033,483 +952,9 @@ func TestDefaultThemeName(t *testing.T) {
 	}
 }
 
-func TestConfigurablePartsIncludesRtk(t *testing.T) {
-	app := &OpenCode{}
-	parts := app.ConfigurableParts()
-	if parts[len(parts)-1] != "rtk" {
-		t.Errorf("expected rtk as a configurable part, got %v", parts)
-	}
-	for _, p := range baseapp.SharedConfigParts {
-		if p == "rtk" {
-			t.Fatal("baseapp.SharedConfigParts was mutated to include rtk")
-		}
-	}
-}
-
-func TestForceConfigurePartsRtk(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	rtkInitCalled := 0
-	app := &OpenCode{rtkInit: func() error {
-		rtkInitCalled++
-		return nil
-	}}
-
-	if err := app.ForceConfigureParts([]string{"rtk"}); err != nil {
-		t.Fatalf("ForceConfigureParts(rtk) error: %v", err)
-	}
-	if rtkInitCalled != 1 {
-		t.Errorf("expected rtk init to run once, got %d", rtkInitCalled)
-	}
-	// The --only=rtk path must not touch opencode.json.
-	if _, err := os.Stat(filepath.Join(opencodeDir, "opencode.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts(rtk) should not write opencode.json")
-	}
-}
-
-func TestForceConfigurePartsRtkInitFailure(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	app := &OpenCode{rtkInit: func() error { return fmt.Errorf("rtk not found") }}
-
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil {
-		t.Fatal("expected error when rtk init fails")
-	}
-	if !strings.Contains(err.Error(), "dg install --only rtk") {
-		t.Errorf("expected install hint in error, got: %v", err)
-	}
-}
-
-func TestForceConfigurePartsRtkRefusesRealExecInTests(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	opencodeDir := filepath.Join(tc.ConfigDir, "opencode")
-	oldOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldOpenCode })
-	paths.Paths.Config.OpenCode = opencodeDir
-
-	// No rtkInit injected: the guard must refuse instead of executing rtk.
-	app := &OpenCode{}
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
-		t.Fatalf("expected test-guard refusal, got: %v", err)
-	}
-}
-
-func TestRun(t *testing.T) {
-	t.Run("WithModelAndEnv", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
-
-		out, err := app.Run(RunOptions{
-			Agent:   "code-reviewer",
-			Model:   "openai/gpt-5.2",
-			Prompt:  "review this branch",
-			Dir:     "/tmp/some-worktree",
-			Timeout: 30 * time.Minute,
-			Env:     []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"},
-		})
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-		if out.Stdout != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
-		}
-
-		lastCall := mockApp.Base.GetLastExecCommandCall()
-		if lastCall == nil {
-			t.Fatal("expected ExecCommand to be called")
-		}
-		if lastCall.Command != constants.OpenCode {
-			t.Fatalf("expected command %q, got %q", constants.OpenCode, lastCall.Command)
-		}
-		wantArgs := []string{
-			"run", "--agent", "code-reviewer", "--format", "json",
-			"-m", "openai/gpt-5.2", "review this branch",
-		}
-		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
-			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
-		}
-		if lastCall.Dir != "/tmp/some-worktree" {
-			t.Fatalf("expected Dir to land on params, got %q", lastCall.Dir)
-		}
-		if lastCall.Timeout != 30*time.Minute {
-			t.Fatalf("expected Timeout to land on params, got %v", lastCall.Timeout)
-		}
-		wantEnv := []string{"DEVGETA_REVIEW_JOURNAL_SNAPSHOT=/tmp/snap.md"}
-		if !reflect.DeepEqual(lastCall.Env, wantEnv) {
-			t.Fatalf("expected Env %v, got %v", wantEnv, lastCall.Env)
-		}
-		// A headless run must never be handed a terminal: a prompt it decided
-		// to raise could only wedge the caller until the timeout. It is also
-		// what lets the executor put the run in its own process group, so the
-		// timeout kills the whole tree the agent spawns instead of just the
-		// `opencode` process.
-		if !lastCall.NoStdin {
-			t.Fatal("expected a headless run to disconnect stdin")
-		}
-
-		// Exactly one call, and it went through the mock — never a real
-		// binary invocation.
-		if mockApp.Base.GetExecCommandCallCount() != 1 {
-			t.Fatalf(
-				"expected exactly 1 ExecCommand call, got %d",
-				mockApp.Base.GetExecCommandCallCount(),
-			)
-		}
-	})
-
-	t.Run("WithoutModelWithoutEnv", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(`{"type":"text"}`, "", nil)
-
-		out, err := app.Run(RunOptions{
-			Agent:   "code-reviewer",
-			Prompt:  "review this branch",
-			Dir:     "/tmp/some-worktree",
-			Timeout: 30 * time.Minute,
-		})
-		if err != nil {
-			t.Fatalf("Run returned error: %v", err)
-		}
-		if out.Stdout != `{"type":"text"}` {
-			t.Fatalf("expected stdout to be returned, got %q", out.Stdout)
-		}
-
-		lastCall := mockApp.Base.GetLastExecCommandCall()
-		if lastCall == nil {
-			t.Fatal("expected ExecCommand to be called")
-		}
-		// No -m flag when Model is empty.
-		wantArgs := []string{
-			"run", "--agent", "code-reviewer", "--format", "json", "review this branch",
-		}
-		if !reflect.DeepEqual(lastCall.Args, wantArgs) {
-			t.Fatalf("expected args %v, got %v", wantArgs, lastCall.Args)
-		}
-		// Env left nil (not empty-non-nil) so ExecCommand's overlay stays
-		// off and the child keeps today's full inheritance — see
-		// CommandParams.Env's doc comment.
-		if len(lastCall.Env) != 0 {
-			t.Fatalf("expected no Env overlay, got %v", lastCall.Env)
-		}
-
-		if mockApp.Base.GetExecCommandCallCount() != 1 {
-			t.Fatalf(
-				"expected exactly 1 ExecCommand call, got %d",
-				mockApp.Base.GetExecCommandCallCount(),
-			)
-		}
-	})
-
-	t.Run("PropagatesErrorButStillReturnsStdout", func(t *testing.T) {
-		mockApp := testutil.NewMockApp()
-		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
-		mockApp.Base.SetExecCommandResult(
-			`{"type":"error"}`,
-			"stderr noise",
-			fmt.Errorf("exit status 1"),
-		)
-
-		out, err := app.Run(RunOptions{Agent: "code-reviewer", Prompt: "review"})
-		if err == nil {
-			t.Fatal("expected Run to return an error")
-		}
-		if !strings.Contains(err.Error(), "opencode run failed") {
-			t.Fatalf("expected wrapped error, got: %v", err)
-		}
-		// Partial/diagnostic output must still be handed back to the caller
-		// even on failure — a nonzero exit can still carry an error event.
-		if out.Stdout != `{"type":"error"}` {
-			t.Fatalf("expected stdout on error path, got %q", out.Stdout)
-		}
-	})
-}
-
-// TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime is the
-// cycle-level case Step 5's design exists to protect against: on a machine
-// with no Claude config at all, `dg configure opencode --force` alone must
-// still produce a working runner and a valid sidecar (cycle doc Step 6,
-// "the runner exists at paths.Paths.Config.Devgeta ... with no Claude
-// config present"). An earlier draft had only claude.go deploy the runner,
-// which broke exactly this.
-func TestForceConfigure_OpenCodeOnlyProducesAWorkingOutputBudgetRuntime(t *testing.T) {
-	testutil.IsolateXDGDirs(t)
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
-	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "themes"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
-		[]byte(`{}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	pluginDir := filepath.Join(appConfigDir, "plugin")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
-	setupThemeFixture(t, "#282828")
-
-	oldAppConfigsOpenCode := paths.Paths.App.Configs.OpenCode
-	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigsOpenCode })
-	paths.Paths.App.Configs.OpenCode = appConfigDir
-
-	oldConfigOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
-	paths.Paths.Config.OpenCode = userConfigDir
-
-	// EnsureAgentRuntime writes here, independent of paths.Paths.Config.Root
-	// (Devgeta is its own already-resolved field, not derived from Root at
-	// read time) — override it explicitly so this test can assert on it.
-	devgetaDeployDir := filepath.Join(t.TempDir(), "devgeta")
-	oldConfigDevgeta := paths.Paths.Config.Devgeta
-	t.Cleanup(func() { paths.Paths.Config.Devgeta = oldConfigDevgeta })
-	paths.Paths.Config.Devgeta = devgetaDeployDir
-
-	// No paths.Paths.Config.Claude or App.Configs.Claude override at all —
-	// this is the point: no Claude config exists anywhere in this test.
-
-	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-	if err := app.ForceConfigure(); err != nil {
-		t.Fatalf("ForceConfigure error: %v", err)
-	}
-
-	runnerPath := filepath.Join(devgetaDeployDir, "output-budget-run.sh")
-	info, err := os.Stat(runnerPath)
-	if err != nil {
-		t.Fatalf("expected the runner to be deployed to %s: %v", runnerPath, err)
-	}
-	if info.Mode().Perm()&0o111 == 0 {
-		t.Errorf("deployed runner is not executable: mode %o", info.Mode().Perm())
-	}
-
-	sidecarData, err := os.ReadFile(filepath.Join(devgetaDeployDir, "agent-runtime.json"))
-	if err != nil {
-		t.Fatalf("expected a sidecar at %s: %v", devgetaDeployDir, err)
-	}
-	var sidecar map[string]any
-	if err := json.Unmarshal(sidecarData, &sidecar); err != nil {
-		t.Fatalf("sidecar is not valid JSON: %v\n%s", err, sidecarData)
-	}
-	if sidecar["runner"] != runnerPath {
-		t.Errorf("sidecar runner = %v, want %q", sidecar["runner"], runnerPath)
-	}
-}
-
-// npmCallFor returns the single npm invocation recorded by the mock, or nil.
-func npmCallFor(t *testing.T, base *commands.MockBaseCommand) *commands.CommandParams {
-	t.Helper()
-	var found *commands.CommandParams
-	for i := range base.ExecCommandCalls {
-		if base.ExecCommandCalls[i].Command == "npm" {
-			found = &base.ExecCommandCalls[i]
-		}
-	}
-	return found
-}
-
-func TestEnsurePluginLockfile(t *testing.T) {
-	t.Run("GeneratesLockfileWhenPackageJSONHasNone", func(t *testing.T) {
-		tc := testutil.SetupCompleteTest(t)
-		defer tc.Cleanup()
-
-		dir := t.TempDir()
-		if err := os.WriteFile(
-			filepath.Join(dir, "package.json"),
-			[]byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`),
-			0o644,
-		); err != nil {
-			t.Fatal(err)
-		}
-
-		ensurePluginLockfile(tc.MockApp.Base, dir)
-
-		got := npmCallFor(t, tc.MockApp.Base)
-		if got == nil {
-			t.Fatalf("expected npm to be invoked, got calls: %+v", tc.MockApp.Base.ExecCommandCalls)
-		}
-		if got.Dir != dir {
-			t.Errorf("Dir = %q, want %q", got.Dir, dir)
-		}
-		wantArgs := []string{"install", "--package-lock-only", "--offline"}
-		if !reflect.DeepEqual(got.Args, wantArgs) {
-			t.Errorf("Args = %v, want %v", got.Args, wantArgs)
-		}
-		// VerifyNoRealCommands is deliberately absent: it asserts ZERO
-		// ExecCommand calls, and this test's whole point is that npm is
-		// invoked. The mock recording the call is itself the proof that
-		// nothing reached a real shell.
-	})
-}
-
-func TestEnsurePluginLockfile_SkipsWhenLockfileExists(t *testing.T) {
-	// Every lockfile name bun recognizes. Devgeta must leave each one alone:
-	// regenerating would risk changing which dependency version is installed.
-	for _, lockfile := range []string{"package-lock.json", "bun.lock", "bun.lockb"} {
-		t.Run(lockfile, func(t *testing.T) {
-			tc := testutil.SetupCompleteTest(t)
-			defer tc.Cleanup()
-
-			dir := t.TempDir()
-			if err := os.WriteFile(
-				filepath.Join(dir, "package.json"),
-				[]byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`),
-				0o644,
-			); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, lockfile), []byte("{}"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-
-			ensurePluginLockfile(tc.MockApp.Base, dir)
-
-			if got := npmCallFor(t, tc.MockApp.Base); got != nil {
-				t.Errorf("npm was invoked despite %s existing: %v", lockfile, got.Args)
-			}
-		})
-	}
-}
-
-func TestEnsurePluginLockfile_SkipsWhenNoPackageJSON(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	// An empty dir has no plugin dependency to resolve, so there is nothing
-	// to lock and npm must not be run.
-	ensurePluginLockfile(tc.MockApp.Base, t.TempDir())
-
-	if got := npmCallFor(t, tc.MockApp.Base); got != nil {
-		t.Errorf("npm was invoked with no package.json present: %v", got.Args)
-	}
-}
-
-// npmDirsFor returns the working directory of every npm invocation recorded,
-// which is what identifies WHICH opencode directory got a lockfile.
-func npmDirsFor(t *testing.T, base *commands.MockBaseCommand) []string {
-	t.Helper()
-	var dirs []string
-	for _, call := range base.ExecCommandCalls {
-		if call.Command == "npm" {
-			dirs = append(dirs, call.Dir)
-		}
-	}
-	return dirs
-}
-
-// ForceConfigure must lock BOTH opencode directories. Measured in ADR-0049:
-// locking only the config dir takes startup from 62s to 10s, while locking
-// both takes it to 0.87s. Covering one is not covering the bug.
-func TestForceConfigure_LocksBothOpenCodeDirs(t *testing.T) {
-	testutil.IsolateXDGDirs(t)
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
-	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	pluginDir := filepath.Join(appConfigDir, "plugin")
-	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(pluginDir, "task-redirect.js"),
-		[]byte(`export const TaskRedirect = async () => ({});`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
-
-	oldAppConfigs := paths.Paths.App.Configs.OpenCode
-	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
-	paths.Paths.App.Configs.OpenCode = appConfigDir
-
-	oldConfigOpenCode := paths.Paths.Config.OpenCode
-	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
-	paths.Paths.Config.OpenCode = userConfigDir
-
-	installPrefix := isolateOpenCodeInstallPrefix(t)
-	if err := os.MkdirAll(installPrefix, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Both dirs declare the plugin dependency, the way a real install leaves
-	// them, and neither has a lockfile yet.
-	pkgJSON := []byte(`{"dependencies":{"@opencode-ai/plugin":"1.18.32"}}`)
-	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{userConfigDir, installPrefix} {
-		if err := os.WriteFile(filepath.Join(dir, "package.json"), pkgJSON, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	setupThemeFixture(t, "#ebdbb2")
-
-	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-	if err := app.ForceConfigure(); err != nil {
-		t.Fatalf("ForceConfigure error: %v", err)
-	}
-
-	dirs := npmDirsFor(t, tc.MockApp.Base)
-	for _, want := range []string{userConfigDir, installPrefix} {
-		if !slices.Contains(dirs, want) {
-			t.Errorf("no lockfile generated for %q; npm ran in %v", want, dirs)
-		}
-	}
-}
-
-// ForceConfigure wipes ~/.config/opencode to give the config a clean slate,
-// but OpenCode's resolved dependency state lives in that same directory and
-// is NOT devgeta's to throw away. Deleting it forces a full cold reinstall on
-// the next launch — the exact 45-60s stall ADR-0049 exists to remove.
+// OpenCode 1 left resolved plugin dependencies (node_modules, package.json,
+// a lockfile) in this directory. They are not devgeta's: ForceConfigure
+// clears only what devgeta generates, so they survive.
 func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
@@ -1522,17 +967,13 @@ func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
+		[]byte(`{"permissions": []}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
+	writePluginFixtures(t, appConfigDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -1597,11 +1038,9 @@ func TestForceConfigure_PreservesOpenCodeDependencyState(t *testing.T) {
 	}
 }
 
-// devgeta owns plugin/ (singular) and regenerates it from embedded configs.
-// plugins/ (plural) is a sibling directory OpenCode also loads, and it is
-// where `rtk init -g --opencode` installs rtk's plugin. devgeta never creates
-// it, so devgeta must not delete it: doing so silently tears out an
-// integration the user opted into (ADR-0004) on every --force reconfigure.
+// plugins/ is shared: other tools install their plugins there too. devgeta
+// owns only its own folders inside it, so a --force reconfigure must leave
+// everything else in plugins/ alone.
 func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
@@ -1609,19 +1048,15 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 
 	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writePluginFixtures(t, appConfigDir)
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
+		[]byte(`{"permissions": []}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -1632,13 +1067,13 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 	paths.Paths.Config.OpenCode = userConfigDir
 	isolateOpenCodeInstallPrefix(t)
 
-	rtkPlugin := filepath.Join(userConfigDir, "plugins", "rtk.ts")
-	if err := os.MkdirAll(filepath.Dir(rtkPlugin), 0o755); err != nil {
+	thirdPartyPlugin := filepath.Join(userConfigDir, "plugins", "other-tool.ts")
+	if err := os.MkdirAll(filepath.Dir(thirdPartyPlugin), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		rtkPlugin,
-		[]byte("export const RtkOpenCodePlugin = 1"),
+		thirdPartyPlugin,
+		[]byte("export const OtherToolPlugin = 1"),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -1650,7 +1085,7 @@ func TestForceConfigure_PreservesThirdPartyPluginsDir(t *testing.T) {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	if _, err := os.Stat(rtkPlugin); err != nil {
+	if _, err := os.Stat(thirdPartyPlugin); err != nil {
 		t.Errorf("ForceConfigure deleted the third-party plugins/ dir: %v", err)
 	}
 }
@@ -1666,19 +1101,15 @@ func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
 
 	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writePluginFixtures(t, appConfigDir)
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"theme": "{{ .Theme }}"}`),
+		[]byte(`{"permissions": []}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -1741,30 +1172,65 @@ func TestForceConfigure_LeavesFilesDevgetaDoesNotManage(t *testing.T) {
 	}
 }
 
-// TestForceConfigure_PointsInstructionsAtDeployedFile checks that OpenCode
-// loads devgeta's instructions: the file is deployed into the config dir and
-// opencode.json lists that exact path under "instructions" (ADR-0058).
-func TestForceConfigure_PointsInstructionsAtDeployedFile(t *testing.T) {
+// writePluginFixtures gives the fixture app config dir one folder per devgeta
+// plugin, the way configs/opencode/plugins/ ships them.
+func writePluginFixtures(t *testing.T, appConfigDir string) {
+	t.Helper()
+	for _, name := range devgetaPlugins {
+		dir := filepath.Join(appConfigDir, "plugins", name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(
+			filepath.Join(dir, "server.js"),
+			[]byte(`export default { id: "fixture", setup() {} };`),
+			0o644,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// cliThemeName reads theme.name out of the deployed cli.json.
+func cliThemeName(t *testing.T, userConfigDir string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(userConfigDir, "cli.json"))
+	if err != nil {
+		t.Fatalf("failed to read cli.json: %v", err)
+	}
+	var cli struct {
+		Theme struct {
+			Name string `json:"name"`
+		} `json:"theme"`
+	}
+	if err := json.Unmarshal(data, &cli); err != nil {
+		t.Fatalf("cli.json is not valid JSON: %v", err)
+	}
+	return cli.Theme.Name
+}
+
+// setupConfigureFixture isolates every path ForceConfigure touches and
+// returns the user config dir it writes into.
+func setupConfigureFixture(t *testing.T) (*testutil.TestConfig, string) {
+	t.Helper()
 	testutil.IsolateXDGDirs(t)
 	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
+	t.Cleanup(tc.Cleanup)
 
 	appConfigDir := filepath.Join(tc.AppDir, "configs", "opencode")
 	userConfigDir := filepath.Join(tc.ConfigDir, "opencode")
-	if err := os.MkdirAll(filepath.Join(appConfigDir, "plugin"), 0o755); err != nil {
+	if err := os.MkdirAll(appConfigDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "opencode.json.tmpl"),
-		[]byte(`{"instructions": [{{ .InstructionsPath }}]}`),
+		[]byte(`{"permissions": []}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
 	writeOpenCodeThemeTemplateFixture(t, appConfigDir, `{"name": "t"}`)
-	setupSharedDir(t, tc.AppDir)
-	setupOutputBudgetRunnerSource(t, tc.AppDir)
-	setupThemeFixture(t, "#ebdbb2")
+	writePluginFixtures(t, appConfigDir)
 
 	oldAppConfigs := paths.Paths.App.Configs.OpenCode
 	t.Cleanup(func() { paths.Paths.App.Configs.OpenCode = oldAppConfigs })
@@ -1774,29 +1240,427 @@ func TestForceConfigure_PointsInstructionsAtDeployedFile(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.Config.OpenCode = oldConfigOpenCode })
 	paths.Paths.Config.OpenCode = userConfigDir
 	isolateOpenCodeInstallPrefix(t)
+	setupThemeFixture(t, "#ebdbb2")
+	return tc, userConfigDir
+}
+
+// cli.json holds the user's own TUI settings; devgeta sets theme.name in it
+// and nothing else.
+func TestForceConfigure_SelectsThemeInCliJSONAndKeepsUserSettings(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(userConfigDir, "cli.json"),
+		[]byte(`{"theme":{"name":"opencode","mode":"dark"},"animations":false,"diffs":{"wrap":"word"}}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
 	if err := app.ForceConfigure(); err != nil {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	rendered, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	data, err := os.ReadFile(filepath.Join(userConfigDir, "cli.json"))
 	if err != nil {
-		t.Fatalf("opencode.json missing: %v", err)
+		t.Fatal(err)
 	}
-	var cfg struct {
-		Instructions []string `json:"instructions"`
+	var cli map[string]any
+	if err := json.Unmarshal(data, &cli); err != nil {
+		t.Fatal(err)
 	}
-	if err := json.Unmarshal(rendered, &cfg); err != nil {
-		t.Fatalf("rendered opencode.json is not valid JSON: %v\n%s", err, rendered)
+	theme := cli["theme"].(map[string]any)
+	if theme["name"] != "default" || theme["mode"] != "dark" {
+		t.Errorf("theme = %v, want name 'default' with mode kept", theme)
 	}
-	wantPath := filepath.Join(userConfigDir, baseapp.InstructionsFileName)
-	if len(cfg.Instructions) != 1 || cfg.Instructions[0] != wantPath {
-		t.Fatalf("instructions = %v, want [%q]", cfg.Instructions, wantPath)
+	if cli["animations"] != false || cli["diffs"] == nil {
+		t.Errorf("user settings not kept: %s", data)
 	}
-	if _, err := os.Stat(wantPath); err != nil {
-		t.Errorf("instructions file not deployed: %v", err)
+	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+// OpenCode 1 plugins lived in plugin/ (singular), which only devgeta ever
+// wrote. OpenCode 2 cannot run them, so a reconfigure removes the folder.
+func TestForceConfigure_RemovesOpenCode1PluginDir(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	legacy := filepath.Join(userConfigDir, "plugin", "notify.js")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("export const Notify = 1"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(userConfigDir, "plugin")); !os.IsNotExist(err) {
+		t.Errorf("expected the OpenCode 1 plugin/ folder to be removed, stat err = %v", err)
+	}
+}
+
+// A stale file inside a devgeta plugin folder is cleared on --force: the
+// folder is devgeta's alone.
+func TestForceConfigure_ReplacesDevgetaPluginFolders(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	stale := filepath.Join(userConfigDir, "plugins", devgetaPlugins[0], "stale.js")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Errorf("expected stale file in a devgeta plugin folder to be removed, stat err = %v", err)
+	}
+}
+
+// devgetaPlugins drives both deploy and cleanup, so it must name exactly the
+// folders configs/opencode/plugins/ ships: a folder missing from the list
+// would never deploy, and a name with no folder would fail every configure.
+func TestDevgetaPluginsMatchShippedFolders(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("..", "..", "..", "configs", "opencode", "plugins"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shipped []string
+	for _, e := range entries {
+		if e.IsDir() {
+			shipped = append(shipped, e.Name())
+		}
+	}
+	want := slices.Clone(devgetaPlugins)
+	slices.Sort(want)
+	slices.Sort(shipped)
+	if !slices.Equal(shipped, want) {
+		t.Errorf("configs/opencode/plugins ships %v, devgetaPlugins lists %v", shipped, want)
+	}
+}
+
+// A coder's uninstall deletes its config directory, which takes every pack's
+// OpenCode side with it, so the pack records must follow (ADR-0070 §6).
+func TestUninstallForgetsAgentPacks(t *testing.T) {
+	testutil.IsolateXDGDirs(t)
+	tc := testutil.SetupCompleteTest(t)
+	defer tc.Cleanup()
+	prefix := isolateOpenCodeInstallPrefix(t)
+	writeOpenCodeBinaryFixture(t, prefix)
+
+	oldCfg, oldPacks := paths.Paths.Config.OpenCode, paths.Paths.App.AgentPacks
+	t.Cleanup(func() {
+		paths.Paths.Config.OpenCode, paths.Paths.App.AgentPacks = oldCfg, oldPacks
+	})
+	paths.Paths.Config.OpenCode = filepath.Join(tc.ConfigDir, "opencode")
+	paths.Paths.App.AgentPacks = filepath.Join(tc.AppDir, "agent-packs")
+	if err := os.MkdirAll(filepath.Join(paths.Paths.App.AgentPacks, "devgeta"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.AgentPacks = map[string]config.AgentPackState{
+		"devgeta": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodeInstructions: []string{"/d/DEVGETA.md"}},
+		}},
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodePlugins: []string{"/p"}}, "claude": {Plugin: "superpowers@devgeta"},
+		}},
+	}
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.Uninstall(); err != nil {
+		t.Fatalf("Uninstall error: %v", err)
+	}
+
+	after := &config.GlobalConfig{}
+	if err := after.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.AgentPacks["devgeta"]; ok {
+		t.Error("a pack only OpenCode had should be gone from state")
+	}
+	if _, ok := after.AgentPacks["superpowers"].Coders["opencode"]; ok {
+		t.Error("OpenCode's record should be gone from the other packs")
+	}
+	if _, ok := after.AgentPacks["superpowers"].Coders["claude"]; !ok {
+		t.Error("Claude's record must stay")
+	}
+	if _, err := os.Stat(filepath.Join(paths.Paths.App.AgentPacks, "devgeta")); !os.IsNotExist(err) {
+		t.Errorf("the built tree of the orphaned pack should be deleted, stat err: %v", err)
+	}
+}
+
+const packEchoTemplate = `{{.ScratchDirGlob}}|{{range .Plugins}}{{.}},{{end}}|{{range .Instructions}}{{.}},{{end}}`
+
+// withPackEchoTemplate swaps the fixture's opencode.json.tmpl for one that
+// prints the pack fields, so a test sees exactly what the app passed in.
+func withPackEchoTemplate(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(
+		filepath.Join(paths.Paths.App.Configs.OpenCode, "opencode.json.tmpl"),
+		[]byte(packEchoTemplate), 0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readOpenCodeJSON(t *testing.T, userConfigDir string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(userConfigDir, "opencode.json"))
+	if err != nil {
+		t.Fatalf("failed to read opencode.json: %v", err)
+	}
+	return string(data)
+}
+
+func jsonString(t *testing.T, s string) string {
+	t.Helper()
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestForceConfigure_RendersPackEntriesFromState(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	withPackEchoTemplate(t)
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.AgentPacks = map[string]config.AgentPackState{
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodePlugins: []string{"/p/superpowers"}},
+			"claude":   {Plugin: "superpowers@devgeta"},
+		}},
+		"ponytail": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodePlugins: []string{"/p/ponytail/.opencode/plugins"}},
+		}},
+		"devgeta": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodeInstructions: []string{"/p/devgeta/DEVGETA.md"}},
+		}},
+		// Only in Pi: nothing for OpenCode to load.
+		"pi-only": {Coders: map[string]config.AgentPackCoderState{"pi": {PiPackage: "/q"}}},
+	}
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	scratch, err := paths.EnsureScratchDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Packs in name order: devgeta, ponytail, superpowers.
+	want := jsonString(t, scratch+"/**") + "|" +
+		jsonString(t, "/p/ponytail/.opencode/plugins") + "," + jsonString(t, "/p/superpowers") + "," + "|" +
+		jsonString(t, "/p/devgeta/DEVGETA.md") + ","
+	if got := readOpenCodeJSON(t, userConfigDir); got != want {
+		t.Errorf("opencode.json rendered from state:\n got %s\nwant %s", got, want)
+	}
+}
+
+func TestForceConfigure_WithoutPacksRendersNoPackData(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	withPackEchoTemplate(t)
+
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	got := readOpenCodeJSON(t, userConfigDir)
+	if !strings.HasSuffix(got, "||") {
+		t.Errorf("no packs means no plugins and no instructions, got %q", got)
+	}
+}
+
+func TestConfigureWithPacks_RendersTheGivenStateNotTheSavedOne(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	withPackEchoTemplate(t)
+	// Saved state has nothing; the engine passes the state as it will be.
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+
+	err := app.ConfigureWithPacks(map[string]config.AgentPackState{
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodePlugins: []string{"/p/superpowers"}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ConfigureWithPacks error: %v", err)
+	}
+
+	got := readOpenCodeJSON(t, userConfigDir)
+	if !strings.Contains(got, jsonString(t, "/p/superpowers")) {
+		t.Errorf("the given state must be rendered, got %q", got)
+	}
+}
+
+// Installing a pack must re-render opencode.json and nothing else: the
+// theme, cli.json and devgeta's plugin folders are `dg configure`'s business.
+func TestConfigureWithPacks_TouchesOnlyOpenCodeJSON(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+
+	if err := app.ConfigureWithPacks(nil); err != nil {
+		t.Fatalf("ConfigureWithPacks error: %v", err)
+	}
+
+	entries, err := os.ReadDir(userConfigDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if len(names) != 1 || names[0] != "opencode.json" {
+		t.Errorf("expected only opencode.json to be written, got %v", names)
+	}
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
+}
+
+func TestIsInstalled(t *testing.T) {
+	prefix := isolateOpenCodeInstallPrefix(t)
+	notOnPath := func(string) (string, error) { return "", errors.New("not found") }
+	app := &OpenCode{}
+
+	t.Run("neither the managed binary nor PATH", func(t *testing.T) {
+		stubLookPath(t, notOnPath)
+		if app.IsInstalled() {
+			t.Error("expected not installed")
+		}
+	})
+	t.Run("the managed binary, which is not on PATH yet", func(t *testing.T) {
+		stubLookPath(t, notOnPath)
+		writeOpenCodeBinaryFixture(t, prefix)
+		if !app.IsInstalled() {
+			t.Error("a fresh managed install counts even before PATH has it")
+		}
+	})
+	t.Run("an opencode from another channel", func(t *testing.T) {
+		if err := os.RemoveAll(prefix); err != nil {
+			t.Fatal(err)
+		}
+		stubLookPath(t, func(string) (string, error) { return "/usr/bin/opencode", nil })
+		if !app.IsInstalled() {
+			t.Error("an opencode on PATH counts")
+		}
+	})
+}
+
+func TestExecuteCommandOutput(t *testing.T) {
+	t.Run("returns stdout and never reads stdin", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(`[{"type":"document"}]`, "", nil)
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		out, err := app.ExecuteCommandOutput("debug", "config", "--standalone")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != `[{"type":"document"}]` {
+			t.Errorf("unexpected stdout %q", out)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if !last.NoStdin {
+			t.Error("stdin must be disconnected so a query can never wait on a prompt")
+		}
+		if len(last.Args) != 3 || last.Args[0] != "debug" {
+			t.Errorf("unexpected args %v", last.Args)
+		}
+	})
+	t.Run("prefers the managed binary, which is not on PATH until a new shell", func(t *testing.T) {
+		prefix := isolateOpenCodeInstallPrefix(t)
+		writeOpenCodeBinaryFixture(t, prefix)
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if _, err := app.ExecuteCommandOutput("--version"); err != nil {
+			t.Fatal(err)
+		}
+		if got := mockApp.Base.GetLastExecCommandCall().Command; got != filepath.Join(prefix, "bin", "opencode") {
+			t.Errorf("expected the managed binary, got %q", got)
+		}
+	})
+	t.Run("falls back to PATH", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		mockApp := testutil.NewMockApp()
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		if _, err := app.ExecuteCommandOutput("--version"); err != nil {
+			t.Fatal(err)
+		}
+		if got := mockApp.Base.GetLastExecCommandCall().Command; got != constants.OpenCode {
+			t.Errorf("expected %q, got %q", constants.OpenCode, got)
+		}
+	})
+	t.Run("wraps a failure and keeps stderr", func(t *testing.T) {
+		isolateOpenCodeInstallPrefix(t)
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "bad flag", fmt.Errorf("exit 1"))
+		app := &OpenCode{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		_, err := app.ExecuteCommandOutput("--nope")
+		if err == nil || !strings.Contains(err.Error(), "bad flag") ||
+			!strings.Contains(err.Error(), "opencode command execution failed") {
+			t.Fatalf("expected a wrapped error with stderr, got %v", err)
+		}
+	})
+}
+
+func TestConfigureWithPacks_IsIdempotentAndRemovalLeavesOtherPacksAlone(t *testing.T) {
+	tc, userConfigDir := setupConfigureFixture(t)
+	withPackEchoTemplate(t)
+	app := &OpenCode{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	both := map[string]config.AgentPackState{
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{"opencode": {OpenCodePlugins: []string{"/p/superpowers"}}}},
+		"ponytail":    {Coders: map[string]config.AgentPackCoderState{"opencode": {OpenCodePlugins: []string{"/p/ponytail/.opencode/plugins"}}}},
+	}
+
+	if err := app.ConfigureWithPacks(both); err != nil {
+		t.Fatal(err)
+	}
+	first := readOpenCodeJSON(t, userConfigDir)
+	if err := app.ConfigureWithPacks(both); err != nil {
+		t.Fatal(err)
+	}
+	if again := readOpenCodeJSON(t, userConfigDir); again != first {
+		t.Errorf("adding the same state again must change nothing:\n%s\n%s", first, again)
+	}
+
+	delete(both, "superpowers")
+	if err := app.ConfigureWithPacks(both); err != nil {
+		t.Fatal(err)
+	}
+	got := readOpenCodeJSON(t, userConfigDir)
+	if strings.Contains(got, "/p/superpowers") || !strings.Contains(got, "/p/ponytail/.opencode/plugins") {
+		t.Errorf("removing superpowers must leave ponytail alone, got %q", got)
+	}
 }

@@ -2,9 +2,14 @@ package baseapp
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	cmd "github.com/cjairm/devgeta/internal/commands"
+	"github.com/cjairm/devgeta/internal/config"
+	"github.com/cjairm/devgeta/pkg/logger"
+	"github.com/cjairm/devgeta/pkg/paths"
 )
 
 // Reinstall implements the "force reinstall" flow correctly:
@@ -36,4 +41,19 @@ func SoftInstall(managedPresent func() bool, binary string, install func() error
 		return nil
 	}
 	return install()
+}
+
+// ForgetAgentPackCoder is the part of a coder's uninstall that follows its
+// agent packs (ADR-0070 §6): the coder's config directory is gone, so its
+// pack records go too, and a pack no coder has left loses its built tree.
+// gc is changed in memory; the caller's own Save persists it.
+func ForgetAgentPackCoder(gc *config.GlobalConfig, coder string) {
+	for _, pack := range gc.ForgetAgentPackCoder(coder) {
+		tree := filepath.Join(paths.Paths.App.AgentPacks, pack)
+		// A built tree is derived data (the clone cache can rebuild it), so a
+		// failed delete is worth a warning but must not fail the uninstall.
+		if err := os.RemoveAll(tree); err != nil {
+			logger.L().Warnw("could not delete a built agent pack", "tree", tree, "err", err)
+		}
+	}
 }

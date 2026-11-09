@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -12,7 +13,7 @@ import (
 )
 
 // agentConfigGuardCase is one row of ADR-0014 §1's table, run against BOTH
-// configs/claude/agent-config-guard.sh and configs/opencode/plugin/agent-config-guard.js
+// configs/claude/agent-config-guard.sh and configs/opencode/plugins/devgeta-agent-config-guard/server.js
 // with the same fixture and the same expected outcome. A behavioral run
 // against both is the point (CLAUDE.md §12, ADR-0014's consequences): a
 // string-level comparison of the two files cannot tell that one mirror
@@ -477,26 +478,27 @@ func runAgentConfigGuardShHook(
 // guard's deny code, for a uniform Go-side assertion) for deny, with the
 // thrown message on stderr.
 const agentConfigGuardJSDriver = `
-const { AgentConfigGuard } = await import(process.env.DG_GUARD_JS_PATH);
-const guard = await AgentConfigGuard({ directory: process.env.DG_GUARD_CWD });
-try {
-  await guard["tool.execute.before"](
-    { tool: process.env.DG_GUARD_TOOL },
-    { args: { filePath: process.env.DG_GUARD_FILE_PATH } },
-  );
-  process.exit(0);
-} catch (e) {
-  process.stderr.write(String(e && e.message ? e.message : e));
+const { evaluate } = await import(process.env.DG_GUARD_JS_PATH);
+// OpenCode 2 asks for the "edit" action, with every file the edit, write or
+// patch tool would touch in resources, and reads back effect and message.
+const evaluation = {
+  action: "edit",
+  resources: [process.env.DG_GUARD_FILE_PATH],
+  effect: "allow",
+};
+evaluate(evaluation, process.env.DG_GUARD_CWD);
+if (evaluation.effect === "deny") {
+  process.stderr.write(String(evaluation.message));
   process.exit(2);
 }
+process.exit(0);
 `
 
-// runAgentConfigGuardJSHook extracts configs/opencode/plugin/agent-config-guard.js
+// runAgentConfigGuardJSHook extracts configs/opencode/plugins/devgeta-agent-config-guard/server.js
 // from the embedded ConfigsFS and drives it via `node --input-type=module`
 // fed the driver script above on stdin — the same mechanism the cycle
 // doc's manual verification uses, made repeatable. Executing the JS mirror
-// (rather than only diffing it against the .sh textually, as
-// task_redirect_test.go does for the OTHER three guards) is deliberate: a
+// (rather than only diffing it against the .sh textually) is deliberate: a
 // string comparison cannot tell that one mirror resolves symlinks and the
 // other forgot to.
 func runAgentConfigGuardJSHook(
@@ -508,9 +510,9 @@ func runAgentConfigGuardJSHook(
 		t.Skip("node not found on PATH; skipping agent-config-guard.js behavioral test")
 	}
 
-	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/opencode/plugin/agent-config-guard.js")
+	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/opencode/plugins/devgeta-agent-config-guard/server.js")
 	if err != nil {
-		t.Fatalf("failed to read embedded agent-config-guard.js: %v", err)
+		t.Fatalf("failed to read embedded agent-config-guard server.js: %v", err)
 	}
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "agent-config-guard.js")
@@ -518,7 +520,9 @@ func runAgentConfigGuardJSHook(
 		t.Fatalf("failed to write script: %v", err)
 	}
 
-	tool := strings.ToLower(toolName)
+	// OpenCode 2 routes the edit, write and patch tools through one "edit"
+	// permission, so the tool name no longer changes what the JS guard sees.
+	_ = toolName
 
 	cmd := exec.Command("node", "--input-type=module")
 	cmd.Stdin = strings.NewReader(agentConfigGuardJSDriver)
@@ -526,7 +530,6 @@ func runAgentConfigGuardJSHook(
 		os.Environ(),
 		"DG_GUARD_JS_PATH="+scriptPath,
 		"DG_GUARD_CWD="+cwd,
-		"DG_GUARD_TOOL="+tool,
 		"DG_GUARD_FILE_PATH="+filePath,
 	)
 	for k, v := range env {
@@ -619,6 +622,52 @@ func TestAgentConfigGuard_BypassEnvVarAllowsEverything(t *testing.T) {
 	assertGuardOutcome(t, false, code, stderr)
 }
 
+// TestAgentConfigGuardJS_EvaluatesEveryResource covers what the matrix cannot:
+// a patch asks for one "edit" permission naming several files, and one denied
+// file must deny the whole request; any action other than edit is left alone.
+func TestAgentConfigGuardJS_EvaluatesEveryResource(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not found on PATH")
+	}
+	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/opencode/plugins/devgeta-agent-config-guard/server.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "server.js")
+	if err := os.WriteFile(scriptPath, scriptBytes, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo := filepath.Join(dir, "repo")
+	mustMkdirAll(t, repo)
+
+	driver := `
+const { evaluate } = await import(process.env.DG_GUARD_JS_PATH);
+const cwd = process.env.DG_GUARD_CWD;
+const patch = { action: "edit", resources: ["src/main.go", ".opencode/agents/x.md"], effect: "allow" };
+evaluate(patch, cwd);
+const clean = { action: "edit", resources: ["src/main.go", "README.md"], effect: "allow" };
+evaluate(clean, cwd);
+const read = { action: "read", resources: [".opencode/agents/x.md"], effect: "allow" };
+evaluate(read, cwd);
+console.log(JSON.stringify([patch.effect, clean.effect, read.effect]));
+`
+	cmd := exec.Command("node", "--input-type=module")
+	cmd.Stdin = strings.NewReader(driver)
+	cmd.Env = append(os.Environ(),
+		"DG_GUARD_JS_PATH="+scriptPath,
+		"DG_GUARD_CWD="+repo,
+		"DEVGETA_SKIP_AGENT_CONFIG_GUARD=",
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("driver failed: %v", err)
+	}
+	if got, want := strings.TrimSpace(string(out)), `["deny","allow","allow"]`; got != want {
+		t.Errorf("effects (multi-file patch, clean patch, read) = %s, want %s", got, want)
+	}
+}
+
 func TestAgentConfigGuardShHook_FailsOpenOnMalformedInput(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not found on PATH")
@@ -653,4 +702,8 @@ func TestAgentConfigGuardShHook_FailsOpenOnMalformedInput(t *testing.T) {
 			}
 		})
 	}
+}
+
+func isExitError(err error, target **exec.ExitError) bool {
+	return errors.As(err, target)
 }

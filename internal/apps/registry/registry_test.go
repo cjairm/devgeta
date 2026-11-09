@@ -14,7 +14,7 @@ func init() { testutil.InitLogger() }
 var expectedApps = []string{
 	"aerospace", "alacritty", "bat", "brave", "claude", "devgeta", "docker",
 	"eza", "fastfetch", "flameshot", "ghostty", "gimp", "git", "i3", "lazydocker",
-	"lazygit", "mise", "neovim", "opencode", "pi", "raycast", "rtk", "shottr", "tmux", "ulauncher",
+	"lazygit", "mise", "neovim", "opencode", "pi", "raycast", "shottr", "tmux", "ulauncher",
 }
 
 func TestGetApp_KnownApp(t *testing.T) {
@@ -70,7 +70,6 @@ func TestGetAppsByKind_Terminal(t *testing.T) {
 		"neovim",
 		"opencode",
 		"pi",
-		"rtk",
 		"tmux",
 	}
 	if len(names) != len(expected) {

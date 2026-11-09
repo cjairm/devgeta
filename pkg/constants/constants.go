@@ -49,6 +49,25 @@ var SupportedVersion = struct {
 	},
 }
 
+// PinnedVersion is the exact version devgeta installs of each AI coder. A
+// coder release can change what devgeta's config means (OpenCode 2 dropped
+// half of the 1.x keys without an error), so devgeta installs the version its
+// config was checked against and turns the coder's self-update off. Moving a
+// pin is a devgeta change: bump it here, read the release notes against the
+// config devgeta writes, check it in a sandbox HOME, and release.
+var PinnedVersion = struct {
+	Claude   string
+	OpenCode string
+	// Pi is a reference, not a pin: Pi's official installer (ADR-0059) always
+	// installs the latest release and takes no version. This is the release
+	// devgeta's Pi config was last checked against.
+	Pi string
+}{
+	Claude:   "2.1.319",
+	OpenCode: "2.2.6",
+	Pi:       "1.5.0",
+}
+
 // App contains application-specific constants
 var App = struct {
 	Name       string
@@ -94,9 +113,15 @@ var App = struct {
 	},
 }
 
+// AgentPackMarketplace is the name of the Claude Code marketplace devgeta
+// registers for the agent packs it builds. Claude Code ids a plugin as
+// "<pack>@<marketplace>".
+const AgentPackMarketplace = "devgeta"
+
 const (
 	// App names
 	Aerospace    = "aerospace"
+	AgentPacks   = "agent-packs"
 	Alacritty    = "alacritty"
 	Autoconf     = "autoconf"
 	Bison        = "bison"
@@ -136,14 +161,12 @@ const (
 	Claude             = "claude"
 	OpenCode           = "opencode"
 	Pi                 = "pi"
-	Shared             = "shared"
 	OpenSSL            = "openssl"
 	PkgConfig          = "pkg-config"
 	Powerlevel10k      = "powerlevel10k"
 	Raycast            = "raycast"
 	Readline           = "readline"
 	Ripgrep            = "rg"
-	Rtk                = "rtk"
 	Shottr             = "shottr"
 	Syntaxhighlighting = "zsh-syntax-highlighting"
 	Tldr               = "tldr"

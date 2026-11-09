@@ -416,3 +416,20 @@ func TestEnsureScratchDir(t *testing.T) {
 		}
 	})
 }
+
+// TestAgentPackPaths pins where `dg agent-pack` keeps its three roots. Built
+// trees and clones live under the devgeta data dir next to the extracted
+// configs, devgeta's shipped overrides come from the extracted configs, and
+// the user's override layer sits in the devgeta config dir.
+func TestAgentPackPaths(t *testing.T) {
+	cases := []struct{ name, got, want string }{
+		{"built trees and clones", paths.Paths.App.AgentPacks, filepath.Join(paths.Paths.App.Root, "agent-packs")},
+		{"shipped overrides", paths.Paths.App.Configs.AgentPacks, filepath.Join(paths.Paths.App.Root, "configs", "agent-packs")},
+		{"user overrides", paths.Paths.Config.AgentPacks, filepath.Join(paths.Paths.Config.Devgeta, "agent-packs")},
+	}
+	for _, tc := range cases {
+		if tc.got != tc.want {
+			t.Errorf("%s: expected %q, got %q", tc.name, tc.want, tc.got)
+		}
+	}
+}

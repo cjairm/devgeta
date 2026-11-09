@@ -26,7 +26,7 @@ const (
 // TestExecLaunchFormPerPaneKind pins the rendered command for every pane kind
 // devgeta creates, since each one has a DIFFERENT argument shape and they are
 // deliberately not unified: claude takes its prompt positionally, opencode takes
-// --prompt, the reviewer adds --agent before it, nvim takes nothing, and a shell
+// --prompt, nvim takes nothing, and a shell
 // pane has no command at all.
 //
 // This is the regression net for the whole file: a builder that silently drops
@@ -70,16 +70,6 @@ func TestExecLaunchFormPerPaneKind(t *testing.T) {
 			name:   "opencode takes --prompt",
 			launch: (&OpenCodeCoder{}).execLaunch(testOpenCodePath, prompt),
 			want:   `'/opt/homebrew/bin/opencode' '--prompt' 'fix issue 1082'`,
-		},
-		{
-			name: "reviewer pins an agent before the prompt",
-			launch: (&OpenCodeCoder{}).execLaunchWithAgent(
-				testOpenCodePath,
-				"code-reviewer",
-				ReviewPrompt,
-			),
-			want: `'/opt/homebrew/bin/opencode' '--agent' 'code-reviewer' ` +
-				`'--prompt' 'Review this branch against the default branch.'`,
 		},
 		{
 			name:   "a shell pane has no command at all",
@@ -133,11 +123,6 @@ func TestNameLaunchIsTheUnaliasedCommandAndLeavesTheProgramUnquoted(t *testing.T
 			"opencode with prompt",
 			(&OpenCodeCoder{}).interactiveLaunch("fix it"),
 			`opencode '--prompt' 'fix it'`,
-		},
-		{
-			"opencode with a reviewer agent",
-			(&OpenCodeCoder{}).interactiveLaunchWithAgent("skill-reviewer", "fix it"),
-			`opencode '--agent' 'skill-reviewer' '--prompt' 'fix it'`,
 		},
 		// nvim goes through the same form, for the same reason: the shell running
 		// it has to resolve the name itself.
@@ -341,7 +326,6 @@ func TestPaneCommandForNeverSendsANameThroughTheExecRecipe(t *testing.T) {
 	nameLaunches := []paneLaunch{
 		(&ClaudeCoder{}).interactiveLaunch("fix it"),
 		(&OpenCodeCoder{}).interactiveLaunch("fix it"),
-		(&OpenCodeCoder{}).interactiveLaunchWithAgent("code-reviewer", ReviewPrompt),
 		nameLaunch(nvimCommand),
 	}
 

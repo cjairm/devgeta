@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "theme": "custom:default",
+  "permissions": {
+    "allow": ["Bash(*)", "Read", "Edit"],
+    "ask": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(sudo *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh release delete *)"
+    ],
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.*)",
+      "Read(*.env)",
+      "Read(**/envs/*.js)",
+      "Read(./secrets/**)",
+      "Read(*.pem)",
+      "Read(*.key)",
+      "Read(~/.ssh/**)",
+      "Read(**/.ssh/**)",
+      "Read(**/id_rsa)",
+      "Read(**/id_ed25519)",
+      "Read(**/id_ecdsa)",
+      "Read(~/.aws/**)",
+      "Read(**/.aws/**)",
+      "Read(~/.kube/**)",
+      "Read(**/.kube/**)",
+      "Read(~/.config/gcloud/**)",
+      "Read(**/.config/gcloud/**)",
+      "Read(~/.azure/**)",
+      "Read(**/.azure/**)",
+      "Read(~/.npmrc)",
+      "Read(**/.npmrc)",
+      "Read(~/.pypirc)",
+      "Read(**/.pypirc)",
+      "Read(~/.netrc)",
+      "Read(**/.netrc)",
+      "Read(~/.git-credentials)",
+      "Read(**/.git-credentials)",
+      "Read(~/.docker/config.json)",
+      "Read(**/.docker/config.json)",
+      "Read(~/.pgpass)",
+      "Read(**/.pgpass)",
+      "Read(~/.zsh_history)",
+      "Read(**/.zsh_history)",
+      "Read(~/.bash_history)",
+      "Read(**/.bash_history)",
+      "Edit(.git/**)"
+    ],
+    "defaultMode": "acceptEdits",
+    "additionalDirectories": ["/home/tester/.cache/devgeta/scratch"]
+  },
+  "extraKnownMarketplaces": {
+    "devgeta": {
+      "source": { "source": "directory", "path": "/home/tester/.local/share/devgeta/agent-packs" }
+    }
+  },
+  "enabledPlugins": {
+    "ponytail@devgeta": true,
+    "superpowers@devgeta": true
+  },
+  "env": {
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+    "DISABLE_AUTOUPDATER": "1"
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh",
+    "padding": 2
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/format.sh"
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh resume"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-config-guard.sh"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh start"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh end"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh idle"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh busy"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "permission_prompt",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.claude/agent-state.sh blocked"
+          }
+        ]
+      }
+    ]
+  }
+}

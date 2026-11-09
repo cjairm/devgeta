@@ -1,7 +1,7 @@
 # ADR-0006 — Scope and code-sharing for two new PreToolUse guardrail hooks
 
 **Date:** 2026-07-29
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0067](ADR-0067-agent-permission-floor.md)
 
 ## Context
 

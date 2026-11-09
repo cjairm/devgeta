@@ -1,7 +1,7 @@
 # ADR-0031 — Context is reduced at write time, never at send time
 
 **Date:** 2026-08-25
-**Status:** ACCEPTED
+**Status:** ACCEPTED (amended by [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md))
 
 ## Context
 
@@ -97,9 +97,9 @@ Concretely:
   cache churn and the attack surface. Truncation with an explicit, visible
   marker beats clever summarization; that is the measured result, not a
   preference.
-- **`rtk` stays the reference implementation of the pattern, and stays
-  opt-in.** It is already write-time and already deterministic. Its hook remains
-  opt-in per [ROADMAP](../../ROADMAP.md) — this ADR does not change that.
+- ~~**`rtk` stays the reference implementation of the pattern, and stays
+  opt-in.**~~ Removed by [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md):
+  devgeta no longer ships rtk.
 
 The one-line rule, for anyone deciding where a future feature belongs:
 

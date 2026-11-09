@@ -23,22 +23,6 @@ Everything about designing and building devgeta commands:
 
 ---
 
-### [Task Design](task-design.md) — AI-first, token-wise `dg task` subcommands
-
-How to design `dg task` output for LLM agents:
-
-- When a task earns its existence (round-trips, policy, rendering) — and when not
-- Output principles: labeled plain text, payload only, one-line confirmations, stable sentinels, lossy-with-a-receipt
-- Orchestrate/format separation (jq for JSON, pure Go for text) and its testing payoff
-- Measuring token cost before and after
-- Future: rtk and how it complements `dg task`
-
-**When to read:** Before adding or changing any `dg task` subcommand whose consumer is an agent.
-
-**Referenced by:** CLAUDE.md Documentation Index; cycle docs 2026-06-18 and 2026-07-14
-
----
-
 ### [Testing Patterns](testing-patterns.md) — Isolation, mocks, and reliability
 
 Complete testing architecture for devgeta:
@@ -124,81 +108,34 @@ The formal interface all apps implement:
 
 ### [Agent Permission Matching](agent-permission-matching.md) — What the permission patterns actually match
 
-How the two AI agents resolve permission patterns at runtime, and where that
+How Claude Code and OpenCode (the coders with permission lists) resolve permission patterns at runtime, and where that
 differs from how they read:
 
 - `~/`-anchored patterns never fire on OpenCode — paths arrive project-relative, so 26 shipped deny rules are inert
 - `*` crosses `/`, so depth-based narrowing does not work and `dir/*` grants a whole subtree
-- The two agents' conflict resolution differs (first-match-by-action vs. longest-pattern-wins), so a carve-out expressible in one is impossible in the other
+- The two coders' conflict resolution differs (first-match-by-action vs. longest-pattern-wins), so a carve-out expressible in one is impossible in the other
 - Why making the dead rules fire would re-break agent memory
 - How to probe any of this against the real binary instead of guessing
 
 **When to read:** Before adding, re-anchoring, or relying on any rule in `settings.json.tmpl` or `opencode.json.tmpl` — the parity test compares pattern strings and cannot tell you whether a pattern matches anything.
 
-**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
+**Referenced by:** CLAUDE.md section 12 (keeping every AI coder in sync)
 
 ---
 
-### [Vendored Skills](vendored-skills.md) — Where each upstream skill came from, and how to sync it
+### [Agent Sync](agent-sync.md) — Which file holds which concern, for every coder
 
-- The manifest: which skills under `configs/shared/skills/` are copied from Superpowers, anthropics/skills, and Ponytail, pinned to which commit
-- The known local differences a sync must carry forward
-- The step-by-step sync procedure
+The detail behind CLAUDE.md's rule that a policy change goes into every coder
+that can express it (Claude Code, OpenCode, Pi):
 
-**When to read:** Before editing any vendored skill, and when syncing one with its upstream
-
----
-
-### [Agent Sync](agent-sync.md) — Which file holds which concern, for both agents
-
-The detail behind CLAUDE.md's one-line rule that a policy change goes into both
-agents:
-
-- The concern-by-concern table: permissions, formatting, redirects, activity state, config protection, scratch grant
-- What `permissions_test.go` enforces — and the trap that it compares pattern strings, not what they match
-- The deliberate differences: agent frontmatter is OpenCode-only, command frontmatter is inert in both, the lint feedback loop is Claude-only, `statusLine` has no OpenCode equivalent
+- The concern-by-concern table with a column per coder: permissions, formatting, activity state, config protection, scratch grant, `DEVGETA.md`, agent packs
+- What `permissions_test.go` and `coder_parity_test.go` enforce — and the trap that the permission test compares pattern strings, not what they match
+- The deliberate differences, including every concern Pi has no equivalent for (Pi does not ask before tool calls)
 - Why a command that posts outward must grant its own authorization in prose
 
-**When to read:** Before changing anything under `configs/claude/` or `configs/opencode/`.
+**When to read:** Before changing anything under `configs/claude/`, `configs/opencode/`, `configs/pi/` or `configs/agent-packs/`.
 
-**Referenced by:** CLAUDE.md section 12 (keeping the two AI agents in sync)
-
----
-
-### [Token and context efficiency](token-efficiency.md) — What to do, in what order, with the measured reasoning
-
-The three local, deterministic mechanisms this repo ships for cutting agent
-token spend, ranked by measured impact: `dg task context-report` (measure
-first), trimming base context (the biggest lever, per-session), the
-output-budget hook (recurring, per-command, opt-in), and `dg task handoff`
-(a durable checkpoint instead of a longer session). Includes real numbers
-from validating `context-report` in this repo, and what was deliberately
-rejected (a compression proxy, automatic memory).
-
-**When to read:** Before deciding whether to turn on the output-budget hook,
-or before trimming a project's CLAUDE.md.
-
-**Referenced by:** [the token-and-context-efficiency cycle](../plans/cycles/2026-08-25-token-and-context-efficiency.md)
-
----
-
-### [Output-budget hook and runner](output-budget-runner.md) — The write-time output cap contract
-
-**Status: shipped.** Read it before writing any of the three artifacts it governs:
-
-- The argv shape and sidecar schema, and which numbers are transported vs. Go-only constants
-- Why the naive `2>&1 | head` pipeline is banned: it returns `head`'s exit status, so a red test suite reports green
-- How the capture is bounded without killing or blocking the command, and why `ulimit -f` and a bare `head -c` were rejected
-- Why markers count inside the budgets they report, not on top of them
-- The 15-digit decimal contract: what bash and JavaScript actually do to large integers, measured
-- The tokenization contract — under-match rather than parse, because `segments.sh` segments but does not tokenize
-- The conformance test matrix, kept beside the clauses it pins
-
-**When to read:** Before touching `configs/claude/output-budget.sh`,
-`configs/opencode/plugin/output-budget.js`, or
-`configs/devgeta/output-budget-run.sh`.
-
-**Referenced by:** [the token-and-context-efficiency cycle](../plans/cycles/2026-08-25-token-and-context-efficiency.md), Steps 4 and 6
+**Referenced by:** CLAUDE.md section 12 (keeping every AI coder in sync)
 
 ---
 

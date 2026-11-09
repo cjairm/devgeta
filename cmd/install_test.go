@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/testutil"
+	"github.com/cjairm/devgeta/internal/tooling/agentpack"
 )
 
 func init() { testutil.InitLogger() }
@@ -55,7 +59,9 @@ func assertRunsOnly(t *testing.T, cfg *installConfig, categories ...string) {
 		"languages": cfg.runLanguages,
 		"databases": cfg.runDatabases,
 		"desktop":   cfg.runDesktop,
-		"ai-tools":  cfg.runAITools,
+		// Agent packs are a category too (ADR-0068 §8): they run by default,
+		// and only when named by --only otherwise.
+		"agent-packs": cfg.runAgentPacks,
 	}
 	for cat, shouldRun := range got {
 		if shouldRun != want[cat] {
@@ -75,15 +81,12 @@ func TestParseFlags_NoFlags_RunsAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "agent-packs")
 	if cfg.terminalAppFilter != nil {
 		t.Error("expected terminalAppFilter nil with no flags")
 	}
 	if cfg.desktopAppFilter != nil {
 		t.Error("expected desktopAppFilter nil with no flags")
-	}
-	if cfg.aiToolsAppFilter != nil {
-		t.Error("expected aiToolsAppFilter nil with no flags")
 	}
 }
 
@@ -103,7 +106,7 @@ func TestParseFlags_SkipDatabases(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "desktop", "agent-packs")
 }
 
 func TestParseFlags_OnlyDesktop(t *testing.T) {
@@ -161,46 +164,13 @@ func TestParseFlags_SkipGit_TerminalRunsWithSkipFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "ai-tools")
+	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop", "agent-packs")
 	if cfg.terminalAppFilter != nil {
 		t.Error("expected terminalAppFilter nil when only skip flags given")
 	}
 	if !cfg.terminalSkipFilter["git"] {
 		t.Error("expected terminalSkipFilter to include git")
 	}
-}
-
-func TestParseFlags_OnlyAITools(t *testing.T) {
-	cfg, err := parseInstallFlags([]string{"ai-tools"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "ai-tools")
-	if cfg.aiToolsAppFilter != nil {
-		t.Error("expected aiToolsAppFilter nil for category-only flag")
-	}
-}
-
-func TestParseFlags_OnlyRtk_RunsAITools(t *testing.T) {
-	cfg, err := parseInstallFlags([]string{"rtk"}, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "ai-tools")
-	if !cfg.aiToolsAppFilter["rtk"] {
-		t.Error("expected aiToolsAppFilter to include rtk")
-	}
-	if len(cfg.aiToolsAppFilter) != 1 {
-		t.Errorf("expected aiToolsAppFilter length 1, got %d", len(cfg.aiToolsAppFilter))
-	}
-}
-
-func TestParseFlags_SkipAITools(t *testing.T) {
-	cfg, err := parseInstallFlags(nil, []string{"ai-tools"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	assertRunsOnly(t, cfg, "terminal", "languages", "databases", "desktop")
 }
 
 // --- mixed category + app ---
@@ -332,5 +302,221 @@ func TestInstall_CallsRecoverInterruptedFn(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("expected recoverInterruptedFn called once, got %d", calls)
+	}
+}
+
+// --- agent packs (ADR-0068 §8) ---
+
+func TestParseFlags_AgentPacks(t *testing.T) {
+	cases := []struct {
+		name         string
+		only, skip   []string
+		wantRun      bool
+		wantExplicit bool
+	}{
+		{"default: runs, into the coders this run installed", nil, nil, true, false},
+		{"--skip agent-packs installs none", nil, []string{"agent-packs"}, false, false},
+		{"--only agent-packs is an explicit request for every configured coder", []string{"agent-packs"}, nil, true, true},
+		{"--only terminal did not ask for packs", []string{"terminal"}, nil, false, false},
+		{"--only claude did not ask for packs", []string{"claude"}, nil, false, false},
+		{"--only terminal,agent-packs runs them after the fresh install", []string{"terminal", "agent-packs"}, nil, true, true},
+		{"--skip wins over --only", []string{"agent-packs"}, []string{"agent-packs"}, false, false},
+		{"skipping something else leaves packs on", nil, []string{"desktop"}, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := parseInstallFlags(tc.only, tc.skip)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.runAgentPacks != tc.wantRun {
+				t.Errorf("runAgentPacks = %v, want %v", cfg.runAgentPacks, tc.wantRun)
+			}
+			if cfg.agentPacksExplicit != tc.wantExplicit {
+				t.Errorf("agentPacksExplicit = %v, want %v", cfg.agentPacksExplicit, tc.wantExplicit)
+			}
+		})
+	}
+}
+
+func TestParseFlags_OnlyAgentPacksRunsNothingElse(t *testing.T) {
+	cfg, err := parseInstallFlags([]string{"agent-packs"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertRunsOnly(t, cfg, "agent-packs")
+}
+
+func TestParseFlags_ErrorsListAgentPacksAsACategory(t *testing.T) {
+	_, err := parseInstallFlags([]string{"bogus"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "agent-packs") {
+		t.Errorf("the valid categories must include agent-packs, got: %v", err)
+	}
+}
+
+func TestInstallCommandDocumentsAgentPacks(t *testing.T) {
+	for _, want := range []string{"agent-packs", "dg agent-pack"} {
+		if !strings.Contains(installCmd.Long, want) {
+			t.Errorf("dg install --help must mention %q:\n%s", want, installCmd.Long)
+		}
+	}
+}
+
+func installedPacks(f *fakeAgentPackEngine) []string {
+	var names []string
+	for _, r := range f.installReq {
+		names = append(names, r.Pack)
+	}
+	return names
+}
+
+func TestInstallDefaultAgentPacks_GoesOnlyIntoTheCodersThisRunInstalled(t *testing.T) {
+	engine := &fakeAgentPackEngine{}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{fresh: []string{"opencode"}, already: []string{"claude"}})
+
+	if got := installedPacks(engine); !reflect.DeepEqual(got, []string{"devgeta", "superpowers", "ponytail"}) {
+		t.Errorf("packs installed %v, want the three defaults in order", got)
+	}
+	for _, r := range engine.installReq {
+		if !reflect.DeepEqual(r.Coders, []string{"opencode"}) {
+			t.Errorf("%s went to %v; only the coder this run installed may get it", r.Pack, r.Coders)
+		}
+		if r.Exclude != nil {
+			t.Errorf("a default install leaves the saved exclusions alone, got %v", *r.Exclude)
+		}
+	}
+	text := out.String()
+	for _, pack := range []string{"devgeta", "superpowers", "ponytail"} {
+		want := "dg agent-pack install " + pack + " --coder claude"
+		if !strings.Contains(text, want) {
+			t.Errorf("the coder that was already there needs its command, missing %q in:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "--coder opencode") {
+		t.Errorf("opencode got its packs; no command needed, got:\n%s", text)
+	}
+}
+
+func TestInstallDefaultAgentPacks_ExplicitRequestTargetsEveryConfiguredCoder(t *testing.T) {
+	engine := &fakeAgentPackEngine{}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{explicit: true, already: []string{"claude"}})
+
+	if got := installedPacks(engine); len(got) != 3 {
+		t.Fatalf("expected the three default packs, got %v", got)
+	}
+	for _, r := range engine.installReq {
+		if r.Coders != nil {
+			t.Errorf("--only agent-packs means every configured coder (nil), %s got %v", r.Pack, r.Coders)
+		}
+	}
+	if strings.Contains(out.String(), "--coder claude") {
+		t.Errorf("an explicit request already covered claude; no hint needed, got:\n%s", out.String())
+	}
+}
+
+func TestInstallDefaultAgentPacks_NoFreshCoderMeansNoPacksAndSaysHow(t *testing.T) {
+	engine := &fakeAgentPackEngine{}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{already: []string{"claude", "git"}})
+
+	if len(engine.installReq) != 0 {
+		t.Errorf("nothing was freshly installed, so nothing may be installed, got %v", installedPacks(engine))
+	}
+	text := out.String()
+	if !strings.Contains(text, "No coder was installed in this run") {
+		t.Errorf("expected the reason, got:\n%s", text)
+	}
+	if !strings.Contains(text, "dg agent-pack install superpowers --coder claude") {
+		t.Errorf("the coder that was already there needs its command, got:\n%s", text)
+	}
+	if strings.Contains(text, "--coder git") {
+		t.Errorf("git is not a coder, got:\n%s", text)
+	}
+}
+
+func TestInstallDefaultAgentPacks_NothingAtAllStillSaysHowToInstallLater(t *testing.T) {
+	engine := &fakeAgentPackEngine{}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{})
+
+	if len(engine.installReq) != 0 || !strings.Contains(out.String(), "dg agent-pack install") {
+		t.Errorf("expected a pointer to dg agent-pack install, got:\n%s", out.String())
+	}
+}
+
+func TestInstallDefaultAgentPacks_OnePackFailingDoesNotStopTheOthers(t *testing.T) {
+	engine := &fakeFailingPack{fakeAgentPackEngine: &fakeAgentPackEngine{}, failPack: "superpowers"}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{fresh: []string{"claude"}})
+
+	if got := installedPacks(engine.fakeAgentPackEngine); !reflect.DeepEqual(got, []string{"devgeta", "superpowers", "ponytail"}) {
+		t.Errorf("every pack must be tried, got %v", got)
+	}
+	text := out.String()
+	if !strings.Contains(text, "superpowers") || !strings.Contains(text, "network down") {
+		t.Errorf("the failure must be reported with its cause, got:\n%s", text)
+	}
+	if !strings.Contains(text, "dg agent-pack install superpowers") {
+		t.Errorf("a pack that failed is not retried; the command to run must be printed, got:\n%s", text)
+	}
+}
+
+// fakeFailingPack fails one pack's install and records every request.
+type fakeFailingPack struct {
+	*fakeAgentPackEngine
+	failPack string
+}
+
+func (f *fakeFailingPack) Install(r agentpack.InstallRequest) (agentpack.Report, error) {
+	rep, _ := f.fakeAgentPackEngine.Install(r)
+	if r.Pack == f.failPack {
+		return rep, errors.New("network down")
+	}
+	return rep, nil
+}
+
+func TestInstallDefaultAgentPacks_AConflictShowsTheRemovalCommand(t *testing.T) {
+	engine := &fakeFailingPack{fakeAgentPackEngine: &fakeAgentPackEngine{}}
+	conflicting := &fakeConflictPack{fakeAgentPackEngine: engine.fakeAgentPackEngine}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, conflicting, agentPackPlan{fresh: []string{"claude"}})
+
+	if !strings.Contains(out.String(), "claude plugin uninstall superpowers@claude-plugins-official -s user") {
+		t.Errorf("the exact removal command must reach the user, got:\n%s", out.String())
+	}
+}
+
+type fakeConflictPack struct{ *fakeAgentPackEngine }
+
+func (f *fakeConflictPack) Install(r agentpack.InstallRequest) (agentpack.Report, error) {
+	f.fakeAgentPackEngine.Install(r)
+	if r.Pack == "superpowers" {
+		return agentpack.Report{}, &agentpack.ConflictError{
+			Pack: "superpowers", Messages: []string{"claude plugin uninstall superpowers@claude-plugins-official -s user"},
+		}
+	}
+	return agentpack.Report{}, nil
+}
+
+func TestInstallDefaultAgentPacks_ShowsWhatEachPackDid(t *testing.T) {
+	engine := &fakeAgentPackEngine{}
+	engine.installRep = agentpack.Report{
+		Pack: "devgeta", Version: "bundled",
+		Outcomes: []agentpack.CoderOutcome{{Coder: "claude", Done: true}},
+	}
+	var out bytes.Buffer
+
+	installDefaultAgentPacks(&out, engine, agentPackPlan{fresh: []string{"claude"}})
+
+	if !strings.Contains(out.String(), "devgeta bundled") {
+		t.Errorf("each pack's report should be shown, got:\n%s", out.String())
 	}
 }

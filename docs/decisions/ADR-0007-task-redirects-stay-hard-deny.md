@@ -1,7 +1,7 @@
 # ADR-0007 — The task redirects stay hard-deny, not `ask`
 
 **Date:** 2026-07-29
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 
 ## Context
 

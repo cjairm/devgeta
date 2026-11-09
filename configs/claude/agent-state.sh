@@ -8,7 +8,7 @@
 # docs/decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md — read
 # it for the full value table and for why "busy" must be an explicit write
 # rather than a cleared/absent value. The OpenCode counterpart is
-# configs/opencode/plugin/notify.js; both write the same tmux pane options and
+# configs/opencode/plugins/devgeta-notify/tui.js; both write the same tmux pane options and
 # must stay behaviourally matched.
 #
 # docs/decisions/ADR-0055-an-agent-says-what-it-is.md adds a second pane
@@ -26,7 +26,7 @@
 # this file for that logic; it reuses the same three-state set as the window
 # mirror below, for the same reason.
 #
-# Unlike format.sh and task-redirect.sh, this script deliberately reads NO
+# Unlike format.sh, this script deliberately reads NO
 # field from the hook's JSON stdin payload — it doesn't even read stdin.
 # "Which value to write" is fully determined by which registration in
 # settings.json.tmpl invoked it, each passing a different literal argument

@@ -1,7 +1,7 @@
 # ADR-0038 — A third-party hook rewrites the command; it does not decide the permission
 
 **Date:** 2026-09-10
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md)
 
 ## Context
 

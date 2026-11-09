@@ -1,7 +1,7 @@
 # ADR-0014 — Agent-config protection is a capability guard, not a path deny
 
 **Date:** 2026-08-05
-**Status:** ACCEPTED
+**Status:** ACCEPTED (amended by [ADR-0067](ADR-0067-agent-permission-floor.md): the guard stays, the path denies around it are gone)
 
 ## Context
 

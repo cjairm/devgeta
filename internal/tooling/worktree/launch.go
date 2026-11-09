@@ -12,9 +12,8 @@
 //
 //   - Pane.Command (layout.go) is the form TYPED into a live interactive shell -
 //     "CLAUDE_CODE_NO_FLICKER=1 claude", "opencode --prompt '...'", "nvim", or a
-//     raw --pane value. Exactly two paths still send it with send-keys, and both
-//     write into a pane that already exists: ensureWindow's repair branch, and
-//     launchReviewInLiveWindow's idle-shell reuse (ADR-0021 part 4). No create
+//     raw --pane value. Exactly one path still sends it with send-keys, and it
+//     writes into a pane that already exists: ensureWindow's repair branch. No create
 //     path types anything. It names the BINARY, not the cc/oc alias: devgeta.zsh's alias is
 //     for the user to type, and a send-keys path that relied on it would launch
 //     something the preflight probe never checked (ADR-0021's 2026-08-07
@@ -40,10 +39,9 @@ import (
 //
 // It is structured rather than a "program plus prompt" pair because the create
 // paths do not share one argument shape - claude takes its prompt positionally,
-// opencode takes --prompt, and the reviewer launch adds --agent <name> before
-// it. A two-slot template cannot express those three, which is exactly why the
-// three of them used to hand-assemble their own strings (and why an --agent flag
-// could not share the prompt fragment's single author).
+// opencode takes --prompt, and nvim takes nothing. A two-slot template cannot
+// express those, which is exactly why they used to hand-assemble their own
+// strings.
 //
 // The zero value means "no command at all" - the shell pane, which gets the
 // shell tmux would have started anyway. It renders to "", and paneCommandFor
@@ -306,12 +304,12 @@ func paneCommandFor(launch paneLaunch, shell string) string {
 //
 // It is the counterpart of Pane.Command, never a replacement for it: Command
 // stays the form TYPED into a pane that already exists (ensureWindow's repair
-// branch, launchReviewInLiveWindow's idle-shell reuse - ADR-0021 part 4).
+// branch).
 //
 // Three kinds of pane, decided by what the pane's constructor put on it rather
 // than by inspecting its Command string:
 //
-//   - launch != nil - a devgeta-owned pane (a coder, the editor, a reviewer).
+//   - launch != nil - a devgeta-owned pane (a coder or the editor).
 //     The launch closure is handed the probe's resolution and this pane's prompt
 //     text, and IT decides exec-vs-interactive by whether the path is empty
 //     (see layout.go's launchFor). That is the one probe's answer being spent,

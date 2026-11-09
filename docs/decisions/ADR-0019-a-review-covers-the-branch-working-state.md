@@ -1,6 +1,6 @@
 # ADR-0019: A review covers the branch's working state, not just its committed history
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-07
 **Deciders:** cjairm
 **Related:** [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md), [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md), [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md), [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) (its explicit-range mode reviews immutable SHAs only, never the working state this ADR established for branch mode)

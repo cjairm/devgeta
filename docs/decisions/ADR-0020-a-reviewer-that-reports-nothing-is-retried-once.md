@@ -1,6 +1,6 @@
 # ADR-0020: A reviewer that reports nothing is retried once
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-07
 **Deciders:** cjairm
 **Related:** [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) (narrows its "Auto-retry a failed reviewer" alternative), [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md)

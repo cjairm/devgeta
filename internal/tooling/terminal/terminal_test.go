@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/cjairm/devgeta/internal/commands"
@@ -242,3 +243,109 @@ func TestInstallAndConfigure_SkipsDevToolsWhenFilterActive(t *testing.T) {
 	}
 	testutil.VerifyNoRealCommands(t, mockApp.Base)
 }
+
+// presenceMock is an installable that can say whether it is installed, the way
+// the coder apps can. present is what IsInstalled reports; a successful
+// SoftInstall sets it to becomesPresent, so a test models "absent, then
+// installed" and "already there, then upgraded".
+type presenceMock struct {
+	mockInstallable
+	present        bool
+	becomesPresent bool
+}
+
+func (p *presenceMock) IsInstalled() bool { return p.present }
+
+func (p *presenceMock) SoftInstall() error {
+	p.installCalled = true
+	if p.installErr == nil {
+		p.present = p.becomesPresent
+	}
+	return p.installErr
+}
+
+func presenceEntries(apps map[string]*presenceMock, order ...string) []namedInstallable {
+	var entries []namedInstallable
+	for _, name := range order {
+		entries = append(entries, namedInstallable{name: name, app: apps[name]})
+	}
+	return entries
+}
+
+func TestInstallTerminalApps_ReportsWhichAppsThisRunInstalled(t *testing.T) {
+	apps := map[string]*presenceMock{
+		constants.Claude:   {present: false, becomesPresent: true},  // installed by this run
+		constants.OpenCode: {present: true, becomesPresent: true},   // was there, upgraded to the pin
+		constants.Pi:       {present: false, becomesPresent: false}, // install "succeeded" but is not present
+	}
+	term := &Terminal{appsOverride: presenceEntries(apps, constants.Claude, constants.OpenCode, constants.Pi)}
+	summary := &InstallationSummary{}
+
+	term.InstallTerminalApps(summary, nil, nil)
+
+	if want := []string{constants.Claude}; !equalStrings(summary.FreshlyInstalled, want) {
+		t.Errorf("freshly installed %v, want %v", summary.FreshlyInstalled, want)
+	}
+	if want := []string{constants.OpenCode}; !equalStrings(summary.AlreadyPresent, want) {
+		t.Errorf("already present %v, want %v (an upgrade to the pin does not make it fresh)", summary.AlreadyPresent, want)
+	}
+}
+
+func TestInstallTerminalApps_AFailedInstallIsNeitherFreshNorPresent(t *testing.T) {
+	failing := &presenceMock{present: false, becomesPresent: true}
+	failing.installErr = errBoom
+	term := &Terminal{appsOverride: presenceEntries(map[string]*presenceMock{constants.Claude: failing}, constants.Claude)}
+	summary := &InstallationSummary{}
+
+	term.InstallTerminalApps(summary, nil, nil)
+
+	if len(summary.FreshlyInstalled) != 0 || len(summary.AlreadyPresent) != 0 {
+		t.Errorf("a failed install is neither, got fresh %v present %v", summary.FreshlyInstalled, summary.AlreadyPresent)
+	}
+}
+
+func TestInstallTerminalApps_AppsThatCannotSayAreNeverListed(t *testing.T) {
+	entries, _ := buildOverride(constants.Git, constants.Tmux) // plain mocks: no IsInstalled
+	term := &Terminal{appsOverride: entries}
+	summary := &InstallationSummary{}
+
+	term.InstallTerminalApps(summary, nil, nil)
+
+	if len(summary.FreshlyInstalled) != 0 || len(summary.AlreadyPresent) != 0 {
+		t.Errorf("got fresh %v present %v", summary.FreshlyInstalled, summary.AlreadyPresent)
+	}
+}
+
+func TestInstallTerminalApps_SkippedAndFilteredAppsAreNeverListed(t *testing.T) {
+	apps := map[string]*presenceMock{
+		constants.Claude:   {present: false, becomesPresent: true},
+		constants.OpenCode: {present: true, becomesPresent: true},
+		constants.Pi:       {present: true, becomesPresent: true},
+	}
+	term := &Terminal{appsOverride: presenceEntries(apps, constants.Claude, constants.OpenCode, constants.Pi)}
+	summary := &InstallationSummary{}
+
+	// --skip claude, --only opencode: the run touched only opencode.
+	term.InstallTerminalApps(summary, map[string]bool{constants.OpenCode: true}, map[string]bool{constants.Claude: true})
+
+	if len(summary.FreshlyInstalled) != 0 {
+		t.Errorf("nothing was freshly installed, got %v", summary.FreshlyInstalled)
+	}
+	if want := []string{constants.OpenCode}; !equalStrings(summary.AlreadyPresent, want) {
+		t.Errorf("only apps this run processed count, got %v", summary.AlreadyPresent)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+var errBoom = errors.New("boom")

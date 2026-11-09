@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"slices"
@@ -1237,6 +1238,162 @@ func TestConfigureDeploysFormatPieces(t *testing.T) {
 		}
 		if _, err := os.Stat(formatExtensionFile()); err != nil {
 			t.Errorf("extension missing after a failed extension install: %v", err)
+		}
+	})
+}
+
+func TestPackageSources(t *testing.T) {
+	root := isolateInstallRoot(t)
+	agentDir := filepath.Dir(root)
+
+	t.Run("a missing settings file means no packages", func(t *testing.T) {
+		app, _ := newApp()
+		got, err := app.PackageSources()
+		if err != nil || len(got) != 0 {
+			t.Fatalf("expected nothing and no error, got %v / %v", got, err)
+		}
+	})
+
+	t.Run("reads bare strings and objects, and resolves relative paths against the agent dir", func(t *testing.T) {
+		// Pi stores a local package relative to its agent dir, not as the
+		// absolute path it was given.
+		writeAgentSettings(t, `{
+		  "packages": [
+		    "npm:pi-lens@1.2.3",
+		    {"source": "git:github.com/obra/superpowers"},
+		    "../data/devgeta/agent-packs/superpowers",
+		    "./local-pkg",
+		    "/abs/path/ponytail/",
+		    {"source": "../data/devgeta/agent-packs/ponytail", "extensions": []},
+		    42
+		  ],
+		  "theme": "devgeta"
+		}`)
+		app, _ := newApp()
+
+		got, err := app.PackageSources()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := []string{
+			"npm:pi-lens@1.2.3",
+			"git:github.com/obra/superpowers",
+			filepath.Clean(filepath.Join(agentDir, "../data/devgeta/agent-packs/superpowers")),
+			filepath.Join(agentDir, "local-pkg"),
+			"/abs/path/ponytail",
+			filepath.Clean(filepath.Join(agentDir, "../data/devgeta/agent-packs/ponytail")),
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("sources:\n got %v\nwant %v", got, want)
+		}
+	})
+
+	t.Run("unreadable settings are an error, not an empty list", func(t *testing.T) {
+		writeAgentSettings(t, `{ not json`)
+		app, _ := newApp()
+
+		if _, err := app.PackageSources(); err == nil {
+			t.Fatal("a settings file we cannot parse must not read as 'nothing installed'")
+		}
+	})
+
+	t.Run("the curated-extension check is built on the same reader", func(t *testing.T) {
+		writeAgentSettings(t, `{"packages": ["npm:ext-a@2.0.0", {"source": "npm:ext-b"}, "../some/path"]}`)
+		useFakeExtensions(t)
+
+		declared, err := declaredExtensions()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !declared["npm:ext-a"] || !declared["npm:ext-b"] || declared["npm:ext-c"] {
+			t.Errorf("unexpected declared set %v", declared)
+		}
+	})
+}
+
+func TestIsInstalled(t *testing.T) {
+	root := isolateInstallRoot(t)
+	app := &Pi{}
+
+	t.Run("neither", func(t *testing.T) {
+		piNotOnPath(t)
+		if app.IsInstalled() {
+			t.Error("expected not installed")
+		}
+	})
+	t.Run("on PATH", func(t *testing.T) {
+		piOnPath(t)
+		if !app.IsInstalled() {
+			t.Error("a pi on PATH counts")
+		}
+	})
+	t.Run("the managed launcher, which is not on PATH until a new shell", func(t *testing.T) {
+		piNotOnPath(t)
+		launcher := filepath.Join(filepath.Dir(root), "bin", "pi")
+		if err := os.MkdirAll(filepath.Dir(launcher), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(launcher, []byte("#!/bin/sh\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if !app.IsInstalled() {
+			t.Error("a fresh managed install counts before PATH has it")
+		}
+	})
+}
+
+func TestExecuteCommandNeverWaitsOnStdin(t *testing.T) {
+	isolateInstallRoot(t)
+	piOnPath(t)
+	app, mockApp := newApp()
+
+	if err := app.ExecuteCommand("install", "/some/pack"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if last := mockApp.Base.GetLastExecCommandCall(); !last.NoStdin {
+		t.Error("a package command must run with stdin disconnected so it can't block on a prompt")
+	}
+}
+
+func TestExecuteCommandOutput(t *testing.T) {
+	t.Run("returns stdout and never reads stdin", func(t *testing.T) {
+		isolateInstallRoot(t)
+		piOnPath(t)
+		app, mockApp := newApp()
+		mockApp.Base.SetExecCommandResult("1.5.0\n", "", nil)
+
+		out, err := app.ExecuteCommandOutput("--version")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != "1.5.0\n" {
+			t.Errorf("unexpected stdout %q", out)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if !last.NoStdin || filepath.Base(last.Command) != "pi" {
+			t.Errorf("expected pi with stdin disconnected, got %+v", last)
+		}
+	})
+	t.Run("a missing pi says how to install it", func(t *testing.T) {
+		isolateInstallRoot(t)
+		piNotOnPath(t)
+		app, _ := newApp()
+
+		_, err := app.ExecuteCommandOutput("--version")
+		if err == nil || !strings.Contains(err.Error(), "dg install --only pi") {
+			t.Fatalf("expected an install hint, got %v", err)
+		}
+	})
+	t.Run("wraps a failure and keeps stderr", func(t *testing.T) {
+		isolateInstallRoot(t)
+		piOnPath(t)
+		app, mockApp := newApp()
+		mockApp.Base.SetExecCommandResult("", "bad flag", fmt.Errorf("exit 1"))
+
+		_, err := app.ExecuteCommandOutput("--nope")
+		if err == nil || !strings.Contains(err.Error(), "bad flag") ||
+			!strings.Contains(err.Error(), "pi command execution failed") {
+			t.Fatalf("expected a wrapped error with stderr, got %v", err)
 		}
 	})
 }

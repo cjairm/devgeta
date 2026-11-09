@@ -35,7 +35,7 @@ recorded here so the names are not revived by mistake.
 - ❌ **`dg reinstall`** — Force reinstall was never built as its own verb. Re-running
   `dg install` is idempotent, and per-app repair belongs to the `dg list` dashboard above.
 - ❌ **`dg re-configure`** — Shipped instead as a flag: `dg configure <app> --force`,
-  with `--only` to re-render just part of an app's config.
+  re-rendering the app's whole config.
 
 ### Customization
 
@@ -51,6 +51,24 @@ Wallpaper switching (`dg theme set-wallpaper <path>`) and font switching
 (`current_font`, `.Font`) remain planned — the same dead-config shape theme
 switching just closed, deferred as separate work to keep this change's blast
 radius reviewable.
+
+### Agent packs
+
+Shipped: `dg agent-pack list|install|uninstall|update|check` installs `superpowers`,
+`ponytail` and `devgeta` into Claude Code, OpenCode and Pi at pinned versions,
+and `dg install` puts them into the coders it installs. See
+[docs/apps/agent-packs.md](docs/apps/agent-packs.md) and
+[docs/plans/cycles/2026-11-08-agent-packs.md](docs/plans/cycles/2026-11-08-agent-packs.md).
+
+- ⚪ **devgeta's own skill overrides** — The override mechanism ships and is tested, but no
+  override does. The first candidate is `using-git-worktrees` → `dg worktree`; each override
+  is its own reviewed change and must make sense to someone who has never seen this repo.
+- ⚪ **devgeta's own skills in the `devgeta` pack** — Today the pack carries only `DEVGETA.md`.
+- ⚪ **Other skill sets** — `humanizer`, and Anthropic's `internal-comms` and `doc-coauthoring`
+  (check license, maintenance and steps that only work in Claude first).
+- ⚪ **Packs for other apps** — The engine is coder-agnostic; for example a Neovim pack.
+- ⚪ **Retry packs for coders that were already installed** — `dg install` prints the command
+  instead of changing an existing coder's agent content.
 
 ### Backup & Recovery
 
@@ -146,9 +164,8 @@ these lean on tmux's own idioms (status bar, popups) instead of chasing that lit
 
 ### AI & Development Tools
 
-**Category `ai-tools`** — shipped 2026-07-23 with rtk as first app ([ADR-0004](docs/decisions/ADR-0004-ai-tools-install-category.md))
+rtk shipped here as the first app of an `ai-tools` category and was removed on 2026-11-06, along with the category ([ADR-0065](docs/decisions/ADR-0065-devgeta-does-not-ship-rtk.md)). Don't re-add an output-rewriting tool without a measured result.
 
-- ~~**rtk** — Token-compressing CLI proxy~~ ✅ Shipped: `dg install --only rtk` (brew on macOS, GitHub release binary on Debian); the command-rewriting hook (`rtk init -g`) stays opt-in — see [docs/apps/rtk.md](docs/apps/rtk.md). Revisit automating the hook once the project stabilizes.
 - **Ollama** — Local LLM inference engine
 - Gemini CLI integration
 - IDE AI integrations (Claude Code, Opencode configuration)
@@ -156,7 +173,7 @@ these lean on tmux's own idioms (status bar, popups) instead of chasing that lit
 
 **Related Questions:**
 
-- ~~Should this be a separate category or extend existing categories?~~ Answered: separate `ai-tools` category (ADR-0004)
+- Should this be a separate category or extend existing categories? (An `ai-tools` category existed for rtk alone and was removed with it, ADR-0065.)
 - How to integrate with Opencode / Claude Code setup?
 
 ### Alternative Tools
@@ -196,8 +213,7 @@ Users should be able to choose between alternatives:
 - **Super powers** — How to extend [super powers](https://github.com/obra/superpowers) for Opencode?
 - **Auto Claude integration** — Reuse or build [Auto Claude](https://github.com/AndyMik90/Auto-Claude)?
 - **`/review-pr` read-only enforcement** — Consider making `/review-pr` genuinely read-only via a dedicated restricted agent (currently it can edit despite reviewing) — see [docs/plans/cycles/2026-08-05-shared-command-permissions.md](docs/plans/cycles/2026-08-05-shared-command-permissions.md)
-- **User-defined output-budget rules** — the output-budget hook ([docs/guides/output-budget-runner.md](docs/guides/output-budget-runner.md)) ships built-in rules only in v1; a user-supplied rule list needs its own design for precedence against the built-ins before it's worth building.
-- **Devgeta's own CLAUDE.md size, and the worktree double-load it picked up** — `dg task context-report` (shipped [2026-08-25 cycle](docs/plans/cycles/2026-08-25-token-and-context-efficiency.md)) measured this repo's CLAUDE.md at ~47KB, and — because devgeta's own worktrees nest inside the main checkout under `.claude/worktrees/<name>/` — a session opened in any devgeta worktree loads it **twice** (worktree + main checkout, both genuine ancestor directories under Claude Code's own CLAUDE.md discovery walk). Shrinking the file is its own cycle; the worktree nesting is a separate layout question.
+- **Devgeta's own CLAUDE.md size, and the worktree double-load it picked up** — The since-removed `dg task context-report` ([2026-08-25 cycle](docs/plans/cycles/2026-08-25-token-and-context-efficiency.md)) measured this repo's CLAUDE.md at ~47KB, and — because devgeta's own worktrees nest inside the main checkout under `.claude/worktrees/<name>/` — a session opened in any devgeta worktree loads it **twice** (worktree + main checkout, both genuine ancestor directories under Claude Code's own CLAUDE.md discovery walk). Shrinking the file is its own cycle; the worktree nesting is a separate layout question.
 
 ### References & Templates
 

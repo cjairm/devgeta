@@ -1,0 +1,9 @@
+{
+  "name": "devgeta",
+  "private": true,
+  "type": "module",
+  "description": "devgeta's response and writing rules, loaded into Pi's system prompt",
+  "pi": {
+    "extensions": ["./extensions/devgeta-instructions.js"]
+  }
+}

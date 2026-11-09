@@ -54,25 +54,19 @@ just dead weight. It can still surface where `devgeta.zsh` is not loaded — a
 plain login shell, a CI step, an editor that builds its own environment — and
 there the two copies can be different versions. Removing it avoids the question.
 
-## Pinning a version after a bad release
+## Running a different version
 
-devgeta installs whatever the script installs; it does not pin a version, so a
-broken upstream release reaches you on your next `dg install`
-([ADR-0047](../decisions/ADR-0047-opencode-installs-from-its-official-script-on-every-platform.md)).
-To hold a known-good version:
-
-```bash
-curl -fsSL https://opencode.ai/install | VERSION=1.18.20 bash
-```
-
-That overwrites `~/.opencode/bin/opencode` in place, and devgeta leaves it alone
-from then on: `dg install` skips opencode whenever that binary exists. To go
-back to the latest version once upstream fixes the release, run the same script
-without the version:
+devgeta now installs a pinned OpenCode version and turns OpenCode's own
+updates off (see [docs/apps/opencode.md](../apps/opencode.md#pinned-version)),
+so a bad upstream release no longer reaches you through `dg install`. To run
+another version anyway, use OpenCode 2's script:
 
 ```bash
-curl -fsSL https://opencode.ai/install | bash
+curl -fsSL https://opencode.ai/v2/install | bash -s -- --version <version>
 ```
+
+That overwrites `~/.opencode/bin/opencode` in place. `dg install` leaves a
+version newer than the pin alone, and replaces an older one with the pin.
 
 Use that rather than `dg uninstall opencode` followed by a reinstall —
 `dg uninstall` also deletes `~/.config/opencode`, taking your config, themes and

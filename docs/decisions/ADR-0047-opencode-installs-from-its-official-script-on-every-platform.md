@@ -1,7 +1,9 @@
 # ADR-0047 — opencode installs from its official script on every platform
 
 **Date:** 2026-09-16
-**Status:** ACCEPTED
+**Status:** ACCEPTED. Amended 2026-11-08: OpenCode 2's script is
+`https://opencode.ai/v2/install`, and devgeta passes it a pinned `--version`
+(see [docs/apps/opencode.md](../apps/opencode.md)). The rest stands.
 
 ## Context
 

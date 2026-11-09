@@ -4,8 +4,8 @@
 // module provides installation and state management for Pi with devgeta
 // integration. Configuration is a curated extension set installed through Pi's
 // own package manager (ADR-0060) and one devgeta-owned theme file that follows
-// `dg theme` (ADR-0061); skills and two-agent parity stay out of scope
-// (ADR-0059).
+// `dg theme` (ADR-0061). Skills arrive as agent packs, and Pi joins the coder
+// parity wherever it has an equivalent (ADR-0059 §7, ADR-0060 §7-8).
 //
 // References:
 // - Official installer: https://pi.dev/install.sh
@@ -14,7 +14,6 @@
 package pi
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -120,18 +119,21 @@ func (p *Pi) SoftInstall() error {
 // packages `pi install` has added and the active theme.
 func piAgentDir() string { return paths.PiAgentDir() }
 
-// declaredExtensions returns the curated extensions Pi's settings already list.
-// Pi matches npm sources by package name, so a pinned `npm:<pkg>@<version>`
-// counts. An entry is a bare source string or an object carrying one under
-// "source"; both are read and anything else in the file is left to Pi. A
-// missing settings file means nothing is installed yet.
-func declaredExtensions() (map[string]bool, error) {
-	declared := map[string]bool{}
+// readPackageSources returns every source Pi's settings list under "packages",
+// not just the curated ones. An entry is a bare source string or an object
+// carrying one under "source"; both are read, and anything else in the file is
+// left to Pi. A missing settings file means nothing is installed yet.
+//
+// A local package is stored relative to the agent dir (`pi install
+// /abs/path` writes "../data/..."), so a path source is resolved against that
+// dir and returned absolute: callers compare it with the path they installed.
+// npm:, git: and URL sources are returned as written.
+func readPackageSources() ([]string, error) {
 	settingsPath := filepath.Join(piAgentDir(), "settings.json")
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return declared, nil
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read %s: %w", settingsPath, err)
 	}
@@ -141,17 +143,53 @@ func declaredExtensions() (map[string]bool, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return nil, fmt.Errorf("failed to parse %s: %w", settingsPath, err)
 	}
+	var sources []string
 	for _, raw := range settings.Packages {
 		var source string
 		if err := json.Unmarshal(raw, &source); err != nil {
 			var entry struct {
 				Source string `json:"source"`
 			}
-			if err := json.Unmarshal(raw, &entry); err != nil {
+			if err := json.Unmarshal(raw, &entry); err != nil || entry.Source == "" {
 				continue
 			}
 			source = entry.Source
 		}
+		sources = append(sources, resolvePackageSource(source))
+	}
+	return sources, nil
+}
+
+// resolvePackageSource makes a path source absolute and clean. A relative path
+// is anchored at the agent dir, where Pi stores it from. Anything that is not a
+// path is returned unchanged.
+func resolvePackageSource(source string) string {
+	switch {
+	case source == "." || source == ".." ||
+		strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../"):
+		return filepath.Clean(filepath.Join(piAgentDir(), source))
+	case strings.HasPrefix(source, "~"):
+		return filepath.Clean(paths.ExpandHome(source))
+	case filepath.IsAbs(source):
+		return filepath.Clean(source)
+	}
+	return source
+}
+
+// PackageSources is readPackageSources for callers outside this package, such
+// as the agent pack installer.
+func (p *Pi) PackageSources() ([]string, error) { return readPackageSources() }
+
+// declaredExtensions returns the curated extensions Pi's settings already list.
+// Pi matches npm sources by package name, so a pinned `npm:<pkg>@<version>`
+// counts.
+func declaredExtensions() (map[string]bool, error) {
+	declared := map[string]bool{}
+	sources, err := readPackageSources()
+	if err != nil {
+		return nil, err
+	}
+	for _, source := range sources {
 		for _, name := range piExtensions {
 			if source == name || strings.HasPrefix(source, name+"@") {
 				declared[name] = true
@@ -246,49 +284,20 @@ func writeFooterOverride(force bool) error {
 // piSettingDefaults are the only keys devgeta writes in Pi's settings.json
 // (ADR-0061 §3, ADR-0064). Collapsed thinking still shows a "Thinking..." line
 // that a click or Ctrl+T expands, so hiding it by default loses nothing.
-var piSettingDefaults = map[string]json.RawMessage{
-	"theme":             json.RawMessage(strconv.Quote(piThemeName)),
-	"hideThinkingBlock": json.RawMessage("true"),
+var piSettingDefaults = []files.JSONSetting{
+	{Key: "theme", Value: json.RawMessage(strconv.Quote(piThemeName))},
+	{Key: "hideThinkingBlock", Value: json.RawMessage("true")},
 }
 
-// applySettingDefaults writes piSettingDefaults into Pi's settings.json.
-// Without force a key already present is the user's choice and stays; with
-// force every default is written. Every other key is carried as raw JSON so
-// Pi's own state (packages above all) round-trips; HTML escaping is off because
-// the default would rewrite "&" in a package URL as \u0026. A file that does
-// not parse is an error, never a reset.
+// applySettingDefaults writes piSettingDefaults into Pi's settings.json,
+// keeping Pi's own state (packages above all). Without force a key already
+// present is the user's choice and stays.
 func applySettingDefaults(force bool) error {
-	settingsPath := filepath.Join(piAgentDir(), "settings.json")
-	settings := map[string]json.RawMessage{}
-	data, err := os.ReadFile(settingsPath)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(data, &settings); err != nil {
-			return fmt.Errorf("failed to parse %s: %w", settingsPath, err)
-		}
-	case !os.IsNotExist(err):
-		return fmt.Errorf("failed to read %s: %w", settingsPath, err)
-	}
-	changed := false
-	for key, value := range piSettingDefaults {
-		if _, exists := settings[key]; exists && !force {
-			continue
-		}
-		settings[key] = value
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-
-	var out bytes.Buffer
-	encoder := json.NewEncoder(&out)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(settings); err != nil {
-		return fmt.Errorf("failed to encode %s: %w", settingsPath, err)
-	}
-	return files.WriteFileAtomic(settingsPath, out.Bytes(), files.FilePermission)
+	return files.MergeJSONSettings(
+		filepath.Join(piAgentDir(), "settings.json"),
+		piSettingDefaults,
+		force,
+	)
 }
 
 // formatExtensionName is the devgeta-owned extension that runs the shared
@@ -327,57 +336,16 @@ func piLensConfigPath() string {
 // Mason formatters (ADR-0063). The diagnostics widget is hidden because the
 // findings already reach the model in the tool results; /lens-widget-toggle
 // still shows it for one session.
-var piLensDefaults = []struct{ section, key, value string }{
-	{"format", "enabled", "false"},
-	{"autofix", "enabled", "false"},
-	{"widget", "visible", "false"},
+var piLensDefaults = []files.JSONSetting{
+	{Section: "format", Key: "enabled", Value: json.RawMessage("false")},
+	{Section: "autofix", Key: "enabled", Value: json.RawMessage("false")},
+	{Section: "widget", Key: "visible", Value: json.RawMessage("false")},
 }
 
-// applyPiLensDefaults merges piLensDefaults into the user's pi-lens config the
-// way applySettingDefaults does: raw JSON kept, siblings kept, an unparseable
-// file is an error. Without force a value the user already set stays.
+// applyPiLensDefaults merges piLensDefaults into the user's pi-lens config.
+// Without force a value the user already set stays.
 func applyPiLensDefaults(force bool) error {
-	configPath := piLensConfigPath()
-	config := map[string]json.RawMessage{}
-	data, err := os.ReadFile(configPath)
-	switch {
-	case err == nil:
-		if err := json.Unmarshal(data, &config); err != nil {
-			return fmt.Errorf("failed to parse %s: %w", configPath, err)
-		}
-	case !os.IsNotExist(err):
-		return fmt.Errorf("failed to read %s: %w", configPath, err)
-	}
-	changed := false
-	for _, setting := range piLensDefaults {
-		fields := map[string]json.RawMessage{}
-		if raw, ok := config[setting.section]; ok {
-			if err := json.Unmarshal(raw, &fields); err != nil {
-				return fmt.Errorf("failed to parse %q in %s: %w", setting.section, configPath, err)
-			}
-		}
-		if _, exists := fields[setting.key]; exists && !force {
-			continue
-		}
-		fields[setting.key] = json.RawMessage(setting.value)
-		raw, err := json.Marshal(fields)
-		if err != nil {
-			return fmt.Errorf("failed to encode %q: %w", setting.section, err)
-		}
-		config[setting.section] = raw
-		changed = true
-	}
-	if !changed {
-		return nil
-	}
-	var out bytes.Buffer
-	encoder := json.NewEncoder(&out)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(config); err != nil {
-		return fmt.Errorf("failed to encode %s: %w", configPath, err)
-	}
-	return files.WriteFileAtomic(configPath, out.Bytes(), files.FilePermission)
+	return files.MergeJSONSettings(piLensConfigPath(), piLensDefaults, force)
 }
 
 // configure is the body of both configure modes: theme file, Pi setting defaults,
@@ -469,22 +437,43 @@ func piExecutable() (string, error) {
 	return "", err
 }
 
+// ExecuteCommand runs pi, for commands whose effect is the point
+// (`pi install <source>`).
 func (p *Pi) ExecuteCommand(args ...string) error {
+	_, err := p.ExecuteCommandOutput(args...)
+	return err
+}
+
+// ExecuteCommandOutput runs pi and returns its stdout, for commands read for
+// their answer (`pi --version`). Stdin is disconnected: a package command run
+// by an installer must fail rather than sit waiting on a prompt nobody can see.
+func (p *Pi) ExecuteCommandOutput(args ...string) (string, error) {
 	executable, err := piExecutable()
 	if err != nil {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"pi executable not found; install it with `dg install --only pi`: %w",
 			err,
 		)
 	}
-	params := cmd.CommandParams{
+	stdout, stderr, err := p.Base.ExecCommand(cmd.CommandParams{
 		Command: executable,
 		Args:    args,
+		NoStdin: true,
+	})
+	if err != nil {
+		if stderr != "" {
+			return "", fmt.Errorf("pi command execution failed: %s: %w", strings.TrimSpace(stderr), err)
+		}
+		return "", fmt.Errorf("pi command execution failed: %w", err)
 	}
-	if _, _, err := p.Base.ExecCommand(params); err != nil {
-		return fmt.Errorf("pi command execution failed: %w", err)
-	}
-	return nil
+	return stdout, nil
+}
+
+// IsInstalled reports whether pi is present: on PATH, or the managed launcher
+// the official installer writes, which exists before PATH picks up its bin dir.
+func (p *Pi) IsInstalled() bool {
+	_, err := piExecutable()
+	return err == nil
 }
 
 func (p *Pi) Update() error {

@@ -46,6 +46,10 @@ That's it! You'll be prompted to select which programming languages, databases, 
 - Runtime manager: Mise for managing multiple language versions
 - Fonts: JetBrains Mono and developer fonts
 
+**Agent Packs** (into each AI coder this run installs)
+
+- `superpowers` (skills and a session bootstrap), `ponytail` (a "simplest thing that works" ruleset) and `devgeta` (response and writing rules), installed into Claude Code, OpenCode and Pi at pinned versions. A coder you already had is left alone; `dg install` prints the command to add the packs to it. Skip with `dg install --skip agent-packs`. See [docs/apps/agent-packs.md](docs/apps/agent-packs.md)
+
 **Programming Languages** (interactive selection)
 
 - Node.js (LTS)
@@ -164,9 +168,6 @@ dg install --only databases
 # Install only desktop applications
 dg install --only desktop
 
-# Install only AI tools (rtk, …)
-dg install --only ai-tools
-
 # Combine multiple categories
 dg install --only terminal,languages
 ```
@@ -186,9 +187,17 @@ dg install --skip databases,desktop
 ### Available Commands
 
 - `dg install` - Install and configure development environment
-  - `--only <categories>` - Install only specified categories (terminal, languages, databases, desktop, ai-tools)
+  - `--only <categories>` - Install only specified categories (terminal, agent-packs, languages, databases, desktop)
   - `--skip <categories>` - Install everything except specified categories
   - `--verbose` - Enable verbose logging
+- `dg agent-pack` - Install agent packs (skills, hooks, rules) into Claude Code, OpenCode and Pi. See [docs/apps/agent-packs.md](docs/apps/agent-packs.md)
+  - `dg agent-pack list` - Each pack's pinned and installed version, and each coder's state
+  - `dg agent-pack install <pack>` - Install `superpowers`, `ponytail` or `devgeta` into every installed coder
+    - `--coder <claude,opencode,pi>` - Only these coders
+    - `--exclude <skills>` - Leave these skills out (saved; `--exclude=` clears it)
+  - `dg agent-pack uninstall <pack>` - Remove a pack, deleting only what devgeta installed (`--coder` limits it)
+  - `dg agent-pack update [pack]` - Move installed packs to this devgeta's pinned version and rebuild them
+  - `dg agent-pack check <pack>` - Build and check a pack without installing it (`--ref <tag>` tries another upstream tag)
 - `dg worktree` (alias: `dg wt`) - Manage git worktrees with tmux windows and AI coders
   - `dg wt create <name>` - Create a worktree + tmux window + launch AI
     - `--ai <opencode|claude>` - AI coder to launch (mutually exclusive with `--layout`)
@@ -210,30 +219,14 @@ dg install --skip databases,desktop
   - `dg config get <key>` - Print one setting's effective value (for scripts)
   - `dg config set <key> <value...>` - Validate and persist a value (`worktree.search_paths` takes multiple values)
   - `dg config unset <key>` - Clear a setting back to its default
-- `dg task` (alias: `dg t`) - Developer utilities callable by agents and humans (mirrors `dge` shell function)
+- `dg task` (alias: `dg t`) - Developer utilities for git, npm, releases and scratch space (mirrors `dge` shell function)
   - `dg task refresh-branch [target]` - Checkout target (default: `main`), pull, return to previous branch, merge
   - `dg task reset-main-branch` - Checkout `main`, hard-reset to `origin/main`
   - `dg task delete-branch [target]` - Checkout target, fetch, pick a branch via fzf to force-delete
   - `dg task reinstall-libraries` - Clean ignored files, remove `node_modules/`, run `npm install`
   - `dg task reinstall-library <name>` - Remove `node_modules/<name>`, run `npm install`
-  - **Review scope tasks (noise-filtered git context for agents):**
-    - `dg task review-scope` - Fetch + orient in one call: branch, default branch, ahead/behind, commits, per-file stats (lockfile-style noise excluded and noted)
-    - `dg task branch-diff [--file <path>]` - Merge-base diff against the default branch, same exclusions applied; `--file` bypasses them for one file
-  - **Pull request tasks (via `gh`, formatted for agents):**
-    - `dg task review-threads [--pr N] [--state unresolved|resolved|all]` - Show PR review threads as compact markdown
-    - `dg task resolve-thread <id>` / `unresolve-thread <id>` - Resolve/reopen a review thread
-    - `dg task reply-thread <id> <body>` - Reply to a review thread
-    - `dg task create-pr --title T [--body B] [--base main]` - Open a PR from the current branch
-    - `dg task update-pr-description [--pr N] --body B` - Replace a PR description
-    - `dg task approve-pr [--pr N] [--body B]` - Approve a PR
-    - `dg task request-changes-pr [--pr N] --body B` - Request changes on a PR
-    - `dg task request-review [--pr N] <reviewer>...` - Re-request review from reviewers (adds them back to the reviewers list)
-    - `dg task comment-pr [--pr N] --body B` - Post a top-level PR comment
-    - `dg task merge-pr [--pr N] [--method squash|merge|rebase]` - Merge a PR
-    - `dg task pr-view [--pr N]` / `pr-checks [--pr N]` - Compact PR summary / CI check status
-    - `dg task pr-review-target [--pr N]` - Immutable review target for a PR: merge-base/head SHAs, PR-scoped journal key, and the noise-filtered changed-file list (fetches `refs/pull/<n>/head` read-only; fails rather than review a stale ref). The working tree is untouched, but the fetch leaves two refs — `refs/devgeta/pr/<n>/head` and `.../base` — in the repo for later review steps to read; they are reused per PR, and `git update-ref -d` removes them
-    - `dg task pr-review-state [--pr N]` - Whether a PR wants a review from you right now, as three lines: `pr:` (`open | draft | merged | closed`), `requested:` (is the authenticated user in the PR's review requests) and `my-review:` (`approved | changes-requested | commented | none`). A state read of GitHub's own fields, so it never goes stale
-    - `dg task current-pr` / `current-repo` - Resolve the current branch's PR number / `owner/name`
+  - `dg task release <version> --message-file <file> [--push]` - Squash unpushed commits, create an annotated tag, optionally push
+  - `dg task scratch [--key <name>] [--clean <path>]` - Allocate or remove a devgeta-owned scratch directory
 - `dg archive <source> <destination-dir>` - Pack a folder onto an external drive for a machine move (one-shot, not an incremental backup); skips only what's proven regenerable (`node_modules`, virtualenvs, build caches — never by name alone), then verifies the archive against the source. Shows a live progress bar with the rate and time remaining for both the write and the verify. Reads the source only, and refuses to start if any file it would write is already on the drive — it never overwrites or deletes anything there
   - `--dry-run` - Scan and print the report without writing anything
   - `--gzip` - Write `.tar.gz` instead of the default `.tar.zst`

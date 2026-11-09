@@ -1,8 +1,46 @@
 # Investigation — Resetting the shared skills, commands and agents
 
 **Date:** 2026-11-06
-**Status:** Open
-**Feeds:** a cycle doc for the reset; ADRs listed in [Decisions this will need](#decisions-this-will-need)
+**Status:** Concluded 2026-11-08. The open items moved to
+[2026-11-08-agent-packs.md](2026-11-08-agent-packs.md) (see [Outcome](#outcome)).
+**Feeds:** ADRs listed in [Decisions this will need](#decisions-this-will-need)
+**Branch:** `agentsv2`. Work that acts on this investigation, together with
+[2026-11-06-rtk-value-and-risk.md](2026-11-06-rtk-value-and-risk.md) and
+[2026-11-06-agent-customizations-rollback.md](2026-11-06-agent-customizations-rollback.md),
+happens there. This file was committed to `main` before the branch existed.
+
+**Work done and planned, in order:**
+
+1. `d7adb89` — rtk and the `ai-tools` category removed (ADR-0065).
+2. `1906e9e` — the shared skills, commands, agents and `DEVGETA.md` removed
+   (see [Removal done](#removal-done-and-where-to-get-things-back)).
+3. Cycle [2026-11-07-agent-customizations-rollback.md](../plans/cycles/2026-11-07-agent-customizations-rollback.md)
+   — the rest of the token layer, the agent `dg task` group, two guards, and
+   the permission reset (ADR-0066, ADR-0067).
+4. Planned, no doc yet: a cycle for pinning the versions devgeta installs
+   (coders, Pi extensions, skill packages), with its own ADR.
+5. Investigation [2026-11-08-agent-packs.md](2026-11-08-agent-packs.md):
+   installing bundles of skills, commands, agents and context (Superpowers,
+   Ponytail, and devgeta's own `DEVGETA.md`) into every coder. It replaces
+   this investigation's vendored-copy delivery. The wrapper + `UPSTREAM.md`
+   pattern (finding 3) stays the plan for customizing, built later.
+
+## Outcome
+
+Done here: the removal (finding 2) and the branch-over-`sharedv2` choice
+(finding 4). Every coder was confirmed clean on 2026-11-08. The only thing
+left on the maintainer's machine is the dead `@DEVGETA.md` line in
+`~/.claude/CLAUDE.md` (cleanup step 2).
+
+Moved to [2026-11-08-agent-packs.md](2026-11-08-agent-packs.md):
+
+- `DEVGETA.md` v2 (Appendix A) and its delivery to Pi (finding 6).
+- Verification items 1, 2 and 4 below.
+- The "every coder, not two" parity follow-up (Shared work).
+- The ADR on deploys removing only what devgeta installed.
+
+Findings 1 and 3 still hold, and the new investigation builds on them. The
+rest of this file is the record as it stood when it closed.
 
 ## Question
 
@@ -51,6 +89,125 @@ That raises five questions:
   re-read. The community repos below were found by search and have **not been
   read**: their licenses, maintenance and content are unverified. Usage of each
   command was not measured.
+
+## Removal done, and where to get things back
+
+On `agentsv2`, the commit after `d7adb89` ("feat!: remove rtk and the ai-tools
+category") removes the whole set, going further than the Summary below: the
+Superpowers and Ponytail skills and `DEVGETA.md` went too, so the rebuild
+starts from an empty context. The same commit removed what depended on the
+set: the deploy code (`SyncSharedParts`, `DeployInstructions`, the
+`@DEVGETA.md` import), `dg configure --force --only`, OpenCode's
+`instructions` and `code-reviewer` entries, the `dg ws` R key,
+`dg task review-run`, `OpenCode.Run`, and the `review.reviewers` /
+`review.rounds` settings.
+
+**`d7adb89` is the last commit that has all of it.** Before rebuilding a
+piece, check what the old one did there:
+
+```bash
+git show d7adb89 --stat -- configs/shared              # what existed
+git show d7adb89:configs/shared/commands/human.md      # read one file
+git restore --source d7adb89 -- configs/shared/skills/ponytail   # bring one back
+git show <removal commit> -- internal/ cmd/            # the Go side that was removed
+```
+
+Anything restored still has to pass this investigation's criteria and
+CLAUDE.md principle 8. The new deploy must also delete only what devgeta
+installed (see Shared work), not the coder's whole folder.
+
+### Cleaning up a machine configured before the removal
+
+Upgrading devgeta doesn't delete what earlier versions copied. devgeta no
+longer treats the coders' `skills/`, `commands/` and `agents/` folders as its
+own, so it can't tell its old files from the user's, and leaves them all
+alone. They keep loading into every session until removed by hand.
+
+1. **Run the cleanup script.** It looks for the exact names devgeta shipped
+   in both coders, lists what it found, and deletes only after you answer
+   `y`. Anything else deletes nothing. Deleting can't be undone, so if you
+   wrote or installed a skill, command or agent with one of the same names
+   yourself, take it out of the script first. Save it as
+   `remove-old-agent-context.sh` and run `sh remove-old-agent-context.sh`.
+   It runs under `sh`, so it behaves the same whatever your login shell is.
+
+   ```sh
+   #!/bin/sh
+   # Removes the skills, commands, agents and DEVGETA.md that devgeta copied into
+   # Claude Code and OpenCode before commit ade169a. Lists what it found and asks
+   # before deleting anything. Run with: sh remove-old-agent-context.sh
+   set -eu
+
+   targets=""
+   for dir in "$HOME/.claude" "$HOME/.config/opencode"; do
+   	for name in brainstorming dg-worktree diagnosing-superpowers \
+   		dispatching-parallel-agents executing-plans \
+   		finishing-a-development-branch ponytail ponytail-debt post-to-tracker \
+   		receiving-code-review requesting-code-review skill-creator \
+   		subagent-driven-development systematic-debugging \
+   		test-driven-development using-git-worktrees using-superpowers \
+   		verification-before-completion writing-plans writing-skills; do
+   		[ -e "$dir/skills/$name" ] && targets="$targets
+   $dir/skills/$name"
+   	done
+   	for name in address-feedback approve-pr context-report create-pr \
+   		explain-simply finish-work human load-context pr-review-loop \
+   		review-loop review-pr save-context smart-commit teach; do
+   		[ -e "$dir/commands/$name.md" ] && targets="$targets
+   $dir/commands/$name.md"
+   	done
+   	for name in code-reviewer document-reviewer skill-reviewer; do
+   		[ -e "$dir/agents/$name.md" ] && targets="$targets
+   $dir/agents/$name.md"
+   	done
+   	[ -e "$dir/DEVGETA.md" ] && targets="$targets
+   $dir/DEVGETA.md"
+   done
+
+   if [ -z "$targets" ]; then
+   	echo "Nothing to remove."
+   else
+   	echo "Will delete:$targets"
+   	echo
+   	printf 'Delete these? This cannot be undone. [y/N] '
+   	read -r answer
+   	if [ "$answer" = "y" ] || [ "$answer" = "Y" ]; then
+   		echo "$targets" | while IFS= read -r path; do
+   			[ -n "$path" ] && rm -rf "$path"
+   		done
+   		echo "Deleted."
+   	else
+   		echo "Nothing deleted."
+   	fi
+   fi
+
+   if grep -n '@DEVGETA.md' "$HOME/.claude/CLAUDE.md" 2>/dev/null; then
+   	echo
+   	echo "Still to do by hand: delete the @DEVGETA.md line above from ~/.claude/CLAUDE.md"
+   fi
+   echo "Then: dg configure opencode --force (with the new binary), and restart every Claude Code and OpenCode session."
+   ```
+
+2. **Remove the import line.** If the script printed an `@DEVGETA.md` line,
+   delete it from `~/.claude/CLAUDE.md` by hand. devgeta added it once, the
+   first time it configured Claude Code; the file belongs to the user, so
+   devgeta doesn't edit it.
+
+3. **Redeploy OpenCode** with a devgeta binary built from this commit or
+   later: `dg configure opencode --force`. It writes `opencode.json` without
+   the `instructions` entry and the `code-reviewer` agent entry. It rewrites
+   the whole file, so hand edits to `opencode.json` are lost.
+
+4. **Restart every Claude Code and OpenCode session.** Skills, commands and
+   instructions load when a session starts.
+
+Left behind, and harmless: `claude_instructions_imported` under
+`integrations:` and the `review:` section in `global_config.yaml`. devgeta
+ignores both on load and drops them the next time it saves the file.
+
+If you skip this, the old skills, commands and agents keep loading in every
+session, and `DEVGETA.md` keeps being read. Some of the old commands call
+`dg task review-run`, which no longer exists, so they fail when used.
 
 ## Summary
 
@@ -235,6 +392,7 @@ every row as a lead to check, not a recommendation to install.
   wording is also left out, so the same file reads correctly in all three
   coders. The file grew from 1.6 KB to 2.7 KB and is loaded in every
   session, so anything added later must be just as general.
+
 - **Verdict on Pi delivery:** use a devgeta-owned extension,
   `devgeta-instructions.js`, that reads `~/.pi/agent/DEVGETA.md` and appends
   it in `before_agent_start`. It plays the same role as OpenCode's
@@ -281,6 +439,16 @@ every row as a lead to check, not a recommendation to install.
   - `docs/guides/vendored-skills.md`, `docs/guides/agent-sync.md`
   - `dg task` subcommands that only the removed commands call, such as
     `review-run`. Decide on these separately.
+- **Parity means every coder, not two (follow-up, not part of the cleanup).**
+  The permission and formatter parity tests
+  (`internal/apps/opencode/permissions_test.go`) and the "change both coders
+  in one commit" rule in CLAUDE.md §12 and `agent-sync.md` name only Claude
+  Code and OpenCode. Pi is now a third coder devgeta configures, and it gets
+  none of the permissions or guards. When the rebuild adds anything back
+  (permissions, guards, skill packages, `DEVGETA.md`), it must cover Claude
+  Code, OpenCode and Pi, or none. The tests and the CLAUDE.md wording should
+  be widened to "all coders" at the same time. The rollback cycle does not
+  do this; it only removes.
 
 ## Verification still needed
 
@@ -312,7 +480,7 @@ worktree`) on the branch and confirm all three coders follow the wrapper
 Proposed replacement for `configs/shared/DEVGETA.md`, applied on the reset
 branch, not before.
 
-````markdown
+```markdown
 # Response style
 
 - **Lead with the answer.** Put the answer or the outcome first, then only what the reader needs to act on it.
@@ -348,4 +516,4 @@ Messages, PR descriptions, commit messages, comments on tickets:
 - **Keep functions focused.** One job per function, readable top to bottom, without splitting it into fragments the reader has to jump between.
 - **Use names that last.** Say what the thing is or does in plain words someone new would understand. Avoid abbreviations, task-specific jargon, and names like `data2` or `newFix`.
 - **Comments explain why,** not what the code already says.
-````
+```

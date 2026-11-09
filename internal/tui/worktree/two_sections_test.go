@@ -361,7 +361,7 @@ func TestMoveCursor_ClampsAtTopOfSpaces(t *testing.T) {
 }
 
 // TestHandleKey_SpacesOnlyKeysAreInertInAgentsSection confirms the
-// destructive/structural spaces keys (delete, rename, repair, review,
+// destructive/structural spaces keys (delete, rename, repair,
 // new-session, new-worktree, fold) do nothing while the cursor is in the
 // agents section, rather than acting on m.cursor's frozen, invisible spaces
 // row.
@@ -370,7 +370,7 @@ func TestHandleKey_SpacesOnlyKeysAreInertInAgentsSection(t *testing.T) {
 	m.section = sectionAgents
 	m.agentCursor = 0
 
-	for _, key := range []string{"d", "D", "F", "r", "R", "s", "$", "n", "N", "h", "l"} {
+	for _, key := range []string{"d", "D", "F", "r", "s", "$", "n", "N", "h", "l"} {
 		before := m
 		got, _ := m.handleKey(tea.KeyPressMsg{Code: rune(key[0])})
 		next, ok := got.(Model)

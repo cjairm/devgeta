@@ -4,50 +4,13 @@
   "permissions": {
     "allow": ["Bash(*)", "Read", "Edit"],
     "ask": [
-      "Bash(ssh *)",
-      "Bash(scp *)",
-      "Bash(rsync *)",
-      "Bash(gh api *)",
       "Bash(git push --force*)",
       "Bash(git push -f*)",
-      "Bash(terraform apply *)",
-      "Bash(kubectl apply *)",
-      "Bash(gh pr merge *)",
-      "Bash(gh release delete *)",
-      "Bash(gh pr close *)",
-      "Bash(gh issue delete *)"
+      "Bash(sudo *)",
+      "Bash(gh repo delete *)",
+      "Bash(gh release delete *)"
     ],
     "deny": [
-      "Bash(curl *)",
-      "Bash(wget *)",
-      "Bash(nc *)",
-      "Bash(ncat *)",
-      "Bash(netcat *)",
-      "Bash(osascript *)",
-      "Bash(security *)",
-      "Bash(eval *)",
-      "Bash(crontab *)",
-      "Bash(launchctl *)",
-      "Bash(systemctl enable *)",
-      "Bash(dd *)",
-      "Bash(mkfs*)",
-      "Bash(shred *)",
-      "Bash(rm -rf *)",
-      "Bash(sudo *)",
-      "Bash(su *)",
-      "Bash(kubectl delete *)",
-      "Bash(aws *)",
-      "Bash(gcloud *)",
-      "Bash(az *)",
-      "Bash(gh repo delete *)",
-      "Bash(gh gist create *)",
-      "Bash(python3 -c *)",
-      "Bash(python -c *)",
-      "Bash(node -e *)",
-      "Bash(node --eval *)",
-      "Bash(ruby -e *)",
-      "Bash(perl -e *)",
-      "Bash(php -r *)",
       "Read(**/.env)",
       "Read(**/.env.*)",
       "Read(*.env)",
@@ -84,52 +47,26 @@
       "Read(**/.zsh_history)",
       "Read(~/.bash_history)",
       "Read(**/.bash_history)",
-      "Edit(.git/**)",
-      "Edit(**/.claude/settings.json)",
-      "Edit(**/.claude/settings.local.json)",
-      "Edit(**/.claude/hooks/**)",
-      "Edit(**/.opencode/opencode.json)",
-      "Edit(**/.opencode/plugin/**)",
-      "Edit(**/.mcp.json)",
-      "Edit(~/.claude/*.json)",
-      "Edit(~/.claude/*.sh)",
-      "Edit(~/.claude/*.md)",
-      "Edit(**/.claude/CLAUDE.md)",
-      "Edit(**/.claude/RTK.md)",
-      "Edit(**/.claude/statusline.sh)",
-      "Edit(**/.claude/format.sh)",
-      "Edit(**/.claude/task-redirect.sh)",
-      "Edit(**/.claude/secret-guard.sh)",
-      "Edit(**/.claude/suppression-guard.sh)",
-      "Edit(**/.claude/agent-config-guard.sh)",
-      "Edit(**/.claude/agent-state.sh)",
-      "Edit(**/.claude/output-budget.sh)",
-      "Edit(**/.claude/rtk-shim.sh)",
-      "Edit(~/.claude/agents/**)",
-      "Edit(**/.claude/agents/**)",
-      "Edit(~/.claude/commands/**)",
-      "Edit(**/.claude/commands/**)",
-      "Edit(~/.claude/skills/**)",
-      "Edit(**/.claude/skills/**)",
-      "Edit(~/.claude/plugins/**)",
-      "Edit(**/.claude/plugins/**)",
-      "Edit(~/.claude/hooks/**)",
-      "Edit(~/.claude/lib/**)",
-      "Edit(**/.claude/lib/**)",
-      "Edit(~/.config/opencode/**)",
-      "Edit(**/.config/opencode/**)",
-      "Edit(~/.zshrc)",
-      "Edit(**/.zshrc)",
-      "Edit(~/.bashrc)",
-      "Edit(**/.bashrc)",
-      "Edit(~/.profile)",
-      "Edit(**/.profile)"
+      "Edit(.git/**)"
     ],
     "defaultMode": "acceptEdits",
     "additionalDirectories": [{{.ScratchDir}}]
   },
+{{- if .PackPlugins}}
+  "extraKnownMarketplaces": {
+    {{.PackMarketplaceName}}: {
+      "source": { "source": "directory", "path": {{.PackMarketplacePath}} }
+    }
+  },
+  "enabledPlugins": {
+{{- range $i, $id := .PackPlugins}}{{if $i}},{{end}}
+    {{$id}}: true
+{{- end}}
+  },
+{{- end}}
   "env": {
-    "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
+    "ENABLE_CLAUDEAI_MCP_SERVERS": "false",
+    "DISABLE_AUTOUPDATER": "1"
   },
   "statusLine": {
     "type": "command",
@@ -158,46 +95,11 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/task-redirect.sh"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/secret-guard.sh"
-          }
-        ]
-      }{{if .RtkClaudeHook}},
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/rtk-shim.sh"
-          }
-        ]
-      }{{end}}{{if .OutputBudgetEnabled}},
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/output-budget.sh"
-          }
-        ]
-      }{{end}},
-      {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "~/.claude/agent-config-guard.sh"
-          },
-          {
-            "type": "command",
-            "command": "~/.claude/suppression-guard.sh"
           }
         ]
       }

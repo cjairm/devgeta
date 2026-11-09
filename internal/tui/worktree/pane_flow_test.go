@@ -220,22 +220,12 @@ func TestDeleteRepairSessionDeleteKickReviewInertOnPaneRow(t *testing.T) {
 		t.Error("D on a pane row must not arm pendingSessionDelete")
 	}
 
-	m6, cmd3 := m5.Update(tea.KeyPressMsg{Code: 'r'})
-	m7 := m6.(Model)
+	_, cmd3 := m5.Update(tea.KeyPressMsg{Code: 'r'})
 	if cmd3 != nil {
 		t.Error("r on a pane row should return no command")
 	}
 	if repairCalled {
 		t.Error("r on a pane row must not call repairFn")
-	}
-
-	m8, cmd4 := m7.Update(tea.KeyPressMsg{Code: 'R'})
-	m9 := m8.(Model)
-	if cmd4 != nil {
-		t.Error("R on a pane row should return no command")
-	}
-	if m9.reviewMode != reviewNone {
-		t.Error("R on a pane row must not open the kick-a-review picker")
 	}
 }
 

@@ -56,26 +56,6 @@ type ShellFeatures struct {
 	Claude                bool `yaml:"claude"`
 }
 
-// IntegrationsConfig tracks explicit cross-app opt-ins that devgeta must
-// preserve when re-rendering another app's config. RtkClaudeHook records that
-// the user opted into rtk's command-rewriting hook (ADR-0004: the hook is
-// never enabled automatically), so claude's settings.json template keeps the
-// hook entry across every `dg configure claude --force`.
-type IntegrationsConfig struct {
-	RtkClaudeHook bool `yaml:"rtk_claude_hook,omitempty"`
-	// OutputBudget is the tri-state opt-in for the output-budget hook
-	// (docs/plans/cycles/2026-08-25-token-and-context-efficiency.md, Step
-	// 3b): nil means unset (falls back to the default, currently off), so a
-	// user can `dg config unset integrations.output_budget` back to it - a
-	// plain bool cannot tell "never configured" apart from "explicitly
-	// false".
-	OutputBudget *bool `yaml:"output_budget,omitempty"`
-	// ClaudeInstructionsImported records that devgeta has already added its
-	// `@DEVGETA.md` import to ~/.claude/CLAUDE.md once. It stays true after
-	// that, so a user who deletes the line does not get it back (ADR-0058).
-	ClaudeInstructionsImported bool `yaml:"claude_instructions_imported,omitempty"`
-}
-
 // FailedInstallation tracks packages that failed to install
 type FailedInstallation struct {
 	PackageName  string    `yaml:"package_name"`
@@ -145,7 +125,7 @@ type WorktreeConfig struct {
 	AttachAfterCreate *bool `yaml:"attach_after_create,omitempty"`
 
 	// NotifySound gates the audible ding ADR-0009 adds to the two agent-state
-	// hooks (configs/claude/agent-state.sh, configs/opencode/plugin/notify.js)
+	// hooks (configs/claude/agent-state.sh, configs/opencode/plugins/devgeta-notify/tui.js)
 	// for idle/blocked/error pane states while the window is unattended.
 	//
 	// Unlike AttachAfterCreate, a plain bool is right here: the default is
@@ -162,56 +142,6 @@ type WorktreeConfig struct {
 	// durable source that survives a killed tmux server; the tmux option is
 	// the live one a fresh server is rendered with.
 	NotifySound bool `yaml:"notify_sound,omitempty"`
-}
-
-// ReviewRoundsMin and ReviewRoundsMax are the valid inclusive range for
-// ReviewConfig.Rounds. cmd/config_settings.go's review.rounds Setting rejects
-// anything outside this range before it ever reaches GlobalConfig, so these
-// constants - not a restated literal in the registry or its tests - are the
-// one place the range is defined.
-const (
-	ReviewRoundsMin = 1
-	ReviewRoundsMax = 5
-)
-
-// DefaultReviewRounds is the number of review rounds used when Rounds is
-// unset (its zero value, 0). cmd/config_settings.go's review.rounds Default
-// reports this constant rather than restating "3" as a literal, and it is the
-// only place in Go that reads the round cap at all: the cap is enforced by
-// the agent-side /review-loop command
-// (configs/shared/commands/review-loop.md), which reads it back with
-// `devgeta config get review.rounds` and falls back to this default when the
-// key is unset. `dg task review-run` never reads Rounds — one invocation is
-// exactly one round, by design (ADR-0017 §5).
-const DefaultReviewRounds = 3
-
-// ReviewConfig stores settings for `dg task review-run`, which runs
-// configured AI reviewer agents headless and collects their verdicts. Both
-// fields are omitempty: an empty/zero ReviewConfig is indistinguishable from
-// one that was never touched, which is what lets an existing
-// global_config.yaml load unchanged before this cycle's config plumbing ever
-// ran.
-type ReviewConfig struct {
-	// Reviewers lists the AI reviewer agents review-run runs, each in
-	// "provider/model" form (e.g. "anthropic/claude-opus-4-6"). Only the
-	// shape - one "/" minimum, non-empty text on both sides - is validated
-	// here; the model name itself is passed through without offline
-	// verification (out of scope for this cycle - see the cycle doc's
-	// Explicitly Out of Scope section). Empty is not "nothing to run": it
-	// means one reviewer run on OpenCode's own default model, with no -m
-	// flag at all (resolveReviewerRuns in
-	// internal/tooling/task/reviewrun.go), so review-run works before this
-	// key is ever set.
-	Reviewers []string `yaml:"reviewers,omitempty"`
-
-	// Rounds caps how many review rounds the agent-side /review-loop command
-	// performs before it reports to the human. 0 (unset) means
-	// DefaultReviewRounds; a configured value must be within
-	// [ReviewRoundsMin, ReviewRoundsMax]. Nothing in Go reads this field to
-	// decide anything: `dg task review-run` runs exactly one round per
-	// invocation and never consults it, and /review-loop reads the value back
-	// through `devgeta config get review.rounds`.
-	Rounds int `yaml:"rounds,omitempty"`
 }
 
 // ShouldAttachAfterCreate reports whether a successful `dg ws` create should
@@ -231,19 +161,6 @@ func (gc *GlobalConfig) ShouldAttachAfterCreate() bool {
 		return true
 	}
 	return *gc.Worktree.AttachAfterCreate
-}
-
-// OutputBudgetEnabled reports whether the output-budget hook is turned on.
-// Unlike ShouldAttachAfterCreate, absent resolves to false: the hook is
-// opt-in (cycle doc §8, decision #9), so a config nothing has touched must
-// answer the same as one explicitly set to false. The nil-receiver case
-// mirrors ShouldAttachAfterCreate's for the same reason - callers that may
-// hold a nil *GlobalConfig must not have to guard against it themselves.
-func (gc *GlobalConfig) OutputBudgetEnabled() bool {
-	if gc == nil || gc.Integrations.OutputBudget == nil {
-		return false
-	}
-	return *gc.Integrations.OutputBudget
 }
 
 // UpsertRecentRepo records path as the most-recently-used repo: if path is
@@ -336,8 +253,9 @@ type GlobalConfig struct {
 	Shell               ShellFeatures        `yaml:"shell"`
 	FailedInstallations []FailedInstallation `yaml:"failed_installations,omitempty"`
 	Worktree            WorktreeConfig       `yaml:"worktree"`
-	Integrations        IntegrationsConfig   `yaml:"integrations,omitempty"`
-	Review              ReviewConfig         `yaml:"review,omitempty"`
+	// AgentPacks records every agent pack `dg agent-pack` installed, keyed by
+	// pack name (ADR-0070). Additive: configs from before it load with none.
+	AgentPacks map[string]AgentPackState `yaml:"agent_packs,omitempty"`
 }
 
 // GlobalConfigFilePath returns the absolute path of the global config file

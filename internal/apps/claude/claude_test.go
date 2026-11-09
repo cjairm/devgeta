@@ -148,6 +148,45 @@ func TestInstall(t *testing.T) {
 	if execute.Timeout == 0 {
 		t.Error("expected execute step to carry a non-zero Timeout")
 	}
+	// The script's first argument is the version to install: the pin.
+	if len(execute.Args) != 2 || execute.Args[1] != constants.PinnedVersion.Claude {
+		t.Errorf("expected the script to get the pinned version %q, got args %v",
+			constants.PinnedVersion.Claude, execute.Args)
+	}
+}
+
+// TestInstalledIsAtLeastPin covers the check SoftInstall uses to decide
+// whether an installed Claude Code is current enough to keep: older or
+// unreadable reinstalls, the pin or newer stays.
+func TestInstalledIsAtLeastPin(t *testing.T) {
+	pin := constants.PinnedVersion.Claude
+	cases := []struct {
+		name   string
+		stdout string
+		err    error
+		want   bool
+	}{
+		{"the pin", pin + " (Claude Code)\n", nil, true},
+		{"newer", "99.0.0 (Claude Code)\n", nil, true},
+		{"older", "1.0.0 (Claude Code)\n", nil, false},
+		{"unreadable", "Claude Code\n", nil, false},
+		{"command fails", "", errors.New("not found"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockApp := testutil.NewMockApp()
+			mockApp.Base.SetExecCommandResults(commands.ExecCommandResult(tc.stdout, "", tc.err))
+			app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
+			if got := app.installedIsAtLeastPin(); got != tc.want {
+				t.Errorf("installedIsAtLeastPin() = %v, want %v", got, tc.want)
+			}
+			calls := mockApp.Base.ExecCommandCalls
+			if len(calls) != 1 || calls[0].Command != constants.Claude ||
+				len(calls[0].Args) != 1 || calls[0].Args[0] != "--version" {
+				t.Errorf("expected one `claude --version` call, got %+v", calls)
+			}
+		})
+	}
 }
 
 // TestInstall_FailedDownloadBlocksInstall asserts a failed (or truncated,
@@ -207,155 +246,21 @@ func TestForceInstall(t *testing.T) {
 	}
 }
 
-func TestForceConfigureParts(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	// Stand up an embedded shared source with a skill and a command.
-	src := t.TempDir()
-	for _, f := range []string{"skills/demo/SKILL.md", "commands/x.md"} {
-		p := filepath.Join(src, f)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("content"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	oldShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldShared })
-	paths.Paths.App.Configs.Shared = src
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	app := &Claude{}
-	if err := app.ForceConfigureParts([]string{"skills"}); err != nil {
-		t.Fatalf("ForceConfigureParts error: %v", err)
-	}
-
-	// Only the requested part is synced.
-	if _, err := os.Stat(filepath.Join(claudeDir, "skills", "demo", "SKILL.md")); err != nil {
-		t.Fatalf("expected skills synced: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(claudeDir, "commands")); !os.IsNotExist(err) {
-		t.Error("commands should not be synced when only skills was requested")
-	}
-	// The --only path must not write general config.
-	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts should not write settings.json")
-	}
-}
-
-func TestConfigurableParts_IncludesRtk(t *testing.T) {
-	app := &Claude{}
-	parts := app.ConfigurableParts()
-	if parts[len(parts)-1] != "rtk" {
-		t.Errorf("expected rtk as a configurable part, got %v", parts)
-	}
-	// The shared slice must not be mutated by the append.
-	for _, p := range baseapp.SharedConfigParts {
-		if p == "rtk" {
-			t.Fatal("baseapp.SharedConfigParts was mutated to include rtk")
-		}
-	}
-}
-
-func TestForceConfigureParts_Rtk(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	rtkInitCalled := 0
-	app := &Claude{rtkInit: func() error {
-		rtkInitCalled++
-		return nil
-	}}
-
-	if err := app.ForceConfigureParts([]string{"rtk"}); err != nil {
-		t.Fatalf("ForceConfigureParts(rtk) error: %v", err)
-	}
-
-	if rtkInitCalled != 1 {
-		t.Errorf("expected rtk init to run once, got %d", rtkInitCalled)
-	}
-	// Opt-in recorded so future settings renders keep the hook entry.
-	gc := &config.GlobalConfig{}
-	if err := gc.Load(); err != nil {
-		t.Fatalf("failed to load global config: %v", err)
-	}
-	if !gc.Integrations.RtkClaudeHook {
-		t.Error("expected RtkClaudeHook opt-in to be recorded in global config")
-	}
-	// A hand-written settings.json must survive --only=rtk untouched.
-	if _, err := os.Stat(filepath.Join(claudeDir, "settings.json")); !os.IsNotExist(err) {
-		t.Error("ForceConfigureParts(rtk) should not write settings.json")
-	}
-}
-
-func TestForceConfigureParts_RtkInitFailure(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-	testutil.IsolateXDGDirs(t)
-
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	app := &Claude{rtkInit: func() error { return fmt.Errorf("rtk not found") }}
-
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil {
-		t.Fatal("expected error when rtk init fails")
-	}
-	if !strings.Contains(err.Error(), "dg install --only rtk") {
-		t.Errorf("expected install hint in error, got: %v", err)
-	}
-
-	// A failed init must not persist the opt-in — otherwise the next
-	// settings render would emit a hook entry for an integration that
-	// never succeeded. (Create first: the failure path returns before
-	// enableRtkHook ever creates the global config file.)
-	gc := &config.GlobalConfig{}
-	if err := gc.Create(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gc.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if gc.Integrations.RtkClaudeHook {
-		t.Fatal("rtk hook opt-in must remain false when rtk init fails")
-	}
-}
-
 // TestEmbeddedSettingsTemplate renders the real embedded settings.json.tmpl in
-// both opt-in states and asserts the output is valid JSON — the constraint the
+// and asserts the output is valid JSON — the constraint the
 // external consumer (Claude Code) imposes on the rendered file (CLAUDE.md §12).
 func TestEmbeddedSettingsTemplate(t *testing.T) {
 	tmplPath := filepath.Join("..", "..", "..", "configs", "claude", "settings.json.tmpl")
 
 	for _, tt := range []struct {
-		name    string
-		flags   config.IntegrationsConfig
-		wantRtk bool
+		name string
 	}{
-		{"hook opted in", config.IntegrationsConfig{RtkClaudeHook: true}, true},
-		{"hook not opted in", config.IntegrationsConfig{}, false},
+		{"default render"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			out := filepath.Join(t.TempDir(), "settings.json")
 			renderData := settingsTemplateData{
-				IntegrationsConfig: tt.flags,
-				ScratchDir:         `"/tmp/placeholder-scratch"`,
+				ScratchDir: `"/tmp/placeholder-scratch"`,
 			}
 			if err := files.GenerateFromTemplate(tmplPath, out, renderData); err != nil {
 				t.Fatalf("failed to render template: %v", err)
@@ -367,15 +272,8 @@ func TestEmbeddedSettingsTemplate(t *testing.T) {
 			if !json.Valid(data) {
 				t.Fatalf("rendered settings.json is not valid JSON:\n%s", data)
 			}
-			gotRtk := strings.Contains(string(data), "~/.claude/rtk-shim.sh")
-			if gotRtk != tt.wantRtk {
-				t.Errorf("rtk hook entry present=%v, want %v", gotRtk, tt.wantRtk)
-			}
 			// devgeta's own hooks must be present in every rendering.
 			for _, hook := range []string{
-				"task-redirect.sh",
-				"secret-guard.sh",
-				"suppression-guard.sh",
 				"agent-config-guard.sh",
 				"format.sh",
 				"agent-state.sh",
@@ -539,14 +437,14 @@ func TestForceConfigure(t *testing.T) {
 	userConfigDir := filepath.Join(tc.ConfigDir, "..", ".claude")
 
 	// Create source structure
-	for _, sub := range []string{"themes", "lib"} {
+	for _, sub := range []string{"themes"} {
 		if err := os.MkdirAll(filepath.Join(appConfigDir, sub), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "settings.json.tmpl"),
-		[]byte(`{"theme":"default"{{if .RtkClaudeHook}},"rtk":true{{end}}}`),
+		[]byte(`{"theme":"default"}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -560,27 +458,6 @@ func TestForceConfigure(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "format.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "task-redirect.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "secret-guard.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "suppression-guard.sh"),
 		[]byte(`#!/bin/bash`),
 		0o644,
 	); err != nil {
@@ -601,60 +478,15 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "output-budget.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "rtk-shim.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
 		[]byte(`{"foreground": "{{.Palette.Foreground}}"}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "lib", "segments.sh"),
-		[]byte(`# test fixture`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
 
-	// Create shared dirs
-	sharedDir := filepath.Join(tc.AppDir, "configs", "shared")
-	for _, sub := range []string{"skills", "commands", "agents"} {
-		if err := os.MkdirAll(filepath.Join(sharedDir, sub), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(
-		filepath.Join(sharedDir, baseapp.InstructionsFileName),
-		[]byte("# instructions fixture\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	// The output-budget runner's own source dir — agent-neutral, like its
-	// deploy destination, not configs/claude/ (see EnsureAgentRuntime).
 	devgetaConfigDir := filepath.Join(tc.AppDir, "configs", "devgeta")
 	if err := os.MkdirAll(devgetaConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(devgetaConfigDir, "output-budget-run.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
 		t.Fatal(err)
 	}
 
@@ -676,10 +508,6 @@ func TestForceConfigure(t *testing.T) {
 	t.Cleanup(func() { paths.Paths.App.Configs.Devgeta = oldAppConfigsDevgeta })
 	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
 
-	oldAppConfigsShared := paths.Paths.App.Configs.Shared
-	t.Cleanup(func() { paths.Paths.App.Configs.Shared = oldAppConfigsShared })
-	paths.Paths.App.Configs.Shared = sharedDir
-
 	oldConfigClaude := paths.Paths.Config.Claude
 	t.Cleanup(func() { paths.Paths.Config.Claude = oldConfigClaude })
 	paths.Paths.Config.Claude = userConfigDir
@@ -691,7 +519,7 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatalf("ForceConfigure error: %v", err)
 	}
 
-	// settings.json rendered from the template; opt-in flag unset → no rtk entry
+	// settings.json rendered from the template; rendered from the template
 	rendered, err := os.ReadFile(filepath.Join(userConfigDir, "settings.json"))
 	if err != nil {
 		t.Errorf("Expected settings.json at %s: %v", userConfigDir, err)
@@ -700,19 +528,13 @@ func TestForceConfigure(t *testing.T) {
 		t.Errorf("unexpected rendered settings.json: %s", rendered)
 	}
 
-	// statusline.sh, format.sh, task-redirect.sh, secret-guard.sh,
-	// suppression-guard.sh, agent-config-guard.sh, agent-state.sh,
-	// output-budget.sh, and rtk-shim.sh deployed and executable
+	// statusline.sh, format.sh, agent-config-guard.sh and agent-state.sh
+	// deployed and executable
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
-		"task-redirect.sh",
-		"secret-guard.sh",
-		"suppression-guard.sh",
 		"agent-config-guard.sh",
 		"agent-state.sh",
-		"output-budget.sh",
-		"rtk-shim.sh",
 	} {
 		info, err := os.Stat(filepath.Join(userConfigDir, script))
 		if err != nil {
@@ -735,144 +557,16 @@ func TestForceConfigure(t *testing.T) {
 		)
 	}
 
-	// hook lib (sourced by task-redirect.sh/secret-guard.sh/suppression-guard.sh) deployed
-	if _, err := os.Stat(filepath.Join(userConfigDir, "lib", "segments.sh")); err != nil {
-		t.Errorf("Expected lib/segments.sh: %v", err)
-	}
-
-	// shared dirs deployed
-	for _, dir := range []string{"skills", "commands", "agents"} {
-		if _, err := os.Stat(filepath.Join(userConfigDir, dir)); err != nil {
-			t.Errorf("Expected %s dir: %v", dir, err)
+	// devgeta ships nothing into the agent's context: no skills, commands,
+	// agents or instructions file, and it never touches the user's CLAUDE.md.
+	for _, entry := range []string{"skills", "commands", "agents", "DEVGETA.md", "CLAUDE.md"} {
+		if _, err := os.Stat(filepath.Join(userConfigDir, entry)); !os.IsNotExist(err) {
+			t.Errorf("expected ForceConfigure not to create %s, stat err: %v", entry, err)
 		}
-	}
-
-	// devgeta's instructions deployed and imported from the user's CLAUDE.md
-	if _, err := os.Stat(filepath.Join(userConfigDir, baseapp.InstructionsFileName)); err != nil {
-		t.Errorf("Expected %s: %v", baseapp.InstructionsFileName, err)
-	}
-	userInstructions, err := os.ReadFile(filepath.Join(userConfigDir, "CLAUDE.md"))
-	if err != nil {
-		t.Fatalf("Expected CLAUDE.md: %v", err)
-	}
-	if !strings.Contains(string(userInstructions), instructionsImportLine) {
-		t.Errorf("expected CLAUDE.md to import %s, got: %q", instructionsImportLine, userInstructions)
 	}
 
 	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 	testutil.VerifyNoRealConfigChanges(t)
-}
-
-// isolateClaudeConfigDir points paths.Paths.Config.Claude at a fresh
-// directory for the duration of the test and returns that directory.
-func isolateClaudeConfigDir(t *testing.T) string {
-	t.Helper()
-	claudeConfigDir := t.TempDir()
-	previous := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = previous })
-	paths.Paths.Config.Claude = claudeConfigDir
-	return claudeConfigDir
-}
-
-func TestImportInstructionsOnce(t *testing.T) {
-	tests := []struct {
-		name             string
-		existingContent  *string
-		alreadyImported  bool
-		wantContent      string
-		wantImportedFlag bool
-	}{
-		{
-			name:             "creates CLAUDE.md with the import when there is none",
-			wantContent:      "\n@DEVGETA.md",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "appends the import and keeps the user's content",
-			existingContent:  stringPointer("# My rules\nBe brief."),
-			wantContent:      "# My rules\nBe brief.\n@DEVGETA.md",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "does not add a second import when the line is already there",
-			existingContent:  stringPointer("@RTK.md\n@DEVGETA.md\n"),
-			wantContent:      "@RTK.md\n@DEVGETA.md\n",
-			wantImportedFlag: true,
-		},
-		{
-			name:             "does not re-add an import the user deleted",
-			existingContent:  stringPointer("# My rules\n"),
-			alreadyImported:  true,
-			wantContent:      "# My rules\n",
-			wantImportedFlag: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			claudeConfigDir := isolateClaudeConfigDir(t)
-			userInstructions := filepath.Join(claudeConfigDir, "CLAUDE.md")
-			if tt.existingContent != nil {
-				if err := os.WriteFile(userInstructions, []byte(*tt.existingContent), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			gc := &config.GlobalConfig{}
-			gc.Integrations.ClaudeInstructionsImported = tt.alreadyImported
-
-			if err := importInstructionsOnce(gc); err != nil {
-				t.Fatalf("importInstructionsOnce error: %v", err)
-			}
-
-			got, err := os.ReadFile(userInstructions)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(got) != tt.wantContent {
-				t.Errorf("CLAUDE.md = %q, want %q", got, tt.wantContent)
-			}
-			if gc.Integrations.ClaudeInstructionsImported != tt.wantImportedFlag {
-				t.Errorf(
-					"ClaudeInstructionsImported = %v, want %v",
-					gc.Integrations.ClaudeInstructionsImported,
-					tt.wantImportedFlag,
-				)
-			}
-		})
-	}
-}
-
-func stringPointer(s string) *string { return &s }
-
-func TestSoftConfigure_AlreadyConfigured(t *testing.T) {
-	tc := testutil.SetupCompleteTest(t)
-	defer tc.Cleanup()
-
-	testutil.IsolateXDGDirs(t)
-
-	userConfigDir := filepath.Join(tc.ConfigDir, "..", ".claude")
-	oldConfigClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldConfigClaude })
-	paths.Paths.Config.Claude = userConfigDir
-
-	// Pre-create marker file so SoftConfigure skips
-	if err := os.MkdirAll(userConfigDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(userConfigDir, "settings.json"),
-		[]byte(`{}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	app := &Claude{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
-
-	if err := app.SoftConfigure(); err != nil {
-		t.Fatalf("SoftConfigure error: %v", err)
-	}
-
-	testutil.VerifyNoRealCommands(t, tc.MockApp.Base)
 }
 
 func TestExecuteCommand(t *testing.T) {
@@ -892,148 +586,218 @@ func TestExecuteCommand(t *testing.T) {
 	}
 }
 
-func TestForceConfigureParts_RtkRefusesRealExecInTests(t *testing.T) {
+func TestExecuteCommandNeverWaitsOnStdin(t *testing.T) {
+	mockApp := testutil.NewMockApp()
+	app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+	if err := app.ExecuteCommand("plugin", "install", "x@y"); err != nil {
+		t.Fatalf("ExecuteCommand error: %v", err)
+	}
+	if last := mockApp.Base.GetLastExecCommandCall(); !last.NoStdin {
+		t.Error("a plugin command must run with stdin disconnected so it can't block on a prompt")
+	}
+}
+
+func TestExecuteCommandOutput(t *testing.T) {
+	t.Run("returns stdout", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult(`[{"id":"a@b"}]`, "", nil)
+		app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		out, err := app.ExecuteCommandOutput("plugin", "list", "--json")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out != `[{"id":"a@b"}]` {
+			t.Errorf("unexpected stdout %q", out)
+		}
+		last := mockApp.Base.GetLastExecCommandCall()
+		if last.Command != constants.Claude || !last.NoStdin {
+			t.Errorf("expected claude with NoStdin, got %+v", last)
+		}
+		testutil.VerifyNoRealConfigChanges(t)
+	})
+
+	t.Run("wraps a failure and keeps stderr", func(t *testing.T) {
+		mockApp := testutil.NewMockApp()
+		mockApp.Base.SetExecCommandResult("", "plugin not found", errors.New("exit 1"))
+		app := &Claude{Cmd: mockApp.Cmd, Base: mockApp.Base}
+
+		_, err := app.ExecuteCommandOutput("plugin", "list", "--json")
+		if err == nil || !strings.Contains(err.Error(), "plugin not found") {
+			t.Fatalf("expected stderr in the error, got %v", err)
+		}
+	})
+}
+
+// A coder's uninstall deletes its config directory, which takes every pack's
+// Claude side with it, so the pack records must follow (ADR-0070 §6).
+func TestUninstallForgetsAgentPacks(t *testing.T) {
 	tc := testutil.SetupCompleteTest(t)
 	defer tc.Cleanup()
 	testutil.IsolateXDGDirs(t)
 
-	claudeDir := filepath.Join(tc.ConfigDir, ".claude")
-	oldClaude := paths.Paths.Config.Claude
-	t.Cleanup(func() { paths.Paths.Config.Claude = oldClaude })
-	paths.Paths.Config.Claude = claudeDir
-
-	// No rtkInit injected: the guard must refuse instead of executing rtk.
-	app := &Claude{}
-	err := app.ForceConfigureParts([]string{"rtk"})
-	if err == nil || !strings.Contains(err.Error(), "refusing to run real") {
-		t.Fatalf("expected test-guard refusal, got: %v", err)
-	}
-}
-
-// renderRealSettingsTemplate renders the ACTUAL configs/claude/settings.json.tmpl
-// (not a test fixture stub) with the given data, and returns the result.
-// This is what proves settingsTemplateData.OutputBudgetEnabled — not the
-// raw embedded *bool — is what the template actually reads.
-func renderRealSettingsTemplate(t *testing.T, data settingsTemplateData) string {
-	t.Helper()
-	out := filepath.Join(t.TempDir(), "settings.json")
-	if err := files.GenerateFromTemplate(
-		"../../../configs/claude/settings.json.tmpl", out, data,
-	); err != nil {
-		t.Fatalf("failed to render the real settings.json.tmpl: %v", err)
-	}
-	rendered, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("failed to read rendered settings.json: %v", err)
-	}
-	var js any
-	if err := json.Unmarshal(rendered, &js); err != nil {
-		t.Fatalf("rendered settings.json is not valid JSON: %v\n%s", err, rendered)
-	}
-	return string(rendered)
-}
-
-// outputBudgetHookRegistration is the PreToolUse hooks-array entry, distinct
-// from the (always-present, gate-independent) Edit() deny rule for the
-// script file itself — a bare "output-budget.sh" substring match would find
-// the deny rule regardless of gate state and prove nothing.
-const outputBudgetHookRegistration = `"command": "~/.claude/output-budget.sh"`
-
-func TestSettingsTemplate_OutputBudgetGateControlsTheHookEntry(t *testing.T) {
-	off := renderRealSettingsTemplate(
-		t,
-		settingsTemplateData{ScratchDir: `"/tmp"`, OutputBudgetEnabled: false},
-	)
-	if strings.Contains(off, outputBudgetHookRegistration) {
-		t.Errorf("expected no hook registration when the gate is off, got:\n%s", off)
-	}
-
-	on := renderRealSettingsTemplate(
-		t,
-		settingsTemplateData{ScratchDir: `"/tmp"`, OutputBudgetEnabled: true},
-	)
-	if !strings.Contains(on, outputBudgetHookRegistration) {
-		t.Errorf("expected the hook registration when the gate is on, got:\n%s", on)
-	}
-}
-
-// TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook pins the
-// exact bug a raw `{{if .OutputBudget}}` on the embedded *bool field would
-// have: Go templates treat any non-nil pointer as true, so a *bool pointing
-// at false would render as enabled. This proves the resolved bool
-// (GlobalConfig.OutputBudgetEnabled(), computed the same way
-// ForceConfigure does) is what actually reaches the template.
-func TestSettingsTemplate_ExplicitFalsePointerDoesNotEnableTheHook(t *testing.T) {
-	falseVal := false
-	gc := &config.GlobalConfig{Integrations: config.IntegrationsConfig{OutputBudget: &falseVal}}
-
-	rendered := renderRealSettingsTemplate(t, settingsTemplateData{
-		ScratchDir:          `"/tmp"`,
-		OutputBudgetEnabled: gc.OutputBudgetEnabled(),
+	oldClaudeDir, oldPacks := paths.Paths.Config.Claude, paths.Paths.App.AgentPacks
+	t.Cleanup(func() {
+		paths.Paths.Config.Claude, paths.Paths.App.AgentPacks = oldClaudeDir, oldPacks
 	})
-	if strings.Contains(rendered, outputBudgetHookRegistration) {
-		t.Errorf(
-			"an explicit false must not enable the hook, got:\n%s", rendered,
-		)
-	}
-}
-
-// TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks is the
-// Claude-side half of the rtk-composition case (cycle doc Step 6): since
-// Step 0 found PreToolUse hooks on Claude Code run in parallel with no
-// chaining (docs/guides/output-budget-runner.md §2.3, §9), there is no
-// ordering behavior to assert — only that enabling both leaves each hook
-// registered as its own independent matcher block, neither one folded into
-// or gated by the other's presence.
-func TestSettingsTemplate_RtkAndOutputBudgetRegisterAsIndependentBlocks(t *testing.T) {
-	rendered := renderRealSettingsTemplate(t, settingsTemplateData{
-		IntegrationsConfig:  config.IntegrationsConfig{RtkClaudeHook: true},
-		ScratchDir:          `"/tmp"`,
-		OutputBudgetEnabled: true,
-	})
-	var js any
-	if err := json.Unmarshal([]byte(rendered), &js); err != nil {
-		t.Fatalf(
-			"rendered settings.json is not valid JSON with both hooks on: %v\n%s",
-			err,
-			rendered,
-		)
-	}
-	if !strings.Contains(rendered, `"command": "~/.claude/rtk-shim.sh"`) {
-		t.Errorf("expected the rtk shim hook entry, got:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, outputBudgetHookRegistration) {
-		t.Errorf("expected the output-budget hook entry, got:\n%s", rendered)
-	}
-
-	// Each is registered as its own object in the "PreToolUse"/"Bash"
-	// matcher array, not nested inside the other's "hooks" list — this is
-	// what would break if a future edit accidentally folded one template
-	// conditional inside the other's braces.
-	top, ok := js.(map[string]any)
-	if !ok {
-		t.Fatalf("rendered settings.json root is not an object")
-	}
-	hooks, ok := top["hooks"].(map[string]any)
-	if !ok {
-		t.Fatalf("rendered settings.json has no top-level \"hooks\" object")
-	}
-	preToolUse, ok := hooks["PreToolUse"].([]any)
-	if !ok {
-		t.Fatalf("rendered settings.json has no \"PreToolUse\" array")
-	}
-	bashMatcherBlocks := 0
-	for _, entry := range preToolUse {
-		m, ok := entry.(map[string]any)
-		if !ok || m["matcher"] != "Bash" {
-			continue
+	paths.Paths.Config.Claude = filepath.Join(tc.ConfigDir, ".claude")
+	paths.Paths.App.AgentPacks = filepath.Join(tc.AppDir, "agent-packs")
+	for _, pack := range []string{"ponytail", "superpowers"} {
+		if err := os.MkdirAll(filepath.Join(paths.Paths.App.AgentPacks, pack), 0o755); err != nil {
+			t.Fatal(err)
 		}
-		bashMatcherBlocks++
 	}
-	if bashMatcherBlocks < 3 {
-		t.Errorf(
-			"expected at least 3 independent Bash matcher blocks (task-redirect+secret-guard, rtk, output-budget), got %d",
-			bashMatcherBlocks,
-		)
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	gc.AgentPacks = map[string]config.AgentPackState{
+		"ponytail":    {Coders: map[string]config.AgentPackCoderState{"claude": {Plugin: "ponytail@devgeta"}}},
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{"claude": {Plugin: "superpowers@devgeta"}, "pi": {PiPackage: "/p"}}},
+	}
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	app := &Claude{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	if err := app.Uninstall(); err != nil {
+		t.Fatalf("Uninstall error: %v", err)
+	}
+
+	after := &config.GlobalConfig{}
+	if err := after.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := after.AgentPacks["ponytail"]; ok {
+		t.Error("a pack only Claude had should be gone from state")
+	}
+	if _, ok := after.AgentPacks["superpowers"].Coders["claude"]; ok {
+		t.Error("Claude's record should be gone from the other packs")
+	}
+	if _, ok := after.AgentPacks["superpowers"].Coders["pi"]; !ok {
+		t.Error("Pi's record must stay")
+	}
+	if _, err := os.Stat(filepath.Join(paths.Paths.App.AgentPacks, "ponytail")); !os.IsNotExist(err) {
+		t.Errorf("the built tree of the orphaned pack should be deleted, stat err: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.Paths.App.AgentPacks, "superpowers")); err != nil {
+		t.Errorf("a pack Pi still uses keeps its tree: %v", err)
+	}
+}
+
+// forceConfigureRig sets up what ForceConfigure needs around a settings
+// template the test supplies, and returns the app and the rendered file's path.
+func forceConfigureRig(t *testing.T, settingsTmpl string) (*Claude, string, *config.GlobalConfig) {
+	t.Helper()
+	tc := testutil.SetupCompleteTest(t)
+	t.Cleanup(tc.Cleanup)
+	testutil.IsolateXDGDirs(t)
+
+	appConfigDir := filepath.Join(tc.AppDir, "configs", "claude")
+	devgetaConfigDir := filepath.Join(tc.AppDir, "configs", "devgeta")
+	userConfigDir := filepath.Join(tc.ConfigDir, "..", ".claude")
+	write := func(path, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(appConfigDir, "settings.json.tmpl"), settingsTmpl)
+	for _, s := range []string{"statusline.sh", "format.sh", "agent-config-guard.sh", "agent-state.sh"} {
+		write(filepath.Join(appConfigDir, s), "#!/bin/bash")
+	}
+	write(filepath.Join(appConfigDir, "themes", "default.json.tmpl"), `{"foreground": "{{.Palette.Foreground}}"}`)
+	write(filepath.Join(devgetaConfigDir, baseapp.FormatScriptName), "#!/bin/bash")
+
+	oldA, oldD, oldC, oldP := paths.Paths.App.Configs.Claude, paths.Paths.App.Configs.Devgeta,
+		paths.Paths.Config.Claude, paths.Paths.App.AgentPacks
+	t.Cleanup(func() {
+		paths.Paths.App.Configs.Claude, paths.Paths.App.Configs.Devgeta = oldA, oldD
+		paths.Paths.Config.Claude, paths.Paths.App.AgentPacks = oldC, oldP
+	})
+	paths.Paths.App.Configs.Claude = appConfigDir
+	paths.Paths.App.Configs.Devgeta = devgetaConfigDir
+	paths.Paths.Config.Claude = userConfigDir
+	paths.Paths.App.AgentPacks = filepath.Join(tc.AppDir, "agent-packs")
+	setupThemeFixture(t, "#ebdbb2")
+
+	gc := &config.GlobalConfig{}
+	if err := gc.Create(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gc.Load(); err != nil {
+		t.Fatal(err)
+	}
+	app := &Claude{Cmd: tc.MockApp.Cmd, Base: tc.MockApp.Base}
+	return app, filepath.Join(userConfigDir, "settings.json"), gc
+}
+
+const packEchoTemplate = `{{.PackMarketplaceName}}|{{.PackMarketplacePath}}|{{range .PackPlugins}}{{.}},{{end}}`
+
+func TestForceConfigure_RendersPackEntriesFromState(t *testing.T) {
+	app, settings, gc := forceConfigureRig(t, packEchoTemplate)
+	gc.AgentPacks = map[string]config.AgentPackState{
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{
+			"claude": {Plugin: "superpowers@devgeta"}, "pi": {PiPackage: "/p"},
+		}},
+		"ponytail": {Coders: map[string]config.AgentPackCoderState{"claude": {Plugin: "ponytail@devgeta"}}},
+		// A pack that is only in Pi must not put a Claude plugin in settings.
+		"pi-only": {Coders: map[string]config.AgentPackCoderState{"pi": {PiPackage: "/q"}}},
+	}
+	if err := gc.Save(); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	want := `"devgeta"|` + mustJSON(t, paths.Paths.App.AgentPacks) + `|"ponytail@devgeta","superpowers@devgeta",`
+	if got := string(mustRead(t, settings)); got != want {
+		t.Errorf("settings rendered from state:\n got %s\nwant %s", got, want)
+	}
+}
+
+func TestForceConfigure_WithoutPacksRendersNoPackData(t *testing.T) {
+	app, settings, _ := forceConfigureRig(t, packEchoTemplate)
+
+	if err := app.ForceConfigure(); err != nil {
+		t.Fatalf("ForceConfigure error: %v", err)
+	}
+
+	if got := string(mustRead(t, settings)); got != "||" {
+		t.Errorf("no packs means no marketplace and no plugins, got %q", got)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func TestIsInstalled(t *testing.T) {
+	app := &Claude{}
+	orig := commands.LookPathFn
+	t.Cleanup(func() { commands.LookPathFn = orig })
+
+	commands.LookPathFn = func(string) (string, error) { return "", errors.New("not found") }
+	if app.IsInstalled() {
+		t.Error("claude missing from PATH is not installed")
+	}
+	commands.LookPathFn = func(name string) (string, error) { return "/home/u/.local/bin/" + name, nil }
+	if !app.IsInstalled() {
+		t.Error("claude on PATH is installed")
 	}
 }

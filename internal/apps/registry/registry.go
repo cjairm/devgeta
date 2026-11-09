@@ -25,7 +25,6 @@ import (
 	"github.com/cjairm/devgeta/internal/apps/opencode"
 	"github.com/cjairm/devgeta/internal/apps/pi"
 	"github.com/cjairm/devgeta/internal/apps/raycast"
-	"github.com/cjairm/devgeta/internal/apps/rtk"
 	"github.com/cjairm/devgeta/internal/apps/shottr"
 	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/apps/ulauncher"
@@ -37,7 +36,7 @@ import (
 // AppMeta holds metadata for uninstall orchestration.
 // ItemType must match what MaybeInstall* stored in global_config.yaml.
 type AppMeta struct {
-	Coordinator string // "terminal" | "desktop" | "ai-tools" | ""
+	Coordinator string // "terminal" | "desktop" | ""
 	ItemType    string // "package" | "desktop_app" — must match actual tracking
 	// AltItemType is set only for an app whose ItemType varies by platform
 	// (ghostty: a macOS cask tracks as "desktop_app", a Linux apt package as
@@ -75,7 +74,6 @@ var Meta = map[string]AppMeta{
 	constants.OpenCode:   {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Pi:         {Coordinator: "terminal", ItemType: "package", HasShellFeature: false},
 	constants.Raycast:    {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
-	constants.Rtk:        {Coordinator: "ai-tools", ItemType: "package", HasShellFeature: false},
 	constants.Shottr:     {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
 	constants.Tmux:       {Coordinator: "terminal", ItemType: "package", HasShellFeature: true},
 	constants.Ulauncher:  {Coordinator: "desktop", ItemType: "desktop_app", HasShellFeature: false},
@@ -86,7 +84,6 @@ var Meta = map[string]AppMeta{
 var knownCategories = map[string]bool{
 	"terminal": true,
 	"desktop":  true,
-	"ai-tools": true,
 }
 
 // IsKnownApp reports whether name is a registered app (excluding devgeta itself).
@@ -145,7 +142,6 @@ var factories = map[string]func() apps.App{
 	constants.OpenCode:   func() apps.App { return opencode.New() },
 	constants.Pi:         func() apps.App { return pi.New() },
 	constants.Raycast:    func() apps.App { return raycast.New() },
-	constants.Rtk:        func() apps.App { return rtk.New() },
 	constants.Shottr:     func() apps.App { return shottr.New() },
 	constants.Tmux:       func() apps.App { return tmux.New() },
 	constants.Ulauncher:  func() apps.App { return ulauncher.New() },

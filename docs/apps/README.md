@@ -16,7 +16,6 @@ writing down. Not every installed app has one.
 | [pi.md](pi.md)             | official-script install, managed-root uninstall, minimal scope    |
 | [raycast.md](raycast.md)   | replacing Spotlight; Ulauncher on Linux                           |
 | [ripgrep.md](ripgrep.md)   | search flags, multiline/PCRE2, pairing with `fd` and `fzf`        |
-| [rtk.md](rtk.md)           | token-compaction CLI and its opt-in agent integration             |
 | [shottr.md](shottr.md)     | macOS screenshots, and why it replaced Flameshot                  |
 
 Code structure: [guides/app-interface.md](../guides/app-interface.md). What

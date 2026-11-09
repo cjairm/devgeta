@@ -202,25 +202,28 @@ func userHome() string {
 // Paths contains all directory path structures
 var Paths = struct {
 	App struct {
-		Root    string
-		Configs struct {
-			Aerospace string
-			Alacritty string
-			Claude    string
-			Devgeta   string
-			Fastfetch string
-			Fonts     string
-			Ghostty   string
-			Git       string
-			I3        string
-			Neovim    string
-			OpenCode  string
-			Pi        string
-			Shared    string
-			Terminal  string
-			Templates string
-			Themes    string
-			Tmux      string
+		Root string
+		// AgentPacks holds everything `dg agent-pack` builds and fetches: the
+		// built trees, the read-only upstream clones and the Claude marketplace.
+		AgentPacks string
+		Configs    struct {
+			Aerospace  string
+			AgentPacks string
+			Alacritty  string
+			Claude     string
+			Devgeta    string
+			Fastfetch  string
+			Fonts      string
+			Ghostty    string
+			Git        string
+			I3         string
+			Neovim     string
+			OpenCode   string
+			Pi         string
+			Terminal   string
+			Templates  string
+			Themes     string
+			Tmux       string
 		}
 		Fonts struct {
 			Alacritty string
@@ -233,20 +236,23 @@ var Paths = struct {
 		Root string
 	}
 	Config struct {
-		Root      string
-		Aerospace string
-		Alacritty string
-		Claude    string
-		Devgeta   string
-		Fastfetch string
-		Fonts     string
-		Ghostty   string
-		Git       string
-		I3        string
-		Nvim      string
-		OpenCode  string
-		Themes    string
-		Tmux      string
+		Root string
+		// AgentPacks is the user's override layer, copied over each pack's
+		// built tree after devgeta's own (ADR-0069 §3).
+		AgentPacks string
+		Aerospace  string
+		Alacritty  string
+		Claude     string
+		Devgeta    string
+		Fastfetch  string
+		Fonts      string
+		Ghostty    string
+		Git        string
+		I3         string
+		Nvim       string
+		OpenCode   string
+		Themes     string
+		Tmux       string
 	}
 	Data struct {
 		Root string
@@ -275,25 +281,28 @@ var Paths = struct {
 	}
 }{
 	App: struct {
-		Root    string
-		Configs struct {
-			Aerospace string
-			Alacritty string
-			Claude    string
-			Devgeta   string
-			Fastfetch string
-			Fonts     string
-			Ghostty   string
-			Git       string
-			I3        string
-			Neovim    string
-			OpenCode  string
-			Pi        string
-			Shared    string
-			Terminal  string
-			Templates string
-			Themes    string
-			Tmux      string
+		Root string
+		// AgentPacks holds everything `dg agent-pack` builds and fetches: the
+		// built trees, the read-only upstream clones and the Claude marketplace.
+		AgentPacks string
+		Configs    struct {
+			Aerospace  string
+			AgentPacks string
+			Alacritty  string
+			Claude     string
+			Devgeta    string
+			Fastfetch  string
+			Fonts      string
+			Ghostty    string
+			Git        string
+			I3         string
+			Neovim     string
+			OpenCode   string
+			Pi         string
+			Terminal   string
+			Templates  string
+			Themes     string
+			Tmux       string
 		}
 		Fonts struct {
 			Alacritty string
@@ -302,43 +311,44 @@ var Paths = struct {
 			Alacritty string
 		}
 	}{
-		Root: GetDataDir(constants.App.Name),
+		Root:       GetDataDir(constants.App.Name),
+		AgentPacks: GetAppDir(constants.AgentPacks),
 		Configs: struct {
-			Aerospace string
-			Alacritty string
-			Claude    string
-			Devgeta   string
-			Fastfetch string
-			Fonts     string
-			Ghostty   string
-			Git       string
-			I3        string
-			Neovim    string
-			OpenCode  string
-			Pi        string
-			Shared    string
-			Terminal  string
-			Templates string
-			Themes    string
-			Tmux      string
+			Aerospace  string
+			AgentPacks string
+			Alacritty  string
+			Claude     string
+			Devgeta    string
+			Fastfetch  string
+			Fonts      string
+			Ghostty    string
+			Git        string
+			I3         string
+			Neovim     string
+			OpenCode   string
+			Pi         string
+			Terminal   string
+			Templates  string
+			Themes     string
+			Tmux       string
 		}{
-			Aerospace: GetAppDir(constants.App.Dir.Configs, constants.Aerospace),
-			Alacritty: GetAppDir(constants.App.Dir.Configs, constants.Alacritty),
-			Claude:    GetAppDir(constants.App.Dir.Configs, constants.Claude),
-			Devgeta:   GetAppDir(constants.App.Dir.Configs, constants.DevgetaApp),
-			Fastfetch: GetAppDir(constants.App.Dir.Configs, constants.Fastfetch),
-			Fonts:     GetAppDir(constants.App.Dir.Configs, constants.Fonts),
-			Ghostty:   GetAppDir(constants.App.Dir.Configs, constants.Ghostty),
-			Git:       GetAppDir(constants.App.Dir.Configs, constants.Git),
-			I3:        GetAppDir(constants.App.Dir.Configs, constants.I3),
-			Neovim:    GetAppDir(constants.App.Dir.Configs, constants.Neovim),
-			OpenCode:  GetAppDir(constants.App.Dir.Configs, constants.OpenCode),
-			Pi:        GetAppDir(constants.App.Dir.Configs, constants.Pi),
-			Shared:    GetAppDir(constants.App.Dir.Configs, constants.Shared),
-			Terminal:  GetAppDir(constants.App.Dir.Configs, constants.Terminal),
-			Templates: GetAppDir(constants.App.Dir.Configs, constants.Templates),
-			Themes:    GetAppDir(constants.App.Dir.Configs, constants.Themes),
-			Tmux:      GetAppDir(constants.App.Dir.Configs, constants.Tmux),
+			Aerospace:  GetAppDir(constants.App.Dir.Configs, constants.Aerospace),
+			AgentPacks: GetAppDir(constants.App.Dir.Configs, constants.AgentPacks),
+			Alacritty:  GetAppDir(constants.App.Dir.Configs, constants.Alacritty),
+			Claude:     GetAppDir(constants.App.Dir.Configs, constants.Claude),
+			Devgeta:    GetAppDir(constants.App.Dir.Configs, constants.DevgetaApp),
+			Fastfetch:  GetAppDir(constants.App.Dir.Configs, constants.Fastfetch),
+			Fonts:      GetAppDir(constants.App.Dir.Configs, constants.Fonts),
+			Ghostty:    GetAppDir(constants.App.Dir.Configs, constants.Ghostty),
+			Git:        GetAppDir(constants.App.Dir.Configs, constants.Git),
+			I3:         GetAppDir(constants.App.Dir.Configs, constants.I3),
+			Neovim:     GetAppDir(constants.App.Dir.Configs, constants.Neovim),
+			OpenCode:   GetAppDir(constants.App.Dir.Configs, constants.OpenCode),
+			Pi:         GetAppDir(constants.App.Dir.Configs, constants.Pi),
+			Terminal:   GetAppDir(constants.App.Dir.Configs, constants.Terminal),
+			Templates:  GetAppDir(constants.App.Dir.Configs, constants.Templates),
+			Themes:     GetAppDir(constants.App.Dir.Configs, constants.Themes),
+			Tmux:       GetAppDir(constants.App.Dir.Configs, constants.Tmux),
 		},
 		Fonts: struct {
 			Alacritty string
@@ -357,35 +367,37 @@ var Paths = struct {
 		Root: GetCacheDir(),
 	},
 	Config: struct {
-		Root      string
-		Aerospace string
-		Alacritty string
-		Claude    string
-		Devgeta   string
-		Fastfetch string
-		Fonts     string
-		Ghostty   string
-		Git       string
-		I3        string
-		Nvim      string
-		OpenCode  string
-		Themes    string
-		Tmux      string
+		Root       string
+		AgentPacks string
+		Aerospace  string
+		Alacritty  string
+		Claude     string
+		Devgeta    string
+		Fastfetch  string
+		Fonts      string
+		Ghostty    string
+		Git        string
+		I3         string
+		Nvim       string
+		OpenCode   string
+		Themes     string
+		Tmux       string
 	}{
-		Root:      GetConfigDir(),
-		Aerospace: GetConfigDir(constants.Aerospace),
-		Alacritty: GetConfigDir(constants.Alacritty),
-		Claude:    GetHomeDir(".claude"),
-		Devgeta:   GetConfigDir(constants.DevgetaApp),
-		Fastfetch: GetConfigDir(constants.Fastfetch),
-		Fonts:     GetConfigDir(constants.Fonts),
-		Ghostty:   GetConfigDir(constants.Ghostty),
-		Git:       GetConfigDir(constants.Git),
-		I3:        GetConfigDir(constants.I3),
-		Nvim:      GetConfigDir(constants.Nvim),
-		OpenCode:  GetConfigDir(constants.OpenCode),
-		Themes:    GetConfigDir(constants.Themes),
-		Tmux:      GetConfigDir(constants.Tmux),
+		Root:       GetConfigDir(),
+		AgentPacks: GetConfigDir(constants.DevgetaApp, constants.AgentPacks),
+		Aerospace:  GetConfigDir(constants.Aerospace),
+		Alacritty:  GetConfigDir(constants.Alacritty),
+		Claude:     GetHomeDir(".claude"),
+		Devgeta:    GetConfigDir(constants.DevgetaApp),
+		Fastfetch:  GetConfigDir(constants.Fastfetch),
+		Fonts:      GetConfigDir(constants.Fonts),
+		Ghostty:    GetConfigDir(constants.Ghostty),
+		Git:        GetConfigDir(constants.Git),
+		I3:         GetConfigDir(constants.I3),
+		Nvim:       GetConfigDir(constants.Nvim),
+		OpenCode:   GetConfigDir(constants.OpenCode),
+		Themes:     GetConfigDir(constants.Themes),
+		Tmux:       GetConfigDir(constants.Tmux),
 	},
 	Data: struct {
 		Root string

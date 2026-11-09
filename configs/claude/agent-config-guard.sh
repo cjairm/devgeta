@@ -3,23 +3,21 @@
 # configuration — permissions, hooks, agent/command/skill definitions, or
 # plugins — rather than the source code it was asked to work on. CLAUDE.md
 # §4: an agent that can rewrite its own permissions can grant itself any
-# permission the deny list withholds.
+# permission the settings withhold.
 #
-# Scope: GLOBAL (see ADR-0006's test — "an agent should not rewrite its own
-# configuration" has no devgeta-specific opinion in it, unlike
-# suppression-guard.sh's lint-suppression ban). It also MUST be global: it
-# replaces a deny rule (`Edit(.claude/**)` / `Edit(.opencode/**)`) that was
+# Scope: GLOBAL ("an agent should not rewrite its own configuration" has no
+# project-specific opinion in it). It also MUST be global: it replaces a
+# deny rule (`Edit(.claude/**)` / `Edit(.opencode/**)`) that was
 # already global.
 #
 # See ADR-0014 for the full design and why a settings.json deny rule cannot
 # express this rule on its own (deny is evaluated before allow with no
 # specificity tiebreak, so a `.claude/worktrees/**` allow carve-out is a
-# no-op). This hook is a fourth member of the guard family ADR-0006
-# established (secret-guard.sh, suppression-guard.sh, task-redirect.sh) and
-# follows its conventions: PreToolUse deny via exit 2, a one-line reason on
+# no-op). This hook follows the guard conventions ADR-0006
+# established: PreToolUse deny via exit 2, a one-line reason on
 # stderr, and a bypass env var read from the launching shell.
 #
-# THE RULE (mirrored exactly in configs/opencode/plugin/agent-config-guard.js
+# THE RULE (mirrored exactly in configs/opencode/plugins/devgeta-agent-config-guard/server.js
 # — keep both in sync). Canonicalize the target path, then deny when it:
 #
 #   1. has a `.claude` segment NOT immediately followed by either
@@ -78,10 +76,10 @@
 #
 # Claude Code delivers the hook payload as JSON on stdin: `.tool_name`
 # ("Edit" or "Write"), `.tool_input.file_path`, and top-level `.cwd` — the
-# same fields suppression-guard.sh already relies on. Denies via exit 2 with
+# same fields every Claude Code PreToolUse hook gets. Denies via exit 2 with
 # a one-line reason on stderr. A missing/unparseable payload, or `jq` being
-# unavailable, falls through to exit 0 (allow) for the GUARD itself — the
-# settings.json floor (ADR-0014 §3) is what still holds when this happens.
+# unavailable, falls through to exit 0 (allow) for the GUARD itself — nothing
+# backs it up then (ADR-0067 dropped the settings.json path denies).
 #
 # Escape hatch: set DEVGETA_SKIP_AGENT_CONFIG_GUARD=1 in the shell that
 # launches this agent (e.g. in the repo's .envrc or your shell profile)

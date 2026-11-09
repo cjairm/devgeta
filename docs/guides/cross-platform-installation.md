@@ -234,11 +234,11 @@ func InstallGitHubBinary(
 3. Extracts the binary
 4. Installs to `/usr/local/bin/` with sudo
 
-The upstream project must publish a checksums asset (rtk, lazygit, and
-lazydocker all ship `checksums.txt`); a release without one cannot be
+The upstream project must publish a checksums asset (lazygit and
+lazydocker both ship `checksums.txt`); a release without one cannot be
 installed through this helper.
 
-**Example packages:** lazygit, lazydocker, rtk
+**Example packages:** lazygit, lazydocker
 
 ---
 

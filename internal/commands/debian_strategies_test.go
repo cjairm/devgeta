@@ -119,6 +119,30 @@ func TestRunInstallScript_StagedShape(t *testing.T) {
 	}
 }
 
+// TestRunInstallScript_PassesScriptArgs asserts scriptArgs reach the script
+// after its own path, the way `curl … | bash -s -- --version X` passes them,
+// and that no args leaves the execute step as just the script path.
+func TestRunInstallScript_PassesScriptArgs(t *testing.T) {
+	base := NewMockBaseCommand()
+	if err := RunInstallScript(
+		base, "opencode", "https://opencode.ai/v2/install", "bash", "--version", "2.2.6",
+	); err != nil {
+		t.Fatalf("RunInstallScript error: %v", err)
+	}
+	args := base.ExecCommandCalls[1].Args
+	if len(args) != 3 || args[1] != "--version" || args[2] != "2.2.6" {
+		t.Errorf("expected [<script> --version 2.2.6], got %v", args)
+	}
+
+	base = NewMockBaseCommand()
+	if err := RunInstallScript(base, "claude", "https://example.test/install", "bash"); err != nil {
+		t.Fatalf("RunInstallScript error: %v", err)
+	}
+	if args := base.ExecCommandCalls[1].Args; len(args) != 1 {
+		t.Errorf("expected only the script path without scriptArgs, got %v", args)
+	}
+}
+
 // TestRunInstallScript_FailedDownloadBlocksInstall is the regression test for
 // the defect this step fixes: `bash -c 'false | bash'; echo $?` prints 0, so
 // a failed or truncated download used to be reported as a successful

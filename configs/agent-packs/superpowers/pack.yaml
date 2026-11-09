@@ -1,0 +1,9 @@
+name: superpowers
+repo: https://github.com/obra/superpowers.git
+tag: v7.0.2
+sha: 22f0b463e7a5e579904dd6211a520321035526f7
+requires:
+  - command: bash
+    reason: its session-start hook in Claude Code
+  - command: node
+    reason: the brainstorming skill's visual companion

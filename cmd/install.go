@@ -6,11 +6,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps/devgeta"
 	"github.com/cjairm/devgeta/internal/commands"
-	"github.com/cjairm/devgeta/internal/tooling/aitools"
 	"github.com/cjairm/devgeta/internal/tooling/databases"
 	"github.com/cjairm/devgeta/internal/tooling/desktop"
 	"github.com/cjairm/devgeta/internal/tooling/languages"
@@ -27,7 +27,7 @@ var (
 )
 
 // knownCategories are the install categories accepted by --only/--skip.
-var knownCategories = []string{"terminal", "languages", "databases", "desktop", "ai-tools"}
+var knownCategories = []string{"terminal", "agent-packs", "languages", "databases", "desktop"}
 
 // appToCoordinator maps each registry app to the coordinator that installs it.
 // alacritty has KindTerminal but is installed by the desktop coordinator.
@@ -38,7 +38,6 @@ var appToCoordinator = map[string]string{
 	"git":        "terminal",
 	"lazydocker": "terminal",
 	"lazygit":    "terminal",
-	"rtk":        "ai-tools",
 	"mise":       "terminal",
 	"neovim":     "terminal",
 	"opencode":   "terminal",
@@ -64,14 +63,17 @@ type installConfig struct {
 	runLanguages bool
 	runDatabases bool
 	runDesktop   bool
-	runAITools   bool
+	// runAgentPacks installs the default agent packs after the terminal
+	// category. agentPacksExplicit is true for `--only agent-packs`, which
+	// targets every configured coder instead of only the ones this run
+	// installed (ADR-0068 §8).
+	runAgentPacks      bool
+	agentPacksExplicit bool
 	// Per-coordinator filters (nil = no filter, non-nil = only these apps)
 	terminalAppFilter  map[string]bool
 	terminalSkipFilter map[string]bool
 	desktopAppFilter   map[string]bool
 	desktopSkipFilter  map[string]bool
-	aiToolsAppFilter   map[string]bool
-	aiToolsSkipFilter  map[string]bool
 }
 
 var installCmd = &cobra.Command{
@@ -83,7 +85,10 @@ This command performs the following steps:
   - Validates your OS version
   - Installs the package manager (Homebrew on macOS, apt on Debian/Ubuntu)
   - Extracts embedded configuration templates
-  - Installs terminal tools, programming languages, databases, and AI tools
+  - Installs terminal tools, programming languages, and databases
+  - Installs the agent packs (devgeta, superpowers, ponytail) into each AI coder
+    this run installed; coders you already had are left alone, and the command
+    to add the packs to them is printed
   - Optionally installs desktop applications and shell configuration
 
 Supported platforms:
@@ -94,10 +99,16 @@ Flags:
   --only <...>     Only install specific categories or apps (e.g., terminal, neovim)
   --skip <...>     Skip specific categories or apps (e.g., databases, git)
 
+Categories: terminal, agent-packs, languages, databases, desktop
+
 Per-app targeting (registry apps only):
   dg install --only neovim            # install only neovim
   dg install --skip git               # install everything except git
   dg install --only terminal --skip lazygit  # full terminal minus lazygit
+
+Agent packs (see dg agent-pack --help):
+  dg install --skip agent-packs       # install no packs
+  dg install --only agent-packs       # install the packs into every configured coder
 `,
 	RunE: run,
 }
@@ -158,10 +169,20 @@ func run(cmd *cobra.Command, args []string) error {
 	if stopIfInterrupted("terminal tools") {
 		return nil
 	}
+	var terminalSummary *terminal.InstallationSummary
 	if cfg.runTerminal {
-		installTerminalTools(cfg.terminalAppFilter, cfg.terminalSkipFilter)
+		terminalSummary = installTerminalTools(cfg.terminalAppFilter, cfg.terminalSkipFilter)
 	} else {
 		utils.PrintInfo("Skipping terminal tools installation")
+	}
+
+	if stopIfInterrupted("agent packs") {
+		return nil
+	}
+	if cfg.runAgentPacks {
+		installAgentPacks(cmd.OutOrStdout(), terminalSummary, cfg.agentPacksExplicit)
+	} else {
+		utils.PrintInfo("Skipping agent packs installation")
 	}
 
 	if stopIfInterrupted("languages") {
@@ -189,15 +210,6 @@ func run(cmd *cobra.Command, args []string) error {
 		installDesktopTools(cfg.desktopAppFilter, cfg.desktopSkipFilter)
 	} else {
 		utils.PrintInfo("Skipping desktop applications installation")
-	}
-
-	if stopIfInterrupted("AI tools") {
-		return nil
-	}
-	if cfg.runAITools {
-		installAITools(cfg.aiToolsAppFilter, cfg.aiToolsSkipFilter)
-	} else {
-		utils.PrintInfo("Skipping AI tools installation")
 	}
 
 	return nil
@@ -261,16 +273,23 @@ func parseInstallFlags(onlyFlags, skipFlags []string) (*installConfig, error) {
 
 	terminalAppFilter := buildAppFilter("terminal", onlyCategorySet, onlyAppSet, skipAppSet)
 	desktopAppFilter := buildAppFilter("desktop", onlyCategorySet, onlyAppSet, skipAppSet)
-	aiToolsAppFilter := buildAppFilter("ai-tools", onlyCategorySet, onlyAppSet, skipAppSet)
 	terminalSkipFilter := buildSkipFilter("terminal", skipAppSet)
 	desktopSkipFilter := buildSkipFilter("desktop", skipAppSet)
-	aiToolsSkipFilter := buildSkipFilter("ai-tools", skipAppSet)
 
 	hasTerminalApps := hasAppsForCoordinator("terminal", onlyAppSet)
 	hasDesktopApps := hasAppsForCoordinator("desktop", onlyAppSet)
-	hasAIToolsApps := hasAppsForCoordinator("ai-tools", onlyAppSet)
 
 	return &installConfig{
+		runAgentPacks: shouldRunCategory(
+			"agent-packs",
+			onlyCategorySet,
+			skipCategorySet,
+			hasAnyOnly,
+			false,
+		),
+		// Naming the category is an explicit request, so it reaches every
+		// configured coder; the default only reaches coders this run installed.
+		agentPacksExplicit: onlyCategorySet["agent-packs"] && !skipCategorySet["agent-packs"],
 		runTerminal: shouldRunCategory(
 			"terminal",
 			onlyCategorySet,
@@ -299,19 +318,10 @@ func parseInstallFlags(onlyFlags, skipFlags []string) (*installConfig, error) {
 			hasAnyOnly,
 			hasDesktopApps,
 		),
-		runAITools: shouldRunCategory(
-			"ai-tools",
-			onlyCategorySet,
-			skipCategorySet,
-			hasAnyOnly,
-			hasAIToolsApps,
-		),
 		terminalAppFilter:  terminalAppFilter,
 		terminalSkipFilter: terminalSkipFilter,
 		desktopAppFilter:   desktopAppFilter,
 		desktopSkipFilter:  desktopSkipFilter,
-		aiToolsAppFilter:   aiToolsAppFilter,
-		aiToolsSkipFilter:  aiToolsSkipFilter,
 	}, nil
 }
 
@@ -418,9 +428,29 @@ func installDevgeta() {
 	utils.MaybeExitWithError(dg.SoftConfigure())
 }
 
-func installTerminalTools(appFilter, skipFilter map[string]bool) {
+func installTerminalTools(appFilter, skipFilter map[string]bool) *terminal.InstallationSummary {
 	t := terminal.New()
-	t.InstallAndConfigure(appFilter, skipFilter)
+	return t.InstallAndConfigure(appFilter, skipFilter)
+}
+
+// installAgentPacks installs the default packs after the terminal category.
+// A failure here is reported and does not stop the other categories: each
+// part of devgeta is independent, so a pack that can't be fetched must not
+// cost the user their languages and databases.
+func installAgentPacks(out io.Writer, terminalSummary *terminal.InstallationSummary, explicit bool) {
+	plan := agentPackPlan{explicit: explicit}
+	if terminalSummary != nil {
+		plan.fresh = terminalSummary.FreshlyInstalled
+		plan.already = terminalSummary.AlreadyPresent
+	}
+	err := withAgentPackEngine(func(e agentPackEngine) error {
+		installDefaultAgentPacks(out, e, plan)
+		return nil
+	})
+	if err != nil {
+		utils.PrintError(fmt.Sprintf("Could not install the agent packs: %v", err))
+		utils.PrintInfo("Install them later with: dg agent-pack install <pack>")
+	}
 }
 
 func installLanguages(ctx context.Context) {
@@ -440,9 +470,4 @@ func installDatabases(ctx context.Context) {
 func installDesktopTools(appFilter, skipFilter map[string]bool) {
 	desktopTool := desktop.New()
 	desktopTool.InstallAndConfigure(appFilter, skipFilter)
-}
-
-func installAITools(appFilter, skipFilter map[string]bool) {
-	a := aitools.New()
-	a.InstallAndConfigure(appFilter, skipFilter)
 }

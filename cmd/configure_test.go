@@ -114,102 +114,6 @@ func TestConfigure_UnknownApp(t *testing.T) {
 	}
 }
 
-// mockSelectiveApp also implements apps.SelectiveConfigurer.
-type mockSelectiveApp struct {
-	mockConfigureApp
-	partsCalled bool
-	parts       []string
-	partsErr    error
-}
-
-func (m *mockSelectiveApp) ConfigurableParts() []string {
-	return []string{"skills", "commands", "agents"}
-}
-
-func (m *mockSelectiveApp) ForceConfigureParts(parts []string) error {
-	m.partsCalled = true
-	m.parts = parts
-	return m.partsErr
-}
-
-func TestConfigure_OnlyDispatchesToParts(t *testing.T) {
-	mock := &mockSelectiveApp{}
-	restore := setupConfigureCmd(t, mock)
-	defer restore()
-
-	configureForce = true
-	configureOnly = []string{"skills"}
-	defer func() { configureForce = false; configureOnly = nil }()
-
-	if err := runConfigure(configureCmd, []string{"claude"}); err != nil {
-		t.Fatalf("expected no error, got: %v", err)
-	}
-	if !mock.partsCalled {
-		t.Fatal("expected ForceConfigureParts to be called")
-	}
-	if len(mock.parts) != 1 || mock.parts[0] != "skills" {
-		t.Fatalf("expected parts [skills], got %v", mock.parts)
-	}
-	if mock.forceCalled || mock.softCalled {
-		t.Error("expected neither ForceConfigure nor SoftConfigure with --only")
-	}
-}
-
-func TestConfigure_OnlyRequiresForce(t *testing.T) {
-	mock := &mockSelectiveApp{}
-	restore := setupConfigureCmd(t, mock)
-	defer restore()
-
-	configureForce = false
-	configureOnly = []string{"skills"}
-	defer func() { configureOnly = nil }()
-
-	err := runConfigure(configureCmd, []string{"claude"})
-	if err == nil {
-		t.Fatal("expected error: --only requires --force")
-	}
-	if mock.partsCalled {
-		t.Error("expected no work when --only is used without --force")
-	}
-}
-
-func TestConfigure_OnlyUnknownPart(t *testing.T) {
-	mock := &mockSelectiveApp{}
-	restore := setupConfigureCmd(t, mock)
-	defer restore()
-
-	configureForce = true
-	configureOnly = []string{"bogus"}
-	defer func() { configureForce = false; configureOnly = nil }()
-
-	err := runConfigure(configureCmd, []string{"claude"})
-	if err == nil {
-		t.Fatal("expected error for unknown --only value")
-	}
-	if mock.partsCalled {
-		t.Error("expected no work for an invalid part")
-	}
-}
-
-func TestConfigure_OnlyUnsupportedApp(t *testing.T) {
-	// mockConfigureApp does NOT implement SelectiveConfigurer.
-	mock := &mockConfigureApp{}
-	restore := setupConfigureCmd(t, mock)
-	defer restore()
-
-	configureForce = true
-	configureOnly = []string{"skills"}
-	defer func() { configureForce = false; configureOnly = nil }()
-
-	err := runConfigure(configureCmd, []string{"git"})
-	if err == nil {
-		t.Fatal("expected error: --only not supported for this app")
-	}
-	if mock.forceCalled || mock.softCalled {
-		t.Error("expected no configure call when --only is unsupported")
-	}
-}
-
 // TestConfigure_CallsRecoverInterruptedFn asserts runConfigure sweeps for a
 // crashed `dg theme set`'s leftover backups before doing any of its own
 // filesystem work (cycle doc Step 5) - a command that deploys configs
@@ -370,7 +274,6 @@ func TestConfigureAfterInterruptedSwitch_SurvivesNextSet(t *testing.T) {
 			recoverInterruptedFn = theme.RecoverInterrupted
 
 			configureForce = true
-			configureOnly = nil
 			t.Cleanup(func() { configureForce = false })
 
 			if err := runConfigure(configureCmd, []string{constants.Tmux}); err != nil {

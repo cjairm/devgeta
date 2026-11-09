@@ -23,6 +23,27 @@ func newFullyPopulatedGlobalConfig() *GlobalConfig {
 		CurrentTheme: "theme",
 		PendingTheme: "pending-theme",
 		Wallpapers:   map[string]string{"theme": "/wallpapers/abc.jpg"},
+		AgentPacks: map[string]AgentPackState{
+			"superpowers": {
+				Version:        "v7.0.2",
+				SHA:            "22f0b463e7a5e579904dd6211a520321035526f7",
+				Exclude:        []string{"dispatching-parallel-agents"},
+				ReplacedHashes: map[string]string{"skills/x/SKILL.md": "sha256:abc"},
+				Coders: map[string]AgentPackCoderState{
+					"claude": {
+						Marketplace:       "devgeta",
+						Plugin:            "superpowers@devgeta",
+						ClaudeMDLineAdded: true,
+						InstructionsFile:  "/home/u/.claude/DEVGETA.md",
+					},
+					"opencode": {
+						OpenCodePlugins:      []string{"/data/agent-packs/superpowers"},
+						OpenCodeInstructions: []string{"/data/agent-packs/devgeta/DEVGETA.md"},
+					},
+					"pi": {PiPackage: "/data/agent-packs/superpowers"},
+				},
+			},
+		},
 		AlreadyInstalled: AlreadyInstalledConfig{
 			Packages:      []string{"a"},
 			DesktopApps:   []string{"b"},
@@ -67,8 +88,6 @@ func newFullyPopulatedGlobalConfig() *GlobalConfig {
 			AttachAfterCreate: &attach,
 			NotifySound:       true,
 		},
-		Integrations: IntegrationsConfig{RtkClaudeHook: true},
-		Review:       ReviewConfig{Reviewers: []string{"anthropic/x"}, Rounds: 3},
 	}
 }
 

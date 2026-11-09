@@ -216,9 +216,7 @@ func (tm *TaskManager) checkTagAvailable(version string) error {
 
 // releaseAheadCount returns how many commits HEAD is ahead of
 // origin/<defaultBranch>. This flow only needs the one-sided ahead count (how
-// many commits to squash), unlike review-scope's two-sided ahead/behind, so
-// it runs its own direct `rev-list --count` rather than reusing
-// aheadBehind/parseAheadBehind.
+// many commits to squash), so it runs one direct `rev-list --count`.
 func (tm *TaskManager) releaseAheadCount(defaultBranch string) (int, error) {
 	out, err := tm.Git.RunCapture("rev-list", "--count", "origin/"+defaultBranch+"..HEAD")
 	if err != nil {

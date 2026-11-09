@@ -38,10 +38,10 @@ func cloneGlobalConfig(src *GlobalConfig) *GlobalConfig {
 	dst.Shortcuts = cloneStringMap(src.Shortcuts)
 	dst.FailedInstallations = cloneFailedInstallations(src.FailedInstallations)
 	dst.Worktree = cloneWorktreeConfig(src.Worktree)
-	dst.Review = cloneReviewConfig(src.Review)
 	dst.Wallpapers = cloneStringMap(src.Wallpapers)
-	// AppPath, ConfigPath, CurrentFont, CurrentTheme, PendingTheme, Shell, and
-	// Integrations are strings/bools (or structs made only of those), so the
+	dst.AgentPacks = cloneAgentPacks(src.AgentPacks)
+	// AppPath, ConfigPath, CurrentFont, CurrentTheme, PendingTheme, and Shell
+	// are strings/bools (or structs made only of those), so the
 	// `dst := *src` copy above already gives them independent storage -
 	// nothing else to do.
 
@@ -121,8 +121,30 @@ func cloneWorktreeConfig(wc WorktreeConfig) WorktreeConfig {
 	return out
 }
 
-func cloneReviewConfig(rc ReviewConfig) ReviewConfig {
-	out := rc
-	out.Reviewers = cloneStringSlice(rc.Reviewers)
+func cloneAgentPacks(m map[string]AgentPackState) map[string]AgentPackState {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]AgentPackState, len(m))
+	for name, pack := range m {
+		pack.Exclude = cloneStringSlice(pack.Exclude)
+		pack.ReplacedHashes = cloneStringMap(pack.ReplacedHashes)
+		if pack.Coders != nil {
+			coders := make(map[string]AgentPackCoderState, len(pack.Coders))
+			for coder, st := range pack.Coders {
+				st.OpenCodePlugins = cloneStringSlice(st.OpenCodePlugins)
+				st.OpenCodeInstructions = cloneStringSlice(st.OpenCodeInstructions)
+				coders[coder] = st
+			}
+			pack.Coders = coders
+		}
+		out[name] = pack
+	}
 	return out
+}
+
+// CloneAgentPacks returns an independent deep copy of an agent_packs map, for
+// callers that stage a change in memory before it is saved.
+func CloneAgentPacks(m map[string]AgentPackState) map[string]AgentPackState {
+	return cloneAgentPacks(m)
 }

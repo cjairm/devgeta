@@ -3394,3 +3394,76 @@ func TestUnpushedCommitCount(t *testing.T) {
 		}
 	})
 }
+
+func TestCloneTag(t *testing.T) {
+	t.Run("clones exactly one tag at depth 1", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if err := g.CloneTag("https://example.com/o/r.git", "v1.2.3", "/dst/r"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		want := []string{
+			"clone", "--depth", "1", "--branch", "v1.2.3",
+			"--", "https://example.com/o/r.git", "/dst/r",
+		}
+		if last.Command != constants.Git || !slices.Equal(last.Args, want) {
+			t.Errorf("expected git %v, got %s %v", want, last.Command, last.Args)
+		}
+	})
+
+	t.Run("a tag that looks like a flag is refused before git runs", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if err := g.CloneTag("https://example.com/o/r.git", "--upload-pack=evil", "/dst"); err == nil {
+			t.Fatal("expected an error for a tag starting with '-'")
+		}
+		testutil.VerifyNoRealCommands(t, mockBase)
+	})
+
+	t.Run("surfaces a clone failure", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "fatal: Remote branch v9 not found", errors.New("exit 128"))
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		err := g.CloneTag("https://example.com/o/r.git", "v9", "/dst")
+		if err == nil || !strings.Contains(err.Error(), "Remote branch v9 not found") {
+			t.Fatalf("expected git's stderr in the error, got %v", err)
+		}
+	})
+}
+
+func TestHeadIn(t *testing.T) {
+	const sha = "22f0b463e7a5e579904dd6211a520321035526f7"
+
+	t.Run("returns the full commit SHA of the repo at dir", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult(sha+"\n", "", nil)
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		got, err := g.HeadIn("/clones/sp")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != sha {
+			t.Fatalf("expected %q, got %q", sha, got)
+		}
+		last := mockBase.GetLastExecCommandCall()
+		want := []string{"-C", "/clones/sp", "rev-parse", "HEAD"}
+		if !slices.Equal(last.Args, want) {
+			t.Errorf("expected args %v, got %v", want, last.Args)
+		}
+	})
+
+	t.Run("surfaces a failure", func(t *testing.T) {
+		mockBase := commands.NewMockBaseCommand()
+		mockBase.SetExecCommandResult("", "", errors.New("not a repo"))
+		g := &Git{Cmd: commands.NewMockCommand(), Base: mockBase}
+
+		if _, err := g.HeadIn("/nope"); err == nil {
+			t.Fatal("expected an error")
+		}
+	})
+}

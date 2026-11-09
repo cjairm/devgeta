@@ -5,13 +5,11 @@ package task
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"time"
 
 	git_app "github.com/cjairm/devgeta/internal/apps/git"
-	"github.com/cjairm/devgeta/internal/apps/opencode"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/tooling/terminal/dev_tools/fzf"
 )
@@ -22,28 +20,9 @@ type TaskManager struct {
 	Git  *git_app.Git
 	Base cmd.BaseCommandExecutor
 	Fzf  *fzf.Fzf
-	// OpenCode runs headless reviewer agents for review-run. It is the app
-	// wrapper, not a raw executor, because CLAUDE.md §6 keeps the
-	// `opencode run` command line assembled in exactly one place.
-	OpenCode *opencode.OpenCode
-	// ProgressOut is where review-run writes its per-reviewer progress lines
-	// (never the parseable stdout return value — see reviewrun.go). Nil
-	// means os.Stderr; a test builds a TaskManager literal without New() and
-	// points this at a buffer to capture the lines instead of spraying them
-	// across the test run.
-	ProgressOut io.Writer
-	// NowFn is review-run's clock for timing each reviewer's progress line
-	// and for spacing its heartbeat. Nil means time.Now. Injectable for the
-	// same reason reviewjournal.Manager.NowFn is: a test needs a
-	// deterministic elapsed duration, not a race against the wall clock.
+	// NowFn is the clock for timestamps this package writes. Nil means
+	// time.Now; a test sets it for a deterministic value.
 	NowFn func() time.Time
-	// Verbose mirrors the root --verbose flag, which cmd/task.go copies in.
-	// review-run is the only reader: verbose prints every reviewer tool call,
-	// quiet (the default) prints the sampled heartbeat instead — see
-	// reviewprogress.go. It is a field rather than a read of the logger's
-	// level because progress is not logging: it goes to stderr through
-	// ProgressOut, and a test sets one alongside the other on a literal.
-	Verbose bool
 }
 
 // New creates a TaskManager with real executors. Git output is streamed so
@@ -52,17 +31,15 @@ func New() *TaskManager {
 	git := git_app.New()
 	git.Stream = true
 	return &TaskManager{
-		Git:      git,
-		Base:     cmd.NewBaseCommand(),
-		Fzf:      fzf.New(),
-		OpenCode: opencode.New(),
+		Git:  git,
+		Base: cmd.NewBaseCommand(),
+		Fzf:  fzf.New(),
 	}
 }
 
 // resolveHead resolves HEAD once for every guard that cares which branch is
-// checked out: release's "must be ON the default branch" and review-run's
-// "must NOT be" both read the answer from here rather than each calling git
-// and each deciding for itself what an empty branch name means.
+// checked out, so every guard reads the answer from here rather than each
+// calling git and each deciding for itself what an empty branch name means.
 //
 // current is "" when HEAD is detached — `git branch --show-current` prints
 // nothing and exits 0, so a guard written only as `current != defaultBranch`

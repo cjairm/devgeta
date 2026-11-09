@@ -208,6 +208,36 @@ func (g *Git) Clone(url, dstPath string) error {
 	return g.ExecuteCommand("clone", url, dstPath)
 }
 
+// CloneTag clones exactly one tag at depth 1, for callers that need a pinned,
+// read-only copy of an upstream rather than its history (agent packs).
+//
+// `--branch` accepts a tag name, and `--` stops git reading url or dst as an
+// option. A tag that itself starts with "-" is refused outright: it would be
+// parsed as a flag before `--` is reached, and a pack manifest is not the
+// place to smuggle `--upload-pack=...` through.
+func (g *Git) CloneTag(url, tag, dstPath string) error {
+	if strings.HasPrefix(tag, "-") {
+		return fmt.Errorf("refusing to clone tag %q: a tag cannot start with '-'", tag)
+	}
+	return g.ExecuteCommand(
+		"clone", "--depth", "1", "--branch", tag, "--", url, dstPath,
+	)
+}
+
+// HeadIn returns the full commit SHA of HEAD in the repository at dir. A clone
+// of an annotated tag has HEAD at the tag's commit, which is not the hash of
+// the tag object itself, so this is the value to pin and compare.
+func (g *Git) HeadIn(dir string) (string, error) {
+	stdout, _, err := g.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.Git,
+		Args:    dirArgs(dir, "rev-parse", "HEAD"),
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve HEAD in %s: %w", dir, err)
+	}
+	return strings.TrimSpace(stdout), nil
+}
+
 func (g *Git) DeleteBranch(branch string, isForced bool) error {
 	deleteArg := "-d"
 	if isForced {

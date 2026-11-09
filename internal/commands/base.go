@@ -119,8 +119,7 @@ type CommandParams struct {
 	// caller can report live progress from a long-running tool whose output it
 	// still wants captured and returned whole. Stream tees raw bytes to the
 	// terminal instead; this hands the caller lines it can interpret and
-	// summarize (e.g. `dg task review-run` turning an `opencode run --format
-	// json` event stream into one short progress line per tool call).
+	// summarize.
 	//
 	// It is called on the goroutine draining stdout, one line at a time, so it
 	// never runs concurrently with itself — but it DOES run while

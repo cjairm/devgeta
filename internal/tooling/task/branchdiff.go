@@ -45,9 +45,8 @@ func atDir(dir string, args ...string) []string {
 
 // worktreeDiff is everything a branch would merge, as read from one worktree:
 // the rendered diff, the per-file counts behind it, and the untracked files
-// that no `git diff` can see. Both branch-diff renderings are built from this
-// one gather, so the `dg ws` diff pane and `dg task branch-diff` can never
-// disagree about what the branch changes.
+// that no `git diff` can see. Both the diff pane and the stats row are built from this
+// one gather, so they can never disagree about what the branch changes.
 type worktreeDiff struct {
 	defaultBranch string
 	base          string
@@ -281,80 +280,6 @@ func untrackedFiles(g *git_app.Git, dir string, pathspec ...string) []string {
 	return untracked
 }
 
-// BranchDiff returns everything the current branch would merge, diffed
-// against its merge-base with the default branch: its commits AND whatever is
-// still uncommitted in the working tree, with lockfile-style noise excluded by
-// default (see exclusions.go) and called out in a trailing notes line so
-// nothing is silently hidden. Untracked files carry no diff, so they are
-// listed by name at the end.
-//
-// Including uncommitted work is the point, not a side effect: a review covers
-// the branch's state, so work in progress can be reviewed without committing
-// it first (ADR-0019). It is the same gather the `dg ws` diff pane uses
-// (BranchDiffAt), so the two can never disagree.
-//
-// It does not fetch: review-scope is the orient-and-fetch step, and
-// branch-diff is follow-up retrieval within the same review session.
-// Re-fetching per file pull would be wasteful and could shift the
-// merge-base mid-session if origin moved between calls.
-//
-// file, when non-empty, bypasses exclusions and returns only that file's
-// diff — an explicit request wins over the default noise filter.
-func (tm *TaskManager) BranchDiff(file string) (string, error) {
-	// --file is the per-file path a reviewer walks a large branch with, one
-	// call per file, so it deliberately does NOT run the full gather: it needs
-	// the merge-base and nothing else, and paying for the whole-branch diff,
-	// numstat, and status on every file would multiply that cost by the number
-	// of files.
-	if file != "" {
-		return tm.branchDiffFile(file)
-	}
-	data, err := collectWorktreeDiff(tm.Git, "", false)
-	if err != nil {
-		return "", err
-	}
-	return formatBranchDiff(data.rangeLabel, data.diff, data.excluded) +
-		untrackedNote(data.untracked), nil
-}
-
-// branchDiffFile returns file's diff against the merge-base, without
-// exclusions. file is passed as its own argv element (never
-// shell-interpolated), so it needs no escaping.
-//
-// An untracked file gets its own answer rather than the "no changes" sentinel:
-// `git diff` cannot see it at all, so an empty result there means "read the
-// whole file", not "nothing changed" — the reader is a reviewer deciding
-// whether to look, and those two answers point opposite ways. The question is
-// put to git as a pathspec, so `file` is matched however the caller spelled it
-// (`docs/new.md`, `./docs/new.md`, an absolute path, or a path relative to a
-// subdirectory), and it is asked only when the diff came back empty — the one
-// case that cannot be answered without it.
-func (tm *TaskManager) branchDiffFile(file string) (string, error) {
-	defaultBranch := tm.Git.DefaultBranch()
-	base, err := tm.mergeBase(defaultBranch)
-	if err != nil {
-		return "", fmt.Errorf("branch-diff: %w", err)
-	}
-	rangeLabel := defaultBranch + "..worktree"
-
-	diff, err := tm.Git.RunCapture("diff", base, "--", file)
-	if err != nil {
-		return "", fmt.Errorf("branch-diff: %w", err)
-	}
-	if strings.TrimSpace(diff) != "" {
-		return diff, nil
-	}
-	if len(untrackedFiles(tm.Git, "", file)) > 0 {
-		return fmt.Sprintf(
-			"%s is untracked, so it has no diff in %s — its whole content is the change; "+
-				"read the file directly.",
-			file,
-			rangeLabel,
-		), nil
-	}
-	return fmt.Sprintf("No changes for %s in %s.", file, rangeLabel), nil
-}
-
 // formatBranchDiff renders the diff payload plus an exclusion-notes line.
 // When the filtered diff is empty but some files were excluded, a sentinel
 // takes the diff's place so the payload is never empty; when nothing
@@ -376,7 +301,7 @@ func formatBranchDiff(rangeSpec, diff string, excluded []fileChange) string {
 		fmt.Fprintf(&b, "No changes in %s.", rangeSpec)
 	}
 
-	if note := formatExclusionNotes(excluded, "dg task branch-diff --file <path>"); note != "" {
+	if note := formatExclusionNotes(excluded); note != "" {
 		b.WriteString("\n")
 		b.WriteString(note)
 	}

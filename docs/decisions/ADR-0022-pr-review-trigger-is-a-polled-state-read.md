@@ -1,6 +1,6 @@
 # ADR-0022: The PR review trigger is a polled state read, and one invocation is one tick
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-07
 **Deciders:** cjairm
 **Related:** [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) (ACCEPTED — narrows §1's trigger rule and §2's handoff order to the watch's own ticks; both narrowings are in force, see the notes in those sections), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md)

@@ -1,172 +1,69 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "theme": "{{ .Theme }}",
-  "instructions": [{{ .InstructionsPath }}],
-  "agent": {
+  "update": "disable",
+{{- if .Plugins}}
+  "plugins": [{{range $i, $p := .Plugins}}{{if $i}}, {{end}}{{$p}}{{end}}],
+{{- end}}
+{{- if .Instructions}}
+  "instructions": [{{range $i, $p := .Instructions}}{{if $i}}, {{end}}{{$p}}{{end}}],
+{{- end}}
+  "agents": {
     "build": {
       "color": "#fe8019"
     },
     "plan": {
       "color": "#d3869b"
-    },
-    "code-reviewer": {
-      "description": "Reviews code for best practices and potential issues",
-      "color": "#8ec07c"
     }
   },
-  "permission": {
-    "read": {
-      "*": "allow",
-
-      "**/.env": "deny",
-      "**/.env.*": "deny",
-      "*.env": "deny",
-      "**/envs/*.js": "deny",
-      "./secrets/**": "deny",
-
-      "*.pem": "deny",
-      "*.key": "deny",
-
-      "~/.ssh/**": "deny",
-      "**/.ssh/**": "deny",
-      "**/id_rsa": "deny",
-      "**/id_ed25519": "deny",
-      "**/id_ecdsa": "deny",
-
-      "~/.aws/**": "deny",
-      "**/.aws/**": "deny",
-      "~/.kube/**": "deny",
-      "**/.kube/**": "deny",
-      "~/.config/gcloud/**": "deny",
-      "**/.config/gcloud/**": "deny",
-      "~/.azure/**": "deny",
-      "**/.azure/**": "deny",
-
-      "~/.npmrc": "deny",
-      "**/.npmrc": "deny",
-      "~/.pypirc": "deny",
-      "**/.pypirc": "deny",
-      "~/.netrc": "deny",
-      "**/.netrc": "deny",
-      "~/.git-credentials": "deny",
-      "**/.git-credentials": "deny",
-      "~/.docker/config.json": "deny",
-      "**/.docker/config.json": "deny",
-      "~/.pgpass": "deny",
-      "**/.pgpass": "deny",
-
-      "~/.zsh_history": "deny",
-      "**/.zsh_history": "deny",
-      "~/.bash_history": "deny",
-      "**/.bash_history": "deny"
-    },
-
-    "bash": {
-      "*": "allow",
-
-      "ssh *": "ask",
-      "scp *": "ask",
-      "rsync *": "ask",
-      "gh api *": "ask",
-      "git push --force*": "ask",
-      "git push -f*": "ask",
-      "terraform apply *": "ask",
-      "kubectl apply *": "ask",
-      "gh pr merge *": "ask",
-      "gh release delete *": "ask",
-      "gh pr close *": "ask",
-      "gh issue delete *": "ask",
-
-      "curl *": "deny",
-      "wget *": "deny",
-      "nc *": "deny",
-      "ncat *": "deny",
-      "netcat *": "deny",
-
-      "osascript *": "deny",
-      "security *": "deny",
-      "eval *": "deny",
-      "crontab *": "deny",
-      "launchctl *": "deny",
-      "systemctl enable *": "deny",
-
-      "dd *": "deny",
-      "mkfs*": "deny",
-      "shred *": "deny",
-      "rm -rf *": "deny",
-
-      "sudo *": "deny",
-      "su *": "deny",
-
-      "kubectl delete *": "deny",
-      "aws *": "deny",
-      "gcloud *": "deny",
-      "az *": "deny",
-
-      "gh repo delete *": "deny",
-      "gh gist create *": "deny",
-
-      "python3 -c *": "deny",
-      "python -c *": "deny",
-      "node -e *": "deny",
-      "node --eval *": "deny",
-      "ruby -e *": "deny",
-      "perl -e *": "deny",
-      "php -r *": "deny"
-    },
-
-    "edit": {
-      "*": "allow",
-
-      ".git/**": "deny",
-      "**/.claude/settings.json": "deny",
-      "**/.claude/settings.local.json": "deny",
-      "**/.claude/hooks/**": "deny",
-      "**/.opencode/opencode.json": "deny",
-      "**/.opencode/plugin/**": "deny",
-      "**/.mcp.json": "deny",
-      "~/.claude/*.json": "deny",
-      "~/.claude/*.sh": "deny",
-      "~/.claude/*.md": "deny",
-
-      "**/.claude/CLAUDE.md": "deny",
-      "**/.claude/RTK.md": "deny",
-      "**/.claude/statusline.sh": "deny",
-      "**/.claude/format.sh": "deny",
-      "**/.claude/task-redirect.sh": "deny",
-      "**/.claude/secret-guard.sh": "deny",
-      "**/.claude/suppression-guard.sh": "deny",
-      "**/.claude/agent-config-guard.sh": "deny",
-      "**/.claude/agent-state.sh": "deny",
-      "**/.claude/output-budget.sh": "deny",
-      "**/.claude/rtk-shim.sh": "deny",
-
-      "~/.claude/agents/**": "deny",
-      "**/.claude/agents/**": "deny",
-      "~/.claude/commands/**": "deny",
-      "**/.claude/commands/**": "deny",
-      "~/.claude/skills/**": "deny",
-      "**/.claude/skills/**": "deny",
-      "~/.claude/plugins/**": "deny",
-      "**/.claude/plugins/**": "deny",
-      "~/.claude/hooks/**": "deny",
-      "~/.claude/lib/**": "deny",
-      "**/.claude/lib/**": "deny",
-      "~/.config/opencode/**": "deny",
-      "**/.config/opencode/**": "deny",
-
-      "~/.zshrc": "deny",
-      "**/.zshrc": "deny",
-      "~/.bashrc": "deny",
-      "**/.bashrc": "deny",
-      "~/.profile": "deny",
-      "**/.profile": "deny"
-    },
-
-    "external_directory": {
-      {{.ScratchDirGlob}}: "allow"
-    }
-  },
+  "permissions": [
+    { "action": "read", "resource": "*", "effect": "allow" },
+    { "action": "read", "resource": "**/.env", "effect": "deny" },
+    { "action": "read", "resource": "**/.env.*", "effect": "deny" },
+    { "action": "read", "resource": "*.env", "effect": "deny" },
+    { "action": "read", "resource": "**/envs/*.js", "effect": "deny" },
+    { "action": "read", "resource": "./secrets/**", "effect": "deny" },
+    { "action": "read", "resource": "*.pem", "effect": "deny" },
+    { "action": "read", "resource": "*.key", "effect": "deny" },
+    { "action": "read", "resource": "~/.ssh/**", "effect": "deny" },
+    { "action": "read", "resource": "**/.ssh/**", "effect": "deny" },
+    { "action": "read", "resource": "**/id_rsa", "effect": "deny" },
+    { "action": "read", "resource": "**/id_ed25519", "effect": "deny" },
+    { "action": "read", "resource": "**/id_ecdsa", "effect": "deny" },
+    { "action": "read", "resource": "~/.aws/**", "effect": "deny" },
+    { "action": "read", "resource": "**/.aws/**", "effect": "deny" },
+    { "action": "read", "resource": "~/.kube/**", "effect": "deny" },
+    { "action": "read", "resource": "**/.kube/**", "effect": "deny" },
+    { "action": "read", "resource": "~/.config/gcloud/**", "effect": "deny" },
+    { "action": "read", "resource": "**/.config/gcloud/**", "effect": "deny" },
+    { "action": "read", "resource": "~/.azure/**", "effect": "deny" },
+    { "action": "read", "resource": "**/.azure/**", "effect": "deny" },
+    { "action": "read", "resource": "~/.npmrc", "effect": "deny" },
+    { "action": "read", "resource": "**/.npmrc", "effect": "deny" },
+    { "action": "read", "resource": "~/.pypirc", "effect": "deny" },
+    { "action": "read", "resource": "**/.pypirc", "effect": "deny" },
+    { "action": "read", "resource": "~/.netrc", "effect": "deny" },
+    { "action": "read", "resource": "**/.netrc", "effect": "deny" },
+    { "action": "read", "resource": "~/.git-credentials", "effect": "deny" },
+    { "action": "read", "resource": "**/.git-credentials", "effect": "deny" },
+    { "action": "read", "resource": "~/.docker/config.json", "effect": "deny" },
+    { "action": "read", "resource": "**/.docker/config.json", "effect": "deny" },
+    { "action": "read", "resource": "~/.pgpass", "effect": "deny" },
+    { "action": "read", "resource": "**/.pgpass", "effect": "deny" },
+    { "action": "read", "resource": "~/.zsh_history", "effect": "deny" },
+    { "action": "read", "resource": "**/.zsh_history", "effect": "deny" },
+    { "action": "read", "resource": "~/.bash_history", "effect": "deny" },
+    { "action": "read", "resource": "**/.bash_history", "effect": "deny" },
+    { "action": "shell", "resource": "*", "effect": "allow" },
+    { "action": "shell", "resource": "git push --force*", "effect": "ask" },
+    { "action": "shell", "resource": "git push -f*", "effect": "ask" },
+    { "action": "shell", "resource": "sudo *", "effect": "ask" },
+    { "action": "shell", "resource": "gh repo delete *", "effect": "ask" },
+    { "action": "shell", "resource": "gh release delete *", "effect": "ask" },
+    { "action": "edit", "resource": "*", "effect": "allow" },
+    { "action": "edit", "resource": ".git/**", "effect": "deny" },
+    { "action": "external_directory", "resource": "*", "effect": "ask" },
+    { "action": "external_directory", "resource": {{.ScratchDirGlob}}, "effect": "allow" }
+  ],
   "formatter": {
     "devgeta-js": {
       "command": [

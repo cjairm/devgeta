@@ -43,6 +43,24 @@ next `dg configure` add it back?
   that it was added (`integrations.claude_instructions_imported`). After that,
   devgeta never re-adds it, so a user who deletes the line keeps it deleted.
   If the line is already there, it is not added a second time.
+  _(Amended by [ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md):
+  `DEVGETA.md` now ships as the `devgeta` agent pack, to Claude Code, OpenCode
+  and Pi. The `@DEVGETA.md` line is **added if missing** on every install or
+  update and left alone if one already imports it, so "add once" no longer
+  holds. Opting out means `dg agent-pack uninstall devgeta`, which removes the
+  line only when it is exactly devgeta's
+  ([ADR-0070](ADR-0070-pack-removal-deletes-only-what-devgeta-installed.md)).
+  The `claude_instructions_imported` key no longer exists; the skills reset
+  removed it.)_
+
+_(Amended by [ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md),
+for the whole decision: the reset removed `configs/shared/DEVGETA.md`, and
+`dg configure` no longer deploys the file. The single source is now
+`configs/agent-packs/devgeta/DEVGETA.md`, and the `devgeta` pack installs it.
+Claude Code gets `~/.claude/DEVGETA.md` plus the import line. OpenCode's
+`instructions` entry points at the pack's built copy, and Pi gets it through a
+package extension. One source file and one set of bytes for every coder still
+holds, and a test still checks it.)_
 
 ## Consequences
 

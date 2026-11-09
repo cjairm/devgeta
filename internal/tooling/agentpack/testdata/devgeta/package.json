@@ -1,0 +1,1 @@
+{ "name": "devgeta", "private": true, "type": "module", "pi": { "extensions": ["./extensions/devgeta-instructions.js"] } }

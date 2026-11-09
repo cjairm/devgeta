@@ -24,30 +24,18 @@ var knownStateFields = map[string]string{
 		"written by internal/tooling/worktree on every `dg ws` create - not a " +
 		"user preference (cycle doc docs/plans/cycles/2026-07-29-dg-config-command.md " +
 		"§4 Explicitly Out of Scope: \"Editing state\").",
-	"integrations.rtk_claude_hook": "a deploy record, not a preference: it is " +
-		"set by `dg configure claude --force --only=rtk` (ADR-0004:64-70), which " +
-		"also re-renders settings.json. A bare `set` here would desync the " +
-		"recorded flag from what's actually deployed, so it is refused as a " +
-		"settable key rather than exposed.",
-	"integrations.claude_instructions_imported": "a deploy record, not a " +
-		"preference: `dg configure claude` sets it the first time it adds the " +
-		"@DEVGETA.md import to ~/.claude/CLAUDE.md, so a user who deletes that " +
-		"line does not get it back (ADR-0058). Opting out means deleting the " +
-		"line, not flipping this flag.",
 }
 
 // settingsBearingStructs pairs each struct this completeness test reflects
 // over with the dotted-key prefix its fields live under in
 // global_config.yaml (see GlobalConfig's own yaml tags in fromFile.go:
-// `worktree` and `integrations`). Add a struct here if a future cycle adds
+// `worktree`). Add a struct here if a future cycle adds
 // another settings-bearing section of GlobalConfig.
 var settingsBearingStructs = []struct {
 	prefix string
 	value  any
 }{
 	{"worktree", config.WorktreeConfig{}},
-	{"integrations", config.IntegrationsConfig{}},
-	{"review", config.ReviewConfig{}},
 }
 
 // yamlKeyFromTag extracts the field name a yaml tag serializes as, stripping
@@ -186,7 +174,6 @@ func TestSettingsRegistry_EveryEntryHasADescription(t *testing.T) {
 // silent addition.
 var settingsWithEmptyDefaultAllowed = map[string]bool{
 	"worktree.search_paths": true,
-	"review.reviewers":      true,
 }
 
 // TestSettingsRegistry_EveryDefaultIsNonEmpty guards against a Default that

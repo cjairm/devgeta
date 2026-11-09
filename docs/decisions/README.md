@@ -23,42 +23,42 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0001](ADR-0001-in-tui-overlays-over-external-pickers.md) — In-TUI floating overlays instead of external picker processes
 - [ADR-0002](ADR-0002-recent-repos-store-in-global-config.md) — Recent-repos store in global config
 - [ADR-0003](ADR-0003-sessions-in-workspace-dashboard.md) — A single `dg ws` dashboard for sessions and worktrees
-- [ADR-0004](ADR-0004-ai-tools-install-category.md) — New `ai-tools` install category, rtk as first app
+- [ADR-0004](ADR-0004-ai-tools-install-category.md) — New `ai-tools` install category, rtk as first app (superseded by ADR-0065)
 - [ADR-0005](ADR-0005-agent-activity-state-in-tmux-pane-options.md) — Agent activity state lives in a tmux pane option
-- [ADR-0006](ADR-0006-hook-guardrails-scope-and-sharing.md) — Scope and code-sharing for the secret-commit and lint-suppression guardrail hooks
-- [ADR-0007](ADR-0007-task-redirects-stay-hard-deny.md) — The task redirects stay hard-deny, not `ask`
+- [ADR-0006](ADR-0006-hook-guardrails-scope-and-sharing.md) — Scope and code-sharing for the secret-commit and lint-suppression guardrail hooks (superseded by ADR-0067)
+- [ADR-0007](ADR-0007-task-redirects-stay-hard-deny.md) — The task redirects stay hard-deny, not `ask` (superseded by ADR-0066)
 - [ADR-0008](ADR-0008-agent-state-on-every-pane-row.md) — Agent state belongs to every row in `dg ws`, not just worktree rows
 - [ADR-0009](ADR-0009-audible-agent-notifications.md) — An agent that wants you makes a sound, from the hook that already knows
 - [ADR-0010](ADR-0010-worktree-layout-is-a-setting-git-is-the-index.md) — Worktree layout is a setting, and git is the worktree index
 - [ADR-0011](ADR-0011-agent-prompt-as-launch-argument.md) — An opening prompt is a launch argument, not keystrokes
-- [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md) — Review knowledge lives in a local journal devgeta owns
+- [ADR-0012](ADR-0012-review-knowledge-in-a-local-journal.md) — Review knowledge lives in a local journal devgeta owns (superseded by ADR-0066)
 - [ADR-0013](ADR-0013-normalize-the-worktree-gitfile.md) — Normalize the worktree gitfile instead of warning about it
-- [ADR-0014](ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md) — Agent-config protection is a capability guard, not a path deny
+- [ADR-0014](ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md) — Agent-config protection is a capability guard, not a path deny (amended by ADR-0067)
 - [ADR-0015](ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md) — Agent scratch files get a devgeta-owned directory, not `/tmp`
 - [ADR-0016](ADR-0016-inconclusive-tool-probe-fails-open.md) — An inconclusive tool probe must not block worktree creation
-- [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) — The review loop escalates instead of seeking consensus
-- [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md) — The review loop refuses the default branch, and the fix is a branch
-- [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) — A review covers the branch's working state, not just its committed history
-- [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) — A reviewer that reports nothing is retried once
+- [ADR-0017](ADR-0017-review-loop-escalates-instead-of-seeking-consensus.md) — The review loop escalates instead of seeking consensus (superseded by ADR-0066)
+- [ADR-0018](ADR-0018-review-loop-refuses-the-default-branch.md) — The review loop refuses the default branch, and the fix is a branch (superseded by ADR-0066)
+- [ADR-0019](ADR-0019-a-review-covers-the-branch-working-state.md) — A review covers the branch's working state, not just its committed history (superseded by ADR-0066)
+- [ADR-0020](ADR-0020-a-reviewer-that-reports-nothing-is-retried-once.md) — A reviewer that reports nothing is retried once (superseded by ADR-0066)
 - [ADR-0021](ADR-0021-pane-commands-are-exec-d-not-typed.md) — A pane's command is exec'd at pane creation, not typed into the pane
-- [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick
-- [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner
+- [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) — The PR review trigger is a polled state read, and one invocation is one tick (superseded by ADR-0066)
+- [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md) — A PR review targets immutable SHAs and a PR-scoped journal, through the same runner (superseded by ADR-0066)
 - [ADR-0024](ADR-0024-the-dashboard-refreshes-fast-and-slow-state-separately.md) — The dashboard refreshes fast and slow state separately
-- [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) — An invocation reviews now; the request field gates only the watch
-- [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) — The review loop narrows to the reviewers still blocking, then confirms with all of them
-- [ADR-0027](ADR-0027-a-merge-refuses-on-dirty-checkouts-and-unsettled-findings.md) — A merge refuses on any dirty checkout and any non-stale open finding
+- [ADR-0025](ADR-0025-an-invocation-reviews-the-request-gates-only-the-watch.md) — An invocation reviews now; the request field gates only the watch (superseded by ADR-0066)
+- [ADR-0026](ADR-0026-the-review-loop-narrows-to-the-reviewers-still-blocking.md) — The review loop narrows to the reviewers still blocking, then confirms with all of them (superseded by ADR-0066)
+- [ADR-0027](ADR-0027-a-merge-refuses-on-dirty-checkouts-and-unsettled-findings.md) — A merge refuses on any dirty checkout and any non-stale open finding (superseded by ADR-0066)
 - [ADR-0028](ADR-0028-status-recognition-is-a-shape-not-a-vocabulary.md) — Status recognition is a shape, not a vocabulary
 - [ADR-0029](ADR-0029-installed-state-is-one-cached-listing.md) — Installed state is one cached listing per run, not a probe per package
 - [ADR-0030](ADR-0030-global-config-loads-once-per-run.md) — `global_config.yaml` is loaded once per run and served from a cache
 - [ADR-0031](ADR-0031-context-is-reduced-at-write-time-not-at-send-time.md) — Context is reduced at write time, never at send time
-- [ADR-0032](ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) — Session continuity is a durable note, not a longer session
+- [ADR-0032](ADR-0032-session-continuity-is-a-durable-note-not-a-longer-session.md) — Session continuity is a durable note, not a longer session (superseded by ADR-0066)
 - [ADR-0033](ADR-0033-a-keyed-scratch-directory-trades-isolation-for-hand-off.md) — A keyed scratch directory trades isolation for hand-off
-- [ADR-0034](ADR-0034-an-aggregate-task-composes-its-parts-never-re-derives-them.md) — An aggregate task composes its parts, never re-derives them
+- [ADR-0034](ADR-0034-an-aggregate-task-composes-its-parts-never-re-derives-them.md) — An aggregate task composes its parts, never re-derives them (superseded by ADR-0066)
 - [ADR-0035](ADR-0035-an-issue-is-matched-by-number-never-by-a-branch-naming-scheme.md) — An issue is matched by number, never by a branch-naming scheme
 - [ADR-0036](ADR-0036-release-verification-is-checksum-always-attestation-when-gh-is-present.md) — Release verification is checksum-always, attestation-when-`gh`-is-present
 - [ADR-0037](ADR-0037-a-desktop-app-is-chosen-by-the-user-from-what-the-platform-can-install.md) — A desktop app is chosen by the user from what the platform can install
-- [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission
-- [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name
+- [ADR-0038](ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md) — A third-party hook rewrites the command; it does not decide the permission (superseded by ADR-0065)
+- [ADR-0039](ADR-0039-gh-api-is-gated-by-what-it-writes-not-by-its-name.md) — `gh api` is gated by what it writes, not by its name (superseded by ADR-0067)
 - [ADR-0040](ADR-0040-an-archive-is-written-in-go-not-by-shelling-out-to-tar.md) — An archive is written in Go, not by shelling out to `tar`
 - [ADR-0041](ADR-0041-an-archive-skips-only-what-is-provably-regenerable.md) — An archive skips only what is provably regenerable
 - [ADR-0042](ADR-0042-an-archive-refuses-on-proof-and-warns-on-prediction.md) — An archive refuses on proof and warns on prediction
@@ -84,3 +84,9 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0062](ADR-0062-pi-powerline-footer-colors-come-from-the-active-pi-theme.md) — pi-powerline-footer's colors come from the active Pi theme
 - [ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md) — Pi formats through devgeta's shared Mason script; pi-lens only diagnoses
 - [ADR-0064](ADR-0064-pi-hides-thinking-blocks-by-default.md) — Pi hides thinking blocks by default
+- [ADR-0065](ADR-0065-devgeta-does-not-ship-rtk.md) — Devgeta does not ship rtk, and does not re-add an output-rewriting tool without a measured result
+- [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md) — Devgeta removes its token-reduction layer and the agent `dg task` group
+- [ADR-0067](ADR-0067-agent-permission-floor.md) — Agents get a small permission floor, not a deny list
+- [ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md) — `dg agent-pack`: a pinned upstream plus a build layer, installed through each coder's own system
+- [ADR-0069](ADR-0069-pack-customization-only-through-a-build-time-override-layer.md) — Pack customization happens only through a build-time override layer
+- [ADR-0070](ADR-0070-pack-removal-deletes-only-what-devgeta-installed.md) — Removing a pack deletes only what devgeta installed

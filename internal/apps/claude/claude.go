@@ -4,36 +4,24 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"slices"
-	"testing"
+	"sort"
+	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/apps/baseapp"
-	"github.com/cjairm/devgeta/internal/apps/rtk"
 	cmd "github.com/cjairm/devgeta/internal/commands"
 	"github.com/cjairm/devgeta/internal/config"
 	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/constants"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/version"
 )
 
-// settingsTemplateData is settings.json.tmpl's render data. It embeds
-// config.IntegrationsConfig anonymously so field promotion keeps
-// `{{if .RtkClaudeHook}}` working unchanged, and adds ScratchDir — the
+// settingsTemplateData is settings.json.tmpl's render data. ScratchDir is the
 // scratch directory granted through permissions.additionalDirectories
 // (ADR-0015 §2).
-//
-// OutputBudgetEnabled is a plain bool, computed via
-// GlobalConfig.OutputBudgetEnabled() rather than referencing the embedded
-// *bool field directly: Go templates treat any non-nil pointer as true
-// regardless of what it points to, so `{{if .OutputBudget}}` on the raw
-// IntegrationsConfig.OutputBudget field would render the hook as enabled
-// even after an explicit `dg config set integrations.output_budget false`
-// (a non-nil pointer to false). The template must reference
-// OutputBudgetEnabled, never OutputBudget.
 //
 // ScratchDir must already be JSON-encoded (quotes included, via
 // json.Marshal) by the time it reaches the template: text/template does no
@@ -42,28 +30,63 @@ import (
 // backslash in an unescaped path would emit a settings.json Claude Code
 // cannot parse at all.
 type settingsTemplateData struct {
-	config.IntegrationsConfig
-	ScratchDir          string
-	OutputBudgetEnabled bool
+	ScratchDir string
 	// Theme names the current theme (theme.Definition.Name), rendered into
 	// "custom:{{ .Theme }}" - the name Claude's own theme picker resolves
 	// against the file settings.json.tmpl's sibling ForceConfigureTheme call
 	// writes to themes/<name>.json.
 	Theme string
+	// PackMarketplaceName, PackMarketplacePath and PackPlugins render the
+	// agent packs installed in Claude Code from agent_packs state, so a
+	// --force re-render keeps them (ADR-0068 §6). Like ScratchDir they are
+	// already JSON-encoded. PackPlugins is empty, and nothing is rendered,
+	// when no pack is installed in Claude Code.
+	PackMarketplaceName string
+	PackMarketplacePath string
+	PackPlugins         []string
+}
+
+// addPacks fills the pack fields from agent_packs state: one plugin id per
+// pack that has a Claude Code record, in pack-name order so the output is
+// stable. Packs installed only in other coders add nothing.
+func (d *settingsTemplateData) addPacks(gc *config.GlobalConfig) error {
+	var names []string
+	for name, pack := range gc.AgentPacks {
+		if pack.Coders[constants.Claude].Plugin != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		id, err := json.Marshal(gc.AgentPacks[name].Coders[constants.Claude].Plugin)
+		if err != nil {
+			return fmt.Errorf("failed to encode the plugin id of %s: %w", name, err)
+		}
+		d.PackPlugins = append(d.PackPlugins, string(id))
+	}
+	marketplace, err := json.Marshal(constants.AgentPackMarketplace)
+	if err != nil {
+		return fmt.Errorf("failed to encode the marketplace name: %w", err)
+	}
+	path, err := json.Marshal(paths.Paths.App.AgentPacks)
+	if err != nil {
+		return fmt.Errorf("failed to encode the agent pack path: %w", err)
+	}
+	d.PackMarketplaceName, d.PackMarketplacePath = string(marketplace), string(path)
+	return nil
 }
 
 var (
-	_ apps.App                 = (*Claude)(nil)
-	_ apps.SelectiveConfigurer = (*Claude)(nil)
-	_ apps.ThemedConfigurer    = (*Claude)(nil)
+	_ apps.App              = (*Claude)(nil)
+	_ apps.ThemedConfigurer = (*Claude)(nil)
 )
 
 type Claude struct {
 	Cmd  cmd.Command
 	Base cmd.BaseCommandExecutor
-	// rtkInit overrides the `rtk init` invocation used by the rtk part
-	// (used in tests).
-	rtkInit func() error
 }
 
 func (c *Claude) Name() string       { return constants.Claude }
@@ -82,22 +105,53 @@ func New() *Claude {
 // broken download was reported as a successful install.
 const claudeInstallScriptURL = "https://claude.ai/install.sh"
 
+// Install installs exactly the pinned version: the script takes
+// `[stable|latest|VERSION]` as its first argument. settings.json turns the
+// auto-updater off (DISABLE_AUTOUPDATER) so the pin holds afterwards.
 func (c *Claude) Install() error {
-	if err := cmd.RunInstallScript(c.Base, "claude", claudeInstallScriptURL, "bash"); err != nil {
+	if err := cmd.RunInstallScript(
+		c.Base, "claude", claudeInstallScriptURL, "bash", constants.PinnedVersion.Claude,
+	); err != nil {
 		return fmt.Errorf("failed to install claude: %w", err)
 	}
 	return nil
+}
+
+// IsInstalled reports whether claude is on PATH. The official installer puts it
+// in ~/.local/bin, which the user's PATH normally has; SoftInstall makes the
+// same check.
+func (c *Claude) IsInstalled() bool {
+	_, err := cmd.LookPathFn(constants.Claude)
+	return err == nil
 }
 
 func (c *Claude) ForceInstall() error {
 	return baseapp.Reinstall(c.Install, c.Uninstall)
 }
 
+// SoftInstall installs Claude Code when it is missing or older than the pin.
+// A newer version the user installed is left alone.
 func (c *Claude) SoftInstall() error {
-	if _, err := exec.LookPath(constants.Claude); err == nil {
+	if c.IsInstalled() && c.installedIsAtLeastPin() {
 		return nil
 	}
 	return c.Install()
+}
+
+// installedIsAtLeastPin compares `claude --version` ("2.1.319 (Claude Code)")
+// with the pin. Anything it cannot read counts as older, so SoftInstall
+// reinstalls rather than trusting it.
+func (c *Claude) installedIsAtLeastPin() bool {
+	stdout, _, err := c.Base.ExecCommand(cmd.CommandParams{
+		Command: constants.Claude,
+		Args:    []string{"--version"},
+		NoStdin: true,
+	})
+	if err != nil {
+		return false
+	}
+	installed, ok := version.Find(stdout)
+	return ok && version.AtLeast(installed, constants.PinnedVersion.Claude)
 }
 
 func (c *Claude) Uninstall() error {
@@ -117,6 +171,9 @@ func (c *Claude) Uninstall() error {
 		return fmt.Errorf("failed to regenerate shell config: %w", err)
 	}
 	gc.RemoveFromInstalled(constants.Claude, "package")
+	// Uninstall deleted the config dir, so every pack's record of this coder is
+	// stale (ADR-0070 §6).
+	baseapp.ForgetAgentPackCoder(gc, constants.Claude)
 	return gc.Save()
 }
 
@@ -161,17 +218,20 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to encode scratch dir: %w", err)
 	}
 
-	// settings.json is rendered from a template so tracked opt-ins (the rtk
-	// hook — ADR-0004) survive a --force re-render instead of being wiped.
+	settingsData := settingsTemplateData{
+		ScratchDir: string(scratchDirJSON),
+		Theme:      def.Name,
+	}
+	if err := settingsData.addPacks(gc); err != nil {
+		return err
+	}
+
+	// settings.json is rendered from a template so tracked opt-ins survive a
+	// --force re-render instead of being wiped.
 	if err := files.GenerateFromTemplate(
 		filepath.Join(paths.Paths.App.Configs.Claude, "settings.json.tmpl"),
 		filepath.Join(paths.Paths.Config.Claude, "settings.json"),
-		settingsTemplateData{
-			IntegrationsConfig:  gc.Integrations,
-			ScratchDir:          string(scratchDirJSON),
-			OutputBudgetEnabled: gc.OutputBudgetEnabled(),
-			Theme:               def.Name,
-		},
+		settingsData,
 	); err != nil {
 		return fmt.Errorf("failed to render claude settings: %w", err)
 	}
@@ -179,13 +239,8 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 	for _, script := range []string{
 		"statusline.sh",
 		"format.sh",
-		"task-redirect.sh",
-		"secret-guard.sh",
-		"suppression-guard.sh",
 		"agent-config-guard.sh",
 		"agent-state.sh",
-		"output-budget.sh",
-		"rtk-shim.sh",
 	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(
@@ -220,39 +275,8 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		return fmt.Errorf("failed to render claude theme: %w", err)
 	}
 
-	// task-redirect.sh, secret-guard.sh, and suppression-guard.sh source
-	// these at runtime (see ADR-0006) — plain function/constant definitions,
-	// never executed directly, so no chmod +x needed.
-	if err := files.CopyDir(
-		filepath.Join(paths.Paths.App.Configs.Claude, "lib"),
-		filepath.Join(paths.Paths.Config.Claude, "lib"),
-	); err != nil {
-		return fmt.Errorf("failed to copy claude hook lib: %w", err)
-	}
-
-	if err := baseapp.SyncSharedParts(
-		paths.Paths.Config.Claude,
-		baseapp.SharedConfigParts,
-	); err != nil {
-		return fmt.Errorf("failed to copy claude shared config: %w", err)
-	}
-
-	if _, err := baseapp.DeployInstructions(paths.Paths.Config.Claude); err != nil {
-		return fmt.Errorf("failed to deploy claude instructions: %w", err)
-	}
-	if err := importInstructionsOnce(gc); err != nil {
-		return err
-	}
-
 	if err := baseapp.MaintainScratchDir(); err != nil {
 		return fmt.Errorf("failed to maintain scratch dir: %w", err)
-	}
-
-	// Deploys the output-budget runner and writes agent-runtime.json.
-	// Called from both claude's and opencode's configure paths (cycle doc
-	// Step 5) so running either one converges both agents.
-	if err := baseapp.EnsureAgentRuntime(gc); err != nil {
-		return fmt.Errorf("failed to ensure the output-budget runtime: %w", err)
 	}
 
 	// The hook wrapper (format.sh) delegates to this shared script.
@@ -269,40 +293,6 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 	if err := gc.RegenerateShellConfig(); err != nil {
 		return fmt.Errorf("failed to regenerate shell config: %w", err)
 	}
-	return nil
-}
-
-// instructionsImportLine is the line that makes Claude Code load devgeta's
-// instructions file from the user's own CLAUDE.md.
-const instructionsImportLine = "@" + baseapp.InstructionsFileName
-
-// importInstructionsOnce adds instructionsImportLine to ~/.claude/CLAUDE.md
-// the first time claude is configured, and never again after that: the
-// CLAUDE.md file belongs to the user, so if they delete the line, it stays
-// deleted (ADR-0058). The caller saves gc.
-func importInstructionsOnce(gc *config.GlobalConfig) error {
-	if gc.Integrations.ClaudeInstructionsImported {
-		return nil
-	}
-	userInstructions := filepath.Join(paths.Paths.Config.Claude, "CLAUDE.md")
-	alreadyImported := false
-	if files.FileAlreadyExist(userInstructions) {
-		found, err := files.ContentExistsInFile(userInstructions, instructionsImportLine)
-		if err != nil {
-			return fmt.Errorf("failed to read %s: %w", userInstructions, err)
-		}
-		alreadyImported = found
-	}
-	if !alreadyImported {
-		if err := files.AddLineToFile(instructionsImportLine, userInstructions); err != nil {
-			return fmt.Errorf(
-				"failed to add the devgeta instructions import to %s: %w",
-				userInstructions,
-				err,
-			)
-		}
-	}
-	gc.Integrations.ClaudeInstructionsImported = true
 	return nil
 }
 
@@ -331,96 +321,30 @@ func (c *Claude) SoftConfigure() error {
 	return c.ForceConfigure()
 }
 
-// ConfigurableParts lists the parts --only can refresh: the shared config
-// subtrees plus the rtk integration (wires rtk's command-rewriting hook —
-// the explicit opt-in required by ADR-0004).
-func (c *Claude) ConfigurableParts() []string {
-	return append(slices.Clone(baseapp.SharedConfigParts), constants.Rtk)
-}
-
-// ForceConfigureParts refreshes only the named parts, leaving settings.json,
-// the scripts, and themes untouched. Shared subtrees (skills, commands,
-// agents) are overwritten from the embedded configs; the rtk part opts into
-// rtk's hook via enableRtkHook. This is the `--force --only=...` path.
-func (c *Claude) ForceConfigureParts(parts []string) error {
-	if err := os.MkdirAll(paths.Paths.Config.Claude, 0o755); err != nil {
-		return err
-	}
-	shared := make([]string, 0, len(parts))
-	for _, part := range parts {
-		if part == constants.Rtk {
-			if err := c.enableRtkHook(); err != nil {
-				return err
-			}
-			continue
-		}
-		shared = append(shared, part)
-	}
-	if len(shared) == 0 {
-		return nil
-	}
-	return baseapp.SyncSharedParts(paths.Paths.Config.Claude, shared)
-}
-
-// enableRtkHook wires rtk's command-rewriting hook via `rtk init` — which
-// owns the integration formats (settings.json hook entry, RTK.md, the global
-// CLAUDE.md reference) and patches in place rather than overwriting — and
-// then records the opt-in in the global config so every future settings.json
-// render keeps the hook entry. Wiring runs BEFORE persisting: a failed init
-// must not leave a false "enabled" flag behind, or the next render would emit
-// a hook entry for an integration that never succeeded. (The inverse failure
-// — init succeeded, save failed — is benign: re-running the command
-// converges.) It deliberately does NOT render settings.json here: a
-// hand-written settings.json must survive `--only=rtk` untouched.
-func (c *Claude) enableRtkHook() error {
-	if err := c.runRtkInit(); err != nil {
-		return fmt.Errorf(
-			"failed to wire rtk into claude (is rtk installed? try `dg install --only rtk`): %w",
-			err,
-		)
-	}
-	gc := &config.GlobalConfig{}
-	if err := gc.Create(); err != nil {
-		return fmt.Errorf("failed to create global config: %w", err)
-	}
-	if err := gc.Load(); err != nil {
-		return fmt.Errorf("failed to load global config: %w", err)
-	}
-	gc.Integrations.RtkClaudeHook = true
-	if err := gc.Save(); err != nil {
-		return fmt.Errorf("failed to save global config: %w", err)
-	}
-	return nil
-}
-
-// runRtkInit executes rtk's Claude Code integration through the rtk app
-// wrapper; injectable for tests. InitClaude streams output so rtk's one-time
-// interactive consent prompt is visible instead of hanging in a captured
-// buffer.
-func (c *Claude) runRtkInit() error {
-	if c.rtkInit != nil {
-		return c.rtkInit()
-	}
-	// Same philosophy as pkg/paths' test sandbox: a test that forgets to
-	// inject rtkInit must fail loudly, never execute the real rtk binary.
-	if testing.Testing() {
-		return fmt.Errorf(
-			"refusing to run real `rtk init` under go test — inject rtkInit in the test",
-		)
-	}
-	return rtk.New().InitClaude()
-}
-
+// ExecuteCommand runs the claude CLI. Stdin is disconnected: a plugin or
+// marketplace command run by an installer must fail rather than sit waiting
+// on a prompt nobody can see.
 func (c *Claude) ExecuteCommand(args ...string) error {
-	params := cmd.CommandParams{
+	_, err := c.ExecuteCommandOutput(args...)
+	return err
+}
+
+// ExecuteCommandOutput is ExecuteCommand returning stdout, for commands that
+// are read for their answer (`claude plugin list --json`). The error carries
+// the CLI's stderr, which is where it says what went wrong.
+func (c *Claude) ExecuteCommandOutput(args ...string) (string, error) {
+	stdout, stderr, err := c.Base.ExecCommand(cmd.CommandParams{
 		Command: constants.Claude,
 		Args:    args,
-	}
-	_, _, err := c.Base.ExecCommand(params)
+		NoStdin: true,
+	})
 	if err != nil {
-		return fmt.Errorf("claude command execution failed: %w", err)
+		if stderr != "" {
+			return "", fmt.Errorf("claude command execution failed: %s: %w", strings.TrimSpace(stderr), err)
+		}
+		return "", fmt.Errorf("claude command execution failed: %w", err)
 	}
-	return nil
+	return stdout, nil
 }
 
 func (c *Claude) Update() error {

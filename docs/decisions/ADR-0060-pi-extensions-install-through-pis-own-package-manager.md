@@ -52,14 +52,24 @@ from advancing a source and go stale between devgeta releases. If the threat
 model changes, pinning becomes a code change here plus an amendment.
 
 **7. Uninstall still removes only the managed install root.** Extensions and
-settings survive `dg uninstall pi`.
+settings survive `dg uninstall pi`. _(Amended by
+[ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md):
+agent packs install through the same package manager, `pi install <path>`.
+Unlike the curated extensions, `dg agent-pack uninstall` removes them with
+`pi remove`, because devgeta tracks what it installed
+([ADR-0070](ADR-0070-pack-removal-deletes-only-what-devgeta-installed.md)).
+`dg uninstall pi` still keeps them, so a pack's Pi record stays and `list`
+shows "pi not installed".)_
 
 **8. Everything else stays out of scope:** no themes, no shared skills, no
 two-agent parity, no `dg worktree`/`dg task` wiring. _(Amended by
 [ADR-0061](ADR-0061-pi-is-a-themed-surface-with-one-devgeta-owned-theme-file.md):
 themes are now in scope. Amended by
 [ADR-0063](ADR-0063-pi-formats-through-devgetas-shared-mason-script-and-pi-lens-only-diagnoses.md):
-Pi formats through devgeta's shared Mason script.)_
+Pi formats through devgeta's shared Mason script. Amended by
+[ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md):
+shared skills and parity with the other coders are now in scope, through agent
+packs.)_
 
 ## Consequences
 

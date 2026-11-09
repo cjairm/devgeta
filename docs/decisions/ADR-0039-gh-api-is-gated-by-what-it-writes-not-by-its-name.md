@@ -1,7 +1,7 @@
 # ADR-0039 — `gh api` is gated by what it writes, not by its name
 
 **Date:** 2026-09-10
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0067](ADR-0067-agent-permission-floor.md)
 
 ## Context
 

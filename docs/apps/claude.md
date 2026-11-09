@@ -5,8 +5,22 @@ terminal AI CLI, as a first-class terminal tool and deploys a curated config to
 `~/.claude/`.
 
 - **Module:** `internal/apps/claude/`
-- **Config source:** `configs/claude/` (+ shared content in `configs/shared/`)
-- **Install:** official script (`curl -fsSL https://claude.ai/install.sh | bash`)
+- **Config source:** `configs/claude/`
+- **Install:** official script (`https://claude.ai/install.sh`), pinned to
+  `constants.PinnedVersion.Claude` (2.1.319)
+
+## Pinned version
+
+devgeta installs exactly `constants.PinnedVersion.Claude`: the install script
+takes the version as its first argument. `settings.json` sets
+`DISABLE_AUTOUPDATER=1` in its `env` block, so Claude Code does not update
+itself past the version devgeta's config was checked against. That variable
+also stops automatic plugin updates.
+
+`dg install` reinstalls when `claude --version` is older than the pin, or
+unreadable. A newer version you installed yourself is left alone. Moving the
+pin is a devgeta change: bump the constant, read the release notes against
+`settings.json` and the hooks, and release.
 
 ## Using it
 
@@ -20,8 +34,12 @@ Start it with `cc`. Useful slash commands inside the session:
 - `/init` — initialize CLAUDE.md for your project
 - `/review` — review a pull request
 
-Settings, themes, skills, commands, and agents all land in `~/.claude/` — see
-the deployment table below for exactly what goes where.
+Settings, hooks and themes land in `~/.claude/` — see the deployment table
+below for exactly what goes where. `dg configure` ships no skills, commands,
+agents or instructions file. Those come only from [agent packs](agent-packs.md),
+which you install with `dg agent-pack` (and `dg install` for a coder it
+installs). The one pack that touches `~/.claude/CLAUDE.md` is `devgeta`, and only
+to add an `@DEVGETA.md` line when no line there already imports it.
 
 **Resetting chat history.** Message/input history and past chats are separate:
 
@@ -44,87 +62,74 @@ for those projects along with the chats.
 | `configs/claude/statusline.sh`             | `~/.claude/statusline.sh`             | `chmod 0755`                                                                      |
 | `configs/claude/format.sh`                 | `~/.claude/format.sh`                 | `chmod 0755`                                                                      |
 | `configs/devgeta/format-file.sh`           | `~/.config/devgeta/format-file.sh`    | `chmod 0755`; the formatter table the hook calls                                  |
-| `configs/claude/task-redirect.sh`          | `~/.claude/task-redirect.sh`          | `chmod 0755`                                                                      |
-| `configs/claude/secret-guard.sh`           | `~/.claude/secret-guard.sh`           | `chmod 0755`                                                                      |
-| `configs/claude/suppression-guard.sh`      | `~/.claude/suppression-guard.sh`      | `chmod 0755`                                                                      |
 | `configs/claude/agent-config-guard.sh`     | `~/.claude/agent-config-guard.sh`     | `chmod 0755`                                                                      |
 | `configs/claude/agent-state.sh`            | `~/.claude/agent-state.sh`            | `chmod 0755`                                                                      |
-| `configs/claude/output-budget.sh`          | `~/.claude/output-budget.sh`          | `chmod 0755`; hook entry gated, see below                                         |
-| `configs/claude/rtk-shim.sh`               | `~/.claude/rtk-shim.sh`               | `chmod 0755`; deployed always, hook entry gated on `integrations.rtk_claude_hook` |
-| `configs/claude/lib/`                      | `~/.claude/lib/`                      | sourced helpers, not executed directly                                            |
 | `configs/claude/themes/`                   | `~/.claude/themes/`                   |                                                                                   |
-| `configs/shared/{skills,commands,agents}/` | `~/.claude/{skills,commands,agents}/` | shared with OpenCode                                                              |
-| `configs/shared/DEVGETA.md`                | `~/.claude/DEVGETA.md`                | response style and coding defaults; shared with OpenCode, see below               |
 
-`settings.json` is rendered from a template so tracked opt-ins survive a
-`--force` re-render: when `integrations.rtk_claude_hook` is set in
-`global_config.yaml` (via `dg configure claude --force --only=rtk`, the
-explicit opt-in required by [ADR-0004](../decisions/ADR-0004-ai-tools-install-category.md)),
-the rendered file includes rtk's `PreToolUse` hook entry alongside devgeta's
-own hooks. `dg uninstall rtk` clears the flag. See [rtk.md](rtk.md).
+`settings.json` is rendered from a template (theme, scratch directory, and the
+agent packs), so a `--force` re-render rewrites the whole file: hand edits to it
+are lost.
 
-### Response style and coding defaults (`DEVGETA.md`)
+## Agent packs
 
-`DEVGETA.md` holds devgeta's default instructions: answers that fit the task
-(a quick answer, an investigation, an explanation of something new) without
-filler; reuse before writing; short, readable functions; and names that stay
-meaningful over time. Devgeta owns this file and overwrites it on every
-configure. Put your own rules in `~/.claude/CLAUDE.md`, not here.
+[Agent packs](agent-packs.md) are installed as plugins of a local marketplace
+named `devgeta`, whose folder is `~/.local/share/devgeta/agent-packs/`. `dg
+agent-pack install <pack>` runs `claude plugin marketplace add` and `claude
+plugin install <pack>@devgeta -s user`, so `claude plugin list` and `/plugin`
+show them.
 
-Claude Code loads it through a single `@DEVGETA.md` line that devgeta appends
-to `~/.claude/CLAUDE.md` the **first** time you configure Claude. Nothing else
-in that file is touched. To opt out, delete the line. Devgeta records in
-`global_config.yaml` (`integrations.claude_instructions_imported`) that it
-already added the line once, so it does not add it back. See
-[ADR-0058](../decisions/ADR-0058-devgeta-instructions-live-in-their-own-file.md).
+`settings.json` carries them as `extraKnownMarketplaces` and `enabledPlugins`.
+Both keys are rendered from `agent_packs:` in `global_config.yaml`, so
+`dg configure claude --force` keeps every pack enabled instead of silently
+disabling them. A pack for a coder that isn't Claude Code adds nothing here.
+
+The `devgeta` pack isn't a plugin: a plugin can't carry a `CLAUDE.md`, so it is a
+copy at `~/.claude/DEVGETA.md` plus an `@DEVGETA.md` line in
+`~/.claude/CLAUDE.md`, added only if missing and removed on uninstall only if
+devgeta added it and it is still exactly that line.
+
+`dg configure` does not delete scripts it no longer ships. See
+[the rollback migration note](../migrations/agent-customizations-rollback.md)
+for the old hook files to remove by hand.
 
 ## Permissions model
 
-`settings.json` uses a broad-allow-with-carve-outs model to minimize prompts.
-Rules are evaluated deny → ask → allow (first match wins), so the carve-outs
-override the broad allow:
+`settings.json` ships a small floor ([ADR-0067](../decisions/ADR-0067-agent-permission-floor.md))
+on top of a broad allow. Rules are evaluated deny → ask → allow (first match
+wins):
 
 - **allow** — `Bash(*)`, `Read`, `Edit`: day-to-day work never prompts.
-- **ask** — rare-but-legitimate commands (remote copies, force pushes, infra
-  applies, and four `gh` writes — `pr merge`, `release delete`, `pr close`,
-  `issue delete`) prompt instead of being blocked. **Caveat, verified
-  2026-09-10:** on a machine with the rtk Claude Code integration enabled,
-  none of these reliably prompt for a command rtk rewrites — see "rtk
-  command-rewrite shim" below.
-- **deny** — never allowed: network exfiltration tools, credential file reads
-  (SSH keys, cloud CLI configs, token files, shell history), privilege
-  escalation, persistence mechanisms (crontab/launchctl), destructive disk ops,
-  and file edits to `.git/` and shell rc files. `Edit(path)` rules cover all
-  file-editing tools (Edit, Write, NotebookEdit); `Write(path)` rules are not
-  matched by file permission checks, so they must not be used.
+- **ask** — `git push --force*`, `git push -f*`, `sudo *`, `gh repo delete *`,
+  `gh release delete *`: irreversible, or they act outside the machine.
+- **deny** — reads of secret and credential files (`.env`, `*.pem`, `*.key`,
+  SSH keys, `.aws`, `.kube`, gcloud and Azure config, `.npmrc`, `.pypirc`,
+  `.netrc`, `.git-credentials`, Docker config, `.pgpass`) and shell history,
+  plus edits under `.git/`. `Edit(path)` rules cover all file-editing tools
+  (Edit, Write, NotebookEdit); `Write(path)` rules are not matched by file
+  permission checks, so they must not be used.
+
+Nothing else is denied: `curl`, `rm -rf`, cloud CLIs and interpreter one-liners
+all run. A prefix-matching Bash deny is skipped by `command curl` or
+`bash -c '…'`, so it costs turns without stopping anything. Agent config is
+protected by the agent-config guard below, not by path denies.
 
 Deny and ask rules apply in **every** permission mode, including
-`bypassPermissions` (`claude --dangerously-skip-permissions`), so the guardrails
-survive YOLO sessions.
+`bypassPermissions` (`claude --dangerously-skip-permissions`).
 
 **`permissions.additionalDirectories` grants one scratch directory** —
 `paths.EnsureScratchDir()`'s path (`~/.cache/devgeta/scratch` by default,
 honoring `XDG_CACHE_HOME`), rendered into `settings.json` at configure time.
-`devgeta task scratch` allocates a unique subdirectory under it for commands
-that need a working file outside the project directory (`/review-pr`,
-`/create-pr`) instead of writing to `/tmp`, which this agent would otherwise
-prompt on. See [ADR-0015](../decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md).
+`devgeta task scratch` allocates a unique subdirectory under it for working
+files outside the project directory instead of writing to `/tmp`, which this
+agent would otherwise prompt on. See [ADR-0015](../decisions/ADR-0015-agent-scratch-files-get-a-devgeta-owned-directory.md).
 
-**Known limits:** Bash deny rules are prefix matchers. The deny list names the
-common interpreter one-liners (`python3 -c`, `node -e`, `perl -e`, …), but a
-prefix matcher cannot cover the ways round them: `printf 'code' | python3` runs
-the same code and matches nothing, and so does any `sh -c` wrapper, heredoc, or
-base64 hop. Both were confirmed by live probe against both agents (see
-[agent-permission-matching.md §5](../guides/agent-permission-matching.md)), so
-the deny list is friction and defense-in-depth, not a security boundary. The
-same limit applies to the agent-config guard below: it only intercepts
-Edit/Write, so `echo … > .claude/settings.json` or a `python3 -c` one-liner
-reaches the same files through Bash untouched — a limit that already existed
-in the blanket `Edit(.claude/**)` deny this guard replaced, not one this
-change introduces. For a real boundary on high-autonomy work, enable Claude
-Code's built-in OS sandbox (`/sandbox`; Seatbelt on macOS) which enforces
-filesystem and network limits at the kernel level, and keep Claude Code up to
-date (deny-list bypass bugs have been patched in past releases).
+**Known limits:** nothing checks an agent's commits for secrets, and Bash
+rules are prefix matchers (see
+[agent-permission-matching.md §5](../guides/agent-permission-matching.md)). The
+agent-config guard intercepts only Edit/Write, so `echo … > .claude/settings.json`
+reaches the same files through Bash. For a real boundary on high-autonomy work,
+enable Claude Code's built-in OS sandbox (`/sandbox`; Seatbelt on macOS), which
+enforces filesystem and network limits at the kernel level.
 
 ## Formatting & linting (PostToolUse hook)
 
@@ -167,208 +172,14 @@ Notes:
 - `eslint_d` on a project without an ESLint config will report a config error as
   a "finding"; this is expected outside configured JS/TS repos.
 
-## Command redirect (PreToolUse hook)
-
-`settings.json` registers a `PreToolUse` hook on the `Bash` tool that runs
-`~/.claude/task-redirect.sh` before every Bash command Claude runs. The script
-reads the command from the hook payload (`.tool_input.command`) and denies a
-narrow set of raw-git patterns that have a dedicated `devgeta task` equivalent
-— it never rewrites or runs anything itself, only denies with the exact
-replacement to run instead:
-
-| Raw pattern                                                                              | Replacement                                                     | Scope             |
-| ---------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ----------------- |
-| `git diff <ref>..<ref>` / `git log <ref>..<ref>` (any flags, e.g. `--stat`, `--oneline`) | `devgeta task review-package <base> <head>`                     | global            |
-| `git worktree add ...`                                                                   | `devgeta task worktree-start <name> [--base <ref>]`             | devgeta repo only |
-| `git worktree remove ...`                                                                | `devgeta task worktree-finish [<name>] --merge\|--discard`      | devgeta repo only |
-| `gh pr checks ...`                                                                       | `devgeta task pr-checks`                                        | global            |
-| `gh api graphql ... reviewThreads ...`                                                   | `devgeta task review-threads`                                   | global            |
-| `gh pr review ...`                                                                       | `devgeta task submit-review --event ...`                        | global            |
-| `git reset --soft HEAD~N` (N ≥ 1)                                                        | `devgeta task release <version> --message-file <file> [--push]` | devgeta repo only |
-| `git tag -a v<semver> ...`                                                               | `devgeta task release <version> --message-file <file> [--push]` | devgeta repo only |
-
-**Scope.** These hooks deploy to the user's global config, so they fire on
-every Bash call in every repo. The `review-package`, `pr-checks`,
-`review-threads`, and `submit-review` rules are **global**: each is a
-better/compressed form of a universal git or `gh` operation that imposes no
-devgeta-specific convention, so redirecting it everywhere is correct. Four rules
-are **devgeta-repo-only**: `git worktree add` → `worktree-start` and `git
-worktree remove` → `worktree-finish` (devgeta's worktree storage location
-`~/.local/share/devgeta/worktrees/...` is devgeta's own layout convention, so
-redirecting would wrongly impose it in other repos), and `git reset --soft
-HEAD~N` and `git tag -a v<semver>` (which encode devgeta's own release policy,
-§9 squash-before-tag, strict `vX.Y.Z`). All devgeta-repo-only rules fire only
-when the command runs inside the devgeta repo — detected by walking up from the
-payload's working directory (`.cwd`, falling back to the shell's `$PWD`) to the
-first `go.mod` and confirming its module path is `github.com/cjairm/devgeta`. This check runs only after a devgeta-repo-only pattern has already matched (the
-common allow path pays no lookup cost) and it **fails toward not firing**: if the
-working directory is indeterminate, no `go.mod` is found, or the module doesn't
-match, the raw git command is allowed through — the acceptable failure is "the
-devgeta redirect didn't help here", never "a general `git worktree`/`git
-reset`/`git tag` got blocked in another repo". The gh rules are narrow: `gh pr checks` and `gh pr review`
-match only those exact subcommands (never `gh pr view`/`status`/`list`), and
-the review-threads rule requires a `gh` invocation carrying both `api` and
-`graphql` plus the literal `reviewThreads` (a bare `gh api graphql` or `gh api`
-never matches).
-
-Matching is deliberately narrow but not limited to the start of the whole
-command string: the script splits the command into segments on unquoted
-`&&`, `||`, `;`, and `|`, and checks every segment — so `cd some/dir && git
-worktree add ../wt`, `git status; git worktree remove ../wt`, and `git fetch
-&& git diff main..feature` are all caught, not just a bare `git ...` with
-nothing else on the line. Each segment's `git`/`gh` anchor also tolerates a
-leading run of shell `VAR=value` assignments (e.g. `GIT_PAGER=cat git diff
-a..b`) and a run of the binary's own global options between it and the
-subcommand — `-C <dir>`/`-c name=value`/`--git-dir=<path>` for `git`,
-`-R <owner/repo>`/`--repo <owner/repo>`/`--repo=<owner/repo>` for `gh`, or any
-other bare `--long`/`-x` flag — so `git -C ../wt worktree add x` and
-`gh --repo owner/repo pr checks` still redirect (a global option defeating
-the anchor entirely was a bypass found in review). Splitting respects single-
-and double-quoted spans (a separator
-character inside a commit message is not treated as a boundary), but it is a
-best-effort, non-adversarial split — it does not handle backslash-escaped
-quotes, command substitution (`$(...)`/`` `...` ``), or heredocs; a command
-deliberately crafted to defeat quote tracking is out of scope.
-
-Within all of that, matching is still anchored and narrow: a bare `git diff`,
-`git diff HEAD~1` (single ref, no range), `git log`, `git log -5`, `git tag`
-(list, no `-a`), `git reset --soft HEAD` (no `~N`), and a commit message that
-merely contains a trigger word (e.g. `git commit -m "fix: worktree stuff"`)
-are never intercepted — only the exact multi-step dances these tasks
-replace.
-
-The hook denies via exit code 2 with a one-line reason on stderr (Claude Code's
-simpler PreToolUse deny mechanism, chosen over the structured
-`hookSpecificOutput`/`permissionDecision` JSON form to avoid any JSON-escaping
-failure mode). A missing/unparseable command, or jq itself being unavailable,
-falls through to exit 0 (allow) — this hook must never accidentally block all
-Bash calls.
-
-**Bypass:** export `DEVGETA_SKIP_TASK_REDIRECT=1` in the shell that launches this
-agent (e.g. the repo's `.envrc` file or your shell profile), BEFORE invoking the
-agent — not inside the denied command, and not fixable mid-session, because the
-hook reads its own process environment. Alternatively, edit `~/.claude/settings.json`
-to remove the `PreToolUse` entry entirely if you never want this hook active.
-
-The OpenCode plugin equivalent (`~/.config/opencode/plugin/task-redirect.js`,
-a `tool.execute.before` hook) mirrors the same pattern table, the same
-global-vs-devgeta scoping, and the same `DEVGETA_SKIP_TASK_REDIRECT` bypass. It
-reads the working directory for the devgeta-repo-only gate (worktree add,
-worktree remove, and the two release rules) from the plugin context's
-`directory` (falling back to `worktree`, then `process.cwd()`) and applies the
-identical fail-toward-not-firing `go.mod` check — see that file's header
-comment.
-
-Upstream-synced skills under `configs/shared/skills/` still hand-roll these raw
-git sequences in their prose (they can't be edited without conflicting with
-upstream syncs); this hook is the durable, runtime answer for those flows.
-
-## Secret-commit guard (PreToolUse hook)
-
-`settings.json` registers `~/.claude/secret-guard.sh` as a second hook under
-the same `Bash` `PreToolUse` matcher as task-redirect.sh. Before a `git
-commit` runs (anywhere in a compound command, using the same segment-splitting
-logic as task-redirect.sh), it inspects what is actually staged
-(`git diff --cached`, read-only) and denies with what to unstage if it finds:
-
-| Signal                                                                                                            | Excluded                                                                        |
-| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Staged filename: `.env`/`.env.*`, `*.pem`, `id_rsa`/`id_ed25519`/`id_ecdsa`, `*.p12`/`*.pfx`/`*.keystore`/`*.jks` | `.env.example`/`.env.sample`/`.env.template` (templates), `*.pub` (public keys) |
-| Staged content (added lines only): a private-key header, an AWS access key ID, a GitHub token, or a Slack token   | —                                                                               |
-
-**Scope:** GLOBAL — fires in every repo, since "never commit a secret" is
-universal practice, not a devgeta convention (see
-[ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md)). This
-is a safety net (a small, high-confidence pattern list), not a replacement for
-a real secret scanner or CI pre-commit hooks. Denies via exit 2, same
-mechanism as task-redirect.sh; a missing/unparseable command, `jq`/`git` being
-unavailable, or the target not being a git repo falls through to exit 0
-(allow).
-
-**`git -C <dir> commit` is checked against `<dir>`, not the agent's own
-working directory.** The hook resolves the actual git target from the LAST
-`-C` in the commit invocation (uppercase only — `-c` is git's unrelated
-inline-config flag), falling back to the payload's own working directory
-when no `-C` is present. Scanning the wrong repository was a bypass found in
-review.
-
-**A commit that could stage NEW content this hook hasn't already seen is
-denied outright, not checked.** This is a PreToolUse hook: it runs before
-any part of the Bash command executes, so `git diff --cached` at check time
-cannot reflect a staging action that's part of the SAME, not-yet-run
-command. Two shapes trigger this:
-
-- A compound command that stages before committing in one call
-  (`git add -A && git commit ...`, also `git mv`/`git stage` — not `git rm`,
-  which only removes content).
-- A commit that self-stages via `-a`/`-am`/`--all` (`--amend` alone is
-  unaffected).
-
-Either denies with a message asking for two separate Bash calls: run the
-staging command to completion first, then commit as its own call — at that
-point `git diff --cached` faithfully reflects what will be committed.
-
-**Bypass:** export `DEVGETA_SKIP_SECRET_GUARD=1` in the shell that launches this
-agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
-command — because the hook reads its own environment.
-
-The OpenCode plugin equivalent
-(`~/.config/opencode/plugin/secret-guard.js`) mirrors the same pattern lists
-and the same bypass variable, importing `splitCommandSegments` from
-`task-redirect.js` rather than duplicating it (ADR-0006 explains why it does
-not introduce a separate shared helper file).
-
-## Lint-suppression guard (PreToolUse hook)
-
-`settings.json` registers `~/.claude/suppression-guard.sh` under a new
-`Edit|Write` `PreToolUse` matcher. It denies an Edit or Write that
-**introduces** a lint-suppression comment — `//nolint` (Go), `# noqa` /
-`# type: ignore` / `# pylint: disable` (Python), `eslint-disable` /
-`@ts-ignore` / `@ts-nocheck` (JS/TS), `@SuppressWarnings` (Java/Kotlin), or
-`rubocop:disable` (Ruby) — instead of fixing the underlying issue. This makes
-CLAUDE.md's "Lint issues" rule (`//nolint` is "never acceptable") structurally
-impossible to violate rather than a convention to remember.
-
-For an Edit, only a needle present in `new_string` but **absent** from
-`old_string` counts as introduced — editing code around an existing,
-untouched suppression elsewhere in the file is unaffected. For a Write, any
-needle in the new content denies, since Write replaces the whole file and
-there is no "before" to diff against.
-
-**Scope:** DEVGETA-REPO-ONLY — the same `is_devgeta_repo` go.mod walk
-task-redirect.sh's worktree and release rules use. Banning suppression
-comments outright is _devgeta's own_ stance, not a universal one (plenty of
-codebases use them deliberately), so it must not fire in any other repo — see
-[ADR-0006](../decisions/ADR-0006-hook-guardrails-scope-and-sharing.md). Denies
-via exit 2; a missing/unparseable payload or `jq` being unavailable falls
-through to exit 0 (allow).
-
-**The repo is the edited file's, not the session's.** Unlike task-redirect.sh
-— where a Bash command names no file, so the working directory is all there is
-— Edit and Write both carry the target path, so the walk starts from that
-file's directory (a relative path is resolved against the payload's `cwd`
-first; an absent one falls back to `cwd`). Scoping by the session instead was
-wrong in both directions and was fixed after live verification found it: an
-agent started outside devgeta could write a suppression **into** devgeta
-unchecked, and an agent started inside devgeta had the ban imposed on files it
-touched in unrelated repos. ADR-0006 §1 carries the amendment.
-
-**Bypass:** export `DEVGETA_SKIP_SUPPRESSION_GUARD=1` in the shell that launches this
-agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
-command — because the hook reads its own environment.
-
-The OpenCode plugin equivalent
-(`~/.config/opencode/plugin/suppression-guard.js`) mirrors the same pattern
-list and bypass variable, importing `isDevgetaRepo` from `task-redirect.js`.
-
 ## Agent-config guard (PreToolUse hook)
 
-`settings.json` registers `~/.claude/agent-config-guard.sh` under the same
-`Edit|Write` matcher as suppression-guard.sh. It denies an edit that would
+`settings.json` registers `~/.claude/agent-config-guard.sh` under an
+`Edit|Write` `PreToolUse` matcher. It denies an edit that would
 modify an agent's own configuration — permissions, hooks, agent/command/skill
 definitions, or plugins — rather than the source code it was asked to work
 on: an agent that can rewrite its own permissions can grant itself any
-permission the deny list withholds.
+permission the settings withhold.
 
 It replaces the blanket `Edit(.claude/**)` / `Edit(.opencode/**)` denies that
 used to carry this rule. Those matched a directory of that name **at any
@@ -417,34 +228,11 @@ cleaned path rather than skipping the check — the one place this guard
 family's fail-open stance does not apply, so a `..` escape is closed
 unconditionally regardless of filesystem state.
 
-A settings-level floor backs this up for when the guard itself cannot run
-(missing `jq`, malformed payload):
-
-```
-Edit(**/.claude/settings.json)        Edit(**/.opencode/opencode.json)
-Edit(**/.claude/settings.local.json)  Edit(**/.opencode/plugin/**)
-Edit(**/.claude/hooks/**)             Edit(**/.mcp.json)
-                                      Edit(~/.config/opencode/**)
-
-Edit(~/.claude/*.json)   Edit(~/.claude/agents/**)    Edit(~/.claude/plugins/**)
-Edit(~/.claude/*.sh)     Edit(~/.claude/commands/**)  Edit(~/.claude/hooks/**)
-Edit(~/.claude/*.md)     Edit(~/.claude/skills/**)    Edit(~/.claude/lib/**)
-```
-
-These are the paths that are never legitimately agent-edited in any repo or
-worktree, so they need no `worktrees` exception and can be expressed as plain
-deny rules. The floor and the guard are deliberately asymmetric in coverage —
-the floor covers only this enumerable never-edit set (and survives the guard
-failing open); the guard covers everything else under `.claude/`/`.opencode/`,
-including surface the tools have not shipped yet.
-
-The global Claude root is spelled out rather than swept with a blanket
-`Edit(~/.claude/**)`, because that blanket also covered
-`~/.claude/projects/<slug>/memory/` — the agent's own memory directory — and
-deny beats any allow carve-out, so nothing narrower could re-open it. The
-trade is that a config-bearing directory upstream adds under `~/.claude/`
-isn't in the floor until it's listed here; the guard still denies it by
-default. See ADR-0014's memory amendment.
+The guard is the only mechanism for this rule: devgeta ships no `Edit(...)`
+path denies for agent config, only `Edit(.git/**)` (see
+[ADR-0067](../decisions/ADR-0067-agent-permission-floor.md)). The guard
+fails open when `jq` is missing or the payload is malformed, so it is a
+guardrail, not a boundary.
 
 **Scope:** GLOBAL — it replaces a rule that was already global, and gating it
 to the devgeta repo would silently remove escalation protection from every
@@ -454,8 +242,11 @@ other project on the machine.
 launches this agent (e.g. the repo's `.envrc`), BEFORE invoking the agent —
 not inside the command — because the hook reads its own environment.
 
-The OpenCode plugin equivalent (`~/.config/opencode/plugin/agent-config-guard.js`)
-mirrors the same four-clause rule and the same bypass variable. It does not
+The OpenCode plugin equivalent
+(`~/.config/opencode/plugins/devgeta-agent-config-guard/server.js`) mirrors the
+same four-clause rule and the same bypass variable, though under OpenCode's
+shared background service the variable has to be set on the service (see
+[opencode.md](opencode.md)). It does not
 hand-roll the bounded symlink chase the bash version needs: `fs.realpathSync`
 already resolves an existing path's full symlink chain (with the OS's own
 loop detection) in one call, so only the "resolve as much of a not-yet-existing
@@ -463,126 +254,6 @@ path as exists" step is written by hand, matching the bash version's shape.
 
 See [ADR-0014](../decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)
 for the full design and the table of canonicalization test cases.
-
-**Shared hook code:** `task-redirect.sh`, `secret-guard.sh`, and
-`suppression-guard.sh` all source small helper files from `~/.claude/lib/`
-(command segmentation, the devgeta-repo gate) instead of duplicating that
-logic — safe on the Claude side since nothing auto-executes files there.
-`agent-config-guard.sh` does **not** source these: it has no devgeta-repo
-scoping (it is global) and no command-segment splitting to do, so it has
-nothing in `lib/` to share. The OpenCode side deliberately does **not**
-mirror the sharing pattern with a standalone helper file under `plugin/`: see
-ADR-0006 for why (OpenCode's plugin loader invokes every export of every file
-in that directory as if it were a plugin).
-
-## Output-budget hook (PreToolUse hook)
-
-Opt-in, off by default. When `integrations.output_budget` is set (via
-`dg config set integrations.output_budget true` then
-`dg configure claude --force`), `settings.json` registers
-`~/.claude/output-budget.sh` under a third `Bash` `PreToolUse` matcher. It
-matches a command against a built-in table of general-purpose test/build
-runners (`go test`, `npm test`, `make`, and similar — see
-[the runner contract's default rule set](../guides/output-budget-runner.md#84-the-default-rule-set))
-and, on a match, rewrites the command to run through a shared runner script
-(`output-budget-run.sh`, deployed to `~/.config/devgeta/`, not `~/.claude/` —
-it is agent-neutral and OpenCode's plugin calls the same one) that caps the
-replayed output while leaving the complete output on disk, exit status
-unchanged. See [docs/guides/output-budget-runner.md](../guides/output-budget-runner.md)
-for the full contract and [docs/guides/token-efficiency.md](../guides/token-efficiency.md)
-for how this ranks against devgeta's other token-efficiency levers.
-
-**It never widens permission, and it only touches single-segment commands.**
-The hook emits no `permissionDecision` on any path — it caps output, which is
-never a reason to change what a command is allowed to do. And a compound
-command (`cd sub && go test ./...`, `go test ./... | tee out.log`) is passed
-through untouched even when one of its segments matches, because the rewrite
-replaces the _whole_ command string and would otherwise carry the unmatched
-segments along with it, past any deny rule written against the original text.
-The cost is real — that `cd sub && go test` case is common and goes uncapped —
-and it is the intended trade. Reasoning in
-[the runner contract's §2.4](../guides/output-budget-runner.md#24-the-hook-caps-output-it-never-widens-permission).
-
-**Known race with rtk, by design:** `PreToolUse` hooks on the same matcher run
-in parallel on Claude Code, with no chaining between them — confirmed against
-Claude Code's own hook execution model, not assumed. If rtk's command-
-rewriting hook is also enabled and both hooks would rewrite the same call,
-whichever process finishes last wins; there is no ordering either hook's own
-code can enforce. The accepted failure mode is narrow: the command still runs
-correctly and in full, and the only thing that can be lost is this hook's own
-cap for that one call (rtk's compaction is unaffected either way). See the
-runner contract's §9 for the full reasoning; this is not the deny/ask-rule
-asymmetry CLAUDE.md §12 forbids — it changes nothing about what either agent
-is permitted to do.
-
-The OpenCode plugin equivalent (`~/.config/opencode/plugin/output-budget.js`)
-mirrors the same matching/rewrite decision, reading a generated sidecar
-(`~/.config/devgeta/agent-runtime.json`) at runtime for its own gate rather
-than a render-time template conditional — `opencode.json` is validated
-against OpenCode's own schema, so an unrecognized devgeta key there risks
-rejection by a tool devgeta does not control. Unlike Claude Code, OpenCode's
-plugin hooks run in **sequence** and mutate a shared object, so a plugin
-registered after rtk's genuinely sees rtk's already-rewritten command — no
-equivalent race exists there.
-
-## rtk command-rewrite shim (PreToolUse hook)
-
-Opt-in, off by default. When `integrations.rtk_claude_hook` is set (via
-`dg configure claude --force --only=rtk`), `settings.json` registers
-`~/.claude/rtk-shim.sh` under its own `Bash` `PreToolUse` matcher, in place of
-running `rtk hook claude` directly. It pipes the hook payload straight to
-`rtk hook claude`, then re-emits the same JSON with the
-`permissionDecision`/`permissionDecisionReason` keys removed — `updatedInput`
-(rtk's command rewrite, the source of its token savings) passes through
-unchanged.
-
-**Why it exists:** rtk's own hook returns `permissionDecision: "allow"` for
-most `git`/`gh` families it rewrites (verified on rtk 0.43.0), and a
-`PreToolUse` hook's `allow` overrides both `ask` and `deny` — so with the raw
-hook wired in, rtk's own auto-allow list is the effective policy for those
-commands, not devgeta's `ask`/`deny` lists. See
-[ADR-0038](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md).
-
-**What it fixes, and what it does not — verified 2026-09-10.** The shim
-correctly removes rtk's own decision: with the shim in place, a real `deny`
-rule (`Bash(git status*)`) still fires even though rtk rewrote the command
-underneath it. But a **second, independent** bypass sits underneath that one
-and the shim cannot touch it: devgeta's baseline `"allow": ["Bash(*)"]` —
-present unconditionally, rtk or not — appears to be matched against the
-_rewritten_ command whenever _any_ `PreToolUse` hook returns `updatedInput`,
-and an allow match there beats an `ask`/`deny` rule that only matches the
-_original_ text. This reproduces with the shim's own rewrite, decision fully
-stripped, for both a real `deny` and a real `ask` rule. Practically: on a
-machine with this integration enabled, the four `gh` write gates above (and
-the pre-existing `gh api *` ask) do not reliably prompt for a command rtk
-rewrites. Full evidence, including the four-run A/B table that isolates this
-from the shim's own logic:
-[agent-permission-matching.md §6](../guides/agent-permission-matching.md),
-[ADR-0038's correction](../decisions/ADR-0038-a-third-party-hook-does-not-decide-devgeta-s-permissions.md#consequences).
-This is a Claude Code resolution-order behavior, not a bug in the shim or in
-rtk's JSON shape — no hook devgeta could write closes it, including
-`output-budget.sh` below, which rewrites commands for an unrelated reason and
-is a candidate for the same interaction (not measured).
-
-**Fail-open to silence**, matching the sibling hooks: the rtk binary missing
-from PATH, a non-zero exit from `rtk hook claude`, empty output, or output
-that isn't valid JSON all mean the shim emits nothing and the call proceeds
-through the normal permission flow unaffected.
-
-**Bypass:** export `DEVGETA_SKIP_RTK_SHIM=1` in the shell that launches this
-agent (e.g. the repo's `.envrc`), BEFORE invoking the agent — not inside the
-command — because the hook reads its own environment.
-
-**No OpenCode mirror.** rtk installs its own plugin file on the OpenCode side
-(`~/.config/opencode/plugins/rtk.ts`) and devgeta does not touch it
-(`internal/apps/opencode/opencode.go`). That plugin only rewrites commands —
-it never emits a permission decision there — but the rewrite alone is enough
-to defeat OpenCode's own `ask` rules too, by a related but distinct
-mechanism: OpenCode's permission engine matches against the _rewritten_
-command text, so a rewritten `gh pr merge …` no longer matches a
-`"gh pr merge *": "ask"` rule at all. Measured in
-`docs/plans/cycles/2026-09-10-gh-permission-granularity-probe-notes.md`
-("1c"). There is no devgeta-owned fix for this on either agent today.
 
 ## Agent activity state (SessionStart / SessionEnd / Stop / UserPromptSubmit / PostToolUse / Notification hooks)
 
@@ -605,7 +276,7 @@ newer ones). `resume` exists because Claude Code has no "permission prompt
 answered" event: after you answer one, a tool finishing is the first sign the
 turn is running again. Without it, a pane whose `blocked` was cleared by
 looking at it read as idle until the turn ended. It reads the state first, so
-the usual case (already `busy`) costs one tmux call per tool. Unlike `format.sh` and `task-redirect.sh`, this script reads no data
+the usual case (already `busy`) costs one tmux call per tool. Unlike `format.sh`, this script reads no data
 from the hook's JSON stdin payload — which value to write is fully determined
 by which hook fired, passed as `$1`. It no-ops silently when `$TMUX_PANE` is
 unset (Claude Code run outside tmux) and swallows any `tmux` failure, the same
@@ -627,23 +298,19 @@ spawn — this is what lets `dg ws`'s agents section list a coder that hasn't
 prompted yet, and what survives `@dg_agent_state` being cleared by an
 attach/focus/ack. `end` unsets both options and recomputes
 `@dg_window_agent_state` with the same "any sibling pane still wants you?"
-rule the pane-focus-in/out hooks use. **Verified empirically to be
-unreliable in the one place it matters least:** OpenCode's equivalent
-end-of-life path (`server.instance.disposed` plus a process-exit fallback) does
-not fire on that coder's own quit gesture or a bare `SIGTERM` (Step 0 of
-`docs/plans/cycles/2026-09-28-ws-agents-section.md`) — Claude Code's
-`SessionEnd` does not have this problem (confirmed against a real session: it
-fires reliably on `/exit`, double ctrl-c, and normal completion, always
-carrying `$TMUX_PANE`). Either way, the dashboard's agents list stays correct
-regardless: a pane whose foreground process has reverted to a plain shell is
-never listed, kind option or not (see ADR-0055's shell-name backstop).
+rule the pane-focus-in/out hooks use. `SessionEnd` fires reliably on `/exit`,
+double ctrl-c, and normal completion, always carrying `$TMUX_PANE`; OpenCode's
+equivalent is its TUI plugin's cleanup. Either way, the dashboard's agents
+list stays correct regardless: a pane whose foreground process has reverted to
+a plain shell is never listed, kind option or not (see ADR-0055's shell-name
+backstop).
 
 See [ADR-0005](../decisions/ADR-0005-agent-activity-state-in-tmux-pane-options.md)
 for the full design and value table. The OpenCode plugin equivalent
-(`~/.config/opencode/plugin/notify.js`) writes the same pane options, keeping
-both coders behaviourally matched for `busy`/`idle`/`blocked` and for the kind
-option — but not for `error`: Claude's registered hooks above have no
-counterpart for OpenCode's `session.error` event. Claude Code does have a
+(`~/.config/opencode/plugins/devgeta-notify/tui.js`) writes the same pane
+options, keeping both coders behaviourally matched for `busy`/`idle`/`blocked`
+and for the kind option — but not for `error`: Claude's registered hooks above
+have no counterpart for OpenCode's `session.execution.failed` event. Claude Code does have a
 `StopFailure` event ("when the turn ends due to an API error") that could
 serve this purpose, but it isn't wired up — it was out of scope for this
 cycle. A Claude Code coder that errors out currently surfaces as an ordinary

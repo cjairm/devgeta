@@ -6,6 +6,28 @@ two formats and kept in step by `internal/apps/opencode/permissions_test.go`
 know what a pattern matches at runtime, and this page is about the gap between
 those two things.
 
+> **Status after [ADR-0067](../decisions/ADR-0067-agent-permission-floor.md).**
+> devgeta now ships a small floor: secret-file read denies, five Bash `ask`s,
+> and `Edit(.git/**)`. The enumerated `~/.claude` edit denies, the Bash denies
+> and most `ask` rules this page was written around are gone. The findings
+> below describe how the matchers behave and still apply to any rule you add;
+> where a section names a rule that no longer ships, it is kept as the
+> evidence for how matching works.
+
+> **OpenCode 2 (devgeta pins 2.2.6).** The OpenCode measurements below were
+> taken on 1.18. OpenCode 2's own docs (opencode.ai/docs/permissions, read
+> 2026-11-08) change two of them, and neither has been re-probed here yet:
+>
+> - Rules are an ordered `permissions` list and **the last matching rule
+>   wins** (section 3 is updated for this).
+> - `~`, `~/`, `$HOME` and `$HOME/` are expanded for `read`, `edit` and
+>   `external_directory` at config load, so a `~/…` rule may now be live on
+>   OpenCode too (section 1). devgeta keeps shipping both spellings until a
+>   probe shows the `**/` twin is redundant.
+>
+> `*` still matches across `/` per the same docs (section 2). The probe
+> procedure in section 7 works on 2.x with `--standalone`.
+
 Everything marked **verified** below was measured, not reasoned about:
 
 | Agent       | Version               | How the result was read                                                                  |
@@ -130,16 +152,20 @@ differently, because the resolution orders are not the same:
 |             | Conflict resolution                                                                        | Negation                                           |
 | ----------- | ------------------------------------------------------------------------------------------ | -------------------------------------------------- |
 | Claude Code | deny → ask → allow; **first match in that order wins**, rule specificity is not a tiebreak | none                                               |
-| OpenCode    | **longest matching pattern wins**, regardless of order in the file                         | none, but a _longer allow_ re-opens a shorter deny |
+| OpenCode 2  | **last matching rule wins**, in the order of the `permissions` list                        | none, but a _later allow_ re-opens an earlier deny |
+| OpenCode 1  | longest matching pattern won, regardless of order in the file                              | a _longer allow_ re-opened a shorter deny          |
 
-So the "broad deny plus a narrower carve-out" shape works on OpenCode and is
-**impossible to express** on Claude Code. That asymmetry is why the global
+So the "broad deny plus a narrower carve-out" shape works on OpenCode (put the
+carve-out after the deny) and is **impossible to express** on Claude Code.
+`TestEmbeddedConfigCatchAllIsFirst` keeps each `*` catch-all first, since
+under last-match-wins a catch-all anywhere later overrides everything above it. That asymmetry is why the global
 Claude root is enumerated surface-by-surface in both configs rather than swept
 with a blanket deny and a carve-out — see
 [ADR-0014](../decisions/ADR-0014-agent-config-protection-is-a-guard-not-a-path-deny.md)'s
 memory amendment.
 
-The OpenCode allowlist inversion, for reference (verified):
+The OpenCode 1 allowlist inversion, for reference (verified on 1.18; on 2.x
+the same effect comes from order, not length):
 
 ```jsonc
 "read": {
@@ -151,7 +177,9 @@ The OpenCode allowlist inversion, for reference (verified):
 
 ---
 
-## 4. The global Claude root: why it is enumerated by filename
+## 4. The global Claude root: why it was enumerated by filename
+
+_devgeta no longer ships this enumeration: `agent-config-guard` is the only protection for agent config (ADR-0067). The probes below remain the reference if one is ever added back._
 
 Sections 1 and 2 interact badly, and this is where they land.
 
@@ -205,21 +233,17 @@ So the floor ships **both** halves, and they are not redundant:
 | `**/.claude/<exact filename>`, one per deployed file          | OpenCode    | only the files named — see the known limit below           |
 | `~/.claude/agents/**` + `**/.claude/agents/**` (and siblings) | both        | the config-bearing subdirectories, on their own agent each |
 
-The enumerated filenames are exactly what devgeta and Claude Code put at the top
+The enumerated filenames were what devgeta and Claude Code put at the top
 level of `~/.claude/`: `settings.json`, `settings.local.json`, the global
-`CLAUDE.md`, `RTK.md` (devgeta's rtk integration), and the seven hook scripts
-`internal/apps/claude/claude.go` deploys — `statusline.sh`, `format.sh`,
-`task-redirect.sh`, `secret-guard.sh`, `suppression-guard.sh`,
-`agent-config-guard.sh`, `agent-state.sh`.
+`CLAUDE.md`, and the hook scripts `internal/apps/claude/claude.go` deploys.
 
 **Known limit, stated rather than papered over:** on OpenCode that list is
 default-allow against anything not named — a new direct child upstream adds is
 writable until someone adds it here. This is ADR-0014 §4's rejected
 enumerate-and-maintain approach, accepted for this one root because §3 already
 assigns the default-deny job to `agent-config-guard.js`, which covers surface the
-tools have not shipped yet. `TestGlobalClaudeFloorEnumerationStaysCurrent`
-derives the `.sh` half from `configs/claude/` so at least devgeta's own scripts
-cannot fall out of it silently.
+tools have not shipped yet. A test that derived the `.sh` half from `configs/claude/` existed to keep devgeta's own scripts from falling
+out of it; it was removed with the enumeration.
 
 ---
 
@@ -230,7 +254,7 @@ injection. They do **not** close the `Bash(*)` gap — ADR-0014 §1 and
 `docs/apps/claude.md`'s "Known limits" both say so, and this section exists so
 nobody reads the newer entries as a stronger claim than the old ones.
 
-The entries added for that purpose are the inline-code-execution one-liners —
+The entries that were added for that purpose (and removed by ADR-0067) were the inline-code-execution one-liners —
 `python3 -c *`, `python -c *`, `node -e *`, `node --eval *`, `ruby -e *`,
 `perl -e *`, `php -r *` — plus `gh api *`, which is an **ask**, not a deny (see
 below). They fire, and they are trivially walked around. Both halves verified:
@@ -262,11 +286,10 @@ option ADR-0014 §5 already rejected, for the reason this bullet demonstrates. T
 real boundary for high-autonomy work is Claude Code's OS sandbox (`/sandbox`,
 Seatbelt on macOS).
 
-**`gh api *` is `ask`, not `deny`.** A deny would break a workflow devgeta itself
-ships: `configs/shared/skills/receiving-code-review/SKILL.md` tells the agent to
-reply to inline review comments with
+**`gh api *` was `ask`, not `deny`** (the `ask` is dropped by ADR-0067; the reasoning stands for anyone adding it back). A deny would break ordinary workflows, such
+as replying to inline review comments with
 `gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`. `ask` keeps the
-human gate on an easy egress path without breaking a shipped skill. Verified that
+human gate on an easy egress path without breaking them. Verified that
 the pattern matches at all, on both agents, with `gh api rate_limit`: denied when
 the rule was a deny, allowed in the control.
 
@@ -298,23 +321,18 @@ Four isolated `claude -p --setting-sources ''` runs against a scratch
 | `["Bash(*)"]`    | **yes**                     | **bypassed** — the command actually runs    |
 
 Reproduced with a real `deny` (`Bash(git status*)`) and, separately, a real
-`ask` (`Bash(gh pr merge *)`) — same result both times. The hook used was
-`configs/claude/rtk-shim.sh`, whose entire job is to strip
-`permissionDecision`, so the decision field is not the deciding factor here;
-the rewrite alone is enough. `output-budget.sh` also rewrites
-`tool_input.command` via `updatedInput`, for an unrelated reason (capping
-output), and is therefore a candidate for the same bypass — not measured, a
-follow-up.
+`ask` (`Bash(gh pr merge *)`) — same result both times. The hook used
+stripped `permissionDecision` from its output (it was rtk's shim, removed with
+rtk in ADR-0065), so the decision field is not the deciding factor here; the
+rewrite alone is enough.
 
-**Practically:** on a machine with the rtk Claude Code integration enabled,
-no `ask`/`deny` rule reliably fires for a command rtk rewrites, regardless of
-what devgeta's own config says — including the four write gates
-(`gh pr merge *`, `gh release delete *`, `gh pr close *`, `gh issue delete
-*`) added for exactly this purpose (ADR-0038, ADR-0039). This is not a gap in
-those rules' wording; it reproduces identically with the sole difference
+**Practically:** while any `PreToolUse` hook rewrites a command, no
+`ask`/`deny` rule reliably fires for that command, regardless of what
+devgeta's own config says — including the `gh release delete *` and
+`gh repo delete *` asks. This is not a gap in those rules' wording; it reproduces identically with the sole difference
 being whether a hook rewrote the command at all. It is a Claude Code
-resolution-order behavior, not something a devgeta-owned hook can close —
-the same conclusion ADR-0038's correction reaches for the shim specifically.
+resolution-order behavior, not something a devgeta-owned hook can close, and
+one reason ADR-0065 removed rtk.
 
 ---
 

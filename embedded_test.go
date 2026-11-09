@@ -206,11 +206,9 @@ func installerInstallDir(t *testing.T) string {
 
 // The project was renamed devgita -> devgeta, and the installed binary is now
 // devgeta. Embedded configs are the one place where the old name fails silently
-// rather than loudly: the agent and command prompts under configs/shared invoke
-// `devgeta task ...` as shell commands and allowlist those same strings in their
-// frontmatter, so a stale name there produces "command not found" (or a
-// permission prompt that never matches) inside an agent run, far from anything
-// a compiler or a normal test would catch. Nothing embedded has a legitimate
+// rather than loudly: a hook or plugin that invokes `devgeta ...` by name gets
+// "command not found" inside an agent run, far from anything a compiler or a
+// normal test would catch. Nothing embedded has a legitimate
 // reason to name the old binary, so this guard covers the whole FS rather than
 // enumerating files, and it will catch the next rename's leftovers too.
 func TestEmbeddedConfigsDoNotReferenceOldProjectName(t *testing.T) {
@@ -302,7 +300,7 @@ func TestEmbeddedConfigsNameNoPersonalCheckoutPaths(t *testing.T) {
 
 // Embedded shell scripts start with `#!/usr/bin/env bash`, and on a stock Mac
 // that resolves to /bin/bash 3.2 — Apple never shipped a newer one. A bash 4+
-// builtin there is not a style problem: `mapfile` made the output-budget runner
+// builtin there is not a style problem: `mapfile` once made a wrapper script
 // exit 1 with no output for every wrapped command, hiding both the command's
 // output and its real exit status. The existing behavior tests only notice when
 // the machine running them happens to have bash 3.2 first on PATH, so this
@@ -310,8 +308,7 @@ func TestEmbeddedConfigsNameNoPersonalCheckoutPaths(t *testing.T) {
 //
 // Empty-array expansion under `set -u` (`"${arr[@]}"` is "unbound" before bash
 // 4.4) is the other 3.2 trap, but it is only wrong when the array can be empty,
-// which syntax cannot tell; TestOutputBudgetRun_WorksUnderBash3 covers it by
-// running the script under a real bash 3.
+// which syntax cannot tell.
 func TestEmbeddedShellScriptsAvoidBash4OnlySyntax(t *testing.T) {
 	banned := []struct {
 		pattern *regexp.Regexp
@@ -410,13 +407,18 @@ func TestTmuxExtendedKeysAreEnabledAndVersionGated(t *testing.T) {
 	if gate < 0 || format < 0 || end < 0 || !(gate < format && format < end) {
 		t.Errorf(
 			"extended-keys-format must sit inside a tmux >= 3.5 %%if block (gate=%d format=%d endif=%d)",
-			gate, format, end,
+			gate,
+			format,
+			end,
 		)
 	}
 	// The block must hold only that line: anything else would be skipped on
 	// tmux < 3.5 as a side effect of the gate.
 	if gate >= 0 && end >= 0 && end-gate != 2 {
-		t.Errorf("the version gate should wrap only extended-keys-format, wraps %d lines", end-gate-1)
+		t.Errorf(
+			"the version gate should wrap only extended-keys-format, wraps %d lines",
+			end-gate-1,
+		)
 	}
 }
 
@@ -443,7 +445,11 @@ func TestPowerlineFooterOverrideFollowsThePiTheme(t *testing.T) {
 		"thinkingMax":   "thinkingMax",
 	}
 	if !maps.Equal(override.Colors, want) {
-		t.Errorf("colors must equal the ADR-0062 §2 table\n got: %v\nwant: %v", override.Colors, want)
+		t.Errorf(
+			"colors must equal the ADR-0062 §2 table\n got: %v\nwant: %v",
+			override.Colors,
+			want,
+		)
 	}
 	for key, value := range override.Colors {
 		if strings.HasPrefix(value, "#") || value == "rainbow" {

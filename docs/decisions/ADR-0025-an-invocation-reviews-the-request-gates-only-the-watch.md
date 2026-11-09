@@ -1,6 +1,6 @@
 # ADR-0025: An invocation reviews now; the request field gates only the watch
 
-**Status:** ACCEPTED
+**Status:** SUPERSEDED by [ADR-0066](ADR-0066-devgeta-removes-its-token-reduction-layer.md)
 **Date:** 2026-08-12 (accepted 2026-08-17, when the behavior below landed)
 **Deciders:** cjairm
 **Related:** [ADR-0022](ADR-0022-pr-review-trigger-is-a-polled-state-read.md) (narrows its §1 trigger rule and §2 handoff order), [ADR-0023](ADR-0023-a-pr-review-targets-immutable-shas.md), [cycle 2026-08-06-pr-review-loop](../plans/cycles/2026-08-06-pr-review-loop.md) (where the defects surfaced), [cycle 2026-08-12-pr-review-explicit-vs-watch](../plans/cycles/2026-08-12-pr-review-explicit-vs-watch.md) (the plan that lands this)

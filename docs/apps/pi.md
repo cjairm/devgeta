@@ -12,6 +12,11 @@ Devgeta runs Pi's official installer (`https://pi.dev/install.sh`) under `sh`
 download-then-execute guard so a broken download cannot be reported as a
 successful install (ADR-0059).
 
+The script always installs the latest Pi release and takes no version, so Pi is
+not pinned the way Claude Code and OpenCode are. `constants.PinnedVersion.Pi`
+records the release devgeta's Pi config was last checked against (1.5.0), as a
+reference for the next check.
+
 Idempotency:
 
 - Skips if the script's marker (`~/.pi/agent/install/managed-install.json`)
@@ -413,9 +418,31 @@ follow-up). Devgeta's own configs forward those keys:
   acting like Enter.
 - **Ghostty:** nothing to change.
 
-Everything else stays out of scope: no shared skills, no permission or
-formatter parity with claude/opencode, no `dg worktree`/`dg task` wiring
-(ADR-0059).
+Pi gets skills through [agent packs](agent-packs.md) and takes part in the
+coder parity the other two share, wherever it has an equivalent
+([agent-sync.md](../guides/agent-sync.md)). It has no permission system (Pi does
+not ask before tool calls), so there are no permission rules, guard or scratch
+grant to mirror; those gaps are listed there. Still out of scope: any
+`dg worktree`/`dg task` wiring (ADR-0059).
+
+## Agent packs
+
+[Agent packs](agent-packs.md) are installed with `pi install <built folder>` and
+removed with `pi remove <built folder>`, so Pi's own package manager records
+them in `~/.pi/agent/settings.json` `packages`. Pi stores a local package
+**relative to the agent dir** (`../../.local/share/devgeta/agent-packs/…`);
+devgeta resolves it before comparing it with what it installed.
+
+The `devgeta` pack is an ordinary Pi package whose extension
+(`extensions/devgeta-instructions.js`) appends `DEVGETA.md` to the system prompt
+in a `before_agent_start` handler, so Pi gets the same rules Claude Code and
+OpenCode do. Pi rebuilds its system prompt each run, so the text is not part of
+the conversation that compaction summarizes.
+
+devgeta does not render Pi's `settings.json`, so `dg agent-pack list` checks it
+against `global_config.yaml` and says when a recorded package is missing, with
+the command that puts it back. `dg agent-pack check` prints the Pi version it ran
+against; Pi isn't pinned.
 
 ## Uninstall
 
@@ -423,3 +450,6 @@ formatter parity with claude/opencode, no `dg worktree`/`dg task` wiring
 holds Pi's config, sessions, installed extensions and agent state and is never
 touched. The `pi` binary is a symlink into the install root, so it disappears
 with it; PATH entries the script added to your shell profile are left alone.
+Packages stay in Pi's settings, so a pack's record stays too and `dg agent-pack
+list` shows Pi as not installed. Remove a pack from Pi with
+`dg agent-pack uninstall <pack> --coder pi` while Pi is still installed.

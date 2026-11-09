@@ -1,0 +1,23 @@
+name: ponytail
+repo: https://github.com/DietrichGebert/ponytail.git
+tag: v5.3.3
+sha: 7801d061243d7b753bad0e0b3c057cd250b11755
+requires:
+  - command: node
+    reason: the hooks it runs in Claude Code
+notices:
+  - coder: claude
+    text: >-
+      Ponytail writes one row per task (cost, time, tokens) to
+      ~/.config/ponytail/band/<project>.csv by default. Nothing leaves your
+      machine unless you set a webhook. To turn the ledger off, run
+      echo '{"ledger":"false"}' | claude plugin configure ponytail@devgeta --values-stdin
+      and restart Claude Code.
+  - coder: opencode
+    text: >-
+      In OpenCode, Ponytail reads PONYTAIL_DEFAULT_MODE (lite, full, ultra or
+      off) from the shared background service's environment, not from the
+      terminal that starts a session. Set it with
+      opencode service set env PONYTAIL_DEFAULT_MODE full, then
+      opencode service restart. Or set defaultMode in
+      ~/.config/ponytail/config.json, which every coder reads.

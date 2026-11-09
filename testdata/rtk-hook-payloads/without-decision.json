@@ -1,7 +1,0 @@
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecisionReason": "RTK auto-rewrite",
-    "updatedInput": { "command": "rtk gh api rate_limit" }
-  }
-}

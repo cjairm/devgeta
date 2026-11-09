@@ -1,77 +1,102 @@
-// Regression test for the risk ADR-0006 documents: OpenCode's plugin loader
-// (packages/opencode/src/plugin/index.ts's getLegacyPlugins) imports EVERY
-// .js file under the deployed plugin directory and invokes EVERY exported
-// value as if it were a plugin factory, throwing `TypeError: Plugin export
-// is not a function` for any export that isn't callable.
+// Loader-shape test for every plugin folder devgeta ships under
+// configs/opencode/plugins/, against what OpenCode 2's loader expects
+// (docs/apps/opencode.md; checked against OpenCode 2.2.6):
 //
-// This test enforces the two halves of that constraint for every file
-// actually shipped under configs/opencode/plugin/ (non-recursive — the exact
-// shape CopyDir deploys):
-//   1. Every export is a function (a non-function export would crash
-//      OpenCode's config load entirely).
-//   2. Calling that function with a plausible plugin ctx does not throw
-//      (a helper written for internal reuse — like isDevgetaRepo or
-//      splitCommandSegments — must tolerate being accidentally invoked this
-//      way; see task-redirect.js's export comments).
-//   3. The awaited result is not undefined or null. The loader reads
-//      `.config` (and the other hook names) off whatever each export
-//      returns, so a helper returning nothing crashes OpenCode's startup
-//      with "evaluating 'N.config'" — exactly what an exported
-//      exitFallbackSync in notify.js once did. A boolean, string or array
-//      result is harmless: reading a property off one yields undefined.
-//
-// A future contributor who adds a new shared-helpers file to plugin/ (the
-// exact mistake ADR-0006 warns against) will trip rule 1 immediately.
+//   1. A folder's entry files are named for where they run: server.js (or
+//      index.js) in OpenCode's server, tui.js in each terminal client. Any
+//      other top-level .js file is never loaded, so it is a mistake.
+//   2. Each entry's default export is `{ id, setup }`: a non-empty string id
+//      and a setup function. Nothing else is read; extra named exports are
+//      tolerated (the guard exports helpers for its Go test).
+//   3. Entries import only Node's standard library (`node:` specifiers) or
+//      relative files. A bare package import would make OpenCode resolve a
+//      dependency, which is exactly the startup stall devgeta used to work
+//      around with a lockfile; keeping plugins dependency-free removes it.
 //
 // Run with: node --test plugin-loader-safety.test.mjs
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readdirSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PLUGIN_DIR = join(HERE, "configs", "opencode", "plugin");
-const DEVGETA_DIR = HERE; // this repo's own root — a plausible, real ctx.directory
+const PLUGINS_DIR = join(HERE, "configs", "opencode", "plugins");
+const ENTRY_FILES = new Set(["server.js", "index.js", "tui.js"]);
 
-const pluginFiles = readdirSync(PLUGIN_DIR).filter((f) => f.endsWith(".js"));
+const folders = readdirSync(PLUGINS_DIR).filter((name) =>
+  statSync(join(PLUGINS_DIR, name)).isDirectory(),
+);
 
-test("every deployed plugin file has at least one export", () => {
-  assert.ok(
-    pluginFiles.length > 0,
-    "expected at least one .js file under configs/opencode/plugin/",
+test("configs/opencode/plugins ships at least one plugin folder", () => {
+  assert.ok(folders.length > 0);
+});
+
+test("no loose files next to the plugin folders", () => {
+  const loose = readdirSync(PLUGINS_DIR).filter(
+    (name) => !statSync(join(PLUGINS_DIR, name)).isDirectory(),
+  );
+  assert.deepEqual(
+    loose,
+    [],
+    "OpenCode 2 local plugins are folders; loose files load as separate plugins",
   );
 });
 
-for (const file of pluginFiles) {
-  test(`${file}: every export is a function callable with a plugin-shaped ctx`, async () => {
-    const mod = await import(join(PLUGIN_DIR, file));
-    const exportNames = Object.keys(mod);
-    assert.ok(exportNames.length > 0, `${file} has no exports at all`);
+for (const folder of folders) {
+  const dir = join(PLUGINS_DIR, folder);
+  const jsFiles = readdirSync(dir).filter((f) => f.endsWith(".js"));
 
-    for (const name of exportNames) {
-      const value = mod[name];
-      assert.equal(
-        typeof value,
-        "function",
-        `${file}'s export "${name}" is not a function — OpenCode's plugin loader would throw "Plugin export is not a function" on this file`,
-      );
-
-      // Call it the way the loader would: with a single ctx-shaped argument.
-      // Some exports (isDevgetaRepo) expect a plain string instead of a
-      // ctx object — either call shape must not throw synchronously.
-      let result;
-      await assert.doesNotReject(
-        (async () => {
-          result = await value({ directory: DEVGETA_DIR });
-        })(),
-        `${file}'s export "${name}" threw when called with a ctx object`,
-      );
-      assert.ok(
-        result !== undefined && result !== null,
-        `${file}'s export "${name}" returned ${result} — OpenCode's plugin loader reads .config on every export's result and would crash at startup; stop exporting it or return a hooks object`,
-      );
-    }
+  test(`${folder}: has an entry file and nothing the loader would skip`, () => {
+    const entries = jsFiles.filter((f) => ENTRY_FILES.has(f));
+    assert.ok(
+      entries.length > 0,
+      `${folder} has no server.js, index.js or tui.js`,
+    );
+    const stray = jsFiles.filter((f) => !ENTRY_FILES.has(f));
+    assert.deepEqual(stray, [], `${folder} has .js files OpenCode never loads`);
   });
+
+  for (const file of jsFiles) {
+    test(`${folder}/${file}: default export is { id, setup }`, async () => {
+      const mod = await import(join(dir, file));
+      const plugin = mod.default;
+      assert.ok(
+        plugin && typeof plugin === "object",
+        "missing default export object",
+      );
+      assert.equal(typeof plugin.id, "string");
+      assert.ok(plugin.id.length > 0, "id is empty");
+      assert.equal(typeof plugin.setup, "function");
+    });
+
+    test(`${folder}/${file}: imports only node: builtins or relative files`, () => {
+      const source = readFileSync(join(dir, file), "utf8");
+      const specifiers = [
+        ...source.matchAll(/^\s*import\s[^;]*?from\s+["']([^"']+)["']/gm),
+        ...source.matchAll(/^\s*import\s+["']([^"']+)["']/gm),
+      ].map((m) => m[1]);
+      const bare = specifiers.filter(
+        (s) => !s.startsWith("node:") && !s.startsWith("."),
+      );
+      assert.deepEqual(
+        bare,
+        [],
+        "bare package imports make OpenCode resolve dependencies",
+      );
+    });
+  }
 }
+
+test("the two plugin ids are distinct", async () => {
+  const ids = [];
+  for (const folder of folders) {
+    for (const file of readdirSync(join(PLUGINS_DIR, folder)).filter((f) =>
+      ENTRY_FILES.has(f),
+    )) {
+      ids.push((await import(join(PLUGINS_DIR, folder, file))).default.id);
+    }
+  }
+  assert.equal(new Set(ids).size, ids.length, `duplicate plugin ids: ${ids}`);
+});

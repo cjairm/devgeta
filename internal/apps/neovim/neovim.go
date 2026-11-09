@@ -17,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
 	"github.com/cjairm/devgeta/internal/apps"
@@ -30,6 +29,7 @@ import (
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/logger"
 	"github.com/cjairm/devgeta/pkg/paths"
+	"github.com/cjairm/devgeta/pkg/version"
 )
 
 var (
@@ -306,7 +306,7 @@ func (n *Neovim) checkVersion() error {
 		line := scanner.Text()
 		if versionStr, found := strings.CutPrefix(line, "NVIM v"); found {
 			versionStr = strings.Fields(versionStr)[0]
-			if isVersionEqualOrHigher(versionStr, constants.SupportedVersion.Neovim.Number) {
+			if version.AtLeast(versionStr, constants.SupportedVersion.Neovim.Number) {
 				return nil
 			}
 			return fmt.Errorf(
@@ -328,28 +328,6 @@ func enableFeature(gc *config.GlobalConfig) error {
 		return fmt.Errorf("failed to save global config: %w", err)
 	}
 	return nil
-}
-
-func isVersionEqualOrHigher(currentVersion, requiredVersion string) bool {
-	currentParts := strings.Split(currentVersion, ".")
-	requiredParts := strings.Split(requiredVersion, ".")
-	for i, requiredPartStr := range requiredParts {
-		if i >= len(currentParts) {
-			return false // Current version has fewer parts
-		}
-		currentPart, err := strconv.Atoi(currentParts[i])
-		if err != nil {
-			return false
-		}
-		requiredPart, err := strconv.Atoi(requiredPartStr)
-		if err != nil {
-			return false
-		}
-		if currentPart < requiredPart {
-			return false
-		}
-	}
-	return true
 }
 
 func getBaseCmd(args ...string) cmd.CommandParams {

@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -94,5 +95,44 @@ func TestForceConfigureTheme_ThemeJSONMatchesGoldenRender(t *testing.T) {
 			"rendered opencode theme json differs from golden\n--- got ---\n%s\n--- want ---\n%s",
 			got, want,
 		)
+	}
+}
+
+// TestForceConfigureTheme_ConfigWithPacksMatchesGoldenRender covers the other
+// half of the template: with agent packs installed in OpenCode, their plugin
+// folders and instruction files are rendered from state, so a `--force`
+// re-render keeps them (ADR-0068 §6). With no packs the output is the
+// existing golden, byte for byte.
+func TestForceConfigureTheme_ConfigWithPacksMatchesGoldenRender(t *testing.T) {
+	repoRoot, _ := repoDefaultOpenCodePalette(t)
+
+	out := filepath.Join(t.TempDir(), "opencode.json")
+	if err := files.GenerateFromTemplate(
+		filepath.Join(repoRoot, "configs", "opencode", "opencode.json.tmpl"),
+		out,
+		configTemplateData{
+			ScratchDirGlob: `"/tmp/placeholder-scratch/**"`,
+			Plugins: []string{
+				`"/home/tester/.local/share/devgeta/agent-packs/ponytail/.opencode/plugins"`,
+				`"/home/tester/.local/share/devgeta/agent-packs/superpowers"`,
+			},
+			Instructions: []string{`"/home/tester/.local/share/devgeta/agent-packs/devgeta/DEVGETA.md"`},
+		},
+	); err != nil {
+		t.Fatalf("failed to render opencode.json.tmpl: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(got) {
+		t.Fatalf("the rendered config is not valid JSON:\n%s", got)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "golden_opencode_packs.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("rendered output differs from golden_opencode_packs.json\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
