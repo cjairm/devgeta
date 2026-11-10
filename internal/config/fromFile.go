@@ -125,7 +125,7 @@ type WorktreeConfig struct {
 	AttachAfterCreate *bool `yaml:"attach_after_create,omitempty"`
 
 	// NotifySound gates the audible ding ADR-0009 adds to the two agent-state
-	// hooks (configs/claude/agent-state.sh, configs/opencode/plugins/devgeta-notify/tui.js)
+	// hooks (configs/devgeta/agent-state.sh, configs/opencode/plugins/devgeta-notify/tui.js)
 	// for idle/blocked/error pane states while the window is unattended.
 	//
 	// Unlike AttachAfterCreate, a plain bool is right here: the default is

@@ -240,7 +240,6 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		"statusline.sh",
 		"format.sh",
 		"agent-config-guard.sh",
-		"agent-state.sh",
 	} {
 		dst := filepath.Join(paths.Paths.Config.Claude, script)
 		if err := files.CopyFile(
@@ -252,6 +251,13 @@ func (c *Claude) ForceConfigureTheme(def theme.Definition) error {
 		if err := os.Chmod(dst, 0o755); err != nil {
 			return fmt.Errorf("failed to chmod %s: %w", script, err)
 		}
+	}
+	// Shared with Pi; settings.json still calls it from ~/.claude.
+	if err := baseapp.DeploySharedScript(
+		baseapp.AgentStateScriptName,
+		paths.Paths.Config.Claude,
+	); err != nil {
+		return err
 	}
 
 	// Rendered into a clean directory, not CopyDir'd: a blind directory copy
@@ -340,7 +346,11 @@ func (c *Claude) ExecuteCommandOutput(args ...string) (string, error) {
 	})
 	if err != nil {
 		if stderr != "" {
-			return "", fmt.Errorf("claude command execution failed: %s: %w", strings.TrimSpace(stderr), err)
+			return "", fmt.Errorf(
+				"claude command execution failed: %s: %w",
+				strings.TrimSpace(stderr),
+				err,
+			)
 		}
 		return "", fmt.Errorf("claude command execution failed: %w", err)
 	}

@@ -33,8 +33,14 @@
 # (start / busy / resume / idle / blocked / error / end) in its command string. That
 # argument is $1.
 #
+# $2 is the coder's name for @dg_agent_kind. Pi's devgeta-notify extension
+# (configs/pi/extensions/devgeta-notify.js) passes "pi"; Claude Code's hooks
+# pass nothing, which keeps settings.json files rendered before $2 existed
+# correct.
+kind="${2:-claude}"
+
 # Same no-op contract as the OpenCode plugin: if TMUX_PANE is unset or empty,
-# do nothing and exit 0 — Claude Code run outside tmux must not error.
+# do nothing and exit 0 — a coder run outside tmux must not error.
 [ -n "${TMUX_PANE:-}" ] || exit 0
 
 # recompute_window_mirror applies the SAME rule the pane-focus-in/out hooks
@@ -61,7 +67,7 @@ case "$1" in
 start)
 	# ADR-0055: a fresh agent has no state yet, so this writes only the
 	# identity option - no @dg_agent_state write, no window mirror, no sound.
-	tmux set-option -p -t "$TMUX_PANE" @dg_agent_kind claude >/dev/null 2>&1 || true
+	tmux set-option -p -t "$TMUX_PANE" @dg_agent_kind "$kind" >/dev/null 2>&1 || true
 	exit 0
 	;;
 resume)
@@ -72,7 +78,7 @@ resume)
 	# after every tool, so it reads first and stops at one tmux call in the
 	# common case (already busy).
 	[ "$(tmux display-message -p -t "$TMUX_PANE" '#{@dg_agent_state}' 2>/dev/null)" != busy ] || exit 0
-	tmux set-option -p -t "$TMUX_PANE" @dg_agent_state busy \; set-option -p -t "$TMUX_PANE" @dg_agent_kind claude >/dev/null 2>&1 || true
+	tmux set-option -p -t "$TMUX_PANE" @dg_agent_state busy \; set-option -p -t "$TMUX_PANE" @dg_agent_kind "$kind" >/dev/null 2>&1 || true
 	recompute_window_mirror
 	exit 0
 	;;
@@ -95,7 +101,7 @@ esac
 # SAME tmux invocation via `\;` rather than a second process spawn - kept
 # fresh on every write so it survives @dg_agent_state being cleared by an
 # attach/focus/ack (ADR-0005's 2026-09-28 revision, `3013bd0`).
-tmux set-option -p -t "$TMUX_PANE" @dg_agent_state "$1" \; set-option -p -t "$TMUX_PANE" @dg_agent_kind claude >/dev/null 2>&1 || true
+tmux set-option -p -t "$TMUX_PANE" @dg_agent_state "$1" \; set-option -p -t "$TMUX_PANE" @dg_agent_kind "$kind" >/dev/null 2>&1 || true
 
 # Window-level display-only mirror for the tmux status bar - a DIFFERENT
 # option name than @dg_agent_state; see ADR-0005 for why reusing the

@@ -147,7 +147,7 @@ type hookEnv struct {
 	paneState string
 }
 
-// runAgentStateHook extracts configs/claude/agent-state.sh from the embedded
+// runAgentStateHook extracts configs/devgeta/agent-state.sh from the embedded
 // ConfigsFS (the same bytes that ship in the built binary), runs it as a real
 // subprocess with the given positional argument and TMUX_PANE environment
 // state, with a fake `tmux` (see writeFakeTmux) and any fake sound players
@@ -192,7 +192,7 @@ func runAgentStateHook(
 		t.Fatalf("bash not found: %v", err)
 	}
 
-	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/claude/agent-state.sh")
+	scriptBytes, err := fs.ReadFile(ConfigsFS, "configs/devgeta/agent-state.sh")
 	if err != nil {
 		t.Fatalf("failed to read embedded agent-state.sh: %v", err)
 	}
@@ -222,7 +222,8 @@ func runAgentStateHook(
 		writeFakePlayer(t, fakeBinDir, name, playerRecPath)
 	}
 
-	cmd := exec.Command(bashPath, scriptPath, arg)
+	// arg may carry the coder name as a second word ("idle pi").
+	cmd := exec.Command(bashPath, append([]string{scriptPath}, strings.Fields(arg)...)...)
 	// Deliberately NOT inheriting the parent's real PATH: the fake tmux (and
 	// any fake players) on fakeBinDir are the ONLY binaries this child can
 	// find, by construction — see the doc comment above for why the child is
@@ -438,6 +439,18 @@ func TestAgentStateHook_Start_WritesOnlyKind(t *testing.T) {
 		t.Errorf("call = %q, want %q", calls[0], want)
 	}
 	assertPlayerNeverInvoked(t, playerRecPath)
+}
+
+// TestAgentStateHook_KindArgument: a second argument names the coder (Pi's
+// devgeta-notify extension passes "pi"); without one the kind stays "claude".
+func TestAgentStateHook_KindArgument(t *testing.T) {
+	_, recorded, _ := runAgentStateHook(
+		t, "busy pi", paneEnv{set: true, value: "%3"}, hookEnv{},
+	)
+	want := "set-option -p -t %3 @dg_agent_state busy ; set-option -p -t %3 @dg_agent_kind pi"
+	if calls := callLines(recorded); len(calls) == 0 || calls[0] != want {
+		t.Errorf("calls = %q, want first %q", calls, want)
+	}
 }
 
 // TestAgentStateHook_Resume_NoWriteWhenAlreadyBusy: PostToolUse runs after

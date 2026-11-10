@@ -18,7 +18,7 @@ the enforcing tests do and do not check, and which differences are deliberate.
 | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | Permissions                                                                           | `configs/claude/settings.json.tmpl`                                                                                   | `configs/opencode/opencode.json.tmpl`                                                                    | None, see below                                                                    |
 | Formatting on save                                                                    | `configs/claude/format.sh` (wraps `configs/devgeta/format-file.sh`)                                                   | `formatter` block in `configs/opencode/opencode.json.tmpl`                                               | `configs/pi/extensions/devgeta-format.js` (calls `configs/devgeta/format-file.sh`) |
-| Agent activity state                                                                  | `configs/claude/agent-state.sh`                                                                                       | `configs/opencode/plugins/devgeta-notify/tui.js` (TUI plugin)                                            | None, see below                                                                    |
+| Agent activity state                                                                  | `configs/devgeta/agent-state.sh` (copied to `~/.claude`)                                                              | `configs/opencode/plugins/devgeta-notify/tui.js` (TUI plugin)                                            | `configs/pi/extensions/devgeta-notify.js` (calls `configs/devgeta/agent-state.sh`) |
 | Agent-config protection                                                               | `configs/claude/agent-config-guard.sh`                                                                                | `configs/opencode/plugins/devgeta-agent-config-guard/server.js` (server plugin)                          | None, see below                                                                    |
 | Scratch dir grant                                                                     | `additionalDirectories` in `configs/claude/settings.json.tmpl`                                                        | `external_directory` in `configs/opencode/opencode.json.tmpl`                                            | None, see below                                                                    |
 | Shared instructions (`DEVGETA.md`)                                                    | an `@DEVGETA.md` line in `~/.claude/CLAUDE.md`, added by the `devgeta` pack (`internal/tooling/agentpack/devgeta.go`) | an `instructions` entry in `opencode.json`, rendered from state by `configs/opencode/opencode.json.tmpl` | `configs/agent-packs/devgeta/extensions/devgeta-instructions.js`                   |
@@ -69,9 +69,10 @@ Deliberate — do not "fix" these by halves.
   documentation says to review changes and use a sandbox for unattended work),
   so there is no permission list to keep in step. Claude Code and OpenCode stay
   rule for rule the same.
-- **Agent activity state: Pi has none.** devgeta ships no activity-state
-  integration for Pi, so a Pi pane is not reported busy, idle or blocked to the
-  tmux dashboard the way a Claude Code or OpenCode pane is.
+- **Pi's "blocked" covers extension dialogs only.** Pi has no permission
+  prompts, so `devgeta-notify.js` reports blocked while an extension's
+  `ctx.ui` dialog waits on you during a run (`ui_prompt_start`), and busy again
+  when it closes.
 - **Agent-config protection: Pi has none.** devgeta ships no guard for Pi, so
   nothing stops Pi editing its own configuration.
 - **Scratch dir grant: Pi has none.** Pi has no permission system to grant a

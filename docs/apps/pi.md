@@ -366,6 +366,27 @@ the output of `edit`, `write`, `read` and the search tools. Those overrides are
 left out because they replace Pi's diff view of an edit with plain text.
 `dg configure pi` rewrites the file every time, like `devgeta-format.js`.
 
+## Agent activity in tmux
+
+`~/.pi/agent/extensions/devgeta-notify.js` reports what Pi is doing into the
+tmux pane it runs in, so `dg ws` lists the pane as a `pi` agent with its state,
+the tmux status bar flags its window when it wants you, and the optional sound
+(`@dg_notify_sound`) plays. It calls `~/.config/devgeta/agent-state.sh`, the
+same script Claude Code's hooks run, with `pi` as the coder name:
+
+| Pi event                                  | Writes                                       |
+| ----------------------------------------- | -------------------------------------------- |
+| `session_start`                           | `@dg_agent_kind pi` only                     |
+| `agent_start`                             | `busy`                                       |
+| `agent_settled`                           | `error` if the last turn failed, else `idle` |
+| `ui_prompt_start` during a run            | `blocked`                                    |
+| `ui_prompt_end` during a run              | `busy`                                       |
+| `session_shutdown` (quit, `/new`, reload) | unsets kind and state                        |
+
+Pi has no permission prompts, so `blocked` means an extension's dialog is
+waiting on you. Outside tmux the extension does nothing. `dg configure pi`
+rewrites the file every time.
+
 ## Formatting
 
 After every `edit` or `write`, Pi formats and lints the file with the same

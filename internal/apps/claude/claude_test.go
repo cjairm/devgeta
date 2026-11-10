@@ -471,13 +471,6 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(appConfigDir, "agent-state.sh"),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
 		filepath.Join(appConfigDir, "themes", "default.json.tmpl"),
 		[]byte(`{"foreground": "{{.Palette.Foreground}}"}`),
 		0o644,
@@ -490,12 +483,10 @@ func TestForceConfigure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := os.WriteFile(
-		filepath.Join(devgetaConfigDir, baseapp.FormatScriptName),
-		[]byte(`#!/bin/bash`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
+	for _, script := range []string{baseapp.FormatScriptName, baseapp.AgentStateScriptName} {
+		if err := os.WriteFile(filepath.Join(devgetaConfigDir, script), []byte(`#!/bin/bash`), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	testutil.IsolateXDGDirs(t)
@@ -711,9 +702,10 @@ func forceConfigureRig(t *testing.T, settingsTmpl string) (*Claude, string, *con
 		}
 	}
 	write(filepath.Join(appConfigDir, "settings.json.tmpl"), settingsTmpl)
-	for _, s := range []string{"statusline.sh", "format.sh", "agent-config-guard.sh", "agent-state.sh"} {
+	for _, s := range []string{"statusline.sh", "format.sh", "agent-config-guard.sh"} {
 		write(filepath.Join(appConfigDir, s), "#!/bin/bash")
 	}
+	write(filepath.Join(devgetaConfigDir, baseapp.AgentStateScriptName), "#!/bin/bash")
 	write(filepath.Join(appConfigDir, "themes", "default.json.tmpl"), `{"foreground": "{{.Palette.Foreground}}"}`)
 	write(filepath.Join(devgetaConfigDir, baseapp.FormatScriptName), "#!/bin/bash")
 

@@ -67,7 +67,7 @@
 // plays a sound for the same three "wants you" states (idle/blocked/error;
 // `busy` never dings), gated so it never fires for the agent you're already
 // watching. See `playNotifySound`/`firePlayer` below — they must stay
-// behaviourally matched with the bash counterpart, configs/claude/agent-state.sh.
+// behaviourally matched with the bash counterpart, configs/devgeta/agent-state.sh.
 //
 // Guard against a plugin failure taking down the session: every write is
 // wrapped in try/catch and the error is swallowed. A missing dot on the

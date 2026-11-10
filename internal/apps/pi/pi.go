@@ -307,8 +307,9 @@ const formatExtensionName = "devgeta-format.js"
 // devgetaExtensions are the extensions devgeta ships in configs/pi/extensions.
 // Unlike the footer override they are devgeta code, not user config, so they
 // are rewritten on every configure. devgeta-quiet-bash shows only the command
-// of a bash call until ctrl+o expands it.
-var devgetaExtensions = []string{formatExtensionName, "devgeta-quiet-bash.js"}
+// of a bash call until ctrl+o expands it. devgeta-notify reports Pi's activity
+// to tmux through the shared agent-state.sh.
+var devgetaExtensions = []string{formatExtensionName, "devgeta-quiet-bash.js", "devgeta-notify.js"}
 
 func devgetaExtensionFile(name string) string {
 	return filepath.Join(piAgentDir(), "extensions", name)
@@ -381,6 +382,12 @@ func (p *Pi) configure(force bool) error {
 		return err
 	}
 	if err := baseapp.EnsureFormatScript(); err != nil {
+		return err
+	}
+	if err := baseapp.DeploySharedScript(
+		baseapp.AgentStateScriptName,
+		paths.Paths.Config.Devgeta,
+	); err != nil {
 		return err
 	}
 	if err := writeDevgetaExtensions(); err != nil {
@@ -472,7 +479,11 @@ func (p *Pi) ExecuteCommandOutput(args ...string) (string, error) {
 	})
 	if err != nil {
 		if stderr != "" {
-			return "", fmt.Errorf("pi command execution failed: %s: %w", strings.TrimSpace(stderr), err)
+			return "", fmt.Errorf(
+				"pi command execution failed: %s: %w",
+				strings.TrimSpace(stderr),
+				err,
+			)
 		}
 		return "", fmt.Errorf("pi command execution failed: %w", err)
 	}

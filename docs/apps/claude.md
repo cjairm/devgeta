@@ -63,7 +63,7 @@ for those projects along with the chats.
 | `configs/claude/format.sh`             | `~/.claude/format.sh`              | `chmod 0755`                                     |
 | `configs/devgeta/format-file.sh`       | `~/.config/devgeta/format-file.sh` | `chmod 0755`; the formatter table the hook calls |
 | `configs/claude/agent-config-guard.sh` | `~/.claude/agent-config-guard.sh`  | `chmod 0755`                                     |
-| `configs/claude/agent-state.sh`        | `~/.claude/agent-state.sh`         | `chmod 0755`                                     |
+| `configs/devgeta/agent-state.sh`       | `~/.claude/agent-state.sh`         | `chmod 0755`                                     |
 | `configs/claude/themes/`               | `~/.claude/themes/`                |                                                  |
 
 `settings.json` is rendered from a template (theme, scratch directory, and the
