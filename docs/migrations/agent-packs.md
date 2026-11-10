@@ -14,6 +14,12 @@ for adding the packs to coders you already had, and for opting out.
 - The `devgeta` pack puts an `@DEVGETA.md` line in `~/.claude/CLAUDE.md` when no
   line there imports it, and copies `~/.claude/DEVGETA.md`.
 
+## The devgeta pack now ships skills
+
+If you installed the `devgeta` pack before it carried skills, run
+`dg agent-pack install devgeta` (or `dg agent-pack update`) to add them. Updating
+devgeta alone changes nothing on disk.
+
 ## Check whether it affects you
 
 ```bash

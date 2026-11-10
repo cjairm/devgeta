@@ -50,6 +50,11 @@ layer" ([ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer
      `hooks/hooks.json`, so a fixed file name would reject it. Inline hooks
      name no file. *(Amended 2026-11-08, during Step 6, after the real
      Ponytail tree contradicted the first wording. Maintainer agreed.)*
+   - *(Amended 2026-11-09, [ADR-0071](ADR-0071-the-devgeta-pack-ships-skills.md).)*
+     "Excluded and overridden" is an error only for the user's own overrides.
+     When the user excludes a skill, devgeta's shipped override of it is dropped
+     silently, so a skill devgeta starts overriding never breaks an existing
+     exclusion.
 7. **A full replacement doesn't follow upstream.** The build records upstream's
    hash for each replaced file; `check` lists skills whose hash changed on a
    version bump so someone re-reads the upstream change.

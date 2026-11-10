@@ -249,7 +249,8 @@ dg agent-pack check <pack> [--ref <tag>]
 
 Packs: `superpowers` and `ponytail` (pinned upstream tags and commits, in
 `configs/agent-packs/<pack>/pack.yaml`) and `devgeta` (ships in the binary, carries
-`DEVGETA.md`).
+`DEVGETA.md` and the `review` skill; devgeta's wrapper over Superpowers'
+`receiving-code-review` ships in the `superpowers` override layer).
 
 **Behavior**
 

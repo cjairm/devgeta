@@ -22,6 +22,7 @@ the enforcing tests do and do not check, and which differences are deliberate.
 | Agent-config protection | `configs/claude/agent-config-guard.sh` | `configs/opencode/plugins/devgeta-agent-config-guard/server.js` (server plugin) | None, see below |
 | Scratch dir grant | `additionalDirectories` in `configs/claude/settings.json.tmpl` | `external_directory` in `configs/opencode/opencode.json.tmpl` | None, see below |
 | Shared instructions (`DEVGETA.md`) | an `@DEVGETA.md` line in `~/.claude/CLAUDE.md`, added by the `devgeta` pack (`internal/tooling/agentpack/devgeta.go`) | an `instructions` entry in `opencode.json`, rendered from state by `configs/opencode/opencode.json.tmpl` | `configs/agent-packs/devgeta/extensions/devgeta-instructions.js` |
+| Devgeta skills (`review`, `receiving-code-review` wrapper) | a plugin in the `devgeta` marketplace: `configs/agent-packs/devgeta/.claude-plugin/plugin.json` | a `skills` entry in `opencode.json`, rendered from state by `configs/opencode/opencode.json.tmpl` | the `pi.skills` entry in `configs/agent-packs/devgeta/package.json` |
 | Agent packs (skills, hooks, commands) | a plugin in the `devgeta` marketplace, enabled by `configs/claude/settings.json.tmpl` from state | a `plugins` entry in `opencode.json`, rendered from state by `configs/opencode/opencode.json.tmpl` | `pi install <built tree>` (Pi's own package manager) |
 
 Nothing in this table is a place to put devgeta policy: it all ships to every

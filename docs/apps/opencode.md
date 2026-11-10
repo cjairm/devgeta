@@ -302,7 +302,9 @@ devgeta no longer generates one.
 [Agent packs](agent-packs.md) reach OpenCode through two keys in `opencode.json`:
 `plugins`, an absolute folder path per pack (the folder holding the plugin's
 `index.js`: Superpowers' pack root, Ponytail's `.opencode/plugins/`), and
-`instructions`, which is how the `devgeta` pack's `DEVGETA.md` is loaded.
+`instructions`, which is how the `devgeta` pack's `DEVGETA.md` is loaded. The
+`devgeta` pack's skills load through a third key, `skills`: the absolute path of
+its `skills/` folder, listed only while at least one skill is left in it.
 
 `opencode.json` is rendered from a template, and the template renders both keys
 from `agent_packs:` in `global_config.yaml`. So `dg configure opencode --force`

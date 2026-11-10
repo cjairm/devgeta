@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-09
 **Estimated Duration:** ~1–2 days
-**Status:** In Progress (design approved 2026-11-09; implementation plan to follow)
+**Status:** In Progress (implemented 2026-11-09; the maintainer's manual verification, §6, is pending)
 
 ---
 
@@ -300,3 +300,5 @@ permission could post or push mid-workflow.
 ## 8. Cross-Model Review Notes
 
 **Reviewer notes:**
+
+Implementation notes (2026-11-09): `plugin.json` carries no `version` (the pack's recorded version is `bundled`, and a fixed string would pin Claude's plugin cache). The self-review below was done by the author, not a fresh reviewer.

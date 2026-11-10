@@ -83,10 +83,11 @@ Both keys are rendered from `agent_packs:` in `global_config.yaml`, so
 `dg configure claude --force` keeps every pack enabled instead of silently
 disabling them. A pack for a coder that isn't Claude Code adds nothing here.
 
-The `devgeta` pack isn't a plugin: a plugin can't carry a `CLAUDE.md`, so it is a
-copy at `~/.claude/DEVGETA.md` plus an `@DEVGETA.md` line in
-`~/.claude/CLAUDE.md`, added only if missing and removed on uninstall only if
-devgeta added it and it is still exactly that line.
+The `devgeta` pack is a plugin (it carries skills) and also carries
+instructions, which a plugin can't: a copy at `~/.claude/DEVGETA.md` plus an
+`@DEVGETA.md` line in `~/.claude/CLAUDE.md`, added only if missing and removed
+on uninstall only if devgeta added it and it is still exactly that line.
+Uninstalling the pack removes the plugin and both of those.
 
 `dg configure` does not delete scripts it no longer ships. See
 [the rollback migration note](../migrations/agent-customizations-rollback.md)
