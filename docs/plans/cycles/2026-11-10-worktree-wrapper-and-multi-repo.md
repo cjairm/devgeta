@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-10
 **Estimated Duration:** ~1 day
-**Status:** Approved (2026-11-10)
+**Status:** Done (2026-11-10, shipped in v2.3.0)
 
 ---
 
@@ -201,4 +201,11 @@ the same override layer as `receiving-code-review`; the build supplies
 - [x] `using-git-worktrees` wrapper skill
 - [x] Tests (5.5)
 - [x] Docs (5.5)
-- [ ] Maintainer: rebuild and `dg agent-pack update superpowers` to try it in all three coders
+- [x] Maintainer: rebuild and `dg agent-pack update superpowers` to try it in all three coders
+
+Verified live on v2.3.0: the wrapper loads in Claude Code, OpenCode and Pi;
+multi-repo `--no-window`, multi-repo windows with `--ai pi`, phase-1 rollback
+and `--ai pi --prompt` all behave as designed. A coder whose login comes from
+variables set in `~/.zshrc` gets no login in a pane devgeta execs directly; a
+shell alias for the coder (for example `alias pi='ori pi'`) routes the launch
+through the interactive shell and works, by ADR-0021's design.
