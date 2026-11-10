@@ -16,7 +16,7 @@ Follow UPSTREAM.md (in this skill's folder) for judging each item: verify it aga
    `gh api graphql -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){pullRequest(number:$n){reviews(first:100){nodes{author{login} state body}} comments(first:100){nodes{author{login} body}} reviewThreads(first:100){pageInfo{hasNextPage} nodes{id isResolved comments(first:20){nodes{author{login} body path line}}}}}}}' -f o=<owner> -f r=<repo> -F n=<n>`
    Each list stops at 100. If `hasNextPage` is true, page before going on.
 3. **Judge each item** with UPSTREAM.md's process.
-4. **Fix** in logical batches, run the repo's tests for what changed, commit, push.
+4. **Fix** in logical batches, run the repo's tests for what changed, commit, push. When a comment shows a flaw in the design or plan, fix that doc too, not only the code.
 5. **Reply to every item**, short and plain: `Fixed in <sha>: <what changed>`, `Not changing: <reason>`, or the question.
    - Inline threads get the reply in the thread: mutation `addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:"<id>", body:"..."})`.
    - Top-level comments and review summaries get one PR comment listing them: `gh pr comment <n> --body-file -`.

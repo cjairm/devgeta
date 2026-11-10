@@ -30,16 +30,16 @@ Run a check only when its stage is present.
 **Design doc**
 - Problem stated before solution: who has it, what happens if we do nothing.
 - Goals, non-goals, how success is measured.
-- At least two real alternatives, with reasons.
+- At least two real alternatives, including "do nothing" or "buy", with reasons.
 - Assumptions marked verified or not, riskiest first.
-- Failure modes: partial failure, retries, concurrency, bad input, load, tenant isolation where relevant.
-- Hard-to-reverse choices (data model, public API, security boundary) get the deepest pass.
+- Failure modes: partial failure, retries, concurrency, bad input, 10x load, tenant isolation where relevant.
+- Hard-to-reverse choices (data model, public API, security boundary) get the deepest pass; reversible ones get a light pass.
 - How we will know it is broken, how to roll back, how to migrate.
 
 **Plan**
 - Every task traces to a requirement, and back.
-- Riskiest work first.
-- Each step has a testable definition of done.
+- Riskiest work first; each milestone shippable and verifiable on its own.
+- Each step has a testable definition of done ("auth works" is not one).
 - Dependencies and rollback per step.
 - Anything outside the goals is cut.
 
@@ -51,7 +51,7 @@ Run a check only when its stage is present.
 - Regressions: grep every caller of a changed function or behavior.
 - Tests: would they fail if the logic were wrong? They should test behavior, not implementation.
 - Simplicity: deletable code, abstractions with one user.
-- Could someone debug this in six months?
+- Naming and observability: could someone debug this during an outage six months from now?
 
 ## Findings
 
