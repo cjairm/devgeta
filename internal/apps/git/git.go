@@ -239,11 +239,17 @@ func (g *Git) HeadIn(dir string) (string, error) {
 }
 
 func (g *Git) DeleteBranch(branch string, isForced bool) error {
+	return g.DeleteBranchIn("", branch, isForced)
+}
+
+// DeleteBranchIn is DeleteBranch evaluated against the repository at dir
+// ("" = current directory).
+func (g *Git) DeleteBranchIn(dir, branch string, isForced bool) error {
 	deleteArg := "-d"
 	if isForced {
 		deleteArg = "-D"
 	}
-	return g.ExecuteCommand("branch", deleteArg, branch)
+	return g.ExecuteCommand(dirArgs(dir, "branch", deleteArg, branch)...)
 }
 
 func (g *Git) DeepClean(url, dstPath string) error {

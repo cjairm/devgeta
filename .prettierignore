@@ -1,0 +1,2 @@
+# Golden fixtures must match rendered output byte for byte; never reformat them.
+**/testdata/

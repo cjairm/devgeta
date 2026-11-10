@@ -314,19 +314,53 @@ func (c *ClaudeCoder) EnsureInstalled() (string, error) {
 	return ensureToolInstalled(constants.ClaudeLaunch.Binary)
 }
 
+// PiCoder implements AICoder for Pi. Like claude, pi takes the opening prompt
+// positionally (`pi [options] [@files...] [messages...]`) and needs no env prefix.
+type PiCoder struct{}
+
+func (p *PiCoder) Name() string    { return constants.Pi }
+func (p *PiCoder) Command() string { return constants.PiLaunch.Command() }
+
+func (p *PiCoder) PromptCommand(prompt string) string {
+	return p.interactiveLaunch(prompt).render()
+}
+
+func (p *PiCoder) interactiveLaunch(prompt string) paneLaunch {
+	return recipeLaunch(constants.PiLaunch, p.launchArgs(prompt)...)
+}
+
+func (p *PiCoder) execLaunch(binaryPath, prompt string) paneLaunch {
+	return binaryLaunch(binaryPath, p.launchArgs(prompt)...)
+}
+
+// launchArgs omits the prompt when empty so pi is not handed an empty message.
+func (p *PiCoder) launchArgs(prompt string) []string {
+	if prompt == "" {
+		return nil
+	}
+	return []string{prompt}
+}
+
+func (p *PiCoder) EnsureInstalled() (string, error) {
+	return ensureToolInstalled(constants.PiLaunch.Binary)
+}
+
 // ResolveAICoder resolves an alias to an AICoder implementation
 // Valid aliases (case-insensitive):
 //   - opencode, oc -> OpenCodeCoder
 //   - claude, cc, claudecode -> ClaudeCoder
+//   - pi -> PiCoder
 func ResolveAICoder(alias string) (AICoder, error) {
 	switch strings.ToLower(alias) {
 	case "opencode", "oc":
 		return &OpenCodeCoder{}, nil
 	case "claude", "cc", "claudecode":
 		return &ClaudeCoder{}, nil
+	case "pi":
+		return &PiCoder{}, nil
 	default:
 		return nil, fmt.Errorf(
-			"unknown AI coder alias %q. Valid aliases: opencode, oc, claude, cc, claudecode",
+			"unknown AI coder alias %q. Valid aliases: opencode, oc, claude, cc, claudecode, pi",
 			alias,
 		)
 	}

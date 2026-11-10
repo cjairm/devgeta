@@ -71,14 +71,28 @@ Window layout selection precedence (--layout and --ai are mutually exclusive):
   5. worktree.default_ai in global_config.yaml, derived into a single-pane layout
   6. Default: opencode, single-pane
 
-Valid AI coders: opencode (oc), claude (cc, claudecode)
-Valid layouts: opencode, claude, claude-nvim, nvim, shell
+Valid AI coders: opencode (oc), claude (cc, claudecode), pi
+Valid layouts: opencode, claude, claude-nvim, pi, nvim, shell
 
 --base <ref>       roots the new branch at <ref> instead of the freshly-fetched
                    default branch. Only applies when <name> is a genuinely new
                    branch: if a local or remote branch named <name> already
                    exists, --base is an error — omit it to adopt the existing
                    branch instead, which is create's default behavior.
+
+Several repos, one branch:
+
+  --repo <path>      repeatable. With two or more, every repo is listed
+                     explicitly ('--repo .' is the current one) and the same
+                     branch is created in each. Worktrees are created first, and
+                     if any repo fails everything this call made is removed.
+                     Windows launch afterwards; a failed window never removes a
+                     worktree, run 'dg wt repair <name>' from that repo instead.
+
+  --no-window        creates the worktree and branch only: no tmux window, no
+                     coder, works outside tmux. Cannot be combined with --ai,
+                     --layout, --prompt or --pane. Resume later with
+                     'dg wt repair <name>'.
 
 Starting the coder on a task, and adding panes:
 
@@ -104,6 +118,15 @@ worktree.attach_after_create, and stays put when it is false.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
+		wm := worktree.New()
+
+		// One repo with a window is the original path and keeps its own rollback
+		// rules; everything else (several repos, or no window) goes through
+		// CreateMany.
+		if len(repoFlags) > 1 || createNoWindowFlag {
+			return createMany(wm, name)
+		}
+
 		layout, err := resolveWorktreeLayout(createLayoutFlag, createAIFlag)
 		if err != nil {
 			return err
@@ -113,9 +136,9 @@ worktree.attach_after_create, and stays put when it is false.`,
 			return err
 		}
 
-		wm := worktree.New()
 		var repoRoot string
-		if repoFlag != "" {
+		if len(repoFlags) == 1 {
+			repoFlag := repoFlags[0]
 			if err := wm.CreateAt(repoFlag, name, createBaseFlag, layout, forceFlag); err != nil {
 				return err
 			}
@@ -255,8 +278,8 @@ Window layout selection follows the same precedence as create (--layout and
   5. worktree.default_ai in global_config.yaml, derived into a single-pane layout
   6. Default: opencode, single-pane
 
-Valid AI coders: opencode (oc), claude (cc, claudecode)
-Valid layouts: opencode, claude, claude-nvim, nvim, shell
+Valid AI coders: opencode (oc), claude (cc, claudecode), pi
+Valid layouts: opencode, claude, claude-nvim, pi, nvim, shell
 
 Note: repair does not remember the layout a worktree was created with. If the
 window is missing, it is rebuilt from scratch using the precedence above,
@@ -421,17 +444,18 @@ func pluralize(n int, singular, plural string) string {
 // forceFlag/repoFlag stay shared package vars — untouched by this change,
 // out of scope.
 var (
-	createAIFlag     string
-	createLayoutFlag string
-	createPromptFlag string
-	createPaneFlags  []string
-	createBaseFlag   string
-	repairAIFlag     string
-	repairLayoutFlag string
-	forceFlag        bool
-	repoFlag         string
-	moveToFlag       string
-	pruneStaleFlag   bool
+	createAIFlag       string
+	createLayoutFlag   string
+	createPromptFlag   string
+	createPaneFlags    []string
+	createBaseFlag     string
+	repairAIFlag       string
+	repairLayoutFlag   string
+	forceFlag          bool
+	repoFlags          []string
+	createNoWindowFlag bool
+	moveToFlag         string
+	pruneStaleFlag     bool
 )
 
 // applyCreateLayoutOptions folds create's --prompt and --pane flags into the
@@ -470,9 +494,9 @@ func init() {
 	worktreeCmd.AddCommand(worktreePruneCmd)
 
 	worktreeCreateCmd.Flags().
-		StringVarP(&createAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode)")
+		StringVarP(&createAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode, pi)")
 	worktreeCreateCmd.Flags().
-		StringVarP(&createLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim, shell)")
+		StringVarP(&createLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, pi, nvim, shell)")
 	worktreeCreateCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	// No shorthands for --prompt or --pane: -p is ambiguous between them, and
 	// picking one would read as a typo for the other.
@@ -487,8 +511,14 @@ func init() {
 	worktreeCreateCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Skip hook compatibility check")
 	worktreeCreateCmd.Flags().
-		StringVarP(&repoFlag, "repo", "r", "",
-			"Path to the repository (defaults to the repo containing the current directory); the window opens in the repo's tmux session")
+		StringArrayVarP(&repoFlags, "repo", "r", nil,
+			"Path to a repository (defaults to the repo containing the current directory); repeat it to create the same branch in several repos ('.' is the current one). Windows open in each repo's tmux session")
+	worktreeCreateCmd.Flags().
+		BoolVar(&createNoWindowFlag, "no-window", false,
+			"Create the worktree and branch only: no tmux window, no coder. Works outside tmux; open a window later with `dg wt repair <name>`")
+	for _, f := range []string{"ai", "layout", "prompt", "pane"} {
+		worktreeCreateCmd.MarkFlagsMutuallyExclusive("no-window", f)
+	}
 	worktreeCreateCmd.Flags().
 		StringVar(&createBaseFlag, "base", "",
 			"Root the new branch at this ref instead of the default; error if <name> already exists (defaults to the freshly-fetched default branch)")
@@ -499,9 +529,9 @@ func init() {
 		},
 	)
 	worktreeRepairCmd.Flags().
-		StringVarP(&repairAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode)")
+		StringVarP(&repairAIFlag, "ai", "a", "", "AI coder to launch (opencode, oc, claude, cc, claudecode, pi)")
 	worktreeRepairCmd.Flags().
-		StringVarP(&repairLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, nvim, shell)")
+		StringVarP(&repairLayoutFlag, "layout", "l", "", "Window layout to build (opencode, claude, claude-nvim, pi, nvim, shell)")
 	worktreeRepairCmd.MarkFlagsMutuallyExclusive("ai", "layout")
 	worktreeRemoveCmd.Flags().
 		BoolVarP(&forceFlag, "force", "f", false, "Force removal even if worktree has uncommitted changes")
@@ -564,4 +594,32 @@ func findLastSlash(s string) int {
 		}
 	}
 	return 0
+}
+
+// createMany handles `dg wt create` with several --repo values or --no-window,
+// printing one line per repo.
+func createMany(wm *worktree.WorktreeManager, name string) error {
+	var layout worktree.Layout
+	if !createNoWindowFlag {
+		var err error
+		if layout, err = resolveWorktreeLayout(createLayoutFlag, createAIFlag); err != nil {
+			return err
+		}
+		if layout, err = applyCreateLayoutOptions(layout, createPromptFlag, createPaneFlags); err != nil {
+			return err
+		}
+	}
+	repos := repoFlags
+	if len(repos) == 0 {
+		repos = []string{"."}
+	}
+	results, err := wm.CreateMany(repos, name, createBaseFlag, layout, forceFlag, createNoWindowFlag)
+	for _, r := range results {
+		window := r.Window
+		if window == "" {
+			window = "no window"
+		}
+		utils.PrintSuccess(fmt.Sprintf("%s  %s  branch %s  %s", r.Repo, r.Path, r.Branch, window))
+	}
+	return err
 }

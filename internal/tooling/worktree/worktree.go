@@ -355,6 +355,28 @@ func (w *WorktreeManager) create(
 	wtPath := worktreePathIn(repoRoot, name)
 	windowName := GetWindowName(repoSlug, name)
 
+	// Same lock as CreateMany, so a multi-repo rollback can never mistake this
+	// create's worktree or branch for its own.
+	err := withCreateLocks([]string{repoRoot}, name, func() error {
+		if err := w.precheckCreate(repoRoot, name, force); err != nil {
+			return err
+		}
+		return w.addWorktree(repoRoot, wtPath, name, base)
+	})
+	if err != nil {
+		return err
+	}
+	return w.launchWindowAndRecord(repoRoot, repoSlug, windowName, wtPath, layout, useRepoSession)
+}
+
+// precheckCreate runs every check create makes before touching git: worktree
+// and window state, and the hook-compatibility prompt. It is split out so a
+// multi-repo create can validate every repo before creating any of them.
+func (w *WorktreeManager) precheckCreate(repoRoot, name string, force bool) error {
+	repoSlug := filepath.Base(repoRoot)
+	wtPath := worktreePathIn(repoRoot, name)
+	windowName := GetWindowName(repoSlug, name)
+
 	// repoRoot is already known here, so worktreeStateIn is used directly
 	// instead of round-tripping root->slug->root through the slug-based
 	// worktreeState - see worktreeStateIn's doc comment. Before this, the slug
@@ -385,7 +407,7 @@ func (w *WorktreeManager) create(
 		} else {
 			// Directory exists, suggest repair
 			return fmt.Errorf(
-				"worktree '%s' exists but has no active window; use `dg wt repair %s`",
+				"worktree '%s' exists but has no active window; use `devgeta worktree repair %s`",
 				name,
 				name,
 			)
@@ -412,7 +434,12 @@ func (w *WorktreeManager) create(
 			}
 		}
 	}
+	return nil
+}
 
+// addWorktree creates the worktree and branch (phase 1 of create), retrying
+// once after pruning a stale registration. It launches nothing.
+func (w *WorktreeManager) addWorktree(repoRoot, wtPath, name, base string) error {
 	if err := os.MkdirAll(filepath.Dir(wtPath), 0o755); err != nil {
 		return fmt.Errorf("failed to create worktree directory: %w", err)
 	}
@@ -420,7 +447,7 @@ func (w *WorktreeManager) create(
 	// createFn is the ONLY thing that differs between the base and no-base
 	// paths: which git wrapper call actually creates the worktree. Everything
 	// before this point (state checks, hook check, MkdirAll) and after it
-	// (the stale-registration retry, launchWindowAndRecord) is identical
+	// (the stale-registration retry) is identical
 	// either way.
 	createFn := func() error { return w.Git.CreateWorktreeIn(repoRoot, wtPath, name) }
 	if base != "" {
@@ -431,21 +458,13 @@ func (w *WorktreeManager) create(
 		if isStaleRegistrationError(err) {
 			if pruneErr := w.pruneStaleWorktrees(repoRoot); pruneErr == nil {
 				if retryErr := createFn(); retryErr == nil {
-					return w.launchWindowAndRecord(
-						repoRoot,
-						repoSlug,
-						windowName,
-						wtPath,
-						layout,
-						useRepoSession,
-					)
+					return nil
 				}
 			}
 		}
 		return fmt.Errorf("failed to create worktree: %w", err)
 	}
-
-	return w.launchWindowAndRecord(repoRoot, repoSlug, windowName, wtPath, layout, useRepoSession)
+	return nil
 }
 
 // isStaleRegistrationError reports whether a failed `git worktree add` looks

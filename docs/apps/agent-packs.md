@@ -114,8 +114,9 @@ Put files laid out like the pack under `~/.config/devgeta/agent-packs/<pack>/`:
 ```
 
 Then run `dg agent-pack update superpowers`. devgeta copies its own overrides
-(today one: a wrapper over Superpowers' `receiving-code-review` that adds the
-pull-request steps) and then yours on top, so **yours win**. If you exclude a
+(today two: a wrapper over Superpowers' `receiving-code-review` that adds the
+pull-request steps, and one over `using-git-worktrees` that makes `devgeta worktree`
+the worktree tool when `devgeta` is on PATH, including one branch across several repos) and then yours on top, so **yours win**. If you exclude a
 skill, devgeta's own override of it is dropped silently. An override replaces
 the file at the same path, or adds a file inside an existing skill's folder. It
 can't add a new skill.

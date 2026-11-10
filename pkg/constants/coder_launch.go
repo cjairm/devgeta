@@ -83,4 +83,11 @@ var (
 		Binary:    Claude,
 		EnvPrefix: "CLAUDE_CODE_NO_FLICKER=1",
 	}
+
+	// Pi takes its opening prompt positionally, like claude, and needs no env
+	// prefix. Alias is unused: devgeta.zsh ships no alias for pi.
+	PiLaunch = CoderLaunch{
+		Alias:  "pi",
+		Binary: Pi,
+	}
 )

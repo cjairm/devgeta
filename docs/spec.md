@@ -249,8 +249,11 @@ dg agent-pack check <pack> [--ref <tag>]
 
 Packs: `superpowers` and `ponytail` (pinned upstream tags and commits, in
 `configs/agent-packs/<pack>/pack.yaml`) and `devgeta` (ships in the binary, carries
-`DEVGETA.md` and the `review` skill; devgeta's wrapper over Superpowers'
-`receiving-code-review` ships in the `superpowers` override layer).
+`DEVGETA.md` and the `review` skill; devgeta's wrappers over Superpowers'
+`receiving-code-review` and `using-git-worktrees` ship in the `superpowers`
+override layer). The worktree wrapper tells agents to use `devgeta worktree` for
+upstream's worktree step when `devgeta` is on PATH, and to follow upstream unchanged
+when it is not.
 
 **Behavior**
 
@@ -350,8 +353,10 @@ dg wt <subcommand> [flags]     # alias
 
 **Flags for `create` and `repair`**:
 
-- `--ai <alias>` / `-a <alias>` — AI coder to launch in the window. Accepted aliases: `opencode`, `oc`, `claude`, `cc`, `claudecode`.
-- `--layout <name>` / `-l <name>` — Window layout to build. Valid names: `opencode`, `claude`, `claude-nvim`, `nvim`, `shell` (see "Window layouts" below). Mutually exclusive with `--ai` — passing both is a cobra error before either command runs.
+- `--repo <path>` / `-r <path>` — Repository to create in. **Repeatable**: `dg wt create fix-auth --repo ~/code/api --repo ~/code/web` creates the same branch in each. With two or more, the current repo is not implied (pass `--repo .`), and two paths resolving to the same repo are an error. Every repo is validated before anything is created (including that `--base` is not combined with an existing branch). Two paths that would share a tmux window or a worktree directory are rejected too. Checks and creation hold a lock on each repo's branch and on each worktree directory (under `~/.local/state/devgeta/worktree-locks/`, also taken by single-repo create), so two overlapping creates of the same branch, or of names that flatten to the same directory (`feat/auth`, `feat-auth`), run one after the other and a rollback only ever removes what its own call created. Then **phase 1** creates every worktree and launches nothing; if any repo fails, everything this call made is removed, including the failing repo's partial worktree and any branch this call created (adopted branches are never deleted), and any cleanup that fails is reported with the path left on disk. **Phase 2** launches the windows; a launch failure never removes a worktree or branch (a coder may already be working), the remaining windows are still launched, and each failure is reported with `dg wt repair <name>` (run from that repo) as the fix. One line per repo is printed: repo, path, branch, window.
+- `--no-window` — Create the worktree and branch only: no tmux window, no coder; works outside tmux. Mutually exclusive with `--ai`, `--layout`, `--prompt` and `--pane`. `dg wt list` shows the worktree with no window and `dg wt repair <name>` opens one later.
+- `--ai <alias>` / `-a <alias>` — AI coder to launch in the window. Accepted aliases: `opencode`, `oc`, `claude`, `cc`, `claudecode`, `pi`.
+- `--layout <name>` / `-l <name>` — Window layout to build. Valid names: `opencode`, `claude`, `claude-nvim`, `pi`, `nvim`, `shell` (see "Window layouts" below). Mutually exclusive with `--ai` — passing both is a cobra error before either command runs.
 
   **Resolution order** (highest wins; each rule below only applies when none of the rules above it fired):
 
@@ -399,6 +404,7 @@ A layout is a named, ordered set of tmux panes built when a worktree's window is
 | `opencode`    | Single pane running OpenCode                               |
 | `claude`      | Single pane running Claude Code                            |
 | `claude-nvim` | Claude Code and Neovim side by side (vertical split)       |
+| `pi`          | Single pane running Pi                                     |
 | `nvim`        | Single pane running Neovim only                            |
 | `shell`       | Single pane running nothing — just a shell in the worktree |
 

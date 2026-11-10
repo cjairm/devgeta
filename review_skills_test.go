@@ -70,3 +70,32 @@ func TestReviewSkills_AreShippedAndGeneral(t *testing.T) {
 		t.Error("the wrapper must point at UPSTREAM.md, which marks it as a wrapper")
 	}
 }
+
+const upstreamWorktreesDescription = "Use when starting feature work that needs isolation from current workspace " +
+	"or before executing implementation plans - ensures an isolated workspace exists via native " +
+	"tools or git worktree fallback"
+
+// The worktree wrapper ships to strangers too: it may name `devgeta worktree`, which
+// ships with devgeta, but nothing of this repository's own process.
+func TestWorktreeWrapper_IsShippedAndGeneral(t *testing.T) {
+	name, description, text := skillFrontmatter(t, "configs/agent-packs/superpowers/skills/using-git-worktrees/SKILL.md")
+	if name != "using-git-worktrees" {
+		t.Errorf("name = %q", name)
+	}
+	if description != upstreamWorktreesDescription {
+		t.Errorf("the wrapper must keep upstream's description exactly, got %q", description)
+	}
+	if !strings.Contains(text, "UPSTREAM.md") {
+		t.Error("the wrapper must point at UPSTREAM.md, which marks it as a wrapper")
+	}
+	if !strings.Contains(text, "command -v devgeta") {
+		t.Error("the wrapper must fall back to upstream when devgeta is not on PATH")
+	}
+	// `dg` is a shell alias, which an agent's non-interactive shell does not
+	// load; only the `devgeta` binary resolves there.
+	for _, banned := range []string{"dg ", "`dg`", "docs/plans", "docs/decisions", "docs/guides", "cycle"} {
+		if strings.Contains(text, banned) {
+			t.Errorf("the wrapper names %q, which means nothing in another repository", banned)
+		}
+	}
+}

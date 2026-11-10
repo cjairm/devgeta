@@ -147,6 +147,9 @@ repo gets its own window and coder.
 
 ### 5.4 Wrapper skill `using-git-worktrees`
 
+Shipped wording uses the `devgeta` binary, never the `dg` alias: an agent's
+non-interactive shell does not load aliases. `review_skills_test.go` enforces it.
+
 File: `configs/agent-packs/superpowers/skills/using-git-worktrees/SKILL.md`, in
 the same override layer as `receiving-code-review`; the build supplies
 `UPSTREAM.md`. Same `name` and exact upstream `description`. Content, short:
@@ -192,10 +195,10 @@ the same override layer as `receiving-code-review`; the build supplies
 
 ## 7. Checklist
 
-- [ ] `--no-window`
-- [ ] Repeatable `--repo`: validate, create all (rollback incl. partial), then launch (no rollback)
-- [ ] Pi coder and `pi` layout
-- [ ] `using-git-worktrees` wrapper skill
-- [ ] Tests (5.5)
-- [ ] Docs (5.5)
+- [x] `--no-window`
+- [x] Repeatable `--repo`: validate, create all (rollback incl. partial), then launch (no rollback)
+- [x] Pi coder and `pi` layout
+- [x] `using-git-worktrees` wrapper skill
+- [x] Tests (5.5)
+- [x] Docs (5.5)
 - [ ] Maintainer: rebuild and `dg agent-pack update superpowers` to try it in all three coders

@@ -439,7 +439,7 @@ func ensureNvimInstalled() (string, error) {
 // builtinLayoutNames lists the valid layout names in a stable order, used
 // both to build the registry and to render "valid layouts" in error
 // messages.
-var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "nvim", "shell"}
+var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "pi", "nvim", "shell"}
 
 // builtinLayouts returns the registry of layouts ResolveLayout can return by
 // name. It's rebuilt on every call (cheap: four small structs) rather than
@@ -452,6 +452,7 @@ var builtinLayoutNames = []string{"opencode", "claude", "claude-nvim", "nvim", "
 func builtinLayouts() map[string]Layout {
 	opencode := &OpenCodeCoder{}
 	claude := &ClaudeCoder{}
+	pi := &PiCoder{}
 
 	return map[string]Layout{
 		"opencode": {
@@ -461,6 +462,10 @@ func builtinLayouts() map[string]Layout {
 		"claude": {
 			Name:  "claude",
 			Panes: []Pane{coderPane(claude, "")},
+		},
+		"pi": {
+			Name:  "pi",
+			Panes: []Pane{coderPane(pi, "")},
 		},
 		"claude-nvim": {
 			Name: "claude-nvim",

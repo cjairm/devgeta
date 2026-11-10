@@ -516,7 +516,7 @@ func TestWithPromptErrorsOnLayoutWithoutCoderPane(t *testing.T) {
 // the built-ins with an AI pane, in registry order - hardcoding that list is
 // what this guards against.
 func TestPromptableLayoutNames(t *testing.T) {
-	want := []string{"opencode", "claude", "claude-nvim"}
+	want := []string{"opencode", "claude", "claude-nvim", "pi"}
 
 	got := promptableLayoutNames()
 

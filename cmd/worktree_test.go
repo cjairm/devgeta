@@ -539,3 +539,38 @@ func TestApplyCreateLayoutOptions(t *testing.T) {
 		}
 	})
 }
+
+// --no-window means no coder and no layout, so each flag that configures one
+// must be rejected with it. Cobra fails on the flag group before RunE runs, so
+// nothing real is created.
+func resetCreateFlags() {
+	worktreeCreateCmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if sv, ok := f.Value.(pflag.SliceValue); ok {
+			_ = sv.Replace(nil)
+		} else {
+			_ = f.Value.Set(f.DefValue)
+		}
+		f.Changed = false
+	})
+}
+
+func TestWorktreeCreateNoWindowConflicts(t *testing.T) {
+	for _, conflict := range [][]string{
+		{"--ai", "claude"},
+		{"--layout", "nvim"},
+		{"--prompt", "x"},
+		{"--pane", "make dev"},
+	} {
+		t.Run(conflict[0], func(t *testing.T) {
+			resetCreateFlags()
+			t.Cleanup(resetCreateFlags)
+			if err := worktreeCreateCmd.Flags().Parse(append([]string{"--no-window"}, conflict...)); err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			err := worktreeCreateCmd.ValidateFlagGroups()
+			if err == nil || !strings.Contains(err.Error(), "no-window") {
+				t.Fatalf("expected a no-window conflict, got %v", err)
+			}
+		})
+	}
+}
