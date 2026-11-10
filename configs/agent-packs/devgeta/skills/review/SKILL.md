@@ -1,6 +1,6 @@
 ---
 name: review
-description: Use when asked to review a design doc, plan, code change or pull request before it is built on or merged — "review this", "review the plan", "review PR 12"
+description: "Use when asked to review a design doc or a plan before code exists, or to review a pull request and post the review to it ('review the design doc', 'review the plan', 'review PR 12'). Reviews in order of cost to fix: design, plan, then code."
 ---
 
 # Review
