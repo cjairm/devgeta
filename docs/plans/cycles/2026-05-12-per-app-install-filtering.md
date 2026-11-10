@@ -29,11 +29,11 @@ Related files: [docs/spec.md](../../spec.md), [ROADMAP.md](../../../ROADMAP.md),
 
 ### Two tiers of "apps" — only one tier is targetable
 
-| Location | Examples | `Name()` / `Kind()` | In registry |
-|---|---|---|---|
-| `internal/apps/{appname}/` | neovim, tmux, lazygit, alacritty… | ✅ Full 10-method `App` interface | ✅ Yes (18 apps) |
-| `internal/tooling/terminal/core/` | autoconf, bison, ncurses… | ❌ 8 methods, no Name/Kind | ❌ No |
-| `internal/tooling/terminal/dev_tools/` | bat, fzf, zoxide… | ❌ 8 methods, no Name/Kind | ❌ No |
+| Location                               | Examples                          | `Name()` / `Kind()`               | In registry      |
+| -------------------------------------- | --------------------------------- | --------------------------------- | ---------------- |
+| `internal/apps/{appname}/`             | neovim, tmux, lazygit, alacritty… | ✅ Full 10-method `App` interface | ✅ Yes (18 apps) |
+| `internal/tooling/terminal/core/`      | autoconf, bison, ncurses…         | ❌ 8 methods, no Name/Kind        | ❌ No            |
+| `internal/tooling/terminal/dev_tools/` | bat, fzf, zoxide…                 | ❌ 8 methods, no Name/Kind        | ❌ No            |
 
 **Only the 18 registry apps are individually targetable.** Core libs (16) and dev tools (13) are always installed as a block whenever the terminal category runs without an app filter.
 
@@ -102,12 +102,14 @@ Extend `--only` and `--skip` flags on `dg install` to accept both category names
 ### Design: Flag parsing logic
 
 **Known values:**
+
 ```
 knownCategories = {"terminal", "languages", "databases", "desktop"}
 knownAppNames   = registry.Names()  // 18 sorted app names
 ```
 
 **Parsing (in `cmd/install.go` `run()`):**
+
 ```
 for each value in --only / --skip:
     if value in knownCategories → onlyCategorySet / skipCategorySet
@@ -118,6 +120,7 @@ for each value in --only / --skip:
 **Category execution logic:**
 
 A category should run if:
+
 1. No `--only` flags at all → run everything
 2. `--only terminal` is set → run terminal with no app filter (all 38+ packages)
 3. `--only neovim` is set → neovim's Kind() == KindTerminal → run terminal with `appFilter = {"neovim"}`
@@ -127,6 +130,7 @@ A category should run if:
 Helper: `shouldRunCategory(category string, onlyCategorySet, skipCategorySet map[string]bool, appsBelongingToCategory []string, onlyAppSet map[string]bool) bool`
 
 **App filter for coordinators:**
+
 - `appFilter` is non-nil and non-empty only when `onlyAppSet` contains apps for that category
 - When `appFilter` is non-nil: only install apps in the filter; skip `InstallDevTools()` and `InstallCoreLibs()` entirely (user asked for specific apps, not full setup)
 - When `appFilter` is nil: existing behavior (install everything in the category)
@@ -134,17 +138,17 @@ Helper: `shouldRunCategory(category string, onlyCategorySet, skipCategorySet map
 
 ### File Changes
 
-| Action | File | Description |
-|--------|------|-------------|
-| Modify | `internal/apps/registry/registry.go` | Add `GetAppsByKind(kind apps.AppKind) []string` |
-| Modify | `internal/apps/registry/registry_test.go` | Test `GetAppsByKind` (or create if missing) |
-| Modify | `cmd/install.go` | Split flags, validate, compute per-category app filters, pass to coordinators |
-| Modify | `cmd/install_test.go` | Tests for new flag parsing, validation, app-level filtering |
-| Modify | `internal/tooling/terminal/terminal.go` | `InstallTerminalApps(summary, appFilter)`, skip devtools/corelibs when filter active |
-| Modify | `internal/tooling/terminal/terminal_test.go` | Tests for app filter behavior |
-| Modify | `internal/tooling/desktop/desktop.go` | `InstallAndConfigure(appFilter)`, `InstallDesktopAppsWithoutConfiguration(appFilter)` |
-| Modify | `internal/tooling/desktop/desktop_test.go` | Tests for app filter behavior |
-| Modify | `docs/spec.md` | Document per-app targeting under `dg install` |
+| Action | File                                         | Description                                                                           |
+| ------ | -------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Modify | `internal/apps/registry/registry.go`         | Add `GetAppsByKind(kind apps.AppKind) []string`                                       |
+| Modify | `internal/apps/registry/registry_test.go`    | Test `GetAppsByKind` (or create if missing)                                           |
+| Modify | `cmd/install.go`                             | Split flags, validate, compute per-category app filters, pass to coordinators         |
+| Modify | `cmd/install_test.go`                        | Tests for new flag parsing, validation, app-level filtering                           |
+| Modify | `internal/tooling/terminal/terminal.go`      | `InstallTerminalApps(summary, appFilter)`, skip devtools/corelibs when filter active  |
+| Modify | `internal/tooling/terminal/terminal_test.go` | Tests for app filter behavior                                                         |
+| Modify | `internal/tooling/desktop/desktop.go`        | `InstallAndConfigure(appFilter)`, `InstallDesktopAppsWithoutConfiguration(appFilter)` |
+| Modify | `internal/tooling/desktop/desktop_test.go`   | Tests for app filter behavior                                                         |
+| Modify | `docs/spec.md`                               | Document per-app targeting under `dg install`                                         |
 
 ### Step-by-Step
 
@@ -280,12 +284,12 @@ make build
 
 ## 7. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|---|---|---|
-| `alacritty` is `KindTerminal` but installed by desktop coordinator | Med | Derive category membership from which coordinator installs the app, not from `Kind()`. Or document that `--only alacritty` maps to desktop (since desktop installs it). Clarify in step 6. |
-| App filter skips dev_tools / core_libs when user does `--only terminal --only neovim` | Low | Rule: category flag with no app filter = full install; any app filter = registry apps only. Document clearly. |
-| `registry.GetAppsByKind` instantiates all apps just to read `Kind()` | Low | Acceptable for a CLI that runs once. If it becomes a concern, store kind alongside the factory. |
-| Missing test coverage for mixed flags | Med | Step 7 explicitly covers mixed cases. |
+| Risk                                                                                  | Likelihood | Mitigation                                                                                                                                                                                 |
+| ------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `alacritty` is `KindTerminal` but installed by desktop coordinator                    | Med        | Derive category membership from which coordinator installs the app, not from `Kind()`. Or document that `--only alacritty` maps to desktop (since desktop installs it). Clarify in step 6. |
+| App filter skips dev_tools / core_libs when user does `--only terminal --only neovim` | Low        | Rule: category flag with no app filter = full install; any app filter = registry apps only. Document clearly.                                                                              |
+| `registry.GetAppsByKind` instantiates all apps just to read `Kind()`                  | Low        | Acceptable for a CLI that runs once. If it becomes a concern, store kind alongside the factory.                                                                                            |
+| Missing test coverage for mixed flags                                                 | Med        | Step 7 explicitly covers mixed cases.                                                                                                                                                      |
 
 ### Trade-offs Made
 

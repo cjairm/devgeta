@@ -26,18 +26,18 @@ Relevant docs: [CLAUDE.md](../../CLAUDE.md), [ROADMAP.md](../../ROADMAP.md) (TUI
 
 **Files to modify or delete:**
 
-| File | Purpose | Change |
-|------|---------|--------|
-| `go.mod` | Module definition | Version bumps |
-| `go.sum` | Checksums | Auto-updated by `go mod tidy` |
-| `internal/tui/installer.go` | **Dead code** — bubbletea/lipgloss, no callers | **DELETE** |
-| `cmd/root.go` | Root Cobra command, persistent flags | `SilenceUsage`, deprecate `--debug`, remove `PersistentPreRunE` logger call if moving to `RunE`, set `rootCmd.Version` + `SetVersionTemplate` |
-| `cmd/version.go` | `dg version` subcommand + `--version` flag | Remove `init()` side-effect pattern; replace `--version` flag + `ParseFlags` + `os.Exit` with Cobra's built-in Version mechanism |
-| `cmd/install.go` | `dg install` command | `Run` → `RunE` |
-| `cmd/worktree.go` | `dg worktree` + 7 subcommands | `Run` → `RunE`; add `NoArgs()` on list/jump/prune; add `ValidArgsFunction` on remove and jump |
-| `cmd/completion.go` | **New file** | `dg completion [bash\|zsh\|fish\|powershell]` command |
-| `pkg/logger/logger.go` | Zap initialization | No code change needed; `go get` updates version |
-| `CLAUDE.md` | Tech Stack table | Update Go version note |
+| File                        | Purpose                                        | Change                                                                                                                                        |
+| --------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `go.mod`                    | Module definition                              | Version bumps                                                                                                                                 |
+| `go.sum`                    | Checksums                                      | Auto-updated by `go mod tidy`                                                                                                                 |
+| `internal/tui/installer.go` | **Dead code** — bubbletea/lipgloss, no callers | **DELETE**                                                                                                                                    |
+| `cmd/root.go`               | Root Cobra command, persistent flags           | `SilenceUsage`, deprecate `--debug`, remove `PersistentPreRunE` logger call if moving to `RunE`, set `rootCmd.Version` + `SetVersionTemplate` |
+| `cmd/version.go`            | `dg version` subcommand + `--version` flag     | Remove `init()` side-effect pattern; replace `--version` flag + `ParseFlags` + `os.Exit` with Cobra's built-in Version mechanism              |
+| `cmd/install.go`            | `dg install` command                           | `Run` → `RunE`                                                                                                                                |
+| `cmd/worktree.go`           | `dg worktree` + 7 subcommands                  | `Run` → `RunE`; add `NoArgs()` on list/jump/prune; add `ValidArgsFunction` on remove and jump                                                 |
+| `cmd/completion.go`         | **New file**                                   | `dg completion [bash\|zsh\|fish\|powershell]` command                                                                                         |
+| `pkg/logger/logger.go`      | Zap initialization                             | No code change needed; `go get` updates version                                                                                               |
+| `CLAUDE.md`                 | Tech Stack table                               | Update Go version note                                                                                                                        |
 
 **Key functions and types involved:**
 
@@ -110,6 +110,7 @@ Upgrade Go, Cobra, and Zap to current stable versions; remove the unused charmbr
 ### In Scope
 
 **Track A — Dependency cleanup:**
+
 - [x] Delete `internal/tui/installer.go` (dead code, no callers)
 - [x] Upgrade Go directive in `go.mod`: 1.23.0 → 1.26.3; toolchain: go1.23.5 → go1.26.3
 - [x] Upgrade Cobra: v1.8.1 → v1.10.2
@@ -117,6 +118,7 @@ Upgrade Go, Cobra, and Zap to current stable versions; remove the unused charmbr
 - [x] Run `go mod tidy`; verify charmbracelet entries removed from `go.mod`/`go.sum`
 
 **Track B — Cobra API improvements:**
+
 - [x] Easy wins: `SilenceUsage: true` on rootCmd; `NoArgs()` on list/jump/prune; `MarkDeprecated("debug", "use --verbose instead")`
 - [x] Migrate all `Run` handlers → `RunE` across `cmd/install.go`, `cmd/version.go`, `cmd/worktree.go` (7 subcommands); remove `utils.MaybeExitWithError()` at each call site
 - [x] Replace `cmd/version.go` `init()` side-effect (ParseFlags + os.Exit) with `rootCmd.Version` + `rootCmd.SetVersionTemplate()`; preserve exact output format
@@ -228,7 +230,7 @@ Args: cobra.NoArgs(),
 Replace every `Run: func(...)` with `RunE: func(...) error` across:
 
 - `cmd/install.go` — 1 handler
-- `cmd/version.go` — 1 handler  
+- `cmd/version.go` — 1 handler
 - `cmd/worktree.go` — 7 handlers (create, list, remove, jump, repair, prune, parent)
 
 Pattern:
@@ -273,6 +275,7 @@ rootCmd.SetVersionTemplate(fmt.Sprintf(
 Keep the `dg version` subcommand (`versionCmd`) in place — it should continue to work as before. The built-in `--version` flag is additive.
 
 **Acceptance criteria:**
+
 - `dg version` → `devgeta <ver> (commit: <sha>, built: <date>)`
 - `dg --version` → same format
 - Neither command calls `os.Exit()` inside `init()`
@@ -326,6 +329,7 @@ func init() {
 ```
 
 **Acceptance criteria:**
+
 - `dg completion zsh` → prints non-empty zsh completion script
 - `dg completion bash` → prints non-empty bash completion script
 - `dg completion unknown` → returns an error, exits non-zero
@@ -354,6 +358,7 @@ ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([
 If `worktree.ListNames()` does not exist, add a thin wrapper in `internal/tooling/worktree/` that returns just the names (not the full struct) — do not implement new worktree logic.
 
 **Acceptance criteria:**
+
 - `dg worktree remove <TAB>` → lists current worktree names
 - `dg worktree jump <TAB>` → lists current worktree names
 - Returns empty list (not error) when no worktrees exist
@@ -417,15 +422,15 @@ ls devgeta-darwin-arm64 devgeta-darwin-amd64 devgeta-linux-amd64
 
 ## 7. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|------|------------|-----------|
-| Go 1.26 stdlib change breaks something | Very Low | `go test ./...` catches it; Go maintains strong backward compat |
-| Cobra v1.10 pflag rename causes compile error | Very Low | Devgeta doesn't use pflag directly; `go build` will surface it immediately |
-| `init()` removal in version.go changes startup order | Low | No other `init()` depends on the version flag; test with `dg --version` |
-| `ValidArgsFunction` panics outside git repo | Low | Guard with `err != nil` → return `ShellCompDirectiveError` |
-| `internal/tui/` directory left empty after delete | Low | Check `ls internal/tui/`; remove directory if empty |
-| Go toolchain directive rejected by older CI | Low | If CI fails, set `go 1.23.0` + `toolchain go1.26.3` independently |
-| `go mod tidy` silently changes unrelated indirect deps | Low | Review `go.sum` diff before committing; focus on charmbracelet removals |
+| Risk                                                   | Likelihood | Mitigation                                                                 |
+| ------------------------------------------------------ | ---------- | -------------------------------------------------------------------------- |
+| Go 1.26 stdlib change breaks something                 | Very Low   | `go test ./...` catches it; Go maintains strong backward compat            |
+| Cobra v1.10 pflag rename causes compile error          | Very Low   | Devgeta doesn't use pflag directly; `go build` will surface it immediately |
+| `init()` removal in version.go changes startup order   | Low        | No other `init()` depends on the version flag; test with `dg --version`    |
+| `ValidArgsFunction` panics outside git repo            | Low        | Guard with `err != nil` → return `ShellCompDirectiveError`                 |
+| `internal/tui/` directory left empty after delete      | Low        | Check `ls internal/tui/`; remove directory if empty                        |
+| Go toolchain directive rejected by older CI            | Low        | If CI fails, set `go 1.23.0` + `toolchain go1.26.3` independently          |
+| `go mod tidy` silently changes unrelated indirect deps | Low        | Review `go.sum` diff before committing; focus on charmbracelet removals    |
 
 ### Trade-offs Made
 

@@ -42,6 +42,7 @@ breaks without them.
    ```
 
    Leave out `--coder` to install into every installed coder.
+
 2. Check with `dg agent-pack list`.
 3. Start a new session in each coder. Claude Code also lists them in `/plugin`.
 

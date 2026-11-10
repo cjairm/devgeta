@@ -28,6 +28,7 @@ Sort what is in scope into design docs, plans and code. The repo's own conventio
 Run a check only when its stage is present.
 
 **Design doc**
+
 - Problem stated before solution: who has it, what happens if we do nothing.
 - Goals, non-goals, how success is measured.
 - At least two real alternatives, including "do nothing" or "buy", with reasons.
@@ -37,6 +38,7 @@ Run a check only when its stage is present.
 - How we will know it is broken, how to roll back, how to migrate.
 
 **Plan**
+
 - Every task traces to a requirement, and back.
 - Riskiest work first; each milestone shippable and verifiable on its own.
 - Each step has a testable definition of done ("auth works" is not one).
@@ -44,6 +46,7 @@ Run a check only when its stage is present.
 - Anything outside the goals is cut.
 
 **Code**
+
 - Intent first: if the description and tests do not say what it does, that is the first finding.
 - Matches the approved design; deviations are explained.
 - Correctness: edge cases, error paths, concurrency, idempotency, transactions. Run the tests when you can.

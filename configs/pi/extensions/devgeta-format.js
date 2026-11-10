@@ -46,7 +46,11 @@ function changedSpan(before, after) {
     endA--;
     endB--;
   }
-  return { from: start + 1, to: Math.max(endB, start) + 1, lines: b.slice(start, endB + 1) };
+  return {
+    from: start + 1,
+    to: Math.max(endB, start) + 1,
+    lines: b.slice(start, endB + 1),
+  };
 }
 
 function describeChange(span) {
@@ -64,7 +68,10 @@ export default function (pi) {
   if (existsSync(masonBin) && !entries.includes(masonBin)) {
     process.env.PATH = [masonBin, ...entries].filter(Boolean).join(delimiter);
   }
-  for (const name of ["PI_LENS_DISABLE_TOOL_INSTALL", "PI_LENS_DISABLE_LSP_INSTALL"]) {
+  for (const name of [
+    "PI_LENS_DISABLE_TOOL_INSTALL",
+    "PI_LENS_DISABLE_LSP_INSTALL",
+  ]) {
     if (process.env[name] === undefined) process.env[name] = "1";
   }
 
@@ -87,8 +94,11 @@ export default function (pi) {
       const parts = [];
       const span = after === null ? null : changedSpan(before, after);
       if (span) parts.push(describeChange(span));
-      const findings = (result && result.stdout ? String(result.stdout) : "").trim();
-      if (findings) parts.push(`Linter findings for ${target} — please fix:\n${findings}`);
+      const findings = (
+        result && result.stdout ? String(result.stdout) : ""
+      ).trim();
+      if (findings)
+        parts.push(`Linter findings for ${target} — please fix:\n${findings}`);
       if (parts.length === 0) return;
 
       return {

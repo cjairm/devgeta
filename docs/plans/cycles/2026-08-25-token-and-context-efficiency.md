@@ -179,7 +179,7 @@ cycle and referenced here.
 | Create | `internal/tooling/contextreport/report.go`                                      | Base-context measurement                                                                                        |
 | Create | `internal/tooling/contextreport/report_test.go`                                 | Unit tests against a fixture tree                                                                               |
 | Modify | `internal/config/fromFile.go`                                                   | Add `IntegrationsConfig.OutputBudget *bool` opt-in field                                                        |
-| Modify | `cmd/config_settings.go`                                                        | Register `integrations.output_budget` (bool, Set + Unset)                                                              |
+| Modify | `cmd/config_settings.go`                                                        | Register `integrations.output_budget` (bool, Set + Unset)                                                       |
 | Modify | `docs/guides/agent-sync.md`                                                     | Record the Claude-only gap **if** Step 0's fallback rule fires                                                  |
 | Modify | `internal/apps/opencode/opencode.go`                                            | Plugin reads the opt-in field at runtime                                                                        |
 | Create | `configs/claude/output-budget.sh`                                               | PreToolUse hook: match + redirect to the runner                                                                 |
@@ -211,63 +211,63 @@ memory; each answer changes an implementation detail downstream.
       the rtk-composition rule in Step 4.
 
       **Confirmed, and it overturns this step's own assumption.** Claude
-                                                                      Code's `PreToolUse` hooks on the same matcher run in **parallel**, not
-                                                                      sequentially — official docs: "All matching hooks run in parallel."
-                                                                      Independently corroborated detail beyond the docs' own gap: when more
-                                                                      than one hook returns `updatedInput`, **the last one to finish wins,
-                                                                      non-deterministically** — registration order in `settings.json` has no
-                                                                      effect on which rewrite survives. Docs explicitly warn against two
-                                                                      hooks on one matcher both returning `updatedInput`. Also load-bearing
-                                                                      for the runner's argv contract: `updatedInput` **replaces the whole
-                                                                      input object** — a hook that returns only `{"command": ...}` silently
-                                                                      drops every other field (`description`, `timeout`) the original call
-                                                                      carried, so Step 4's hook must echo those through unchanged.
-                                                                      Re-permission-checking of a rewritten command is undocumented (genuine
-                                                                      gap, not found in any source checked).
+                                                                                  Code's `PreToolUse` hooks on the same matcher run in **parallel**, not
+                                                                                  sequentially — official docs: "All matching hooks run in parallel."
+                                                                                  Independently corroborated detail beyond the docs' own gap: when more
+                                                                                  than one hook returns `updatedInput`, **the last one to finish wins,
+                                                                                  non-deterministically** — registration order in `settings.json` has no
+                                                                                  effect on which rewrite survives. Docs explicitly warn against two
+                                                                                  hooks on one matcher both returning `updatedInput`. Also load-bearing
+                                                                                  for the runner's argv contract: `updatedInput` **replaces the whole
+                                                                                  input object** — a hook that returns only `{"command": ...}` silently
+                                                                                  drops every other field (`description`, `timeout`) the original call
+                                                                                  carried, so Step 4's hook must echo those through unchanged.
+                                                                                  Re-permission-checking of a rewritten command is undocumented (genuine
+                                                                                  gap, not found in any source checked).
 
-                                                                      **OpenCode is the opposite.** Its plugin hooks (`tool.execute.before`)
-                                                                      run in **sequence**, mutating a shared `output.args` object in place —
-                                                                      docs: "all hooks run in sequence." A later plugin sees an earlier
-                                                                      plugin's mutation, so composing with rtk by registration order (as
-                                                                      Step 4/5 originally assumed for both agents) is actually correct here.
+                                                                                  **OpenCode is the opposite.** Its plugin hooks (`tool.execute.before`)
+                                                                                  run in **sequence**, mutating a shared `output.args` object in place —
+                                                                                  docs: "all hooks run in sequence." A later plugin sees an earlier
+                                                                                  plugin's mutation, so composing with rtk by registration order (as
+                                                                                  Step 4/5 originally assumed for both agents) is actually correct here.
 
-                                                                      **Consequence for Step 4/5's rtk-composition rule**: "register after
-                                                                      rtk's block so a command it already rewrote is not re-matched" is
-                                                                      correct on OpenCode and **impossible to guarantee on Claude Code** —
-                                                                      there is no chaining to order. Decided: ship both hooks independently
-                                                                      on Claude Code and document the race rather than block on it (see
-                                                                      Step 4/5's own note and the risk table). Revisit only if real usage
-                                                                      shows the race biting in practice.
+                                                                                  **Consequence for Step 4/5's rtk-composition rule**: "register after
+                                                                                  rtk's block so a command it already rewrote is not re-matched" is
+                                                                                  correct on OpenCode and **impossible to guarantee on Claude Code** —
+                                                                                  there is no chaining to order. Decided: ship both hooks independently
+                                                                                  on Claude Code and document the race rather than block on it (see
+                                                                                  Step 4/5's own note and the risk table). Revisit only if real usage
+                                                                                  shows the race biting in practice.
 
 - [x] Whether OpenCode exposes a `PreToolUse` equivalent with command rewriting
       at all. If it does not, see the fallback rule directly below.
 
       **Confirmed: yes.** `tool.execute.before: async (input, output) => {}`,
-                                                                      already used by `configs/opencode/plugin/task-redirect.js`. A plugin
-                                                                      rewrites the call by mutating `output.args.command` in place (denial is
-                                                                      by throwing). The fallback rule below does not apply — Scope A ships
-                                                                      for both agents.
+                                                                                  already used by `configs/opencode/plugin/task-redirect.js`. A plugin
+                                                                                  rewrites the call by mutating `output.args.command` in place (denial is
+                                                                                  by throwing). The fallback rule below does not apply — Scope A ships
+                                                                                  for both agents.
 
 - [x] Exact base-context load order and precedence for each agent — the Step 7
       tables are drafted from current docs and must be confirmed, especially
       `@import` resolution and whether project settings override or merge.
 
       **Confirmed, with two corrections to Step 7's Claude Code table** (now
-                                                                      applied there): CLAUDE.md/CLAUDE.local.md layers **concatenate**, never
-                                                                      override, in root-to-leaf order (managed policy → user → project →
-                                                                      local; `CLAUDE.local.md` after `CLAUDE.md` at each level). `@import`
-                                                                      depth caps at 4 hops. Two always-loaded sources were missing from the
-                                                                      table entirely: the **auto-memory index** (`~/.claude/projects/<repo>/memory/MEMORY.md`,
-                                                                      first 200 lines or 25KB, loaded every session — this session's own
-                                                                      `MEMORY.md` is an instance of it) and **`.claude/rules/*.md`** files
-                                                                      without `paths:` frontmatter (loaded at launch, same priority as
-                                                                      `.claude/CLAUDE.md`). Both are added to the Step 7 table below.
+                                                                                  applied there): CLAUDE.md/CLAUDE.local.md layers **concatenate**, never
+                                                                                  override, in root-to-leaf order (managed policy → user → project →
+                                                                                  local; `CLAUDE.local.md` after `CLAUDE.md` at each level). `@import`
+                                                                                  depth caps at 4 hops. Two always-loaded sources were missing from the
+                                                                                  table entirely: the **auto-memory index** (`~/.claude/projects/<repo>/memory/MEMORY.md`,
+                                                                                  first 200 lines or 25KB, loaded every session — this session's own
+                                                                                  `MEMORY.md` is an instance of it) and **`.claude/rules/*.md`** files
+                                                                                  without `paths:` frontmatter (loaded at launch, same priority as
+                                                                                  `.claude/CLAUDE.md`). Both are added to the Step 7 table below.
 
 - [x] Whether skill bodies or only frontmatter enter base context (Step 7
       assumes frontmatter only).
 
       **Confirmed as assumed.** Docs: "a skill's body loads only when it's
-                                                                      used" — only the frontmatter (name/description) is always-loaded.
+                                                                                  used" — only the frontmatter (name/description) is always-loaded.
 
 **Fallback rule if OpenCode cannot rewrite commands — DOES NOT FIRE.** Step 0
 confirmed OpenCode's `tool.execute.before` can rewrite `output.args.command` in
@@ -415,7 +415,7 @@ this, already has boolean entries with the same tri-state shape
 
 | Element   | Value                                                                                                        |
 | --------- | ------------------------------------------------------------------------------------------------------------ |
-| Key       | `integrations.output_budget`                                                                                        |
+| Key       | `integrations.output_budget`                                                                                 |
 | Kind      | `bool`                                                                                                       |
 | Field     | `gc.Integrations.OutputBudget *bool` — pointer for the unset/true/false tri-state                            |
 | `Default` | Calls the same resolver the hook consults, never a restated literal (registry rule, `config_settings.go:32`) |

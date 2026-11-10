@@ -50,7 +50,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import notifyPlugin, { createNotify } from "./configs/opencode/plugins/devgeta-notify/tui.js";
+import notifyPlugin, {
+  createNotify,
+} from "./configs/opencode/plugins/devgeta-notify/tui.js";
 
 // The suite usually runs inside a real tmux pane, often one running a coder.
 // Any code path that reaches the plugin's real exec with TMUX_PANE set
@@ -108,7 +110,11 @@ function makeExecStub(impl) {
 // fakeContext is the slice of OpenCode 2's TUI context the plugin reads:
 // event subscriptions, the current route, and session lookups. `roots` maps a
 // subagent session to its root; `status` is what session.status() answers.
-function fakeContext({ route = { type: "session", sessionID: "ses_1" }, roots = {}, status = "running" } = {}) {
+function fakeContext({
+  route = { type: "session", sessionID: "ses_1" },
+  roots = {},
+  status = "running",
+} = {}) {
   const subscriptions = new Map();
   return {
     subscriptions,
@@ -122,7 +128,11 @@ function fakeContext({ route = { type: "session", sessionID: "ses_1" }, roots = 
         status: () => (typeof status === "function" ? status() : status),
       },
     },
-    ui: { router: { current: () => (typeof route === "function" ? route() : route) } },
+    ui: {
+      router: {
+        current: () => (typeof route === "function" ? route() : route),
+      },
+    },
   };
 }
 
@@ -453,9 +463,7 @@ test("an unrecognized event type is a no-op: no write, no throw", async () => {
     const exec = makeExecStub();
     const plugin = await start(exec);
     exec.calls.length = 0;
-    await assert.doesNotReject(() =>
-      plugin.fire("session.compaction.started"),
-    );
+    await assert.doesNotReject(() => plugin.fire("session.compaction.started"));
     assert.deepEqual(exec.calls, []);
   });
 });
@@ -471,9 +479,7 @@ test("TMUX_PANE unset: no error, no write attempted (pane or mirror)", async () 
     );
     assert.deepEqual(exec.calls, []);
 
-    await assert.doesNotReject(() =>
-      plugin.fire("session.execution.started"),
-    );
+    await assert.doesNotReject(() => plugin.fire("session.execution.started"));
     assert.deepEqual(exec.calls, []);
   });
 });
@@ -483,9 +489,7 @@ test("TMUX_PANE empty string: no error, no write attempted (pane or mirror)", as
     const exec = makeExecStub();
     const plugin = await start(exec);
     exec.calls.length = 0;
-    await assert.doesNotReject(() =>
-      plugin.fire("session.execution.failed"),
-    );
+    await assert.doesNotReject(() => plugin.fire("session.execution.failed"));
     assert.deepEqual(exec.calls, []);
   });
 });
@@ -520,9 +524,7 @@ test("a rejected exec call is swallowed for BOTH the pane write and the mirror c
     });
     const plugin = await start(exec);
     exec.calls.length = 0;
-    await assert.doesNotReject(() =>
-      plugin.fire("session.execution.started"),
-    );
+    await assert.doesNotReject(() => plugin.fire("session.execution.started"));
     assert.deepEqual(exec.calls, [paneWrite("%5", "busy"), mirrorClear("%5")]);
   });
 });
@@ -746,9 +748,7 @@ test("sound: still resolves without throwing when pane_tty cannot be resolved (e
     });
     const plugin = await start(exec);
     exec.calls.length = 0;
-    await assert.doesNotReject(() =>
-      plugin.fire("session.execution.failed"),
-    );
+    await assert.doesNotReject(() => plugin.fire("session.execution.failed"));
   });
 });
 
@@ -863,9 +863,7 @@ test("cleanup without TMUX_PANE is a no-op", async () => {
   await withTmuxPane(undefined, async () => {
     const exec = makeExecStub();
     const plugin = await start(exec);
-    await assert.doesNotReject(() =>
-      plugin.cleanup(),
-    );
+    await assert.doesNotReject(() => plugin.cleanup());
     assert.deepEqual(exec.calls, []);
   });
 });
@@ -879,7 +877,11 @@ async function withExitFallback(syncExecFn, fn) {
   const before = new Set(process.listeners("exit"));
   await start(makeExecStub(), syncExecFn);
   const added = process.listeners("exit").filter((l) => !before.has(l));
-  assert.equal(added.length, 1, "createNotify must register exactly one exit listener");
+  assert.equal(
+    added.length,
+    1,
+    "createNotify must register exactly one exit listener",
+  );
   try {
     await fn(added[0]);
   } finally {
@@ -968,7 +970,11 @@ test("a subagent's prompt marks this pane blocked, but its finishing does not ma
     const plugin = await start(exec, null, { roots: { ses_child: "ses_1" } });
     exec.calls.length = 0;
     await plugin.fire("session.execution.succeeded", "ses_child");
-    assert.deepEqual(exec.calls, [], "a subagent finishing is not the turn finishing");
+    assert.deepEqual(
+      exec.calls,
+      [],
+      "a subagent finishing is not the turn finishing",
+    );
     await plugin.fire("permission.asked", "ses_child");
     assert.deepEqual(exec.calls, [
       paneWrite("%42", "blocked"),
@@ -983,7 +989,12 @@ test("a reply or finished tool after the turn ended does not flip the pane back 
     const exec = makeExecStub(async () => "idle");
     const plugin = await start(exec, null, { status: "idle" });
     exec.calls.length = 0;
-    for (const type of ["permission.replied", "form.replied", "session.tool.failed", "session.tool.success"]) {
+    for (const type of [
+      "permission.replied",
+      "form.replied",
+      "session.tool.failed",
+      "session.tool.success",
+    ]) {
       await plugin.fire(type);
     }
     assert.deepEqual(exec.calls, []);
@@ -1003,14 +1014,26 @@ test("handlers run in arrival order: a slow resume cannot overwrite the idle tha
       }
       return "";
     });
-    const plugin = await start(exec, null, { status: () => (running ? "running" : "idle") });
+    const plugin = await start(exec, null, {
+      status: () => (running ? "running" : "idle"),
+    });
     exec.calls.length = 0;
     const resume = plugin.fire("session.tool.failed");
     running = false;
     const finished = plugin.fire("session.execution.interrupted");
     await Promise.all([resume, finished]);
-    const paneWrites = exec.calls.filter((c) => c.includes("@dg_agent_state") && c[2] === "-p" && !c.includes("-u") && c[1] === "set-option");
-    assert.equal(paneWrites.at(-1)[6], "idle", `last pane write must be idle, got ${JSON.stringify(paneWrites)}`);
+    const paneWrites = exec.calls.filter(
+      (c) =>
+        c.includes("@dg_agent_state") &&
+        c[2] === "-p" &&
+        !c.includes("-u") &&
+        c[1] === "set-option",
+    );
+    assert.equal(
+      paneWrites.at(-1)[6],
+      "idle",
+      `last pane write must be idle, got ${JSON.stringify(paneWrites)}`,
+    );
   });
 });
 

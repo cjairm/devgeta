@@ -25,17 +25,17 @@ Related: [ROADMAP.md](../../../ROADMAP.md) · [docs/guides/app-interface.md](../
 
 ### Key files
 
-| File | Role |
-|------|------|
-| `internal/commands/factory.go` | `Command` interface — needs `UninstallPackage`, `UninstallDesktopApp` |
-| `internal/commands/macos.go` | macOS impl — needs `UninstallPackage` (`brew uninstall`), `UninstallDesktopApp` (`brew uninstall --cask`) |
-| `internal/commands/debian.go` | Debian impl — needs `UninstallPackage` (`apt-get remove -y`), `UninstallDesktopApp` (same as package on Debian) |
-| `internal/commands/mock.go` | Already has `UninstallPackage` — needs `UninstallDesktopApp` added |
-| `internal/config/fromFile.go` | Needs `RemoveFromInstalled(itemName, itemType string)` |
-| `internal/apps/{app}/{app}.go` | 18 app files — all need real `Uninstall()` |
-| `internal/apps/registry/registry.go` | Add `AppMeta` map and helpers (keep in current package — see import cycle note) |
-| `cmd/install.go` | No import change needed (already uses `internal/apps/registry`) |
-| `cmd/uninstall.go` | **New** — `dg uninstall <app|category>` command |
+| File                                 | Role                                                                                                            |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `internal/commands/factory.go`       | `Command` interface — needs `UninstallPackage`, `UninstallDesktopApp`                                           |
+| `internal/commands/macos.go`         | macOS impl — needs `UninstallPackage` (`brew uninstall`), `UninstallDesktopApp` (`brew uninstall --cask`)       |
+| `internal/commands/debian.go`        | Debian impl — needs `UninstallPackage` (`apt-get remove -y`), `UninstallDesktopApp` (same as package on Debian) |
+| `internal/commands/mock.go`          | Already has `UninstallPackage` — needs `UninstallDesktopApp` added                                              |
+| `internal/config/fromFile.go`        | Needs `RemoveFromInstalled(itemName, itemType string)`                                                          |
+| `internal/apps/{app}/{app}.go`       | 18 app files — all need real `Uninstall()`                                                                      |
+| `internal/apps/registry/registry.go` | Add `AppMeta` map and helpers (keep in current package — see import cycle note)                                 |
+| `cmd/install.go`                     | No import change needed (already uses `internal/apps/registry`)                                                 |
+| `cmd/uninstall.go`                   | **New** — `dg uninstall <app                                                                                    | category>` command |
 
 ### Current state of `UninstallPackage`
 
@@ -45,26 +45,26 @@ Related: [ROADMAP.md](../../../ROADMAP.md) · [docs/guides/app-interface.md](../
 
 Each app's `Uninstall()` must do all of: binary/package removal → config dir removal (best-effort) → shell feature disable → shell config regeneration (if applicable) → `gc.RemoveFromInstalled()` → `gc.Save()`. Config removal failures are logged but do not block state updates — the binary is the critical artifact; leftover config dirs are harmless and can be cleaned up manually.
 
-| App | Coordinator | Binary removal | Config path to remove | Shell feature |
-|-----|-------------|---------------|----------------------|---------------|
-| `aerospace` | desktop | `Cmd.UninstallDesktopApp("nikitabobko/tap/aerospace")` (macOS) | `paths.Config.Aerospace` | none |
-| `alacritty` | desktop | `Cmd.UninstallDesktopApp(alacritty)` | `paths.Config.Alacritty` | none |
-| `brave` | desktop | `Cmd.UninstallDesktopApp("brave-browser")` | none | none |
-| `claude` | terminal | `Base.ExecCommand("npm uninstall -g @anthropic-ai/claude-code")` | `paths.Config.Claude` | `constants.Claude` |
-| `docker` | desktop | `Cmd.UninstallDesktopApp(docker)` | none | none |
-| `fastfetch` | terminal | `Cmd.UninstallPackage(fastfetch)` | `paths.Config.Fastfetch` | none |
-| `flameshot` | desktop | `Cmd.UninstallDesktopApp(flameshot)` | none | none |
-| `gimp` | desktop | `Cmd.UninstallDesktopApp(gimp)` | none | none |
-| `git` | terminal | `Cmd.UninstallPackage(git)` | `paths.Config.Git` | none |
-| `i3` | desktop | `Cmd.UninstallPackage(i3)` | `paths.Config.I3` | none |
-| `lazydocker` | terminal | macOS: `Cmd.UninstallPackage("jesseduffield/lazydocker/lazydocker")` · Linux: `sudo rm /usr/local/bin/lazydocker` | none | `constants.LazyDocker` |
-| `lazygit` | terminal | macOS: `Cmd.UninstallPackage(lazygit)` · Linux: `sudo rm /usr/local/bin/lazygit` | none | `constants.LazyGit` |
-| `mise` | terminal | `Cmd.UninstallPackage(mise)` | none | `constants.Mise` |
-| `neovim` | terminal | macOS: `Cmd.UninstallPackage(neovim)` · Linux: `sudo rm /usr/local/bin/nvim` + `sudo rm -rf /usr/local/lib/nvim*` + `sudo rm -rf /usr/local/share/nvim*` | `paths.Config.Nvim` | `constants.Neovim` |
-| `opencode` | terminal | `Cmd.UninstallPackage(opencode)` | `paths.Config.OpenCode` | `constants.OpenCode` |
-| `raycast` | desktop | `Cmd.UninstallDesktopApp(raycast)` (macOS only; no-op on Linux) | none | none |
-| `tmux` | terminal | `Cmd.UninstallPackage(tmux)` | `~/.tmux.conf` (single file, not dir) | `constants.Tmux` |
-| `ulauncher` | desktop | `Cmd.UninstallDesktopApp(ulauncher)` (Linux only; no-op on macOS) | none | none |
+| App          | Coordinator | Binary removal                                                                                                                                           | Config path to remove                 | Shell feature          |
+| ------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- | ---------------------- |
+| `aerospace`  | desktop     | `Cmd.UninstallDesktopApp("nikitabobko/tap/aerospace")` (macOS)                                                                                           | `paths.Config.Aerospace`              | none                   |
+| `alacritty`  | desktop     | `Cmd.UninstallDesktopApp(alacritty)`                                                                                                                     | `paths.Config.Alacritty`              | none                   |
+| `brave`      | desktop     | `Cmd.UninstallDesktopApp("brave-browser")`                                                                                                               | none                                  | none                   |
+| `claude`     | terminal    | `Base.ExecCommand("npm uninstall -g @anthropic-ai/claude-code")`                                                                                         | `paths.Config.Claude`                 | `constants.Claude`     |
+| `docker`     | desktop     | `Cmd.UninstallDesktopApp(docker)`                                                                                                                        | none                                  | none                   |
+| `fastfetch`  | terminal    | `Cmd.UninstallPackage(fastfetch)`                                                                                                                        | `paths.Config.Fastfetch`              | none                   |
+| `flameshot`  | desktop     | `Cmd.UninstallDesktopApp(flameshot)`                                                                                                                     | none                                  | none                   |
+| `gimp`       | desktop     | `Cmd.UninstallDesktopApp(gimp)`                                                                                                                          | none                                  | none                   |
+| `git`        | terminal    | `Cmd.UninstallPackage(git)`                                                                                                                              | `paths.Config.Git`                    | none                   |
+| `i3`         | desktop     | `Cmd.UninstallPackage(i3)`                                                                                                                               | `paths.Config.I3`                     | none                   |
+| `lazydocker` | terminal    | macOS: `Cmd.UninstallPackage("jesseduffield/lazydocker/lazydocker")` · Linux: `sudo rm /usr/local/bin/lazydocker`                                        | none                                  | `constants.LazyDocker` |
+| `lazygit`    | terminal    | macOS: `Cmd.UninstallPackage(lazygit)` · Linux: `sudo rm /usr/local/bin/lazygit`                                                                         | none                                  | `constants.LazyGit`    |
+| `mise`       | terminal    | `Cmd.UninstallPackage(mise)`                                                                                                                             | none                                  | `constants.Mise`       |
+| `neovim`     | terminal    | macOS: `Cmd.UninstallPackage(neovim)` · Linux: `sudo rm /usr/local/bin/nvim` + `sudo rm -rf /usr/local/lib/nvim*` + `sudo rm -rf /usr/local/share/nvim*` | `paths.Config.Nvim`                   | `constants.Neovim`     |
+| `opencode`   | terminal    | `Cmd.UninstallPackage(opencode)`                                                                                                                         | `paths.Config.OpenCode`               | `constants.OpenCode`   |
+| `raycast`    | desktop     | `Cmd.UninstallDesktopApp(raycast)` (macOS only; no-op on Linux)                                                                                          | none                                  | none                   |
+| `tmux`       | terminal    | `Cmd.UninstallPackage(tmux)`                                                                                                                             | `~/.tmux.conf` (single file, not dir) | `constants.Tmux`       |
+| `ulauncher`  | desktop     | `Cmd.UninstallDesktopApp(ulauncher)` (Linux only; no-op on macOS)                                                                                        | none                                  | none                   |
 
 ### ⚠️ REVISED: Item type model — actual tracking vs aspirational
 
@@ -75,26 +75,26 @@ Each app's `Uninstall()` must do all of: binary/package removal → config dir r
 
 This means the **actual item types in `global_config.yaml`** for existing installations are:
 
-| App | Tracked via | Actual item type in global_config |
-|-----|------------|----------------------------------|
-| `aerospace` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `alacritty` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `brave` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `claude` | `MaybeInstallPackage` + explicit `AddToInstalled` | `"package"` |
-| `docker` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `fastfetch` | `MaybeInstallPackage` | `"package"` |
-| `flameshot` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `gimp` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `git` | `MaybeInstallPackage` | `"package"` |
-| `i3` | `MaybeInstallPackage` | `"package"` |
-| `lazydocker` | `MaybeInstallPackage` | `"package"` |
-| `lazygit` | `MaybeInstallPackage` | `"package"` |
-| `mise` | `MaybeInstallPackage` | `"package"` |
-| `neovim` | `MaybeInstallPackage` | `"package"` |
-| `opencode` | `MaybeInstallPackage` + explicit `AddToInstalled` | `"package"` |
-| `raycast` | `MaybeInstallDesktopApp` | `"desktop_app"` |
-| `tmux` | `MaybeInstallPackage` | `"package"` |
-| `ulauncher` | `MaybeInstallDesktopApp` | `"desktop_app"` |
+| App          | Tracked via                                       | Actual item type in global_config |
+| ------------ | ------------------------------------------------- | --------------------------------- |
+| `aerospace`  | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `alacritty`  | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `brave`      | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `claude`     | `MaybeInstallPackage` + explicit `AddToInstalled` | `"package"`                       |
+| `docker`     | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `fastfetch`  | `MaybeInstallPackage`                             | `"package"`                       |
+| `flameshot`  | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `gimp`       | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `git`        | `MaybeInstallPackage`                             | `"package"`                       |
+| `i3`         | `MaybeInstallPackage`                             | `"package"`                       |
+| `lazydocker` | `MaybeInstallPackage`                             | `"package"`                       |
+| `lazygit`    | `MaybeInstallPackage`                             | `"package"`                       |
+| `mise`       | `MaybeInstallPackage`                             | `"package"`                       |
+| `neovim`     | `MaybeInstallPackage`                             | `"package"`                       |
+| `opencode`   | `MaybeInstallPackage` + explicit `AddToInstalled` | `"package"`                       |
+| `raycast`    | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
+| `tmux`       | `MaybeInstallPackage`                             | `"package"`                       |
+| `ulauncher`  | `MaybeInstallDesktopApp`                          | `"desktop_app"`                   |
 
 **The previous draft's `AppEntry.ItemType` table was wrong for 9 apps** (fastfetch, git, i3, lazydocker, lazygit, mise, neovim, tmux were listed as `"terminal_tool"` but are actually tracked as `"package"`). Using the wrong item type in `RemoveFromInstalled` would silently fail to remove the entry.
 
@@ -154,12 +154,12 @@ Add helpers: `IsKnownApp`, `IsKnownCategory`, `KnownCategories`, `AppsByCoordina
 
 One definitive rule for every exit path from `app.Uninstall()`:
 
-| Outcome | Binary removed? | gc.RemoveFromInstalled | gc.DisableShellFeature | gc.RegenerateShellConfig | gc.Save | Command exit |
-|---------|----------------|----------------------|----------------------|--------------------------|---------|-------------|
-| Success | ✅ | ✅ | ✅ (if applicable) | ✅ (if applicable) | ✅ | 0 |
-| Binary removal fails | ❌ | ❌ | ❌ | ❌ | ❌ | error logged, continue batch |
-| Config removal fails | ✅ | ✅ | ✅ (if applicable) | ✅ (if applicable) | ✅ | 0 (warning logged) |
-| gc.Save fails (after all else succeeds) | ✅ | done in-memory | done in-memory | done | ❌ persisted | error, stop for this app |
+| Outcome                                 | Binary removed? | gc.RemoveFromInstalled | gc.DisableShellFeature | gc.RegenerateShellConfig | gc.Save      | Command exit                 |
+| --------------------------------------- | --------------- | ---------------------- | ---------------------- | ------------------------ | ------------ | ---------------------------- |
+| Success                                 | ✅              | ✅                     | ✅ (if applicable)     | ✅ (if applicable)       | ✅           | 0                            |
+| Binary removal fails                    | ❌              | ❌                     | ❌                     | ❌                       | ❌           | error logged, continue batch |
+| Config removal fails                    | ✅              | ✅                     | ✅ (if applicable)     | ✅ (if applicable)       | ✅           | 0 (warning logged)           |
+| gc.Save fails (after all else succeeds) | ✅              | done in-memory         | done in-memory         | done                     | ❌ persisted | error, stop for this app     |
 
 **Rule:** state is only persisted after binary removal succeeds. Config removal is best-effort (`_ = os.RemoveAll`) — failures are logged as warnings but do not block gc updates. This matches the implementation pattern used for tmux, neovim, and claude. Partial success (binary gone, gc.Save failed) is logged as an error — the user knows to clean up manually. The orchestrator collects all per-app errors and returns non-zero if any app failed.
 
@@ -248,54 +248,54 @@ Implement `dg uninstall <app|category>` that fully reverses the install process 
 
 ### File Changes
 
-| Action | File | Description |
-|--------|------|-------------|
-| Modify | `internal/commands/factory.go` | Add `UninstallPackage`, `UninstallDesktopApp` to `Command` interface |
-| Modify | `internal/commands/macos.go` | Implement `UninstallPackage`, `UninstallDesktopApp` |
-| Modify | `internal/commands/debian.go` | Implement `UninstallPackage`, `UninstallDesktopApp` |
-| Modify | `internal/commands/mock.go` | Add `UninstallDesktopApp` + `UninstalledDesktopApp` field |
-| Modify | `internal/config/fromFile.go` | Add `RemoveFromInstalled` |
-| Modify | `internal/config/fromFile_test.go` | Test `RemoveFromInstalled` |
-| Modify | `internal/apps/registry/registry.go` | Add `AppMeta` struct, `Meta` map, filter helpers (NO package move) |
-| Modify | `internal/apps/registry/registry_test.go` | Add `AppMeta` consistency tests |
-| Modify | `internal/apps/aerospace/aerospace.go` | Real `Uninstall()` |
-| Create/Modify | `internal/apps/aerospace/aerospace_test.go` | Uninstall tests |
-| Modify | `internal/apps/alacritty/alacritty.go` | Real `Uninstall()` |
-| Modify | `internal/apps/alacritty/alacritty_test.go` | Uninstall tests |
-| Modify | `internal/apps/brave/brave.go` | Real `Uninstall()` |
-| Create/Modify | `internal/apps/brave/brave_test.go` | Uninstall tests |
-| Modify | `internal/apps/claude/claude.go` | Real `Uninstall()` |
-| Modify | `internal/apps/claude/claude_test.go` | Uninstall tests |
-| Modify | `internal/apps/docker/docker.go` | Real `Uninstall()` |
-| Modify | `internal/apps/docker/docker_test.go` | Uninstall tests |
-| Modify | `internal/apps/fastfetch/fastfetch.go` | Real `Uninstall()` |
-| Create/Modify | `internal/apps/fastfetch/fastfetch_test.go` | Uninstall tests |
-| Modify | `internal/apps/flameshot/flameshot.go` | Real `Uninstall()` |
-| Modify | `internal/apps/flameshot/flameshot_test.go` | Uninstall tests |
-| Modify | `internal/apps/gimp/gimp.go` | Real `Uninstall()` |
-| Create/Modify | `internal/apps/gimp/gimp_test.go` | Uninstall tests |
-| Modify | `internal/apps/git/git.go` | Real `Uninstall()` |
-| Modify | `internal/apps/git/git_test.go` | Uninstall tests (already has tests) |
-| Modify | `internal/apps/i3/i3.go` | Real `Uninstall()` |
-| Modify | `internal/apps/i3/i3_test.go` | Uninstall tests |
-| Modify | `internal/apps/lazydocker/lazydocker.go` | Real `Uninstall()` |
-| Modify | `internal/apps/lazydocker/lazydocker_test.go` | Uninstall tests |
-| Modify | `internal/apps/lazygit/lazygit.go` | Real `Uninstall()` |
-| Modify | `internal/apps/lazygit/lazygit_test.go` | Uninstall tests |
-| Modify | `internal/apps/mise/mise.go` | Complete existing partial `Uninstall()` (add binary removal) |
-| Modify | `internal/apps/mise/mise_test.go` | Uninstall tests |
-| Modify | `internal/apps/neovim/neovim.go` | Real `Uninstall()` |
-| Modify | `internal/apps/neovim/neovim_test.go` | Uninstall tests |
-| Modify | `internal/apps/opencode/opencode.go` | Real `Uninstall()` |
-| Modify | `internal/apps/opencode/opencode_test.go` | Uninstall tests |
-| Modify | `internal/apps/raycast/raycast.go` | Real `Uninstall()` |
-| Modify | `internal/apps/raycast/raycast_test.go` | Uninstall tests |
-| Modify | `internal/apps/tmux/tmux.go` | Real `Uninstall()` |
-| Modify | `internal/apps/tmux/tmux_test.go` | Uninstall tests |
-| Modify | `internal/apps/ulauncher/ulauncher.go` | Real `Uninstall()` |
-| Create/Modify | `internal/apps/ulauncher/ulauncher_test.go` | Uninstall tests |
-| Create | `cmd/uninstall.go` | `dg uninstall <app|category>` command; `init()` self-registers |
-| Create | `cmd/uninstall_test.go` | Command-level tests |
+| Action        | File                                          | Description                                                          |
+| ------------- | --------------------------------------------- | -------------------------------------------------------------------- |
+| Modify        | `internal/commands/factory.go`                | Add `UninstallPackage`, `UninstallDesktopApp` to `Command` interface |
+| Modify        | `internal/commands/macos.go`                  | Implement `UninstallPackage`, `UninstallDesktopApp`                  |
+| Modify        | `internal/commands/debian.go`                 | Implement `UninstallPackage`, `UninstallDesktopApp`                  |
+| Modify        | `internal/commands/mock.go`                   | Add `UninstallDesktopApp` + `UninstalledDesktopApp` field            |
+| Modify        | `internal/config/fromFile.go`                 | Add `RemoveFromInstalled`                                            |
+| Modify        | `internal/config/fromFile_test.go`            | Test `RemoveFromInstalled`                                           |
+| Modify        | `internal/apps/registry/registry.go`          | Add `AppMeta` struct, `Meta` map, filter helpers (NO package move)   |
+| Modify        | `internal/apps/registry/registry_test.go`     | Add `AppMeta` consistency tests                                      |
+| Modify        | `internal/apps/aerospace/aerospace.go`        | Real `Uninstall()`                                                   |
+| Create/Modify | `internal/apps/aerospace/aerospace_test.go`   | Uninstall tests                                                      |
+| Modify        | `internal/apps/alacritty/alacritty.go`        | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/alacritty/alacritty_test.go`   | Uninstall tests                                                      |
+| Modify        | `internal/apps/brave/brave.go`                | Real `Uninstall()`                                                   |
+| Create/Modify | `internal/apps/brave/brave_test.go`           | Uninstall tests                                                      |
+| Modify        | `internal/apps/claude/claude.go`              | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/claude/claude_test.go`         | Uninstall tests                                                      |
+| Modify        | `internal/apps/docker/docker.go`              | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/docker/docker_test.go`         | Uninstall tests                                                      |
+| Modify        | `internal/apps/fastfetch/fastfetch.go`        | Real `Uninstall()`                                                   |
+| Create/Modify | `internal/apps/fastfetch/fastfetch_test.go`   | Uninstall tests                                                      |
+| Modify        | `internal/apps/flameshot/flameshot.go`        | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/flameshot/flameshot_test.go`   | Uninstall tests                                                      |
+| Modify        | `internal/apps/gimp/gimp.go`                  | Real `Uninstall()`                                                   |
+| Create/Modify | `internal/apps/gimp/gimp_test.go`             | Uninstall tests                                                      |
+| Modify        | `internal/apps/git/git.go`                    | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/git/git_test.go`               | Uninstall tests (already has tests)                                  |
+| Modify        | `internal/apps/i3/i3.go`                      | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/i3/i3_test.go`                 | Uninstall tests                                                      |
+| Modify        | `internal/apps/lazydocker/lazydocker.go`      | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/lazydocker/lazydocker_test.go` | Uninstall tests                                                      |
+| Modify        | `internal/apps/lazygit/lazygit.go`            | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/lazygit/lazygit_test.go`       | Uninstall tests                                                      |
+| Modify        | `internal/apps/mise/mise.go`                  | Complete existing partial `Uninstall()` (add binary removal)         |
+| Modify        | `internal/apps/mise/mise_test.go`             | Uninstall tests                                                      |
+| Modify        | `internal/apps/neovim/neovim.go`              | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/neovim/neovim_test.go`         | Uninstall tests                                                      |
+| Modify        | `internal/apps/opencode/opencode.go`          | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/opencode/opencode_test.go`     | Uninstall tests                                                      |
+| Modify        | `internal/apps/raycast/raycast.go`            | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/raycast/raycast_test.go`       | Uninstall tests                                                      |
+| Modify        | `internal/apps/tmux/tmux.go`                  | Real `Uninstall()`                                                   |
+| Modify        | `internal/apps/tmux/tmux_test.go`             | Uninstall tests                                                      |
+| Modify        | `internal/apps/ulauncher/ulauncher.go`        | Real `Uninstall()`                                                   |
+| Create/Modify | `internal/apps/ulauncher/ulauncher_test.go`   | Uninstall tests                                                      |
+| Create        | `cmd/uninstall.go`                            | `dg uninstall <app                                                   | category>`command;`init()` self-registers |
+| Create        | `cmd/uninstall_test.go`                       | Command-level tests                                                  |
 
 ---
 
@@ -304,12 +304,14 @@ Implement `dg uninstall <app|category>` that fully reverses the install process 
 #### Step 1: Extend the `Command` layer with uninstall methods
 
 **`internal/commands/factory.go`** — add to interface:
+
 ```go
 UninstallPackage(packageName string) error
 UninstallDesktopApp(packageName string) error
 ```
 
 **`internal/commands/macos.go`** — implement:
+
 ```go
 func (m *MacOSCommand) UninstallPackage(pkg string) error {
     _, _, err := m.Base.ExecCommand(CommandParams{Command: "brew", Args: []string{"uninstall", pkg}})
@@ -322,6 +324,7 @@ func (m *MacOSCommand) UninstallDesktopApp(pkg string) error {
 ```
 
 **`internal/commands/debian.go`** — implement:
+
 ```go
 func (d *DebianCommand) UninstallPackage(pkg string) error {
     _, _, err := d.Base.ExecCommand(CommandParams{Command: "apt-get", Args: []string{"remove", "-y", pkg}, IsSudo: true})
@@ -333,6 +336,7 @@ func (d *DebianCommand) UninstallDesktopApp(pkg string) error {
 ```
 
 **`internal/commands/mock.go`** — add `UninstallDesktopApp`:
+
 ```go
 UninstalledDesktopApp string
 
@@ -341,6 +345,7 @@ func (m *MockCommand) UninstallDesktopApp(pkg string) error {
     return m.UninstallError
 }
 ```
+
 Also add `UninstalledDesktopApp` to `Reset()`.
 
 - Verify: `go build ./internal/commands/`
@@ -348,6 +353,7 @@ Also add `UninstalledDesktopApp` to `Reset()`.
 #### Step 2: Add `RemoveFromInstalled` to `GlobalConfig`
 
 **`internal/config/fromFile.go`**:
+
 ```go
 func (gc *GlobalConfig) RemoveFromInstalled(itemName, itemType string) {
     slice := gc.getInstalledSlice(itemType)
@@ -365,6 +371,7 @@ func (gc *GlobalConfig) RemoveFromInstalled(itemName, itemType string) {
 ```
 
 **`internal/config/fromFile_test.go`** — table-driven tests:
+
 - Removes item that exists
 - No-op when item absent
 - Does not affect `already_installed`
@@ -375,6 +382,7 @@ func (gc *GlobalConfig) RemoveFromInstalled(itemName, itemType string) {
 #### Step 3: Add `AppMeta` map to `internal/apps/registry/`
 
 **No package move.** The registry stays at `internal/apps/registry/` to avoid import cycle risk (it imports all app packages). Add the `AppMeta` struct and `Meta` map (see spec in Engineer Context). Add new helpers:
+
 - `IsKnownApp`, `IsKnownCategory`, `KnownCategories`, `AppsByCoordinator`
 
 Add a compile-time test asserting every `Meta` entry with `Coordinator != ""` has a matching factory — catches registry-factory drift.
@@ -388,6 +396,7 @@ No import changes needed for `cmd/install.go` or `cmd/configure.go` — they alr
 **Why this is NOT a prerequisite for uninstall:** All apps are already tracked during `Install()` by `MaybeInstallPackage`/`MaybeInstallDesktopApp` in `base.go:324`. This fix only matters for the `dg configure --force <app>` edge case (standalone reconfigure without prior install).
 
 For each of the 14 apps missing the call, add to their `ForceConfigure()` alongside existing gc operations:
+
 ```go
 gc.AddToInstalled(constants.AppName, "package")   // for terminal apps using MaybeInstallPackage
 gc.AddToInstalled(constants.AppName, "desktop_app") // for desktop apps using MaybeInstallDesktopApp
@@ -424,11 +433,13 @@ func (b *Brave) Uninstall() error {
 ```
 
 Notes:
+
 - `raycast`: macOS only — guard with `if !b.Base.IsMac() { return nil }` (requires adding `Base` field to `Raycast` and `Brave` structs)
 - `ulauncher`: Linux only — guard with `if b.Base.IsMac() { return nil }`
 - `docker`: Just `UninstallDesktopApp(docker)` — Docker manages its own data dirs
 
 Test pattern for each:
+
 ```go
 func TestBraveUninstall(t *testing.T) {
     mockApp := testutil.NewMockApp()
@@ -447,6 +458,7 @@ func TestBraveUninstall(t *testing.T) {
 Apps: `aerospace`, `alacritty`, `fastfetch`, `git`, `i3`
 
 Pattern (aerospace example):
+
 ```go
 func (a *Aerospace) Uninstall() error {
     gc := &config.GlobalConfig{}
@@ -465,6 +477,7 @@ func (a *Aerospace) Uninstall() error {
 ```
 
 tmux is special — it removes a file in `$HOME`, not a dir:
+
 ```go
 func (t *Tmux) Uninstall() error {
     gc := &config.GlobalConfig{}
@@ -487,6 +500,7 @@ Test pattern — inject `os.RemoveAll` via a field or just verify the command wa
 Apps: `lazydocker`, `lazygit`, `mise`, `opencode`
 
 Pattern (lazydocker example — platform-aware binary removal):
+
 ```go
 func (ld *LazyDocker) Uninstall() error {
     gc := &config.GlobalConfig{}
@@ -520,6 +534,7 @@ Test each with both `IsMacResult: true` and `IsMacResult: false` to verify both 
 #### Step 8: Implement `Uninstall()` for complex apps — `neovim` and `claude`
 
 **neovim** — platform-aware, installs to multiple system paths on Linux:
+
 ```go
 func (n *Neovim) Uninstall() error {
     gc := &config.GlobalConfig{}
@@ -548,6 +563,7 @@ func (n *Neovim) Uninstall() error {
 ```
 
 **claude** — npm uninstall, then remove config dir and disable shell feature:
+
 ```go
 func (c *Claude) Uninstall() error {
     gc := &config.GlobalConfig{}
@@ -609,7 +625,7 @@ var uninstallGetAppFn = registry.GetApp
    b. If `!gc.IsInstalledByDevgeta(name, itemType)`: log warning "skipping %s: not installed by devgeta", continue
    c. `app, err := uninstallGetAppFn(name)` — uses the seam, mockable in tests
    d. If `err := app.Uninstall(); err != nil`: log error, set `anyFailed = true`, continue
-    e. On success: set `shellFeatureChanged = true` if `registry.Meta[name].HasShellFeature` is true
+   e. On success: set `shellFeatureChanged = true` if `registry.Meta[name].HasShellFeature` is true
 7. If `shellFeatureChanged`: print `"Run \`source ~/.zshrc\` to apply shell changes."`
    - Note: `RegenerateShellConfig` is called inside each `app.Uninstall()`, not here. The orchestrator only prints the user-facing reminder.
 8. If `anyFailed`: return a summary error listing which apps failed
@@ -617,6 +633,7 @@ var uninstallGetAppFn = registry.GetApp
 #### Step 10: Tests for `cmd/uninstall.go`
 
 `cmd/uninstall_test.go`:
+
 - `dg uninstall languages` → explicit "not supported" error (checked before validation)
 - `dg uninstall devgeta` → "cannot uninstall devgeta from itself" (checked before validation)
 - Unknown arg → error listing valid targets
@@ -627,6 +644,7 @@ var uninstallGetAppFn = registry.GetApp
 - Shell-feature app uninstalled → "source ~/.zshrc" message printed
 
 **Use the `uninstallGetAppFn` seam** — override it in test setup:
+
 ```go
 func TestUninstallSingleApp(t *testing.T) {
     mockCmd := commands.NewMockCommand()
@@ -685,12 +703,12 @@ go test ./...                     # nothing else broken
 
 ## 7. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|------|------------|-----------|
-| `Raycast`/`Brave`/`Ulauncher` structs lack `Base` field needed for `IsMac()` | High | Add `Base cmd.BaseCommandExecutor` field in this cycle (same as other apps) |
-| `os.RemoveAll` in tests would hit real filesystem | Medium | Inject `removeAllFn func(string) error` on structs that remove dirs, stub in tests |
-| macOS package name for `lazydocker`/`lazygit` doesn't match binary name | Low | Verify against `AppToCoordinator` and brew formula names |
-| `mise` uninstall removes all managed runtimes | High (user surprise) | Print clear warning: "this will remove the mise binary; your managed runtimes in ~/.local/share/mise remain" |
+| Risk                                                                         | Likelihood           | Mitigation                                                                                                   |
+| ---------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `Raycast`/`Brave`/`Ulauncher` structs lack `Base` field needed for `IsMac()` | High                 | Add `Base cmd.BaseCommandExecutor` field in this cycle (same as other apps)                                  |
+| `os.RemoveAll` in tests would hit real filesystem                            | Medium               | Inject `removeAllFn func(string) error` on structs that remove dirs, stub in tests                           |
+| macOS package name for `lazydocker`/`lazygit` doesn't match binary name      | Low                  | Verify against `AppToCoordinator` and brew formula names                                                     |
+| `mise` uninstall removes all managed runtimes                                | High (user surprise) | Print clear warning: "this will remove the mise binary; your managed runtimes in ~/.local/share/mise remain" |
 
 ### Trade-offs Made
 

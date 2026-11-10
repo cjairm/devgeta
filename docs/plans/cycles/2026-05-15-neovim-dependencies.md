@@ -29,16 +29,17 @@ to cover the `dg install --only neovim` path where those flows are skipped.
 
 **Relevant files:**
 
-| File | Purpose |
-|------|---------|
-| `internal/apps/neovim/neovim.go` | Neovim app — `Install()` and `SoftInstall()` need to call `InstallDeps` |
-| `internal/apps/neovim/neovim_test.go` | Existing tests — must be updated to account for dep installs |
-| `pkg/constants/constants.go` | Add `Make`, `Gcc`, `Xclip`, `TreeSitterCli` constants |
-| `pkg/constants/package_mappings.go` | Add `TreeSitterCli` mapping (brew: `tree-sitter`, apt: `tree-sitter-cli`) |
-| `internal/commands/mock.go` | `MockCommand` needs per-package error injection and call history |
-| `internal/testutil/testutil.go` | `MockApp` infrastructure used in all tests |
+| File                                  | Purpose                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------- |
+| `internal/apps/neovim/neovim.go`      | Neovim app — `Install()` and `SoftInstall()` need to call `InstallDeps`   |
+| `internal/apps/neovim/neovim_test.go` | Existing tests — must be updated to account for dep installs              |
+| `pkg/constants/constants.go`          | Add `Make`, `Gcc`, `Xclip`, `TreeSitterCli` constants                     |
+| `pkg/constants/package_mappings.go`   | Add `TreeSitterCli` mapping (brew: `tree-sitter`, apt: `tree-sitter-cli`) |
+| `internal/commands/mock.go`           | `MockCommand` needs per-package error injection and call history          |
+| `internal/testutil/testutil.go`       | `MockApp` infrastructure used in all tests                                |
 
 **Key patterns:**
+
 - `MaybeInstallPackage(constant)` — idempotent install, used for all deps
 - `base.IsMac()` — platform guard for `xclip`/`gcc` (Linux-only) and tree-sitter fallback
 - `Base.ExecCommand(cmd.CommandParams{Command: "npm", Args: [...]})` — npm fallback path
@@ -50,6 +51,7 @@ to cover the `dg install --only neovim` path where those flows are skipped.
 - Package name translation: `pkg/constants/package_mappings.go` maps brew→apt names
 
 **Test commands:**
+
 ```bash
 go test ./internal/apps/neovim/...
 go test ./pkg/constants/...
@@ -70,16 +72,17 @@ state tracking in `global_config.yaml`.
 
 ## 4. Dependency Tiers
 
-| Tier | Packages | Behavior |
-|------|----------|----------|
-| **Hard** (must succeed) | `make`, `gcc` (Linux), `ripgrep`, `fd-find`, `unzip`, `xclip` (Linux) | Error returned if install fails; Neovim install aborts |
-| **Soft** (best-effort) | `tree-sitter-cli` | Primary package manager → npm fallback → warn-and-continue; never fails Neovim install |
+| Tier                    | Packages                                                              | Behavior                                                                               |
+| ----------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| **Hard** (must succeed) | `make`, `gcc` (Linux), `ripgrep`, `fd-find`, `unzip`, `xclip` (Linux) | Error returned if install fails; Neovim install aborts                                 |
+| **Soft** (best-effort)  | `tree-sitter-cli`                                                     | Primary package manager → npm fallback → warn-and-continue; never fails Neovim install |
 
 ---
 
 ## 5. Scope Boundary
 
 ### In Scope
+
 - [ ] Enhance `MockCommand` in `internal/commands/mock.go`: add `MaybeInstalledPkgs []string` call history and `MaybeInstallErrors map[string]error` per-package error injection
 - [ ] Add constants: `Make`, `Gcc`, `Xclip`, `TreeSitterCli` to `pkg/constants/constants.go`
 - [ ] No `package_mappings.go` change needed (`tree-sitter-cli` is the same on brew and apt)
@@ -90,6 +93,7 @@ state tracking in `global_config.yaml`.
 - [ ] Update `neovim_test.go` existing tests to use call history assertions
 
 ### Explicitly Out of Scope
+
 - Full `App` interface modules for any of the new deps
 - Uninstalling deps when Neovim is uninstalled
 - Installing `node` as a prerequisite for the npm fallback
@@ -102,16 +106,16 @@ state tracking in `global_config.yaml`.
 
 ### File Changes
 
-| Action | File Path | Description |
-|--------|-----------|-------------|
-| Modify | `internal/commands/mock.go` | Add `MaybeInstalledPkgs []string` + `MaybeInstallErrors map[string]error` to `MockCommand` |
-| Modify | `pkg/constants/constants.go` | Add `Make`, `Gcc`, `Xclip`, `TreeSitterCli` constants |
-| ~~Modify~~ | `pkg/constants/package_mappings.go` | No change needed — `tree-sitter-cli` name is identical on brew and apt |
-| Create | `internal/apps/neovim/deps.go` | `InstallDeps` helper + `installTreeSitter` fallback logic |
-| Create | `internal/apps/neovim/deps_test.go` | Tests for `InstallDeps` |
-| Modify | `internal/apps/neovim/neovim.go:58` | `Install()` calls `InstallDeps` first |
-| Modify | `internal/apps/neovim/neovim.go:69` | `SoftInstall()` calls `InstallDeps` first |
-| Modify | `internal/apps/neovim/neovim_test.go` | Update assertions to use `MaybeInstalledPkgs` call history |
+| Action     | File Path                             | Description                                                                                |
+| ---------- | ------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Modify     | `internal/commands/mock.go`           | Add `MaybeInstalledPkgs []string` + `MaybeInstallErrors map[string]error` to `MockCommand` |
+| Modify     | `pkg/constants/constants.go`          | Add `Make`, `Gcc`, `Xclip`, `TreeSitterCli` constants                                      |
+| ~~Modify~~ | `pkg/constants/package_mappings.go`   | No change needed — `tree-sitter-cli` name is identical on brew and apt                     |
+| Create     | `internal/apps/neovim/deps.go`        | `InstallDeps` helper + `installTreeSitter` fallback logic                                  |
+| Create     | `internal/apps/neovim/deps_test.go`   | Tests for `InstallDeps`                                                                    |
+| Modify     | `internal/apps/neovim/neovim.go:58`   | `Install()` calls `InstallDeps` first                                                      |
+| Modify     | `internal/apps/neovim/neovim.go:69`   | `SoftInstall()` calls `InstallDeps` first                                                  |
+| Modify     | `internal/apps/neovim/neovim_test.go` | Update assertions to use `MaybeInstalledPkgs` call history                                 |
 
 ---
 
@@ -120,12 +124,14 @@ state tracking in `global_config.yaml`.
 #### Step 1: Enhance `MockCommand` in `internal/commands/mock.go`
 
 Add to `MockCommand` struct:
+
 ```go
 MaybeInstalledPkgs  []string         // ordered history of all MaybeInstallPackage calls
 MaybeInstallErrors  map[string]error // per-package error injection: pkg -> error
 ```
 
 Update `MaybeInstallPackage`:
+
 ```go
 func (m *MockCommand) MaybeInstallPackage(pkg string, alias ...string) error {
     m.MaybeInstalled = pkg                          // preserve existing single-value field
@@ -140,12 +146,14 @@ func (m *MockCommand) MaybeInstallPackage(pkg string, alias ...string) error {
 ```
 
 Update `NewMockCommand` to initialize the new fields:
+
 ```go
 MaybeInstalledPkgs: []string{},
 MaybeInstallErrors: map[string]error{},
 ```
 
 Update `Reset()` to clear them:
+
 ```go
 m.MaybeInstalledPkgs = []string{}
 m.MaybeInstallErrors = map[string]error{}
@@ -158,6 +166,7 @@ m.MaybeInstallErrors = map[string]error{}
 #### Step 2: Add constants to `pkg/constants/constants.go`
 
 Add these four constants near `Ripgrep` and `Unzip`:
+
 ```go
 Make          = "make"
 Gcc           = "gcc"
@@ -287,6 +296,7 @@ func installTreeSitter(base cmd.BaseCommandExecutor, c cmd.Command) {
 #### Step 5: Wire `InstallDeps` into `neovim.go`
 
 In `Install()` (~line 58), add as first call:
+
 ```go
 func (n *Neovim) Install() error {
     if err := InstallDeps(n.Base, n.Cmd); err != nil {
@@ -300,6 +310,7 @@ func (n *Neovim) Install() error {
 ```
 
 In `SoftInstall()` (~line 69), add as first call:
+
 ```go
 func (n *Neovim) SoftInstall() error {
     if err := InstallDeps(n.Base, n.Cmd); err != nil {
@@ -318,14 +329,14 @@ func (n *Neovim) SoftInstall() error {
 
 #### Step 6: Create `internal/apps/neovim/deps_test.go`
 
-| Test | Platform | tree-sitter primary | npm fallback | Expected |
-|------|----------|---------------------|-------------|---------|
-| `TestInstallDeps_Mac` | macOS | success | — | make, ripgrep, fd-find, unzip, tree-sitter installed; gcc/xclip NOT in call list |
-| `TestInstallDeps_Linux` | Linux | success | — | make, gcc, ripgrep, fd-find, unzip, xclip, tree-sitter all in `MaybeInstalledPkgs` |
-| `TestInstallDeps_TreeSitterFallback_Linux` | Linux | fails | success | npm ExecCommand called; nil returned; `VerifyNoRealCommands` NOT called |
-| `TestInstallDeps_TreeSitterBothFail` | Linux | fails | fails | npm ExecCommand called; nil returned (warn-and-continue) |
-| `TestInstallDeps_MakeFails` | Linux | — | — | error returned immediately; gcc not attempted |
-| `TestInstallDeps_RipgrepFails` | Linux | — | — | error returned |
+| Test                                       | Platform | tree-sitter primary | npm fallback | Expected                                                                           |
+| ------------------------------------------ | -------- | ------------------- | ------------ | ---------------------------------------------------------------------------------- |
+| `TestInstallDeps_Mac`                      | macOS    | success             | —            | make, ripgrep, fd-find, unzip, tree-sitter installed; gcc/xclip NOT in call list   |
+| `TestInstallDeps_Linux`                    | Linux    | success             | —            | make, gcc, ripgrep, fd-find, unzip, xclip, tree-sitter all in `MaybeInstalledPkgs` |
+| `TestInstallDeps_TreeSitterFallback_Linux` | Linux    | fails               | success      | npm ExecCommand called; nil returned; `VerifyNoRealCommands` NOT called            |
+| `TestInstallDeps_TreeSitterBothFail`       | Linux    | fails               | fails        | npm ExecCommand called; nil returned (warn-and-continue)                           |
+| `TestInstallDeps_MakeFails`                | Linux    | —                   | —            | error returned immediately; gcc not attempted                                      |
+| `TestInstallDeps_RipgrepFails`             | Linux    | —                   | —            | error returned                                                                     |
 
 For fallback tests: assert `mockApp.Base.ExecCommandCalls[0].Command == "npm"` instead of
 calling `VerifyNoRealCommands`.
@@ -345,6 +356,7 @@ unaffected (dep installs use `MaybeInstallPackage`, Neovim binary uses `InstallP
 `TestSoftInstall` currently asserts `mockApp.Cmd.MaybeInstalled == constants.Neovim`. Since
 `MaybeInstalled` now reflects the last call (which is still Neovim), this may pass as-is.
 However, add an assertion on `MaybeInstalledPkgs` to confirm deps were installed first:
+
 ```go
 // Confirm deps were installed before neovim itself
 if len(mockApp.Cmd.MaybeInstalledPkgs) < 2 {
@@ -402,12 +414,12 @@ All commands must exit 0 with no failures.
 
 ## 8. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| `MockCommand.MaybeInstallError` is global; existing tests that set it may now fail on first dep, not Neovim | Medium | Step 1 adds per-package errors; existing tests that don't set per-package errors are unaffected (global fallback preserved) |
-| `tree-sitter-cli` apt absent on Debian Bookworm stable | High (expected) | npm fallback handles this; `global_config.yaml` updated on npm success |
-| `ripgrep`/`fd-find`/`unzip` double-installed on full `dg install` | Low | `MaybeInstallPackage` is idempotent — safe to call twice |
-| `gcc` on macOS: brew gcc vs Xcode CLT conflict | Low | Skipped on macOS by design |
+| Risk                                                                                                        | Likelihood      | Mitigation                                                                                                                  |
+| ----------------------------------------------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `MockCommand.MaybeInstallError` is global; existing tests that set it may now fail on first dep, not Neovim | Medium          | Step 1 adds per-package errors; existing tests that don't set per-package errors are unaffected (global fallback preserved) |
+| `tree-sitter-cli` apt absent on Debian Bookworm stable                                                      | High (expected) | npm fallback handles this; `global_config.yaml` updated on npm success                                                      |
+| `ripgrep`/`fd-find`/`unzip` double-installed on full `dg install`                                           | Low             | `MaybeInstallPackage` is idempotent — safe to call twice                                                                    |
+| `gcc` on macOS: brew gcc vs Xcode CLT conflict                                                              | Low             | Skipped on macOS by design                                                                                                  |
 
 ### Trade-offs Made
 

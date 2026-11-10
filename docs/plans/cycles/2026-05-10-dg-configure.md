@@ -19,6 +19,7 @@ This was explicitly planned in ROADMAP.md and unblocked once the app foundations
 ## 2. Engineer Context
 
 **Relevant files and their purposes:**
+
 - `internal/apps/contract.go` — `App` interface; has `ForceConfigure()` and `SoftConfigure()`
 - `internal/apps/errors.go` — Sentinel errors including `ErrConfigureNotSupported`
 - `internal/apps/registry/registry.go` — **New file**: maps app name → `apps.App` instance; also exposes `Names()` for discovery UX
@@ -26,6 +27,7 @@ This was explicitly planned in ROADMAP.md and unblocked once the app foundations
 - `pkg/constants/constants.go` — App name constants (e.g., `constants.Neovim = "neovim"`)
 
 **Key functions/types involved:**
+
 - `apps.App.ForceConfigure()` — Overwrites existing config files
 - `apps.App.SoftConfigure()` — Only applies config if files don't already exist
 - `apps.ErrConfigureNotSupported` — Returned by apps with no config to deploy
@@ -33,6 +35,7 @@ This was explicitly planned in ROADMAP.md and unblocked once the app foundations
 - `registry.Names() []string` — Returns all registered names; used in error messages for discovery
 
 **Pattern used by all apps (see `internal/apps/git/git.go:77-86`):**
+
 ```go
 func (g *Git) ForceConfigure() error {
     return files.CopyDir(paths.Paths.App.Configs.Git, paths.Paths.Config.Git)
@@ -50,11 +53,13 @@ func (g *Git) SoftConfigure() error {
 Commands self-register in their own `init()` function via `rootCmd.AddCommand(...)`. See `cmd/install.go:49-57` and `cmd/worktree.go`. Do NOT add registration to `cmd/root.go` — that file is for global setup only.
 
 **Testing patterns used in this area:**
+
 - See `docs/guides/testing-patterns.md` — always use `testutil.MockApp`, never execute real commands
 - Initialize logger in test files: `func init() { testutil.InitLogger() }`
 - Verify no real commands: `testutil.VerifyNoRealCommands(t, mockApp.Base)`
 
 **Commands to run tests:**
+
 ```bash
 go test ./internal/apps/registry/
 go test ./cmd/
@@ -98,6 +103,7 @@ Implement `dg configure [app]` command that re-applies configuration files for a
 ## 5. Design Decisions
 
 **Unknown-app error UX:** Since `dg list` is out of scope, the unknown-app error must be self-contained. On unrecognized app name, print a sorted list of all supported names inline:
+
 ```
 unknown app "foo"
 
@@ -119,20 +125,21 @@ Supported apps:
 
 ### File Changes
 
-| Action | File Path | Description |
-|--------|-----------|-------------|
-| Create | `internal/apps/registry/registry.go` | App name → apps.App lookup + Names() |
-| Create | `internal/apps/registry/registry_test.go` | Registry tests |
-| Create | `cmd/configure.go` | configure command handler + init() self-registration |
-| Create | `cmd/configure_test.go` | Command behavior tests |
-| Modify | `cmd/root.go` | Update Long help text only |
-| Modify | `docs/spec.md` | Document configure command |
+| Action | File Path                                 | Description                                          |
+| ------ | ----------------------------------------- | ---------------------------------------------------- |
+| Create | `internal/apps/registry/registry.go`      | App name → apps.App lookup + Names()                 |
+| Create | `internal/apps/registry/registry_test.go` | Registry tests                                       |
+| Create | `cmd/configure.go`                        | configure command handler + init() self-registration |
+| Create | `cmd/configure_test.go`                   | Command behavior tests                               |
+| Modify | `cmd/root.go`                             | Update Long help text only                           |
+| Modify | `docs/spec.md`                            | Document configure command                           |
 
 ### Step-by-Step
 
 #### Step 1: Create app registry
 
 Create `internal/apps/registry/registry.go`:
+
 - `map[string]func() apps.App` with all 19 apps; constructors called lazily on `GetApp`
 - `GetApp(name string) (apps.App, error)` — returns app or error with supported names list
 - `Names() []string` — returns sorted list of all registered names
@@ -142,6 +149,7 @@ Create `internal/apps/registry/registry.go`:
 #### Step 2: Write registry tests
 
 Create `internal/apps/registry/registry_test.go`:
+
 - `TestGetApp_KnownApp` — returns non-nil app with correct Name()
 - `TestGetApp_UnknownApp` — returns non-nil error
 - `TestGetApp_AllRegisteredApps` — table test over all 19 expected names
@@ -152,6 +160,7 @@ Create `internal/apps/registry/registry_test.go`:
 #### Step 3: Create configure command
 
 Create `cmd/configure.go`:
+
 - `configureCmd` with `Use: "configure [app]"`, `Args: cobra.ExactArgs(1)`
 - `configureForce bool` flag (name distinct from worktree's `forceFlag`)
 - `init()` calls `rootCmd.AddCommand(configureCmd)` — no changes to root.go `init()`
@@ -165,6 +174,7 @@ Create `cmd/configure.go`:
 #### Step 4: Write command tests
 
 Create `cmd/configure_test.go`:
+
 - Use a mock `apps.App` that records which configure method was called
 - `TestConfigure_SoftPath` — default (no `--force`) calls SoftConfigure
 - `TestConfigure_ForcePath` — `--force` calls ForceConfigure
@@ -176,6 +186,7 @@ Create `cmd/configure_test.go`:
 #### Step 5: Update root help text
 
 Modify `cmd/root.go` Long string only:
+
 - Add `configure` to the Available Commands list with a one-line description
 - No changes to `init()` or any other logic
 - Verify: `./devgeta --help` shows configure in the list
@@ -183,6 +194,7 @@ Modify `cmd/root.go` Long string only:
 #### Step 6: Update spec
 
 Modify `docs/spec.md`:
+
 - Add configure command to Features section with usage examples and flag descriptions
 - Verify: Read docs/spec.md and confirm clarity
 
@@ -225,12 +237,12 @@ unset HOME
 
 ## 8. Risks & Trade-offs
 
-| Risk | Likelihood | Mitigation |
-|------|------------|-----------|
-| App constructor side-effects on registry init | Low | Lazy factories — constructed only when `GetApp` is called |
-| ErrConfigureNotSupported treated as failure | Low | Explicit `errors.Is()` check; returns nil |
-| Registry misses a new app added later | Low | Table test in registry_test.go enumerates all 19 expected names; CI will catch gaps |
-| `--force` with real HOME overwrites user configs | Med | Manual verification prescribed with sandboxed HOME |
+| Risk                                             | Likelihood | Mitigation                                                                          |
+| ------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------- |
+| App constructor side-effects on registry init    | Low        | Lazy factories — constructed only when `GetApp` is called                           |
+| ErrConfigureNotSupported treated as failure      | Low        | Explicit `errors.Is()` check; returns nil                                           |
+| Registry misses a new app added later            | Low        | Table test in registry_test.go enumerates all 19 expected names; CI will catch gaps |
+| `--force` with real HOME overwrites user configs | Med        | Manual verification prescribed with sandboxed HOME                                  |
 
 ### Trade-offs Made
 
@@ -252,6 +264,7 @@ unset HOME
 - [x] Risks are realistic?
 
 **Review feedback addressed (2026-05-10):**
+
 - Added `cmd/configure_test.go` to scope and step-by-step
 - Unknown-app error now prints sorted `registry.Names()` list inline — no dependency on `dg list`
 - Removed `cmd/root.go init()` change; command self-registers in `cmd/configure.go:init()` per project convention

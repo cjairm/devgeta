@@ -552,12 +552,12 @@ dg config unset <key>
 
 **Subcommands**:
 
-| Subcommand               | Description                                                                                                                                              |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _(bare, same as `list`)_ | Print every setting: key, current value (or `(default)` if unset), live default, and description                                                         |
-| `get <key>`              | Print only the effective value, nothing else (bare, for scripts)                                                                                         |
+| Subcommand               | Description                                                                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| _(bare, same as `list`)_ | Print every setting: key, current value (or `(default)` if unset), live default, and description                                     |
+| `get <key>`              | Print only the effective value, nothing else (bare, for scripts)                                                                     |
 | `set <key> <value...>`   | Validate and persist a value; a `stringlist`-kind key (`worktree.search_paths`) accepts multiple values, every other key exactly one |
-| `unset <key>`            | Clear a setting back to its default                                                                                                                      |
+| `unset <key>`            | Clear a setting back to its default                                                                                                  |
 
 **Flags**:
 

@@ -12,7 +12,11 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const instructionsPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "DEVGETA.md");
+const instructionsPath = resolve(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "DEVGETA.md",
+);
 
 // Returns the file's text, or null when it is missing or blank. An extension
 // that throws can break a session, and a missing rules file is not worth that.

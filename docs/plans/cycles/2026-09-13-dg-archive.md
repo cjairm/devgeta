@@ -361,13 +361,13 @@ closed in a follow-up:
       terminals.
 
       Cost was the constraint, since this runs over hundreds of GB. The hot
-          path is one atomic add per buffer; a single goroutine does all
-          formatting and I/O on a fixed tick. There is no second pass over the
-          data — both phases already stream every byte through a reader.
-          Measured against the scan total for the write, and against the
-          archive's size on disk for the verify (that pass reads compressed
-          bytes back off the drive, so the source total would be the wrong
-          denominator).
+                      path is one atomic add per buffer; a single goroutine does all
+                      formatting and I/O on a fixed tick. There is no second pass over the
+                      data — both phases already stream every byte through a reader.
+                      Measured against the scan total for the write, and against the
+                      archive's size on disk for the verify (that pass reads compressed
+                      bytes back off the drive, so the source total would be the wrong
+                      denominator).
 
 - [x] **The overwrite guard now covers every output, not just the archive.**
       §5 said "the final archive name already exists (never overwrite)", and

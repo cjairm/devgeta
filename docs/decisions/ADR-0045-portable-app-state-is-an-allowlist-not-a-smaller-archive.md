@@ -121,14 +121,14 @@ relative to a profile directory (`Default`, `Profile 1`, …). Nothing outside t
 table moves, and adding, renaming or re-defaulting a row is an amendment to this
 ADR, not an implementation choice.
 
-| Group                | Paths                                           | Default | Why                                                                                                                     |
-| -------------------- | ----------------------------------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `bookmarks`          | `Bookmarks`                                     | on      | Plain JSON, stable across versions. The thing a user most expects to survive a machine move.                            |
-| `preferences`        | `Preferences`                                   | on      | Settings, including the extension list. Chromium ignores keys it does not know, so a newer Brave drops a few.           |
-| `tabs`               | `Sessions/`                                     | on      | The work in progress, which is the point of a machine move. State the user is looking at now, not a record of the past. |
+| Group                | Paths                                           | Default | Why                                                                                                                                                                              |
+| -------------------- | ----------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bookmarks`          | `Bookmarks`                                     | on      | Plain JSON, stable across versions. The thing a user most expects to survive a machine move.                                                                                     |
+| `preferences`        | `Preferences`                                   | on      | Settings, including the extension list. Chromium ignores keys it does not know, so a newer Brave drops a few.                                                                    |
+| `tabs`               | `Sessions/`                                     | on      | The work in progress, which is the point of a machine move. State the user is looking at now, not a record of the past.                                                          |
 | `extension-settings` | `Extension State/`, `Local Extension Settings/` | off     | 12M of per-extension private data, including password managers' session state. Opt-in — see the [Amendment](#amendment--2026-09-15-extension-settings-is-opt-in-not-default-on). |
-| `extensions`         | `Extensions/`                                   | off     | 207M of payload the store re-downloads on first launch. Turned on for a machine that will be offline.                   |
-| `history`            | `History`                                       | off     | 95M, and the user's browsing record. Moving it is a decision they make, not a default they discover.                    |
+| `extensions`         | `Extensions/`                                   | off     | 207M of payload the store re-downloads on first launch. Turned on for a machine that will be offline.                                                                            |
+| `history`            | `History`                                       | off     | 95M, and the user's browsing record. Moving it is a decision they make, not a default they discover.                                                                             |
 
 Two measured paths are deliberately **not** groups, so they have no flag:
 `Favicons` (59M) and `Top Sites` (20K) are both derived from browsing and rebuild
@@ -161,7 +161,7 @@ never weighed that — it weighed 12M and convenience.
 `Consequences` note below already called that the better path for `Extensions/`,
 and the same reasoning applies here: Brave re-downloads the payloads on first
 launch and the user signs in once, which is what a password manager expects on
-a new device anyway. The extension *list* still moves in `Preferences`.
+a new device anyway. The extension _list_ still moves in `Preferences`.
 
 **What was considered and rejected:** making `preferences` opt-in too, on the
 grounds that it carries the extension list. It does, and an imported

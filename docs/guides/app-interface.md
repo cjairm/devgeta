@@ -41,18 +41,18 @@ If any method is missing or has the wrong signature, the build fails. This is th
 
 ## Method Semantics
 
-| Method           | Semantics                                                                           |
-| ---------------- | ----------------------------------------------------------------------------------- |
-| `Name()`         | Returns the canonical constant name (e.g., `constants.Alacritty`). Used by future `dg uninstall <name>`. |
-| `Kind()`         | Returns the `AppKind` for dispatch (see below).                                     |
-| `Install()`      | Unconditional install. May re-install if already present.                           |
-| `ForceInstall()` | Uninstall then re-install. Use `baseapp.Reinstall` — see below.                     |
-| `SoftInstall()`  | Install only if not already present. Idempotent.                                    |
-| `ForceConfigure()` | Apply configuration, overwriting any existing config.                             |
-| `SoftConfigure()` | Apply configuration only if not already present. Idempotent.                      |
-| `Uninstall()`    | Remove the app. Return `ErrUninstallNotSupported` if not implemented.               |
-| `Update()`       | Upgrade to latest version. Return `ErrUpdateNotSupported` if not implemented.       |
-| `ExecuteCommand(args ...string)` | Run an app-specific command. Return `ErrExecuteNotSupported` if unused. |
+| Method                           | Semantics                                                                                                |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `Name()`                         | Returns the canonical constant name (e.g., `constants.Alacritty`). Used by future `dg uninstall <name>`. |
+| `Kind()`                         | Returns the `AppKind` for dispatch (see below).                                                          |
+| `Install()`                      | Unconditional install. May re-install if already present.                                                |
+| `ForceInstall()`                 | Uninstall then re-install. Use `baseapp.Reinstall` — see below.                                          |
+| `SoftInstall()`                  | Install only if not already present. Idempotent.                                                         |
+| `ForceConfigure()`               | Apply configuration, overwriting any existing config.                                                    |
+| `SoftConfigure()`                | Apply configuration only if not already present. Idempotent.                                             |
+| `Uninstall()`                    | Remove the app. Return `ErrUninstallNotSupported` if not implemented.                                    |
+| `Update()`                       | Upgrade to latest version. Return `ErrUpdateNotSupported` if not implemented.                            |
+| `ExecuteCommand(args ...string)` | Run an app-specific command. Return `ErrExecuteNotSupported` if unused.                                  |
 
 ---
 

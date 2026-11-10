@@ -35,11 +35,12 @@ Skills, commands, and agents work identically in both Claude Code and OpenCode. 
 - Both apps deploy from `configs/shared/` to their respective config dirs during `ForceConfigure`
 
 Deploy targets:
-| Content | OpenCode destination | Claude Code destination |
-|---------|---------------------|------------------------|
-| skills | `~/.config/opencode/skills/` | `~/.claude/skills/` |
-| commands | `~/.config/opencode/commands/` | `~/.claude/commands/` |
-| agents | `~/.config/opencode/agents/` | `~/.claude/agents/` |
+
+| Content  | OpenCode destination           | Claude Code destination |
+| -------- | ------------------------------ | ----------------------- |
+| skills   | `~/.config/opencode/skills/`   | `~/.claude/skills/`     |
+| commands | `~/.config/opencode/commands/` | `~/.claude/commands/`   |
+| agents   | `~/.config/opencode/agents/`   | `~/.claude/agents/`     |
 
 **`~/.claude/` path note:**  
 Claude Code uses `~/.claude/` (a home dotdir), **not** `~/.config/claude/`. `GetConfigDir("claude")` would produce the wrong path. Use `paths.GetHomeDir(".claude")` instead.
@@ -135,15 +136,15 @@ Implement a `claude` app module that installs Claude Code via the official insta
 
 ### File Changes
 
-| Action | File Path                               | Description                            |
+| Action | File Path | Description |
 | ------ | --------------------------------------- | -------------------------------------- | -------------------------- | ----------------------------- |
-| Modify | `pkg/constants/constants.go`            | Add `Claude` and `Shared` constants    |
-| Modify | `pkg/paths/paths.go`                    | Add `Claude` and `Shared` path entries |
-| Move   | `configs/opencode/skills                | commands                               | agents/`→`configs/shared/` | Consolidate shared AI content |
-| Modify | `internal/apps/opencode/opencode.go`    | Update ForceConfigure source paths     |
-| Create | `internal/apps/claude/claude.go`        | Full app module                        |
-| Create | `internal/apps/claude/claude_test.go`   | Mocked unit tests                      |
-| Modify | `internal/tooling/terminal/terminal.go` | Import and register claude             |
+| Modify | `pkg/constants/constants.go` | Add `Claude` and `Shared` constants |
+| Modify | `pkg/paths/paths.go` | Add `Claude` and `Shared` path entries |
+| Move | `configs/opencode/skills                | commands                               | agents/`→`configs/shared/` | Consolidate shared AI content |
+| Modify | `internal/apps/opencode/opencode.go` | Update ForceConfigure source paths |
+| Create | `internal/apps/claude/claude.go` | Full app module |
+| Create | `internal/apps/claude/claude_test.go` | Mocked unit tests |
+| Modify | `internal/tooling/terminal/terminal.go` | Import and register claude |
 
 ### Step-by-Step
 

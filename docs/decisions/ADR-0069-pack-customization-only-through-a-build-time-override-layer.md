@@ -48,9 +48,9 @@ layer" ([ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer
      paths); when the key is absent Claude Code reads `hooks/hooks.json`, so
      that is the file checked then. Ponytail declares two files and has no
      `hooks/hooks.json`, so a fixed file name would reject it. Inline hooks
-     name no file. *(Amended 2026-11-08, during Step 6, after the real
-     Ponytail tree contradicted the first wording. Maintainer agreed.)*
-   - *(Amended 2026-11-09, [ADR-0071](ADR-0071-the-devgeta-pack-ships-skills.md).)*
+     name no file. _(Amended 2026-11-08, during Step 6, after the real
+     Ponytail tree contradicted the first wording. Maintainer agreed.)_
+   - _(Amended 2026-11-09, [ADR-0071](ADR-0071-the-devgeta-pack-ships-skills.md).)_
      "Excluded and overridden" is an error only for the user's own overrides.
      When the user excludes a skill, devgeta's shipped override of it is dropped
      silently, so a skill devgeta starts overriding never breaks an existing
