@@ -39,6 +39,7 @@ func newFullyPopulatedGlobalConfig() *GlobalConfig {
 					"opencode": {
 						OpenCodePlugins:      []string{"/data/agent-packs/superpowers"},
 						OpenCodeInstructions: []string{"/data/agent-packs/devgeta/DEVGETA.md"},
+						OpenCodeSkills:       []string{"/data/agent-packs/devgeta/skills"},
 					},
 					"pi": {PiPackage: "/data/agent-packs/superpowers"},
 				},

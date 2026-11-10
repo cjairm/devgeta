@@ -134,6 +134,7 @@ func cloneAgentPacks(m map[string]AgentPackState) map[string]AgentPackState {
 			for coder, st := range pack.Coders {
 				st.OpenCodePlugins = cloneStringSlice(st.OpenCodePlugins)
 				st.OpenCodeInstructions = cloneStringSlice(st.OpenCodeInstructions)
+				st.OpenCodeSkills = cloneStringSlice(st.OpenCodeSkills)
 				coders[coder] = st
 			}
 			pack.Coders = coders

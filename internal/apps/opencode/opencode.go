@@ -39,13 +39,15 @@ const DEFAULT_THEME_NAME = "default"
 // every value is already JSON-encoded: text/template does no escaping.
 type configTemplateData struct {
 	ScratchDirGlob string
-	// Plugins and Instructions list what agent packs added to OpenCode, in
-	// pack-name order. Both are empty when no pack is installed in OpenCode.
+	// Plugins, Instructions and Skills list what agent packs added to
+	// OpenCode, in pack-name order. All are empty when no pack is installed in
+	// OpenCode.
 	Plugins      []string
 	Instructions []string
+	Skills       []string
 }
 
-// addPacks fills Plugins and Instructions from agent_packs state: what each
+// addPacks fills Plugins, Instructions and Skills from agent_packs state: what each
 // pack recorded for OpenCode, in pack-name order so the output is stable.
 // Packs with no OpenCode record add nothing.
 func (d *configTemplateData) addPacks(packs map[string]config.AgentPackState) error {
@@ -73,6 +75,9 @@ func (d *configTemplateData) addPacks(packs map[string]config.AgentPackState) er
 			return err
 		}
 		if err := encode(rec.OpenCodeInstructions, &d.Instructions, "instructions", name); err != nil {
+			return err
+		}
+		if err := encode(rec.OpenCodeSkills, &d.Skills, "skills", name); err != nil {
 			return err
 		}
 	}

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"text/template"
 
 	"github.com/cjairm/devgeta/internal/apps"
 	"github.com/cjairm/devgeta/internal/commands"
@@ -1662,5 +1663,40 @@ func TestConfigureWithPacks_IsIdempotentAndRemovalLeavesOtherPacksAlone(t *testi
 	got := readOpenCodeJSON(t, userConfigDir)
 	if strings.Contains(got, "/p/superpowers") || !strings.Contains(got, "/p/ponytail/.opencode/plugins") {
 		t.Errorf("removing superpowers must leave ponytail alone, got %q", got)
+	}
+}
+
+func TestRenderConfig_ListsPackSkills(t *testing.T) {
+	packs := map[string]config.AgentPackState{
+		"superpowers": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodeSkills: []string{"/b/skills"}},
+		}},
+		"devgeta": {Coders: map[string]config.AgentPackCoderState{
+			"opencode": {OpenCodeSkills: []string{"/a/skills", `/q"uote/skills`}},
+		}},
+	}
+	var d configTemplateData
+	if err := d.addPacks(packs); err != nil {
+		t.Fatal(err)
+	}
+	tmpl, err := os.ReadFile(filepath.Join("..", "..", "..", "configs", "opencode", "opencode.json.tmpl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	render := func(d configTemplateData) string {
+		t.Helper()
+		var out strings.Builder
+		if err := template.Must(template.New("x").Parse(string(tmpl))).Execute(&out, d); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+
+	want := `"skills": ["/a/skills", "/q\"uote/skills", "/b/skills"],`
+	if got := render(d); !strings.Contains(got, want) {
+		t.Errorf("rendered config lacks %s (pack-name order, quotes escaped):\n%s", want, got)
+	}
+	if got := render(configTemplateData{ScratchDirGlob: `"/s/**"`}); strings.Contains(got, `"skills"`) {
+		t.Error("no packs must render no skills key")
 	}
 }

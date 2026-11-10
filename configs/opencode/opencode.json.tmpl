@@ -7,6 +7,9 @@
 {{- if .Instructions}}
   "instructions": [{{range $i, $p := .Instructions}}{{if $i}}, {{end}}{{$p}}{{end}}],
 {{- end}}
+{{- if .Skills}}
+  "skills": [{{range $i, $p := .Skills}}{{if $i}}, {{end}}{{$p}}{{end}}],
+{{- end}}
   "agents": {
     "build": {
       "color": "#fe8019"

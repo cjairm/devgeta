@@ -36,10 +36,12 @@ type AgentPackCoderState struct {
 	// coder's own folder (Claude Code's ~/.claude/DEVGETA.md). It is devgeta's
 	// file, so uninstall deletes it (ADR-0070 §3).
 	InstructionsFile string `yaml:"instructions_file,omitempty"`
-	// OpenCodePlugins and OpenCodeInstructions are the absolute paths this
-	// pack contributed to opencode.json's `plugins` and `instructions`.
+	// OpenCodePlugins, OpenCodeInstructions and OpenCodeSkills are the absolute
+	// paths this pack contributed to opencode.json's `plugins`, `instructions`
+	// and `skills`.
 	OpenCodePlugins      []string `yaml:"opencode_plugins,omitempty"`
 	OpenCodeInstructions []string `yaml:"opencode_instructions,omitempty"`
+	OpenCodeSkills       []string `yaml:"opencode_skills,omitempty"`
 	// PiPackage is the path given to `pi install`.
 	PiPackage string `yaml:"pi_package,omitempty"`
 }
