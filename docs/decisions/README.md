@@ -90,3 +90,4 @@ This directory contains decisions about significant technical choices, trade-off
 - [ADR-0068](ADR-0068-agent-packs-are-a-pinned-upstream-plus-a-build-layer.md) — `dg agent-pack`: a pinned upstream plus a build layer, installed through each coder's own system
 - [ADR-0069](ADR-0069-pack-customization-only-through-a-build-time-override-layer.md) — Pack customization happens only through a build-time override layer
 - [ADR-0070](ADR-0070-pack-removal-deletes-only-what-devgeta-installed.md) — Removing a pack deletes only what devgeta installed
+- [ADR-0071](ADR-0071-the-devgeta-pack-ships-skills.md) — The `devgeta` pack ships skills; review is a new skill plus a Superpowers wrapper
