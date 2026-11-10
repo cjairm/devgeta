@@ -449,3 +449,33 @@ func TestDevgetaPack_AllThreeCodersGetTheSameBytes(t *testing.T) {
 		t.Fatalf("the devgeta pack ships no skills folder: %v", err)
 	}
 }
+
+// The engine never rolls back a coder that already had the pack, so a failed
+// update must leave what worked before the run as it was.
+func TestClaudeInstaller_FailedUpdateOfTheDevgetaPackKeepsThePriorInstall(t *testing.T) {
+	r := newClaudeRig(t)
+	tree := r.devgetaTree(t, devgetaText)
+	if _, err := r.in.Install(tree); err != nil {
+		t.Fatal(err)
+	}
+	// Now the import line cannot be written: CLAUDE.md becomes a directory.
+	if err := os.Remove(r.claudeMD()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(r.claudeMD(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := r.in.Install(tree); err == nil {
+		t.Fatal("expected an error")
+	}
+	if _, ok := r.f.plugins["devgeta@devgeta"]; !ok {
+		t.Error("the plugin that worked before the update must stay installed")
+	}
+	if !exists(r.instructions()) {
+		t.Error("DEVGETA.md from the earlier install must stay")
+	}
+	if _, ok := r.f.marketplaces["devgeta"]; !ok {
+		t.Error("the marketplace was there before and must stay")
+	}
+}

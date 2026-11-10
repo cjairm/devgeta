@@ -128,19 +128,26 @@ func (c *ClaudeInstaller) Conflicts(pack Manifest) []string {
 // DEVGETA.md copied and its import line added after the plugin is in; if that
 // fails, the plugin is undone too, so nothing is left half-installed.
 func (c *ClaudeInstaller) Install(tree Tree) (Record, error) {
-	rec, addedMarketplace, err := c.installPlugin(tree)
+	rec, added, err := c.installPlugin(tree)
 	if err != nil {
 		return Record{}, err
 	}
 	if !tree.Pack.Embedded() {
 		return rec, nil
 	}
+	_, statErr := os.Stat(c.instructionsPath())
+	hadInstructions := statErr == nil
 	instructions, err := c.installInstructions(tree)
 	if err != nil {
-		c.undoPlugin(rec.Plugin, addedMarketplace)
+		// Undo only what this run added. The engine never rolls back a coder
+		// that already had the pack, so a failed update must leave the earlier
+		// install as it was, not tear it down under saved state.
+		c.undoPlugin(rec.Plugin, !added.pluginExisted, added.marketplace)
 		// DEVGETA.md is written before the import line, so it may be there.
-		if rmErr := os.Remove(c.instructionsPath()); rmErr != nil && !os.IsNotExist(rmErr) {
-			logger.L().Warnw("could not undo DEVGETA.md", "path", c.instructionsPath(), "err", rmErr)
+		if !hadInstructions {
+			if rmErr := os.Remove(c.instructionsPath()); rmErr != nil && !os.IsNotExist(rmErr) {
+				logger.L().Warnw("could not undo DEVGETA.md", "path", c.instructionsPath(), "err", rmErr)
+			}
 		}
 		return Record{}, err
 	}
@@ -155,24 +162,25 @@ func (c *ClaudeInstaller) Install(tree Tree) (Record, error) {
 //
 // On failure it undoes what this call did, so nothing is left registered: the
 // plugin if it got that far, and the marketplace only if this call added it
-// (another pack may be using one that was already there). It reports whether
-// this call added the marketplace.
-func (c *ClaudeInstaller) installPlugin(tree Tree) (Record, bool, error) {
+// (another pack may be using one that was already there). It reports what was
+// already there, so a caller that fails later undoes only its own work.
+func (c *ClaudeInstaller) installPlugin(tree Tree) (Record, pluginPrior, error) {
 	name := tree.Pack.Name
 	if info, err := os.Stat(filepath.Join(tree.Dir, ".claude-plugin", "plugin.json")); err != nil || !info.Mode().IsRegular() {
-		return Record{}, false, fmt.Errorf("pack %s has no .claude-plugin/plugin.json, so Claude Code has nothing to load", name)
+		return Record{}, pluginPrior{}, fmt.Errorf("pack %s has no .claude-plugin/plugin.json, so Claude Code has nothing to load", name)
 	}
 	if err := c.writeMarketplace(""); err != nil {
-		return Record{}, false, err
+		return Record{}, pluginPrior{}, err
 	}
 	addedMarketplace, err := c.ensureMarketplace()
 	if err != nil {
-		return Record{}, false, err
+		return Record{}, pluginPrior{}, err
 	}
+	prior := pluginPrior{marketplace: addedMarketplace}
 	id := pluginID(name)
-	fail := func(cause error) (Record, bool, error) {
-		c.undoPlugin(id, addedMarketplace)
-		return Record{}, false, fmt.Errorf(
+	fail := func(cause error) (Record, pluginPrior, error) {
+		c.undoPlugin(id, true, addedMarketplace)
+		return Record{}, pluginPrior{}, fmt.Errorf(
 			"installing %s into Claude Code failed: %w\nRe-run: dg agent-pack install %s --coder claude",
 			name, cause, name,
 		)
@@ -184,6 +192,7 @@ func (c *ClaudeInstaller) installPlugin(tree Tree) (Record, bool, error) {
 	}
 	for _, p := range installed {
 		if p.ID == id {
+			prior.pluginExisted = true
 			if err := c.CLI.ExecuteCommand("plugin", "uninstall", id, "-s", scopeOrUser(p.Scope)); err != nil {
 				return fail(err)
 			}
@@ -192,14 +201,22 @@ func (c *ClaudeInstaller) installPlugin(tree Tree) (Record, bool, error) {
 	if err := c.CLI.ExecuteCommand("plugin", "install", id, "-s", "user"); err != nil {
 		return fail(err)
 	}
-	return Record{Marketplace: constants.AgentPackMarketplace, Plugin: id}, addedMarketplace, nil
+	return Record{Marketplace: constants.AgentPackMarketplace, Plugin: id}, prior, nil
 }
 
-// undoPlugin uninstalls the plugin id if it is installed, and removes the
-// marketplace when this install added it. Failures are logged: the caller is
-// already reporting the error that made it undo.
-func (c *ClaudeInstaller) undoPlugin(id string, removeMarketplace bool) {
-	if installed, err := c.plugins(); err == nil {
+// pluginPrior records what installPlugin found, so an undo removes only what
+// the call itself added: the marketplace if it registered it, and the plugin
+// unless it was already installed (an update).
+type pluginPrior struct {
+	pluginExisted bool
+	marketplace   bool // this call added the marketplace
+}
+
+// undoPlugin uninstalls the plugin id when removePlugin is set, and removes the
+// marketplace when removeMarketplace is set. Failures are logged: the caller
+// is already reporting the error that made it undo.
+func (c *ClaudeInstaller) undoPlugin(id string, removePlugin, removeMarketplace bool) {
+	if installed, err := c.plugins(); removePlugin && err == nil {
 		for _, p := range installed {
 			if p.ID == id {
 				if uerr := c.CLI.ExecuteCommand("plugin", "uninstall", id, "-s", scopeOrUser(p.Scope)); uerr != nil {
