@@ -2,7 +2,7 @@
 
 **Date:** 2026-11-09
 **Estimated Duration:** ~1–2 days
-**Status:** In Progress (implemented 2026-11-09; the maintainer's manual verification, §6, is pending)
+**Status:** Done (released in v2.2.0, 2026-11-09)
 
 ---
 
@@ -283,6 +283,14 @@ permission could post or push mid-workflow.
   `dg agent-pack install devgeta superpowers`, then in each coder run `review`
   on a doc-only change, a code-only change and a mixed one, on a scratch PR;
   then the feedback wrapper on that PR's comments.
+- Outcome (2026-11-09): `dg agent-pack check devgeta` passed (including
+  `claude plugin validate`); the install loaded the skills in Claude Code and
+  OpenCode. The scratch-PR runs and the Pi install were skipped by the
+  maintainer's call (Pi is not installed on the test machine). The name probe
+  found no `review` name clash, but Ponytail's `ponytail-review` wins plain
+  code reviews on its description; `review`'s description was narrowed to
+  design docs, plans and posting to a PR, and `/devgeta:review` calls it
+  directly.
 
 ---
 
