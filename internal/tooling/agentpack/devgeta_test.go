@@ -426,8 +426,8 @@ func TestDevgetaPack_AllThreeCodersGetTheSameBytes(t *testing.T) {
 	// Skills: Claude loads the tree its plugin points at; OpenCode and Pi are
 	// pointed at <tree>/skills. Every shipped skill file must arrive unchanged.
 	shippedSkills := filepath.Join(shipped, "devgeta", "skills")
-	if !exists(shippedSkills) {
-		return // the pack ships no skills yet
+	if len(ocRec.OpenCodeSkills) != 1 {
+		t.Fatalf("the shipped devgeta pack must ship skills OpenCode can list, got %+v", ocRec)
 	}
 	skillsDirs := map[string]string{
 		"claude":   filepath.Join(root, "devgeta", "skills"),
