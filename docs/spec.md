@@ -258,7 +258,7 @@ Packs: `superpowers` and `ponytail` (pinned upstream tags and commits, in
   tree in `~/.local/share/devgeta/agent-packs/<pack>/` (excluded skills removed,
   then devgeta's and the user's override layers on top), and installs it into each
   selected coder through that coder's own system: a `devgeta` plugin marketplace
-  for Claude Code, a `plugins` (or `instructions`) entry in `opencode.json`, and
+  for Claude Code, a `plugins`, `instructions` or `skills` entry in `opencode.json`, and
   `pi install <tree>` for Pi. Without `--coder` it targets every installed coder.
 - A coder that isn't installed is skipped with a reason, which is not a failure.
   What a coder can't load is named. If a coder fails, the coders added in this

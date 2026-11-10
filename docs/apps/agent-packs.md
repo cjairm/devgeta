@@ -114,7 +114,9 @@ Put files laid out like the pack under `~/.config/devgeta/agent-packs/<pack>/`:
 ```
 
 Then run `dg agent-pack update superpowers`. devgeta copies its own overrides
-(none ship today) and then yours on top, so **yours win**. An override replaces
+(today one: a wrapper over Superpowers' `receiving-code-review` that adds the
+pull-request steps) and then yours on top, so **yours win**. If you exclude a
+skill, devgeta's own override of it is dropped silently. An override replaces
 the file at the same path, or adds a file inside an existing skill's folder. It
 can't add a new skill.
 
@@ -147,7 +149,9 @@ that was installed before is never touched.
 
 ## `DEVGETA.md` and opting out
 
-The `devgeta` pack carries `DEVGETA.md`. Every coder gets the same bytes:
+The `devgeta` pack carries `DEVGETA.md` and the `review` skill, and installs as a
+Claude Code plugin (uninstalling it removes the plugin too). Every coder gets
+the same `DEVGETA.md` bytes:
 
 - **Claude Code:** a copy at `~/.claude/DEVGETA.md`, and an `@DEVGETA.md` line in
   `~/.claude/CLAUDE.md`, added **only if no line there already imports it**.
