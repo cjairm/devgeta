@@ -2,8 +2,9 @@
   "name": "devgeta",
   "private": true,
   "type": "module",
-  "description": "devgeta's response and writing rules, loaded into Pi's system prompt",
+  "description": "devgeta's response and writing rules and review skills, loaded into Pi",
   "pi": {
-    "extensions": ["./extensions/devgeta-instructions.js"]
+    "extensions": ["./extensions/devgeta-instructions.js"],
+    "skills": ["./skills"]
   }
 }

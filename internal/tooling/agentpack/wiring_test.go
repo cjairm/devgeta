@@ -3,6 +3,7 @@ package agentpack
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -312,5 +313,26 @@ func TestPackBuilder_CheckReportsABuildFailure(t *testing.T) {
 	_, _, err := pb.Check(fixtureManifest(), "", []string{"alpha"}, nil) // beta names alpha
 	if err == nil || !strings.Contains(err.Error(), "beta") {
 		t.Fatalf("expected the build check to fail naming beta, got %v", err)
+	}
+}
+
+func TestPackBuilder_UpstreamPacksGetTheShippedLayerSeparately(t *testing.T) {
+	root := t.TempDir()
+	removeAllWritable(t, root)
+	f := newGitFixture(t)
+	f.cloneFrom = "upstream"
+	pb := &PackBuilder{
+		Fetcher:         &Fetcher{Git: f.git, Root: root},
+		Builder:         &Builder{Root: root},
+		ShippedLayerDir: "/shipped",
+		UserLayerDir:    "/user",
+	}
+
+	opts, _, err := pb.options(fixtureManifest(), "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.ShippedLayer != "/shipped/fixture" || !reflect.DeepEqual(opts.Layers, []string{"/user/fixture"}) {
+		t.Errorf("shipped layer %q, user layers %v", opts.ShippedLayer, opts.Layers)
 	}
 }

@@ -469,10 +469,4 @@ func TestClaudeInstaller_InspectSkipsWhatItCannotValidate(t *testing.T) {
 	if got := r.in.Inspect(r.builtPack(t, "superpowers")); got.Err != nil || len(got.Lines) != 0 || len(r.f.calls) != 0 {
 		t.Errorf("without Claude Code there is nothing to validate with, got %+v / %v", got, r.f.calls)
 	}
-
-	r = newClaudeRig(t)
-	tree := Tree{Pack: embeddedManifest(), Dir: r.root}
-	if got := r.in.Inspect(tree); got.Err != nil || len(got.Lines) != 0 || len(r.f.calls) != 0 {
-		t.Errorf("the devgeta pack is not a Claude plugin, got %+v / %v", got, r.f.calls)
-	}
 }

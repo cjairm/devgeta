@@ -3,6 +3,7 @@ package agentpack
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -288,6 +289,35 @@ func TestOpenCodeInstaller_TheDevgetaPackIsAnInstructionsEntryNotAPlugin(t *test
 	}
 	if len(f.rendered) != 0 {
 		t.Error("the engine renders opencode.json from state; Install only reports the record")
+	}
+}
+
+func TestOpenCodeInstaller_TheDevgetaPackListsItsSkillsFolderOnlyWhenItHasSkills(t *testing.T) {
+	in, _ := newOpenCodeInstaller()
+	dir := filepath.Join(t.TempDir(), "devgeta")
+	writeFile(t, filepath.Join(dir, "DEVGETA.md"), "# Style\n", 0o644)
+	tree := Tree{Pack: embeddedManifest(), Dir: dir}
+
+	rec, err := in.Install(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.OpenCodeSkills) != 0 {
+		t.Errorf("no skills folder, so no skills entry, got %v", rec.OpenCodeSkills)
+	}
+
+	// Every skill excluded leaves an empty folder: still no entry.
+	if err := os.MkdirAll(filepath.Join(dir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rec, err = in.Install(tree); err != nil || len(rec.OpenCodeSkills) != 0 {
+		t.Errorf("an empty skills folder must not be listed, got %+v (%v)", rec, err)
+	}
+
+	writeFile(t, filepath.Join(dir, "skills", "review", "SKILL.md"), "x", 0o644)
+	rec, err = in.Install(tree)
+	if err != nil || !reflect.DeepEqual(rec.OpenCodeSkills, []string{filepath.Join(dir, "skills")}) {
+		t.Errorf("expected the skills folder, got %+v (%v)", rec, err)
 	}
 }
 

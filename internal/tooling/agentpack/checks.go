@@ -102,9 +102,10 @@ func checkRequiredFiles(tree string) error {
 }
 
 // checkEmbeddedFiles verifies what an embedded pack (the devgeta pack) needs:
-// a non-empty DEVGETA.md, which every coder is pointed at, and a package.json
-// with a `pi` entry, because the Pi side is an ordinary Pi package. It is not
-// a Claude Code plugin, so there is no plugin.json or hooks file to check.
+// a non-empty DEVGETA.md, which every coder is pointed at, a plugin.json so
+// Claude Code can load its skills, and a package.json with a `pi` entry
+// (carrying `skills` when the pack has any), because the Pi side is an
+// ordinary Pi package. It has no hooks file to check.
 func checkEmbeddedFiles(tree string) error {
 	text, err := os.ReadFile(filepath.Join(tree, instructionsFile))
 	if err != nil {
@@ -121,8 +122,20 @@ func checkEmbeddedFiles(tree string) error {
 	if err := json.Unmarshal(data, &pkg); err != nil {
 		return fmt.Errorf("package.json is not valid JSON: %w", err)
 	}
-	if _, ok := pkg["pi"]; !ok {
+	rawPi, ok := pkg["pi"]
+	if !ok {
 		return fmt.Errorf(`package.json has no "pi" entry, which Pi needs`)
+	}
+	if info, err := os.Stat(filepath.Join(tree, ".claude-plugin", "plugin.json")); err != nil || !info.Mode().IsRegular() {
+		return fmt.Errorf("the pack has no .claude-plugin/plugin.json, which Claude Code needs to load its skills")
+	}
+	if skills, err := listSkills(tree); err == nil && len(skills) > 0 {
+		var pi struct {
+			Skills []string `json:"skills"`
+		}
+		if json.Unmarshal(rawPi, &pi) != nil || len(pi.Skills) == 0 {
+			return fmt.Errorf(`package.json's "pi" section has no "skills" entry (pi.skills), so Pi would not load the pack's skills`)
+		}
 	}
 	return nil
 }

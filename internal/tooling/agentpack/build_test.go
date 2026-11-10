@@ -833,17 +833,13 @@ func TestBuild_EmbeddedPackBuildsFromItsFolderWithoutItsManifest(t *testing.T) {
 	if res.Dir != filepath.Join(e.root, "devgeta") {
 		t.Errorf("tree at %s", res.Dir)
 	}
-	for _, f := range []string{"DEVGETA.md", "package.json", "extensions/devgeta-instructions.js"} {
+	for _, f := range []string{"DEVGETA.md", "package.json", "extensions/devgeta-instructions.js", ".claude-plugin/plugin.json", "skills/sample/SKILL.md"} {
 		if !exists(filepath.Join(res.Dir, f)) {
 			t.Errorf("%s should be in the tree", f)
 		}
 	}
 	if exists(filepath.Join(res.Dir, "pack.yaml")) {
 		t.Error("pack.yaml is devgeta's pin, not part of the pack")
-	}
-	// An embedded pack is not a Claude plugin and has no hooks to check.
-	if exists(filepath.Join(res.Dir, ".claude-plugin")) {
-		t.Error("nothing should be invented for Claude Code")
 	}
 }
 
@@ -874,6 +870,12 @@ func TestBuild_EmbeddedPackChecks(t *testing.T) {
 		{"package.json without pi", func(t *testing.T, src string) {
 			writeFile(t, filepath.Join(src, "package.json"), `{"name":"devgeta"}`, 0o644)
 		}, "pi"},
+		{"no plugin.json", func(t *testing.T, src string) {
+			_ = os.RemoveAll(filepath.Join(src, ".claude-plugin"))
+		}, ".claude-plugin/plugin.json"},
+		{"skills but no pi.skills entry", func(t *testing.T, src string) {
+			writeFile(t, filepath.Join(src, "package.json"), `{"name":"devgeta","pi":{"extensions":[]}}`, 0o644)
+		}, "pi.skills"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -936,5 +938,48 @@ func TestCheck_AnInspectorIsNotRunWhenTheBuildFails(t *testing.T) {
 
 	if err == nil || called {
 		t.Fatalf("a tree that failed its checks is not worth inspecting; err=%v called=%v", err, called)
+	}
+}
+
+func TestBuild_ShippedOverrideOfAnExcludedSkillIsDropped(t *testing.T) {
+	e := newBuildEnv(t)
+	shipped := e.layer(map[string]string{
+		"skills/gamma/SKILL.md": skillMD("gamma", "Use when you need gamma", "x"),
+	})
+	o := e.opts([]string{"gamma"})
+	o.ShippedLayer = shipped
+
+	if _, err := e.b.Build(o); err != nil {
+		t.Fatalf("an excluded skill must win over devgeta's own override, got %v", err)
+	}
+	if exists(filepath.Join(e.tree(), "skills", "gamma")) {
+		t.Error("the excluded skill must be absent, not resurrected by the shipped override")
+	}
+}
+
+func TestBuild_UserOverrideOfAnExcludedSkillStillFails(t *testing.T) {
+	e := newBuildEnv(t)
+	user := e.layer(map[string]string{
+		"skills/gamma/SKILL.md": skillMD("gamma", "Use when you need gamma", "x"),
+	})
+	o := e.opts([]string{"gamma"}, user)
+	o.ShippedLayer = e.layer(nil)
+
+	_, err := e.b.Build(o)
+	if err == nil || !strings.Contains(err.Error(), "both excluded and overridden") {
+		t.Fatalf("expected the excluded-and-overridden error, got %v", err)
+	}
+}
+
+func TestBuild_ShippedLayerAppliesBeforeTheUsersLayers(t *testing.T) {
+	e := newBuildEnv(t)
+	o := e.opts(nil, e.layer(map[string]string{"skills/alpha/SKILL.md": skillMD("alpha", "Use when you need the alpha behaviour", "user")}))
+	o.ShippedLayer = e.layer(map[string]string{"skills/alpha/SKILL.md": skillMD("alpha", "Use when you need the alpha behaviour", "shipped")})
+
+	if _, err := e.b.Build(o); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, filepath.Join(e.tree(), "skills", "alpha", "SKILL.md")); !strings.Contains(got, "user") {
+		t.Errorf("the user's layer must win over the shipped one, got %q", got)
 	}
 }

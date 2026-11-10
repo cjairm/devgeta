@@ -74,13 +74,19 @@ func (o *OpenCodeInstaller) Skipped(tree Tree) []string {
 // skills and commands may still be useful elsewhere, and nothing is faked.
 func (o *OpenCodeInstaller) Install(tree Tree) (Record, error) {
 	if tree.Pack.Embedded() {
-		// The devgeta pack is instructions, not a plugin: OpenCode reads the
-		// file through an `instructions` entry in opencode.json.
+		// The devgeta pack is instructions and skills, not a plugin: OpenCode
+		// reads them through `instructions` and `skills` entries in opencode.json.
 		file := filepath.Join(tree.Dir, instructionsFile)
 		if info, err := os.Stat(file); err != nil || !info.Mode().IsRegular() {
 			return Record{}, fmt.Errorf("pack %s has no %s, so OpenCode has nothing to load", tree.Pack.Name, instructionsFile)
 		}
-		return Record{OpenCodeInstructions: []string{file}}, nil
+		rec := Record{OpenCodeInstructions: []string{file}}
+		// The skills folder is listed only when it holds a skill: every skill
+		// excluded must not leave a path to an empty folder.
+		if skills, err := listSkills(tree.Dir); err == nil && len(skills) > 0 {
+			rec.OpenCodeSkills = []string{filepath.Join(tree.Dir, "skills")}
+		}
+		return rec, nil
 	}
 	folder := pluginFolder(tree.Dir)
 	if folder == "" {

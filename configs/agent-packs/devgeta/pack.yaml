@@ -1,2 +1,5 @@
 name: devgeta
 source: embedded
+requires:
+  - command: gh
+    reason: posting reviews and replies to pull requests

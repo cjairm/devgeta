@@ -123,46 +123,56 @@ func (c *ClaudeInstaller) Conflicts(pack Manifest) []string {
 	return out
 }
 
-// Install lists the tree in the devgeta marketplace, registers the marketplace
-// if needed, and installs the plugin at user scope. An already installed
-// plugin is uninstalled first: `claude plugin update` leaves Claude's cache
-// copy stale, and a reinstall refreshes it.
-//
-// On failure it undoes what this call did, so nothing is left registered: the
-// plugin if it got that far, and the marketplace only if this call added it
-// (another pack may be using one that was already there).
+// Install installs the tree as a plugin of the devgeta marketplace. The devgeta
+// pack, which also carries instructions a plugin cannot (a CLAUDE.md), gets
+// DEVGETA.md copied and its import line added after the plugin is in; if that
+// fails, the plugin is undone too, so nothing is left half-installed.
 func (c *ClaudeInstaller) Install(tree Tree) (Record, error) {
-	name := tree.Pack.Name
-	if tree.Pack.Embedded() {
-		return c.installInstructions(tree)
-	}
-	if info, err := os.Stat(filepath.Join(tree.Dir, ".claude-plugin", "plugin.json")); err != nil || !info.Mode().IsRegular() {
-		return Record{}, fmt.Errorf("pack %s has no .claude-plugin/plugin.json, so Claude Code has nothing to load", name)
-	}
-	if err := c.writeMarketplace(""); err != nil {
-		return Record{}, err
-	}
-	addedMarketplace, err := c.ensureMarketplace()
+	rec, addedMarketplace, err := c.installPlugin(tree)
 	if err != nil {
 		return Record{}, err
 	}
+	if !tree.Pack.Embedded() {
+		return rec, nil
+	}
+	instructions, err := c.installInstructions(tree)
+	if err != nil {
+		c.undoPlugin(rec.Plugin, addedMarketplace)
+		// DEVGETA.md is written before the import line, so it may be there.
+		if rmErr := os.Remove(c.instructionsPath()); rmErr != nil && !os.IsNotExist(rmErr) {
+			logger.L().Warnw("could not undo DEVGETA.md", "path", c.instructionsPath(), "err", rmErr)
+		}
+		return Record{}, err
+	}
+	instructions.Marketplace, instructions.Plugin = rec.Marketplace, rec.Plugin
+	return instructions, nil
+}
+
+// installPlugin lists the tree in the devgeta marketplace, registers the
+// marketplace if needed, and installs the plugin at user scope. An already
+// installed plugin is uninstalled first: `claude plugin update` leaves
+// Claude's cache copy stale, and a reinstall refreshes it.
+//
+// On failure it undoes what this call did, so nothing is left registered: the
+// plugin if it got that far, and the marketplace only if this call added it
+// (another pack may be using one that was already there). It reports whether
+// this call added the marketplace.
+func (c *ClaudeInstaller) installPlugin(tree Tree) (Record, bool, error) {
+	name := tree.Pack.Name
+	if info, err := os.Stat(filepath.Join(tree.Dir, ".claude-plugin", "plugin.json")); err != nil || !info.Mode().IsRegular() {
+		return Record{}, false, fmt.Errorf("pack %s has no .claude-plugin/plugin.json, so Claude Code has nothing to load", name)
+	}
+	if err := c.writeMarketplace(""); err != nil {
+		return Record{}, false, err
+	}
+	addedMarketplace, err := c.ensureMarketplace()
+	if err != nil {
+		return Record{}, false, err
+	}
 	id := pluginID(name)
-	fail := func(cause error) (Record, error) {
-		if installed, lerr := c.plugins(); lerr == nil {
-			for _, p := range installed {
-				if p.ID == id {
-					if uerr := c.CLI.ExecuteCommand("plugin", "uninstall", id, "-s", scopeOrUser(p.Scope)); uerr != nil {
-						logger.L().Warnw("could not undo a failed plugin install", "plugin", id, "err", uerr)
-					}
-				}
-			}
-		}
-		if addedMarketplace {
-			if merr := c.CLI.ExecuteCommand("plugin", "marketplace", "remove", constants.AgentPackMarketplace); merr != nil {
-				logger.L().Warnw("could not undo the marketplace registration", "err", merr)
-			}
-		}
-		return Record{}, fmt.Errorf(
+	fail := func(cause error) (Record, bool, error) {
+		c.undoPlugin(id, addedMarketplace)
+		return Record{}, false, fmt.Errorf(
 			"installing %s into Claude Code failed: %w\nRe-run: dg agent-pack install %s --coder claude",
 			name, cause, name,
 		)
@@ -182,7 +192,27 @@ func (c *ClaudeInstaller) Install(tree Tree) (Record, error) {
 	if err := c.CLI.ExecuteCommand("plugin", "install", id, "-s", "user"); err != nil {
 		return fail(err)
 	}
-	return Record{Marketplace: constants.AgentPackMarketplace, Plugin: id}, nil
+	return Record{Marketplace: constants.AgentPackMarketplace, Plugin: id}, addedMarketplace, nil
+}
+
+// undoPlugin uninstalls the plugin id if it is installed, and removes the
+// marketplace when this install added it. Failures are logged: the caller is
+// already reporting the error that made it undo.
+func (c *ClaudeInstaller) undoPlugin(id string, removeMarketplace bool) {
+	if installed, err := c.plugins(); err == nil {
+		for _, p := range installed {
+			if p.ID == id {
+				if uerr := c.CLI.ExecuteCommand("plugin", "uninstall", id, "-s", scopeOrUser(p.Scope)); uerr != nil {
+					logger.L().Warnw("could not undo a failed plugin install", "plugin", id, "err", uerr)
+				}
+			}
+		}
+	}
+	if removeMarketplace {
+		if merr := c.CLI.ExecuteCommand("plugin", "marketplace", "remove", constants.AgentPackMarketplace); merr != nil {
+			logger.L().Warnw("could not undo the marketplace registration", "err", merr)
+		}
+	}
 }
 
 func scopeOrUser(scope string) string {
@@ -229,11 +259,14 @@ func samePath(a, b string) bool {
 // Uninstall removes the recorded plugin, then rewrites the marketplace file
 // without it: the engine deletes the pack's tree next, and a marketplace that
 // still named it would point at a folder that is gone. A plugin the user
-// already removed is not an error, and a record with no plugin (the devgeta
-// pack's Claude side is a CLAUDE.md line, not a plugin) has nothing to do here.
+// already removed is not an error. The devgeta pack's record holds instructions
+// (DEVGETA.md and its CLAUDE.md line) and the plugin; a record from before the
+// pack shipped skills holds only the instructions.
 func (c *ClaudeInstaller) Uninstall(r Record) error {
 	if r.InstructionsFile != "" {
-		return c.uninstallInstructions(r)
+		if err := c.uninstallInstructions(r); err != nil {
+			return err
+		}
 	}
 	if r.Plugin == "" {
 		return nil
@@ -410,11 +443,11 @@ func (c *ClaudeInstaller) MergeRecord(prior, next Record) Record {
 }
 
 // Inspect runs `claude plugin validate` on the built tree, which is what Claude
-// Code would load. A pack that is not a plugin (the devgeta pack) and a machine
-// without Claude Code have nothing to validate. A validation error fails the
-// check: it is exactly the kind of upstream change `check` exists to catch.
+// Code would load. A machine without Claude Code has nothing to validate. A
+// validation error fails the check: it is exactly the kind of upstream change
+// `check` exists to catch.
 func (c *ClaudeInstaller) Inspect(tree Tree) Inspection {
-	if tree.Pack.Embedded() || !c.Available() {
+	if !c.Available() {
 		return Inspection{}
 	}
 	if _, err := c.CLI.ExecuteCommandOutput("plugin", "validate", tree.Dir); err != nil {

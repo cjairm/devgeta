@@ -1,6 +1,7 @@
 package agentpack
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,6 +15,7 @@ func (r *claudeRig) devgetaTree(t *testing.T, text string) Tree {
 	dir := filepath.Join(r.root, "devgeta")
 	writeFile(t, filepath.Join(dir, "DEVGETA.md"), text, 0o644)
 	writeFile(t, filepath.Join(dir, "package.json"), `{"name":"devgeta","pi":{}}`, 0o644)
+	writeFile(t, filepath.Join(dir, ".claude-plugin", "plugin.json"), `{"name":"devgeta"}`, 0o644)
 	return Tree{Pack: embeddedManifest(), Dir: dir}
 }
 
@@ -67,14 +69,102 @@ func TestClaudeInstaller_InstallingTheDevgetaPackCopiesTheFileAndAddsTheLine(t *
 	if got := readFile(t, r.claudeMD()); got != "@DEVGETA.md\n" {
 		t.Errorf("a new CLAUDE.md should hold just the import, got %q", got)
 	}
-	if rec.InstructionsFile != r.instructions() || !rec.ClaudeMDLineAdded || rec.Plugin != "" {
-		t.Errorf("unexpected record %+v", rec)
+	if rec.InstructionsFile != r.instructions() || !rec.ClaudeMDLineAdded ||
+		rec.Plugin != "devgeta@devgeta" || rec.Marketplace != "devgeta" {
+		t.Errorf("the record must hold the instructions and the plugin, got %+v", rec)
 	}
-	if r.f.called("plugin") != 0 {
-		t.Errorf("the devgeta pack is not a Claude plugin, so no claude call: %v", r.f.calls)
+	if _, ok := r.f.plugins["devgeta@devgeta"]; !ok {
+		t.Errorf("the devgeta pack carries skills, so it is a Claude plugin too: %v", r.f.calls)
 	}
-	if exists(filepath.Join(r.root, ".claude-plugin")) {
-		t.Error("no marketplace file for a pack that is not a plugin")
+	if got := marketplacePlugins(r.marketplace(t)); got["devgeta"] != "./devgeta" {
+		t.Errorf("the marketplace must list the devgeta pack, got %v", got)
+	}
+}
+
+func TestClaudeInstaller_ReinstallingOverAnInstructionsOnlyRecordAddsThePluginAndKeepsTheLineFact(t *testing.T) {
+	r := newClaudeRig(t)
+	r.claudeMDWith(t, "@DEVGETA.md\n") // an earlier install left the line
+	prior := Record{InstructionsFile: r.instructions(), ClaudeMDLineAdded: true}
+
+	next, err := r.in.Install(r.devgetaTree(t, devgetaText))
+	if err != nil {
+		t.Fatal(err)
+	}
+	merged := r.in.MergeRecord(prior, next)
+	if merged.Plugin != "devgeta@devgeta" || !merged.ClaudeMDLineAdded {
+		t.Errorf("the plugin is added and the line fact survives, got %+v", merged)
+	}
+	if got := readFile(t, r.claudeMD()); got != "@DEVGETA.md\n" {
+		t.Errorf("the line must not be duplicated, got %q", got)
+	}
+}
+
+func (r *claudeRig) claudeMDWith(t *testing.T, text string) {
+	t.Helper()
+	writeFile(t, r.claudeMD(), text, 0o644)
+}
+
+func TestClaudeInstaller_UninstallingTheDevgetaPackRemovesThePluginToo(t *testing.T) {
+	r := newClaudeRig(t)
+	rec, err := r.in.Install(r.devgetaTree(t, devgetaText))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := r.in.Uninstall(rec); err != nil {
+		t.Fatal(err)
+	}
+	if r.f.called("plugin uninstall devgeta@devgeta -s user") != 1 {
+		t.Errorf("the plugin must be uninstalled: %v", r.f.calls)
+	}
+	if exists(r.instructions()) || strings.Contains(readFile(t, r.claudeMD()), "@DEVGETA.md") {
+		t.Error("DEVGETA.md and the line devgeta added must go too")
+	}
+	if got := marketplacePlugins(r.marketplace(t)); len(got) != 0 {
+		t.Errorf("the marketplace must stop listing devgeta, got %v", got)
+	}
+}
+
+func TestClaudeInstaller_DevgetaPackPluginInstallFailureLeavesNothingBehind(t *testing.T) {
+	r := newClaudeRig(t)
+	r.f.failOn = "plugin install"
+
+	if _, err := r.in.Install(r.devgetaTree(t, devgetaText)); err == nil {
+		t.Fatal("expected an error")
+	}
+	if exists(r.instructions()) || exists(r.claudeMD()) {
+		t.Error("the plugin goes first, so a failure there must not have written DEVGETA.md or CLAUDE.md")
+	}
+	if len(r.f.marketplaces) != 0 || len(r.f.plugins) != 0 {
+		t.Errorf("nothing may stay registered: %v %v", r.f.marketplaces, r.f.plugins)
+	}
+}
+
+func TestClaudeInstaller_DevgetaPackInstructionsFailureUndoesThePlugin(t *testing.T) {
+	r := newClaudeRig(t)
+	// A directory where CLAUDE.md should be makes the import line fail after
+	// DEVGETA.md was written.
+	if err := os.MkdirAll(r.claudeMD(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := r.in.Install(r.devgetaTree(t, devgetaText)); err == nil {
+		t.Fatal("expected an error")
+	}
+	if exists(r.instructions()) {
+		t.Error("DEVGETA.md must not be left behind")
+	}
+	if len(r.f.marketplaces) != 0 || len(r.f.plugins) != 0 {
+		t.Errorf("the plugin and the marketplace this call added must be undone: %v %v", r.f.marketplaces, r.f.plugins)
+	}
+}
+
+func TestClaudeInstaller_InspectValidatesTheDevgetaPack(t *testing.T) {
+	r := newClaudeRig(t)
+
+	r.in.Inspect(r.devgetaTree(t, devgetaText))
+	if r.f.called("plugin validate") != 1 {
+		t.Errorf("the devgeta pack is a plugin now, so it is validated: %v", r.f.calls)
 	}
 }
 
@@ -188,6 +278,8 @@ func TestClaudeInstaller_UninstallingTheDevgetaPackRemovesTheFileAndOnlyOurLine(
 		t.Fatal(err)
 	}
 	r.in.TakeNotes()
+	rec = Record{InstructionsFile: rec.InstructionsFile, ClaudeMDLineAdded: rec.ClaudeMDLineAdded}
+	callsBefore := len(r.f.calls)
 
 	if err := r.in.Uninstall(rec); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -202,8 +294,8 @@ func TestClaudeInstaller_UninstallingTheDevgetaPackRemovesTheFileAndOnlyOurLine(
 	if !strings.Contains(notes, "@DEVGETA.md") || !strings.Contains(strings.ToLower(notes), "removed") {
 		t.Errorf("the output must say the line was removed, got %q", notes)
 	}
-	if r.f.called("plugin") != 0 {
-		t.Errorf("no claude call for the devgeta pack: %v", r.f.calls)
+	if len(r.f.calls) != callsBefore {
+		t.Errorf("an instructions-only record (an earlier install) makes no claude call: %v", r.f.calls[callsBefore:])
 	}
 }
 
@@ -329,5 +421,31 @@ func TestDevgetaPack_AllThreeCodersGetTheSameBytes(t *testing.T) {
 		if text != want {
 			t.Errorf("%s was given different bytes than the shipped DEVGETA.md", coder)
 		}
+	}
+
+	// Skills: Claude loads the tree its plugin points at; OpenCode and Pi are
+	// pointed at <tree>/skills. Every shipped skill file must arrive unchanged.
+	shippedSkills := filepath.Join(shipped, "devgeta", "skills")
+	if !exists(shippedSkills) {
+		return // the pack ships no skills yet
+	}
+	skillsDirs := map[string]string{
+		"claude":   filepath.Join(root, "devgeta", "skills"),
+		"opencode": ocRec.OpenCodeSkills[0],
+		"pi":       filepath.Join(piRec.PiPackage, "skills"),
+	}
+	if err := filepath.WalkDir(shippedSkills, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(shippedSkills, p)
+		for coder, dir := range skillsDirs {
+			if got, want := readFile(t, filepath.Join(dir, rel)), readFile(t, p); got != want {
+				t.Errorf("%s was given different bytes than the shipped skills/%s", coder, rel)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("the devgeta pack ships no skills folder: %v", err)
 	}
 }

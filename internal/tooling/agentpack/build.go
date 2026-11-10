@@ -25,8 +25,13 @@ type BuildOptions struct {
 	Source string
 	// Exclude lists skill folders to drop from the built tree.
 	Exclude []string
-	// Layers are override folders laid out like the pack, copied on top in
-	// order, so a later layer wins: devgeta's, then the user's.
+	// ShippedLayer is devgeta's own override folder, applied before Layers.
+	// It differs from a user layer in one rule: an override of a skill the
+	// user excluded is dropped silently instead of failing the build, so a
+	// skill devgeta starts overriding never breaks an existing exclusion.
+	ShippedLayer string
+	// Layers are the user's override folders laid out like the pack, copied
+	// on top in order, so a later layer wins.
 	Layers []string
 }
 
@@ -193,8 +198,13 @@ func buildInto(o BuildOptions, dst string) (BuildResult, error) {
 		skillMD:  map[string]bool{},
 		replaced: map[string]bool{},
 	}
+	if o.ShippedLayer != "" {
+		if err := ov.apply(o.ShippedLayer, true); err != nil {
+			return BuildResult{}, err
+		}
+	}
 	for _, layer := range o.Layers {
-		if err := ov.apply(layer); err != nil {
+		if err := ov.apply(layer, false); err != nil {
 			return BuildResult{}, err
 		}
 	}
@@ -238,7 +248,8 @@ type overlay struct {
 	replaced    map[string]bool // slash paths that exist upstream and were overwritten
 }
 
-func (ov *overlay) apply(layer string) error {
+// apply copies one layer onto the tree. shipped marks devgeta's own layer.
+func (ov *overlay) apply(layer string, shipped bool) error {
 	if _, err := os.Stat(layer); err != nil {
 		if os.IsNotExist(err) {
 			return nil // no overrides in this layer
@@ -263,8 +274,12 @@ func (ov *overlay) apply(layer string) error {
 		if !d.Type().IsRegular() {
 			return fmt.Errorf("override %s in %s is not a regular file", slash, layer)
 		}
-		if err := ov.checkSkillTarget(slash, layer); err != nil {
+		skip, err := ov.checkSkillTarget(slash, layer, shipped)
+		if err != nil {
 			return err
+		}
+		if skip {
+			return nil
 		}
 		if _, err := os.Lstat(filepath.Join(ov.source, rel)); err == nil {
 			ov.replaced[slash] = true
@@ -274,25 +289,30 @@ func (ov *overlay) apply(layer string) error {
 }
 
 // checkSkillTarget rejects an override that would add a skill, resurrect an
-// excluded one, or ship its own UPSTREAM.md.
-func (ov *overlay) checkSkillTarget(slash, layer string) error {
+// excluded one, or ship its own UPSTREAM.md. An override of an excluded skill
+// in devgeta's own (shipped) layer is not an error: skip is true and the file
+// is not copied, because the user excluded the skill and that wins.
+func (ov *overlay) checkSkillTarget(slash, layer string, shipped bool) (skip bool, err error) {
 	parts := strings.Split(slash, "/")
 	if len(parts) < 3 || parts[0] != "skills" {
-		return nil
+		return false, nil
 	}
 	skill, file := parts[1], parts[len(parts)-1]
 	if !ov.known[skill] {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"override %s in %s targets the skill %q, which upstream does not have: "+
 				"an override can change a skill but not add one",
 			slash, layer, skill,
 		)
 	}
 	if ov.excluded[skill] {
-		return fmt.Errorf("the skill %q is both excluded and overridden (%s in %s)", skill, slash, layer)
+		if shipped {
+			return true, nil
+		}
+		return false, fmt.Errorf("the skill %q is both excluded and overridden (%s in %s)", skill, slash, layer)
 	}
 	if len(parts) == 3 && file == upstreamFile {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"override %s in %s would replace UPSTREAM.md, which the build always writes from upstream's own SKILL.md",
 			slash, layer,
 		)
@@ -300,7 +320,7 @@ func (ov *overlay) checkSkillTarget(slash, layer string) error {
 	if len(parts) == 3 && file == "SKILL.md" {
 		ov.skillMD[skill] = true
 	}
-	return nil
+	return false, nil
 }
 
 // finishSkills runs after every layer is copied. For each skill whose SKILL.md

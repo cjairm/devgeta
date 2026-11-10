@@ -77,10 +77,8 @@ func (p *PackBuilder) options(m Manifest, ref string, exclude []string) (BuildOp
 	if err != nil {
 		return BuildOptions{}, "", err
 	}
-	opts.Layers = []string{
-		filepath.Join(p.ShippedLayerDir, m.Name),
-		filepath.Join(p.UserLayerDir, m.Name),
-	}
+	opts.ShippedLayer = filepath.Join(p.ShippedLayerDir, m.Name)
+	opts.Layers = []string{filepath.Join(p.UserLayerDir, m.Name)}
 	return opts, sha, nil
 }
 
