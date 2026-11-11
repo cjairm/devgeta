@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/cjairm/devgeta/internal/apps/tmux"
 	"github.com/cjairm/devgeta/internal/theme"
 	"github.com/cjairm/devgeta/pkg/files"
 	"github.com/cjairm/devgeta/pkg/paths"
@@ -56,13 +57,11 @@ func renderShippedTmuxConf(t *testing.T) []byte {
 
 	out := filepath.Join(t.TempDir(), ".tmux.conf")
 	tmplPath := filepath.Join(repoRoot, "configs", "tmux", "tmux.conf.tmpl")
-	if err := files.GenerateFromTemplate(tmplPath, out, struct {
-		NotifySound bool
-		Palette     theme.Palette
-	}{
-		NotifySound: false,
-		Palette:     p,
-	}); err != nil {
+	if err := files.GenerateFromTemplate(
+		tmplPath,
+		out,
+		tmux.NewTemplateData(false, p),
+	); err != nil {
 		t.Fatalf("failed to render tmux.conf.tmpl: %v", err)
 	}
 
@@ -114,7 +113,10 @@ func TestForceConfigureTheme_PaneMoveKeysPassThroughForDgWs(t *testing.T) {
 	}
 
 	if strings.Contains(got, `if-shell \"$is_dgws\"`) {
-		t.Errorf("is_dgws must not be tested in a nested if-shell (tmux strips its escapes):\n%s", got)
+		t.Errorf(
+			"is_dgws must not be tested in a nested if-shell (tmux strips its escapes):\n%s",
+			got,
+		)
 	}
 	for _, key := range []string{"C-h", "C-j", "C-k", "C-l"} {
 		wantBinding := `bind -n ` + key + ` if-shell "$is_vim || $is_dgws" "send-keys ` + key +

@@ -172,16 +172,33 @@ func (t *Tmux) ForceConfigureTheme(def theme.Definition) error {
 	}
 	configDest := filepath.Join(paths.Paths.Home.Root, configFileName)
 	tmplPath := filepath.Join(paths.Paths.App.Configs.Tmux, "tmux.conf.tmpl")
-	if err := files.GenerateFromTemplate(tmplPath, configDest, struct {
-		NotifySound bool
-		Palette     theme.Palette
-	}{
-		NotifySound: gc.Worktree.NotifySound,
-		Palette:     p,
-	}); err != nil {
+	if err := files.GenerateFromTemplate(
+		tmplPath,
+		configDest,
+		NewTemplateData(gc.Worktree.NotifySound, p),
+	); err != nil {
 		return fmt.Errorf("failed to generate tmux configuration: %w", err)
 	}
 	return nil
+}
+
+// TemplateData is what tmux.conf.tmpl renders from. Tests build it through
+// NewTemplateData too, so a new field cannot leave them rendering a different
+// shape than `dg configure tmux` does.
+type TemplateData struct {
+	NotifySound bool
+	Palette     theme.Palette
+	// ClaudeCommand comes from the same recipe as the cc alias, so a
+	// resurrect-restored pane gets the same env prefix as a fresh one.
+	ClaudeCommand string
+}
+
+func NewTemplateData(notifySound bool, p theme.Palette) TemplateData {
+	return TemplateData{
+		NotifySound:   notifySound,
+		Palette:       p,
+		ClaudeCommand: constants.ClaudeLaunch.Command(),
+	}
 }
 
 // ApplyLiveTheme sources the just-rendered ~/.tmux.conf into the attached

@@ -11,11 +11,21 @@ something a reader still needs, that thing belongs in an ADR or a guide — put 
 there first, then delete. This file must not grow without bound; that is exactly
 why it no longer lives in `CLAUDE.md`.
 
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-11
 
 ---
 
 ## Recent changes
+
+- tmux-resurrect restores Pi panes and keeps Claude's env (2026-11-11, v2.5.0).
+  Restored panes now relaunch `pi --continue` next to claude and opencode. Pi is
+  a node script, but it sets its process title to `pi`, so resurrect's plain
+  `pi` match works without a `~` substring pattern (which would also catch
+  `pip`, `api…`). The claude restore line is rendered from
+  `constants.ClaudeLaunch`, the recipe behind the `cc` alias, so a restored pane
+  carries `CLAUDE_CODE_NO_FLICKER=1` like a fresh one. The template data is now
+  one `tmux.TemplateData` type that the golden test also builds, so a new field
+  can't leave the test rendering a different shape than `dg configure tmux`.
 
 - Pi reports its activity to tmux (2026-11-10, v2.4.0). Pi panes now show in
   the `dg ws` agents section, flag their window in the status bar, and can ding,
