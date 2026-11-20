@@ -223,6 +223,9 @@ func RunInstallScript(
 			Args:    append([]string{scriptPath}, scriptArgs...),
 			Timeout: InstallScriptExecTimeout,
 			NoStdin: true,
+			// Installer menus read /dev/tty directly; detached, they take
+			// their defaults instead of hanging on a prompt nobody can answer.
+			DetachTerminal: true,
 		}); err != nil {
 			return fmt.Errorf(
 				"install script failed for %s: %w\nOutput: %s",

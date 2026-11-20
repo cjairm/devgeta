@@ -155,6 +155,16 @@ type CommandParams struct {
 	// depend on: `dg install` shells out to sudo, and sudo must be able to
 	// read the password from the terminal.
 	NoStdin bool
+	// DetachTerminal starts the child in a new session with no controlling
+	// terminal, so opening /dev/tty fails instead of working. NoStdin alone
+	// does not stop a child that reads /dev/tty directly (installer menus do
+	// this to get around a piped stdin), and in its own process group such a
+	// read gets the child stopped by SIGTTIN: a silent hang the user cannot
+	// answer. Detached, scripts that check for a terminal take their
+	// non-interactive defaults. It is opt-in rather than part of NoStdin
+	// because sudo caches credentials per terminal, so `sudo -n -v` without
+	// one would miss the cached credential.
+	DetachTerminal bool
 }
 
 func NewBaseCommand() *BaseCommand {
@@ -388,8 +398,8 @@ func (b *BaseCommand) ExecCommand(cmd CommandParams) (string, string, error) {
 	// already does for a Timeout. It is false only where nothing has wired a
 	// cancellable root in (tests, library callers that bypass cmd.Execute) or
 	// for a call with no Timeout before that wiring runs.
-	if cmd.NoStdin && ctx.Done() != nil {
-		isolateProcessGroup(execCommand)
+	if cmd.DetachTerminal || (cmd.NoStdin && ctx.Done() != nil) {
+		isolateProcessGroup(execCommand, cmd.DetachTerminal)
 	}
 
 	// Start command
@@ -519,15 +529,18 @@ const outputDrainGrace = 2 * time.Second
 //
 // Unix-only by construction: SysProcAttr.Setpgid and a negative-pid Kill do
 // not exist on Windows, which devgeta does not build for (CLAUDE.md §8).
-func isolateProcessGroup(c *exec.Cmd) {
-	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+//
+// newSession uses Setsid instead of Setpgid (see CommandParams.DetachTerminal).
+// The two are exclusive: a session leader cannot then call setpgid.
+func isolateProcessGroup(c *exec.Cmd, newSession bool) {
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: !newSession, Setsid: newSession}
 	c.Cancel = func() error {
 		if c.Process == nil {
 			return os.ErrProcessDone
 		}
-		// Setpgid with no Pgid makes the child's group id its own pid, so the
-		// negative pid addresses the child and every descendant that has not
-		// left the group.
+		// Setsid, and Setpgid with no Pgid, both make the child's group id
+		// its own pid, so the negative pid addresses the child and every
+		// descendant that has not left the group.
 		err := syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 		if errors.Is(err, syscall.ESRCH) {
 			// The group finished between the deadline firing and the signal.

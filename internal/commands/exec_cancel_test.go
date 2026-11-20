@@ -352,3 +352,27 @@ func TestExecCommandDefaultRootContextLeavesProcessGroupUntouched(t *testing.T) 
 		t.Fatal("ExecCommand did not return after its child was killed")
 	}
 }
+
+// TestExecCommandDetachTerminalStartsANewSession covers the hang an installer
+// menu caused: a child in its own process group that reads /dev/tty is stopped
+// by SIGTTIN. With DetachTerminal the child leads a new session, which has no
+// controlling terminal, so /dev/tty cannot be opened and the script falls back
+// to its non-interactive path instead.
+func TestExecCommandDetachTerminalStartsANewSession(t *testing.T) {
+	b := commands.NewBaseCommandCustom(FakePlatform{Linux: true})
+
+	stdout, _, err := b.ExecCommand(commands.CommandParams{
+		Command:        "sh",
+		Args:           []string{"-c", "if ( : <>/dev/tty ) 2>/dev/null; then echo tty; else echo no-tty; fi; sleep 5"},
+		Timeout:        300 * time.Millisecond,
+		NoStdin:        true,
+		DetachTerminal: true,
+	})
+	if err == nil {
+		t.Fatal("expected the deadline to end the sleeping child")
+	}
+
+	if got := strings.TrimSpace(stdout); got != "no-tty" {
+		t.Fatalf("detached child should not reach a terminal, got %q", got)
+	}
+}
